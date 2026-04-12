@@ -1,0 +1,36 @@
+# https://pre-commit.com — optional Git hooks before each commit (any editor/CLI).
+# Install: pip install pre-commit && pre-commit install
+# Run on all files: pre-commit run --all-files
+# Update hook revisions: pre-commit autoupdate
+#
+# Cursor-specific hooks live in .cursor/hooks.json (format-on-save, secret scans).
+# CI gate: .github/workflows/ci.yml runs ./scripts/ci.sh (includes gofmt -l, go test -race, …).
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+
+  # Pin matches .github/workflows/ci.yml — bump both when upgrading golangci-lint
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v2.11.4
+    hooks:
+      - id: golangci-lint-config-verify
+      - id: golangci-lint-fmt
+        # Uses formatters from .golangci.yml (gofmt + goimports/local-prefixes)
+      - id: golangci-lint-full
+        # Full-module lint (required for unused and other whole-program checks)
+        args: [--timeout=5m]
+
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-unit-tests
+        # Faster than CI: no -race (CI runs ./scripts/ci.sh with -race)

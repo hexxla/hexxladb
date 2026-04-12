@@ -1,0 +1,74 @@
+# Allow-list alternative (stricter): https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
+
+# --- Go build & test artifacts ---
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.a
+*.o
+*.test
+*.prof
+*.pprof
+cpu.prof
+mem.prof
+coverage.*
+*.coverprofile
+profile.cov
+coverage.html
+
+# Fuzzing
+testdata/fuzz/**/*
+!testdata/fuzz/**/.gitkeep
+
+# Delve / some IDEs
+__debug_bin
+__debug_bin_*
+
+# --- Future / common output directories (binaries, releases, packagers) ---
+/bin/
+/build/
+/dist/
+/out/
+/artifacts/
+/target/
+/release/
+/tmp/
+/temp/
+
+# If you later vendor dependencies (uncomment to ignore the tree)
+# vendor/
+
+# Go workspace (local multi-module experiments)
+go.work
+go.work.sum
+
+# --- Environment & secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Tooling caches (if created inside the repo) ---
+.cache/
+
+# --- Logs & OS noise ---
+*.log
+.DS_Store
+Thumbs.db
+
+# --- Editor / IDE (uncomment what you use) ---
+.idea/
+.vscode/
+*.swp
+*~
+
+# Cursor: this template commits .cursor/ (rules, skills, agent notes). Do not ignore it here.
+
+# Roadmap removed from template; keep local copies out of git if you recreate the path
+/docs/ROADMAP.md
+
+# --- Optional: uncomment when you add these stacks ---
+# node_modules/
+# .terraform/
+# *.tfstate*

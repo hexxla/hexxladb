@@ -1,0 +1,41 @@
+# https://editorconfig.org
+
+root = true
+
+# Defaults for all text files
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Go source and module files — matches gofmt / goimports (tabs, width 8 for display)
+[*.{go,mod,work}]
+indent_style = tab
+indent_size = 8
+tab_width = 8
+
+# Make requires literal tabs for recipe bodies
+[{Makefile,makefile,GNUmakefile}]
+indent_style = tab
+
+# Common config / CI — two-space indent is widely used
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# JSON — two spaces keeps diffs readable
+[*.json]
+indent_style = space
+indent_size = 2
+
+# Markdown — trailing two spaces are meaningful (hard line breaks)
+[*.md]
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = false
+
+# Shell scripts
+[*.sh]
+indent_style = space
+indent_size = 2

@@ -1,0 +1,11 @@
+---
+description: Placeholder — rules for CLI entrypoints and wiring under cmd/.
+globs: cmd/**/*.go
+alwaysApply: false
+---
+
+_Placeholder._ Populate later with:
+
+- How thin `main` should stay and what belongs in `internal/`
+- Configuration and dependency wiring conventions
+- Naming (binary name vs directory)

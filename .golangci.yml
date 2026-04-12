@@ -1,0 +1,107 @@
+# https://golangci-lint.run/docs/configuration/file/
+# Linters: https://golangci-lint.run/docs/linters/
+# Formatters: https://golangci-lint.run/docs/formatters/
+version: "2"
+
+linters:
+  # errcheck, govet, ineffassign, staticcheck, unused
+  default: standard
+  enable:
+    - bodyclose # HTTP response bodies (common in adapters)
+    - copyloopvar # Go 1.22+ loop variable semantics
+    - depguard # hexagonal import boundaries (domain/app must not import adapters)
+    - errorlint # %w / errors.Is / errors.As consistency
+    - gocritic # bug, performance, style checks (see settings)
+    - gosec # security patterns
+    - misspell # English in comments / strings
+    - modernize # simplify to current stdlib / language features
+    - nolintlint # valid, explained nolint directives
+    - revive # style / correctness (golint successor; see settings)
+  settings:
+    depguard:
+      rules:
+        domain_no_adapters:
+          files:
+            - internal/domain/**/*.go
+          deny:
+            - pkg: github.com/sploitzberg/go-hexagonal-architecture-template/internal/adapters
+              desc: internal/domain must not import internal/adapters (hexagonal — use ports / domain types only).
+        app_no_adapters:
+          files:
+            - internal/app/**/*.go
+          deny:
+            - pkg: github.com/sploitzberg/go-hexagonal-architecture-template/internal/adapters
+              desc: internal/app must not import internal/adapters (inject ports from cmd; adapters depend on app/domain).
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+      disabled-checks:
+        # Too noisy for typical hexagonal service code:
+        - hugeParam
+        - rangeValCopy
+    gosec:
+      severity: medium
+      confidence: medium
+    revive:
+      severity: warning
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: empty-block
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: exported
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: package-comments
+          disabled: true
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: unused-parameter
+        - name: var-naming
+        - name: var-declaration
+  exclusions:
+    # Generated / vendored code (strict Go generated header)
+    generated: strict
+    rules:
+      # Tests: relax security and revive rules that fight test style
+      - path: _test\.go
+        linters:
+          - gosec
+          - revive
+
+# https://golangci-lint.run/docs/formatters/configuration/
+formatters:
+  enable:
+    - gofmt # align with `make fmt` / scripts/ci.sh (gofmt -l / -w)
+    - goimports # fix/sort imports; group this module after third-party (needs local-prefixes)
+  settings:
+    gofmt:
+      # Default: true — gofmt -s
+      simplify: true
+    goimports:
+      # After std and external modules, group imports of this module (hexagonal internal/...).
+      local-prefixes:
+        - github.com/sploitzberg/go-hexagonal-architecture-template
+  exclusions:
+    generated: strict
+
+run:
+  timeout: 5m
+  relative-path-mode: gomod
+  modules-download-mode: readonly
+  tests: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
