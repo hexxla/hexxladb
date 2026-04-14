@@ -1,0 +1,80 @@
+package engine
+
+import (
+	"bytes"
+	"errors"
+	"testing"
+)
+
+func TestWAL_roundTripAndReplayOrder(t *testing.T) {
+	t.Parallel()
+	payload1 := makeTestPage('a')
+	payload2 := makeTestPage('b')
+	rec1 := encodeWALRecord(1, 1, payload1)
+	rec2 := encodeWALRecord(2, 2, payload2)
+	data := append(append([]byte{}, rec1...), rec2...)
+
+	var applied []string
+	apply := func(seq, pageID uint64, payload []byte) error {
+		applied = append(applied, formatApply(seq, pageID, payload))
+		return nil
+	}
+	maxSeq, err := parseAndReplayWAL(data, 0, apply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if maxSeq != 2 {
+		t.Fatalf("maxSeq: got %d want 2", maxSeq)
+	}
+	if len(applied) != 2 {
+		t.Fatalf("applied count: got %d", len(applied))
+	}
+	if applied[0] != "1:1:a" || applied[1] != "2:2:b" {
+		t.Fatalf("order: %v", applied)
+	}
+
+	// Idempotent: replay with lastApplied=2 applies nothing new.
+	applied = nil
+	maxSeq, err = parseAndReplayWAL(data, 2, apply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if maxSeq != 2 {
+		t.Fatalf("maxSeq second pass: got %d", maxSeq)
+	}
+	if len(applied) != 0 {
+		t.Fatalf("expected no apply, got %v", applied)
+	}
+}
+
+func TestWAL_corruptTruncated(t *testing.T) {
+	t.Parallel()
+	payload := makeTestPage('z')
+	rec := encodeWALRecord(1, 1, payload)
+	trunc := rec[:len(rec)-10]
+	_, err := parseAndReplayWAL(trunc, 0, func(uint64, uint64, []byte) error { return nil })
+	if !errors.Is(err, ErrCorruptWAL) {
+		t.Fatalf("want ErrCorruptWAL, got %v", err)
+	}
+}
+
+func TestWAL_corruptCRC(t *testing.T) {
+	t.Parallel()
+	payload := makeTestPage('z')
+	rec := encodeWALRecord(1, 1, payload)
+	rec[len(rec)-1] ^= 0xff
+	_, err := parseAndReplayWAL(rec, 0, func(uint64, uint64, []byte) error { return nil })
+	if !errors.Is(err, ErrCorruptWAL) {
+		t.Fatalf("want ErrCorruptWAL, got %v", err)
+	}
+}
+
+func makeTestPage(fill byte) []byte {
+	b := bytes.Repeat([]byte{fill}, PageSize)
+	return b
+}
+
+func formatApply(seq, pageID uint64, payload []byte) string {
+	// First data byte identifies payload in tests.
+	return string(rune('0'+seq)) + ":" + string(rune('0'+pageID)) + ":" + string(payload[0])
+}

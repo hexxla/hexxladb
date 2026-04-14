@@ -13,7 +13,7 @@ Use **`make ci`** or **`./scripts/ci.sh`** — same steps as GitHub Actions (for
 
 - **Type checking:** Go does not use a separate “type checker” tool. The **compiler** type-checks when you run `go build`, `go test`, or `go vet`. **`staticcheck`** (via golangci-lint) adds deep static analysis beyond the compiler.
 - **Linting:** **[golangci-lint](https://golangci-lint.run/) v2** with `.golangci.yml` — **`linters.default: standard`** (govet, staticcheck, errcheck, ineffassign, unused) **plus** enabled linters such as **errorlint**, **gosec**, **gocritic**, **revive**, **bodyclose**, **misspell**, **modernize**, **nolintlint**, **copyloopvar**. See [linters](https://golangci-lint.run/docs/linters/) and the config file.
-- **Formatting:** CI uses **`gofmt -l`** in `scripts/ci.sh`. `.golangci.yml` enables **`gofmt`** (with **`simplify: true`**) and **`goimports`** with **`local-prefixes`** set to this module so **`golangci-lint fmt ./...`** sorts imports and groups `github.com/sploitzberg/...` after third-party code ([formatter settings](https://golangci-lint.run/docs/formatters/configuration/)). Run **`make fmt`** for plain `gofmt -w`, or **`golangci-lint fmt ./...`** for goimports + gofmt together.
+- **Formatting:** CI uses **`gofmt -l`** in `scripts/ci.sh`. `.golangci.yml` enables **`gofmt`** (with **`simplify: true`**) and **`goimports`** with **`local-prefixes`** set to this module so **`golangci-lint fmt ./...`** sorts imports and groups `github.com/hexxla/...` after third-party code ([formatter settings](https://golangci-lint.run/docs/formatters/configuration/)). Run **`make fmt`** for plain `gofmt -w`, or **`golangci-lint fmt ./...`** for goimports + gofmt together.
 
 ## Cursor hooks (present)
 

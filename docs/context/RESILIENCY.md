@@ -50,14 +50,14 @@ This document complements **`docs/context/HEXAGONAL_ARCHITECTURE.md`**: resilien
 
 ## Other important practices
 
-| Practice | Notes |
-| --- | --- |
-| **Chaos engineering** | Deliberately inject failures in safe environments to learn where resilience is weak—not a single library pattern. |
-| **Fail fast** | Detect invalid state early; avoid long chains of partial success. |
-| **Graceful degradation** | Keep core paths available when non-critical parts fail. |
-| **Self-healing** | Automated recovery where safe (restarts, reconnects)—often infrastructure-level. |
-| **Leader election / quorum** | Coordination for distributed state (e.g. Raft)—only when your architecture needs it. |
-| **Idempotency** | Safe retries require idempotent handlers or deduplication keys. |
+| Practice                     | Notes                                                                                                             |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **Chaos engineering**        | Deliberately inject failures in safe environments to learn where resilience is weak—not a single library pattern. |
+| **Fail fast**                | Detect invalid state early; avoid long chains of partial success.                                                 |
+| **Graceful degradation**     | Keep core paths available when non-critical parts fail.                                                           |
+| **Self-healing**             | Automated recovery where safe (restarts, reconnects)—often infrastructure-level.                                  |
+| **Leader election / quorum** | Coordination for distributed state (e.g. Raft)—only when your architecture needs it.                              |
+| **Idempotency**              | Safe retries require idempotent handlers or deduplication keys.                                                   |
 
 ---
 
@@ -88,11 +88,11 @@ Exact order depends on semantics; the point is to **avoid redundant work** (e.g.
 
 **Default stance: document patterns; do not add a generic resilience package to `internal/` in the skeleton.**
 
-| Approach | Recommendation |
-| --- | --- |
-| **Only docs (this file + architecture doc)** | Enough for a **template**: keeps dependencies minimal and avoids prescribing libraries before you know workloads (sync vs async, gRPC vs HTTP, queues). |
-| **Per-adapter libraries** | When you need a breaker, retries, or limits, add **focused** dependencies in **`internal/adapters/out/...`** (or thin wrappers in **`cmd`**)—e.g. circuit breaker around one client, retry policy for one queue. |
-| **Shared `internal/platform` or `internal/resilience`** | Optional **later**, if several adapters share identical policies and you want one thin wrapper—still **no** business rules inside; only composition of timeouts/breakers/retries around I/O. |
+| Approach                                                | Recommendation                                                                                                                                                                                                   |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Only docs (this file + architecture doc)**            | Enough for a **template**: keeps dependencies minimal and avoids prescribing libraries before you know workloads (sync vs async, gRPC vs HTTP, queues).                                                          |
+| **Per-adapter libraries**                               | When you need a breaker, retries, or limits, add **focused** dependencies in **`internal/adapters/out/...`** (or thin wrappers in **`cmd`**)—e.g. circuit breaker around one client, retry policy for one queue. |
+| **Shared `internal/platform` or `internal/resilience`** | Optional **later**, if several adapters share identical policies and you want one thin wrapper—still **no** business rules inside; only composition of timeouts/breakers/retries around I/O.                     |
 
 **Why not a big built-in package?** Resilience is **policy** and **operational**: thresholds differ per dependency and environment. Shipping unused abstractions fights the goal of a **small, fast** module graph. **Hexagonal** placement: **secondary adapters** and **composition root** own **how** calls are wrapped; **domain/app** own **what** errors mean for the business.
 
@@ -100,9 +100,9 @@ Exact order depends on semantics; the point is to **avoid redundant work** (e.g.
 
 ---
 
-## This template: `http.Server` timeouts and graceful shutdown
+## When you add `http.Server`: timeouts and graceful shutdown
 
-**`internal/config.Config`** exposes **`ReadTimeout`**, **`WriteTimeout`**, **`IdleTimeout`**, and **`ShutdownTimeout`** (loaded from **`HTTP_*`** env vars). **`cmd/app/main.go`** applies the first three to **`http.Server`** so slow or stalled clients cannot hold resources indefinitely; **`ShutdownTimeout`** caps how long **`srv.Shutdown`** waits after a signal. Handlers should treat **`r.Context()`** as the request scope: pass it into **`internal/app`** and secondary adapters so work cancels when the client disconnects or when a nested deadline fires—aligned with the **timeout** and **context** guidance above, without adding new dependencies.
+If you add an HTTP inbound adapter, expose **`ReadTimeout`**, **`WriteTimeout`**, **`IdleTimeout`**, and a **shutdown deadline** (e.g. via **`HTTP_*`** env vars) in **`internal/config`**, apply the first three to **`http.Server`**, and on **`SIGINT`** / **`SIGTERM`** call **`srv.Shutdown`** with **`context.WithTimeout`**. Handlers should pass **`r.Context()`** into **`internal/app`** and secondary adapters so work cancels when the client disconnects—aligned with the **timeout** and **context** guidance above.
 
 ---
 

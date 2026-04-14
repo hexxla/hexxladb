@@ -45,17 +45,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Correct idle timeout handling when `HTTP_IDLE_TIMEOUT` is unset.
+- Correct idle timeout handling when an optional `HTTP_IDLE_TIMEOUT` is unset.
 
 ## [1.0.0] - 2026-04-01
 
 ### Added
 
-- Initial public HTTP API: `/health`, `/v1/hash`, `/v1/store`, `/v1/messages`.
-- Configurable listen address and HTTP timeouts via environment variables.
+- Composition-root binary with structured logging and signal handling.
+- Configurable log level via environment variables.
 
-[Unreleased]: https://github.com/your-org/your-repo/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/your-org/your-repo/releases/tag/v1.0.0
+[Unreleased]: https://github.com/hexxla/hexxladb/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/hexxla/hexxladb/releases/tag/v1.0.0
 ```
 
 ## Example: tagging a release (local Git)

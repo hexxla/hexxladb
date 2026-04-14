@@ -1,0 +1,18 @@
+package hexxladb
+
+// Options configures opening a database (see [Open]).
+type Options struct {
+	// BeforeWritePage optional transform before a data page is logged and written.
+	// If [EncryptionKey] or [Passphrase] is set, custom hooks must not be used.
+	BeforeWritePage func(pageID uint64, plain []byte) (out []byte, err error)
+	// AfterReadPage optional transform after reading a data page from disk.
+	AfterReadPage func(pageID uint64, data []byte) (out []byte, err error)
+
+	// EncryptionKey optional secret for AES-XTS at-rest encryption of data pages (see [docs/hexxladb/ENCRYPTION.md]).
+	// Stretched with HKDF-SHA256; use a key with at least 128 bits of entropy.
+	// Mutually exclusive with [Passphrase] and with custom page hooks.
+	EncryptionKey []byte
+	// Passphrase optional user passphrase; combined with Argon2id and the per-database salt in the file header.
+	// Mutually exclusive with [EncryptionKey] and custom page hooks.
+	Passphrase string
+}

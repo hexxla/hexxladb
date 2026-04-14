@@ -1,0 +1,524 @@
+package hexxladb
+
+import (
+	"context"
+	"crypto/rand"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/oklog/ulid/v2"
+
+	"github.com/hexxla/hexxladb/internal/index"
+	"github.com/hexxla/hexxladb/internal/lattice"
+	"github.com/hexxla/hexxladb/internal/record"
+)
+
+// PutCell writes a versioned cell record at cell/<packed> for rec.Key.
+// It maintains source/ and time/ secondary indexes (see [Tx.AscendCellsBySource], [Tx.AscendCellsInTimeBucket]).
+// Only allowed inside [DB.Update].
+func (tx *Tx) PutCell(rec record.CellRecord) error {
+	if err := tx.requireWritable(); err != nil {
+		return err
+	}
+	old, had, err := tx.GetCell(rec.Key)
+	if err != nil {
+		return err
+	}
+	data, err := record.EncodeCell(rec)
+	if err != nil {
+		return err
+	}
+	key := index.CellKey(rec.Key)
+	if err := tx.Put(key, data); err != nil {
+		return err
+	}
+	if had {
+		if err := tx.removeCellSecondaryIndex(old); err != nil {
+			return err
+		}
+	}
+	return tx.putCellSecondaryIndex(rec)
+}
+
+// GetCell returns the decoded cell at key, or (zero, false, nil) if missing.
+func (tx *Tx) GetCell(key lattice.PackedCoord) (record.CellRecord, bool, error) {
+	if tx == nil || tx.db == nil {
+		return record.CellRecord{}, false, ErrClosed
+	}
+	e := tx.db.activeEng()
+	if e == nil {
+		return record.CellRecord{}, false, ErrDatabaseClosed
+	}
+	raw, ok, err := tx.db.btree.Get(index.CellKey(key))
+	if err != nil || !ok {
+		return record.CellRecord{}, ok, err
+	}
+	rec, err := record.DecodeCell(raw)
+	if err != nil {
+		return record.CellRecord{}, false, err
+	}
+	return rec, true, nil
+}
+
+// WalkRing visits each coordinate on the hex ring at distance ring from center
+// (same order as [Ring]). For each cell, fn receives raw bytes or ok=false if
+// no cell record exists. Stops early if fn returns false. ctx is checked between cells.
+func (tx *Tx) WalkRing(ctx context.Context, center lattice.Coord, ring int, fn func(lattice.Coord, []byte, bool) bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if tx == nil || tx.db == nil {
+		return ErrClosed
+	}
+	if ring < 0 {
+		return ErrInvalidArgument
+	}
+	if tx.db.activeEng() == nil {
+		return ErrDatabaseClosed
+	}
+	for _, c := range lattice.Ring(center, ring) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		p, err := lattice.Pack(c)
+		if err != nil {
+			return err
+		}
+		raw, ok, err := tx.db.btree.Get(index.CellKey(p))
+		if err != nil {
+			return err
+		}
+		if !fn(c, raw, ok) {
+			break
+		}
+	}
+	return nil
+}
+
+// WalkRingAt visits the same coordinates as [Tx.WalkRing], but decodes each cell and calls fn
+// only when a cell exists and [record.ValidAt] holds for rec.Validity at asOf (interpreted in UTC).
+// Coordinates with no cell or a cell that fails the validity filter are omitted (fn is not called).
+func (tx *Tx) WalkRingAt(ctx context.Context, center lattice.Coord, ring int, asOf time.Time, fn func(lattice.Coord, record.CellRecord) bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if tx == nil || tx.db == nil {
+		return ErrClosed
+	}
+	if ring < 0 {
+		return ErrInvalidArgument
+	}
+	if tx.db.activeEng() == nil {
+		return ErrDatabaseClosed
+	}
+	asOfNano := asOf.UTC().UnixNano()
+	for _, c := range lattice.Ring(center, ring) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		p, err := lattice.Pack(c)
+		if err != nil {
+			return err
+		}
+		rec, ok, err := tx.GetCell(p)
+		if err != nil {
+			return err
+		}
+		if !ok || !record.ValidAt(rec.Validity, asOfNano) {
+			continue
+		}
+		if !fn(c, rec) {
+			break
+		}
+	}
+	return nil
+}
+
+// PutSeam writes a seam record at seam/<ulid> and a secondary seam-by-cells/<lo>/<hi>/<ulid>
+// index entry (empty value). If a primary already exists for the ULID, CellA/CellB must match
+// the stored endpoints or [ErrSeamEndpointMismatch] is returned. Only allowed inside [DB.Update].
+func (tx *Tx) PutSeam(rec record.SeamRecord) error {
+	if err := tx.requireWritable(); err != nil {
+		return err
+	}
+	pk, err := index.SeamKey(rec.ID)
+	if err != nil {
+		return err
+	}
+	if raw, ok, err := tx.Get(pk); err != nil {
+		return err
+	} else if ok {
+		old, err := record.DecodeSeam(raw)
+		if err != nil {
+			return err
+		}
+		elo, ehi := record.CanonicalCellPair(old.CellA, old.CellB)
+		nlo, nhi := record.CanonicalCellPair(rec.CellA, rec.CellB)
+		if elo != nlo || ehi != nhi {
+			return ErrSeamEndpointMismatch
+		}
+	}
+	data, err := record.EncodeSeam(rec)
+	if err != nil {
+		return err
+	}
+	if err := tx.Put(pk, data); err != nil {
+		return err
+	}
+	lo, hi := record.CanonicalCellPair(rec.CellA, rec.CellB)
+	sk, err := index.SeamByCellsKey(lo, hi, rec.ID)
+	if err != nil {
+		return err
+	}
+	return tx.Put(sk, nil)
+}
+
+// MarkConflict creates a manual seam between two cells (spec: mark_conflict): new ULID,
+// canonical endpoints via [record.CanonicalCellPair], SeamType "mark_conflict", and DetectedAt set to now.
+// Only allowed inside [DB.Update].
+func (tx *Tx) MarkConflict(cellA, cellB lattice.Coord, reason string) error {
+	if err := tx.requireWritable(); err != nil {
+		return err
+	}
+	pa, err := lattice.Pack(cellA)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	}
+	pb, err := lattice.Pack(cellB)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	}
+	lo, hi := record.CanonicalCellPair(pa, pb)
+	id, err := ulid.New(ulid.Now(), rand.Reader)
+	if err != nil {
+		return err
+	}
+	rec := record.SeamRecord{
+		ID:               id.String(),
+		CellA:            lo,
+		CellB:            hi,
+		SeamType:         "mark_conflict",
+		Reason:           reason,
+		ConfidenceDelta:  0,
+		DetectedAt:       time.Now().UnixNano(),
+		ResolutionStatus: "",
+		ResolutionNote:   "",
+	}
+	return tx.PutSeam(rec)
+}
+
+// FindSeams returns seams where at least one endpoint lies within hex distance
+// radius of center. If unresolvedOnly is true, only seams with empty
+// ResolutionStatus are returned.
+//
+// M7 uses the seam-by-cells secondary index: for each cell in the ball of radius R
+// around center, range scans list incident seams; results are deduplicated by ULID.
+func (tx *Tx) FindSeams(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool) ([]record.SeamRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if tx == nil || tx.db == nil {
+		return nil, ErrClosed
+	}
+	if radius < 0 {
+		return nil, ErrInvalidArgument
+	}
+	if tx.db.activeEng() == nil {
+		return nil, ErrDatabaseClosed
+	}
+	var out []record.SeamRecord
+	seen := make(map[string]struct{})
+	var scanErr error
+	coords := lattice.WalkRings(nil, center, radius)
+	for _, c := range coords {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		p, err := lattice.Pack(c)
+		if err != nil {
+			return nil, err
+		}
+		from, to := index.SeamByCellsRangeLoFixed(p)
+		if err := tx.db.btree.AscendRange(from, to, func(k, _ []byte) bool {
+			if err := ctx.Err(); err != nil {
+				scanErr = err
+				return false
+			}
+			_, _, id, err := index.ParseSeamByCellsKey(k)
+			if err != nil {
+				scanErr = err
+				return false
+			}
+			if err := tx.collectSeamFind(&out, seen, id, center, radius, unresolvedOnly); err != nil {
+				scanErr = err
+				return false
+			}
+			return true
+		}); err != nil {
+			return nil, err
+		}
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		from2, to2, ok := index.SeamByCellsRangeHiFixedLoLess(p)
+		if !ok {
+			continue
+		}
+		if err := tx.db.btree.AscendRange(from2, to2, func(k, _ []byte) bool {
+			if err := ctx.Err(); err != nil {
+				scanErr = err
+				return false
+			}
+			_, _, id, err := index.ParseSeamByCellsKey(k)
+			if err != nil {
+				scanErr = err
+				return false
+			}
+			if err := tx.collectSeamFind(&out, seen, id, center, radius, unresolvedOnly); err != nil {
+				scanErr = err
+				return false
+			}
+			return true
+		}); err != nil {
+			return nil, err
+		}
+		if scanErr != nil {
+			return nil, scanErr
+		}
+	}
+	return out, nil
+}
+
+func (tx *Tx) collectSeamFind(out *[]record.SeamRecord, seen map[string]struct{}, id string, center lattice.Coord, radius int, unresolvedOnly bool) error {
+	if _, dup := seen[id]; dup {
+		return nil
+	}
+	pk, err := index.SeamKey(id)
+	if err != nil {
+		return err
+	}
+	raw, ok, err := tx.db.btree.Get(pk)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		seen[id] = struct{}{}
+		return nil
+	}
+	rec, err := record.DecodeSeam(raw)
+	if err != nil {
+		return err
+	}
+	if unresolvedOnly && strings.TrimSpace(rec.ResolutionStatus) != "" {
+		seen[id] = struct{}{}
+		return nil
+	}
+	ca, err := lattice.Unpack(rec.CellA)
+	if err != nil {
+		seen[id] = struct{}{}
+		return nil
+	}
+	cb, err := lattice.Unpack(rec.CellB)
+	if err != nil {
+		seen[id] = struct{}{}
+		return nil
+	}
+	da := center.Distance(ca)
+	db := center.Distance(cb)
+	if da > radius && db > radius {
+		seen[id] = struct{}{}
+		return nil
+	}
+	seen[id] = struct{}{}
+	*out = append(*out, rec)
+	return nil
+}
+
+// LoadContext walks concentric rings from center (same order as [WalkRings]) and
+// collects up to maxCells existing cell records. maxR is the maximum ring index
+// (inclusive). maxCells must be positive.
+func (tx *Tx) LoadContext(ctx context.Context, center lattice.Coord, maxR, maxCells int) ([]record.CellRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if tx == nil || tx.db == nil {
+		return nil, ErrClosed
+	}
+	if maxCells <= 0 || maxR < 0 {
+		return nil, ErrInvalidArgument
+	}
+	if tx.db.activeEng() == nil {
+		return nil, ErrDatabaseClosed
+	}
+	var coords []lattice.Coord
+	coords = lattice.WalkRings(coords, center, maxR)
+	var out []record.CellRecord
+	for _, c := range coords {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if len(out) >= maxCells {
+			break
+		}
+		p, err := lattice.Pack(c)
+		if err != nil {
+			return nil, err
+		}
+		rec, ok, err := tx.GetCell(p)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		out = append(out, rec)
+	}
+	return out, nil
+}
+
+// LoadContextAt is like [Tx.LoadContext] but only includes cells whose [record.ValidityWire]
+// contains asOf (UTC), using the same semantics as [record.ValidAt]. maxCells applies after filtering.
+func (tx *Tx) LoadContextAt(ctx context.Context, center lattice.Coord, maxR, maxCells int, asOf time.Time) ([]record.CellRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if tx == nil || tx.db == nil {
+		return nil, ErrClosed
+	}
+	if maxCells <= 0 || maxR < 0 {
+		return nil, ErrInvalidArgument
+	}
+	if tx.db.activeEng() == nil {
+		return nil, ErrDatabaseClosed
+	}
+	asOfNano := asOf.UTC().UnixNano()
+	var coords []lattice.Coord
+	coords = lattice.WalkRings(coords, center, maxR)
+	var out []record.CellRecord
+	for _, c := range coords {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if len(out) >= maxCells {
+			break
+		}
+		p, err := lattice.Pack(c)
+		if err != nil {
+			return nil, err
+		}
+		rec, ok, err := tx.GetCell(p)
+		if err != nil {
+			return nil, err
+		}
+		if !ok || !record.ValidAt(rec.Validity, asOfNano) {
+			continue
+		}
+		out = append(out, rec)
+	}
+	return out, nil
+}
+
+// WalkRingFacets visits the same ring coordinates as [Tx.WalkRing]. For each cell that exists and
+// passes the optional asOf validity filter (when asOf is non-nil), it loads facet records whose
+// facet_id bits are set in facetMask (bits 0..5 correspond to facet_id 0..5). Bits outside 0x3f
+// are rejected with [ErrInvalidArgument]. Cost is O(ring_cells × popcount(facetMask)) btree lookups
+// in the typical case ([Tx.GetFacet] per set bit). Facets are returned in ascending facet_id order;
+// missing facet keys are omitted from the slice.
+func (tx *Tx) WalkRingFacets(ctx context.Context, center lattice.Coord, ring int, facetMask uint8, asOf *time.Time, fn func(lattice.Coord, record.CellRecord, []record.FacetRecord) bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if tx == nil || tx.db == nil {
+		return ErrClosed
+	}
+	if ring < 0 {
+		return ErrInvalidArgument
+	}
+	if facetMask&^0x3f != 0 {
+		return ErrInvalidArgument
+	}
+	if tx.db.activeEng() == nil {
+		return ErrDatabaseClosed
+	}
+	mask := facetMask & 0x3f
+	for _, c := range lattice.Ring(center, ring) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		p, err := lattice.Pack(c)
+		if err != nil {
+			return err
+		}
+		rec, ok, err := tx.GetCell(p)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		if asOf != nil && !record.ValidAt(rec.Validity, asOf.UTC().UnixNano()) {
+			continue
+		}
+		var facets []record.FacetRecord
+		for id := byte(0); id <= index.MaxFacetID; id++ {
+			if mask&(1<<id) == 0 {
+				continue
+			}
+			fr, have, err := tx.GetFacet(p, id)
+			if err != nil {
+				return err
+			}
+			if have {
+				facets = append(facets, fr)
+			}
+		}
+		if !fn(c, rec, facets) {
+			break
+		}
+	}
+	return nil
+}
+
+// ResolveSeam loads seam/<id>, updates resolution fields, and writes it back.
+// Only allowed inside [DB.Update].
+func (tx *Tx) ResolveSeam(id, resolutionStatus, resolutionNote string) error {
+	if err := tx.requireWritable(); err != nil {
+		return err
+	}
+	key, err := index.SeamKey(id)
+	if err != nil {
+		return err
+	}
+	raw, ok, err := tx.Get(key)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrSeamNotFound
+	}
+	rec, err := record.DecodeSeam(raw)
+	if err != nil {
+		return err
+	}
+	rec.ResolutionStatus = resolutionStatus
+	rec.ResolutionNote = resolutionNote
+	data, err := record.EncodeSeam(rec)
+	if err != nil {
+		return err
+	}
+	return tx.Put(key, data)
+}
+
+func (tx *Tx) requireWritable() error {
+	if tx == nil || tx.db == nil {
+		return ErrClosed
+	}
+	if !tx.writable {
+		return ErrTxReadOnly
+	}
+	if tx.db.activeEng() == nil {
+		return ErrDatabaseClosed
+	}
+	return nil
+}
