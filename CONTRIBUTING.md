@@ -11,12 +11,12 @@
 
 ```bash
 git clone <your-fork-or-upstream-url>
-cd go-hexagonal-architecture-template
+cd hexxladb
 go test ./...
 make run
 ```
 
-Copy [`.env.example`](.env.example) to `.env` if you use a local env file (the app does not load `.env` by itself — export variables in your shell or use a process manager).
+Copy [`.env.example`](.env.example) to `.env` if you use a local env file (the binary does not load `.env` by itself — export variables in your shell or use a process manager).
 
 ## Quality gates
 
@@ -31,25 +31,35 @@ That includes: **`gofmt -l`**, **`go vet ./...`**, **`go test -race ./...`**, **
 
 Shortcuts:
 
-| Command | Purpose |
-| --- | --- |
-| `make test` | Tests with `-race` |
-| `make vet` | `go vet` only |
-| `make govulncheck` | Vulnerability scan only (also part of `make ci`) |
-| `make lint` | golangci-lint (requires binary on `PATH`) |
-| `make fmt` | `gofmt -w` on module `.go` files |
-| `make clean` | Remove `bin/` (from `make build`) |
-| `make help` | List Makefile targets |
+| Command            | Purpose                                                                       |
+| ------------------ | ----------------------------------------------------------------------------- |
+| `make test`        | Tests with `-race`                                                            |
+| `make vet`         | `go vet` only                                                                 |
+| `make govulncheck` | Vulnerability scan only (also part of `make ci`)                              |
+| `make lint`        | golangci-lint (requires binary on `PATH`)                                     |
+| `make fmt`         | `gofmt -w` on module `.go` files                                              |
+| `make clean`       | Remove `bin/` (from `make build`)                                             |
+| `make help`        | List Makefile targets                                                         |
+| `make integration` | Optional **`//go:build integration`** tests (`-race`); not part of default CI |
+| `make bench`       | Benchmarks (`go test -bench=. -benchmem ./...`); **not** run in default CI    |
+| `make fuzz`        | Short fuzz smoke on internal decoders (~2s per target); **not** in default CI |
+
+## Benchmarks and fuzzing
+
+- **`make bench`** runs all benchmarks in the module. For a single package: `go test -bench=. -benchmem ./internal/lattice`.
+- **`make fuzz`** runs a **short** smoke (`-fuzztime=2s` per target) on [`internal/record`](internal/record) and [`internal/engine`](internal/engine). For longer or corpus-updating runs, use e.g. `go test ./internal/record -fuzz=FuzzDecodeCell -fuzztime=30s` (see [Go fuzzing](https://go.dev/doc/security/fuzz/)).
+
+Compatibility expectations for releases and on-disk format: **[`VERSIONING.md`](VERSIONING.md)**.
 
 ## Where tests live
 
-| Package | Role |
-| --- | --- |
-| [`internal/domain`](internal/domain) | Pure logic; table-driven tests, no I/O. |
-| [`internal/app`](internal/app) | Use cases + ports; tests use [`internal/adapters/out/memory`](internal/adapters/out/memory) or fakes. |
-| [`internal/adapters/in/http`](internal/adapters/in/http) | HTTP mapping; uses **`net/http/httptest`**. |
+| Package                                  | Role                                                                                                                                              |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`internal/domain`](internal/domain)     | Pure logic; table-driven tests, no I/O.                                                                                                           |
+| [`internal/app`](internal/app)           | Use cases + ports; tests use fakes or stub implementations until adapters exist.                                                                  |
+| [`internal/adapters`](internal/adapters) | Add **`in/`** / **`out/`** packages when you add transports or infrastructure (see [`internal/adapters/README.md`](internal/adapters/README.md)). |
 
-Prefer **table-driven** tests and **`t.Parallel()`** where data is independent. Integration tests behind **`//go:build integration`** are optional if you add them later.
+Prefer **table-driven** tests and **`t.Parallel()`** where data is independent. **Durability / heavier tests** use **`//go:build integration`** (see [`db_durability_test.go`](db_durability_test.go) vs [`durability_integration_test.go`](durability_integration_test.go)); run them with **`make integration`**. Default **`make ci`** does **not** include the integration tag so PRs stay fast.
 
 ## Architecture
 

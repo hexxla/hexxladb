@@ -33,6 +33,9 @@ fi
 echo "==> go vet (includes compiler-backed checks on packages)"
 go vet ./...
 
+echo "==> Hex boundaries (domain/app must not import internal/engine or internal/index)"
+./scripts/check-hex-boundaries.sh
+
 echo "==> go test (compiles packages + runs tests; -race catches data races)"
 go test -count=1 -race ./...
 

@@ -24,13 +24,13 @@ linters:
           files:
             - internal/domain/**/*.go
           deny:
-            - pkg: github.com/sploitzberg/go-hexagonal-architecture-template/internal/adapters
+            - pkg: github.com/hexxla/hexxladb/internal/adapters
               desc: internal/domain must not import internal/adapters (hexagonal — use ports / domain types only).
         app_no_adapters:
           files:
             - internal/app/**/*.go
           deny:
-            - pkg: github.com/sploitzberg/go-hexagonal-architecture-template/internal/adapters
+            - pkg: github.com/hexxla/hexxladb/internal/adapters
               desc: internal/app must not import internal/adapters (inject ports from cmd; adapters depend on app/domain).
     gocritic:
       enabled-tags:
@@ -92,7 +92,7 @@ formatters:
     goimports:
       # After std and external modules, group imports of this module (hexagonal internal/...).
       local-prefixes:
-        - github.com/sploitzberg/go-hexagonal-architecture-template
+        - github.com/hexxla/hexxladb
   exclusions:
     generated: strict
 

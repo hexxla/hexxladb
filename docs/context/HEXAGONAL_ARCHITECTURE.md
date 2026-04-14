@@ -11,13 +11,13 @@
 All imports use the Go module path:
 
 ```text
-github.com/sploitzberg/go-hexagonal-architecture-template
+github.com/hexxla/hexxladb
 ```
 
 Example:
 
 ```go
-import "github.com/sploitzberg/go-hexagonal-architecture-template/internal/app"
+import "github.com/hexxla/hexxladb/internal/app"
 ```
 
 Rename the module in `go.mod` when you fork; update imports everywhere.
@@ -40,7 +40,7 @@ Rename the module in `go.mod` when you fork; update imports everywhere.
 
 - **Correct dependency direction:** **`internal/domain`** and **`internal/app`** define ports; **`internal/adapters/...`** implements them. Domain and app **MUST NOT** import concrete adapters.
 - **Modularity:** Prefer **small packages** (by aggregate, feature, or capability). Avoid single “god” packages.
-- **Fast builds and tests:** Default **`go test ./...`** stays **fast** (no real DB/network unless you opt in). Use **fakes** or **`adapters/out/memory`** in unit tests.
+- **Fast builds and tests:** Default **`go test ./...`** stays **fast** (no real DB/network unless you opt in). Use **fakes** or small test doubles for ports.
 - **Performance:** Avoid pointless layers and allocations on hot paths; **measure** (`benchmark`, `pprof`) before micro-optimizing. **I/O concerns** (retries, pooling, batching) live in **adapters**, not domain.
 
 ---
@@ -82,7 +82,7 @@ Rename the module in `go.mod` when you fork; update imports everywhere.
 Separation of concerns **inside** the core is still **domain** vs **domain**—not adapters.
 
 - **Default:** One package **`internal/domain`** with several **`*.go` files** (e.g. `limits.go`, `errors.go`, `user.go`) is appropriate while the model is small. Shared **`package domain`** keeps imports simple.
-- **Add `internal/domain/<topic>/`** (a **subpackage**, e.g. **`internal/domain/hash`** with `package hash`, or `internal/domain/order` with `package order`) when a **cohesive** cluster of types, rules, and tests grows large enough that a dedicated import path and boundary reduce noise in the root `domain` package—still **pure**, still **no** `adapters`.
+- **Add `internal/domain/<topic>/`** (a **subpackage**) or a **peer** package like **`internal/lattice`** (this repo) when a **cohesive** cluster of types, rules, and tests grows large enough that a dedicated import path and boundary reduce noise—still **pure**, still **no** `adapters`.
 - **Do not** create a subfolder per helper file “just because.” Split when **concepts** and **exports** clearly belong to a named subdomain; otherwise keep related logic in the same `domain` package with extra files.
 
 This keeps **hex boundaries** (adapters vs core) separate from **Go package boundaries** (how you subdivide the domain model).
@@ -102,16 +102,12 @@ cmd/
 internal/
   config/                   # typed configuration (structs, validation); env/flags often in cmd
   domain/                   # entities, value objects, domain errors; business invariants
-    hash/                   # e.g. pure SHA-256 helpers (subpackage when cohesive)
+    lattice/                # e.g. pure lattice helpers (subpackage when cohesive)
   app/                      # use cases: orchestrate domain + secondary ports
   port/                     # OPTIONAL: shared port interfaces (still adapter-free)
   adapters/
-    in/                     # primary adapters (inbound)
-      http/                 # e.g. REST handlers
-      grpc/                 # e.g. gRPC servers
-    out/                    # secondary adapters (outbound)
-      postgres/
-      memory/               # in-memory repos for tests / local dev
+    in/                     # primary adapters (inbound) — e.g. http/, grpc/
+    out/                    # secondary adapters (outbound) — e.g. hexxladb/, postgres/
   tests/                    # OPTIONAL: shared test helpers, mocks, integration suites (or use build tags)
 
 docs/                       # product or project documentation (add your own tree under here)
@@ -176,21 +172,19 @@ This template **does not** create **`pkg/`** by default. Add it when you have a 
 
 ## Current state of this template
 
-The repo is a **small runnable service**, not an empty skeleton:
+The repo is a **minimal composition root**, not an empty skeleton:
 
-- **`cmd/app/main.go`** — composition root: **`config.Load()`**, **`slog`** JSON handler, **`memory.NewStore()`**, **`app.New`**, **`httpserver.NewHandler`**, **`http.Server`**, signal-driven **graceful shutdown** (see below).
-- **`internal/config`** — **`Config`** + **`Load()`** from the environment (listen address, **`http.Server`** timeouts, shutdown deadline, **`slog`** level, max request body bytes).
-- **`internal/domain`** — shared limits (**`MaxContentLen`**) and sentinel errors (**`ErrContentTooLarge`**, **`ErrInvalidInput`**); **`internal/domain/hash`** — **`SHA256Hex`** (pure).
-- **`internal/app`** — **`Service`** over port **`TextStore`**; use cases call domain rules and pass **`context.Context`** into ports.
-- **`internal/adapters/out/memory`** — thread-safe in-memory **`TextStore`**.
-- **`internal/adapters/in/http`** — **`net/http`** routes, JSON, **`errors.Is`** mapping from domain errors to status codes, request logging middleware.
+- **`cmd/hexxladb/main.go`** — **`config.Load()`**, **`slog`** JSON handler, **`app.New()`**, then exits (library-first; add servers or signal handling here if you build a long-running process). Wire **`hexxladb.Open`**, adapters, and any transports here.
+- **`internal/config`** — **`Config`** + **`Load()`** from the environment (**`LOG_LEVEL`** for now).
+- **`internal/domain`** — shared limits (**`MaxContentLen`**) and sentinel errors (**`ErrContentTooLarge`**, **`ErrInvalidInput`**); extend with pure types and rules as features land.
+- **`internal/lattice`** — pure hex geometry (**`Coord`**, distance); **`PackedCoord`** / Morton in later milestones (see **`docs/hexxladb/DEVELOPMENT_ROADMAP.md`**).
+- **`internal/app`** — **`Service`** shell; add ports and use cases when you wire storage or APIs.
+- **`internal/adapters`** — placeholder only (**[`internal/adapters/README.md`](../../internal/adapters/README.md)**); add **`in/`** and **`out/`** packages when you introduce transports or infrastructure.
 
-### HTTP server, graceful shutdown, request context, and logging
+### Logging and signals
 
-- **Timeouts:** **`cmd/app/main.go`** sets **`ReadTimeout`**, **`WriteTimeout`**, and **`IdleTimeout`** on **`http.Server`** from **`internal/config`** (`HTTP_READ_TIMEOUT`, `HTTP_WRITE_TIMEOUT`, `HTTP_IDLE_TIMEOUT`). These bound reads/writes and idle keep-alive behavior at the transport layer.
-- **Graceful shutdown:** On **`SIGINT`** / **`SIGTERM`**, **`main`** calls **`srv.Shutdown`** with a **`context.WithTimeout`** whose length is **`HTTP_SHUTDOWN_TIMEOUT`** from config. That stops new connections and waits for in-flight requests up to the deadline.
-- **Request context:** Route handlers pass **`r.Context()`** into **`internal/app`** (and thus into **`TextStore`**). Downstream adapters should respect cancellation; you can add middleware that derives a child context with a deadline if a use case needs a stricter bound than the server timeouts.
-- **Logging:** The composition root constructs a **`log/slog`** JSON **`Handler`**, calls **`slog.SetDefault`**, and passes the same **`*slog.Logger`** into **`httpserver.NewHandler`** for request-scoped logs. Keep **business** logging out of **`internal/domain`**; **`internal/app`** may log only if it helps operators and stays free of transport details.
+- **Logging:** The composition root sets **`slog.SetDefault`** with a JSON handler. Keep **business** logging out of **`internal/domain`** unless it helps operators without transport details.
+- **Signals:** The process exits cleanly on **`SIGINT`** / **`SIGTERM`**. When you add an **`http.Server`** or gRPC server, set **timeouts** on the server, use **`Shutdown`** with a **deadline context**, and pass **`r.Context()`** (or equivalent) into **`internal/app`** so work cancels with the client—see **`docs/context/RESILIENCY.md`** for timeout patterns.
 
 ---
 
@@ -204,9 +198,9 @@ When adding behavior (e.g. “create user”), follow this order. **Do not** ski
 4. **Application service:** Add a constructor in **`internal/app/...`** that accepts the **interface** type(s), not concrete adapters. Implement the use case by calling domain logic and ports.
 5. **Primary port (optional):** If inbound adapters should depend on a narrow API, expose a small interface from **`internal/app`** (e.g. `CreateUser(ctx, email) error`).
 6. **Primary adapter:** In **`internal/adapters/in/http`** (or grpc/cli), parse request → call **`internal/app`** → map result/errors to HTTP. **No business rules**—only validation of shape and mapping.
-7. **Wire in `cmd/.../main.go`:** Load **`internal/config`**, construct **`adapters/out`**, pass interfaces into **`app`**, construct **`adapters/in`**, start the server.
+7. **Wire in `cmd/.../main.go`:** Load **`internal/config`**, construct **`adapters/out`**, pass interfaces into **`app`**, construct **`adapters/in`**, run (e.g. start a server or worker).
 
-**Tests:** Write **`internal/app`** and **`internal/domain`** tests first using a **fake** or **`adapters/out/memory`** implementation of the secondary port. Keep **`go test ./...`** fast.
+**Tests:** Write **`internal/app`** and **`internal/domain`** tests first using **fakes** or test doubles for secondary ports. Keep **`go test ./...`** fast.
 
 ---
 
@@ -246,7 +240,7 @@ Network client
 - **Optional Git pre-commit:** **`.pre-commit-config.yaml`** ([pre-commit.com](https://pre-commit.com)) runs on `git commit`: file hygiene, **`golangci-lint fmt`** / **`golangci-lint-full`** (pinned like CI), **`go test`** (without `-race` for speed). Install: `pip install pre-commit` and `make pre-commit-install`. This does **not** replace `make ci` before push.
 - **Cursor-only:** **`.cursor/hooks.json`** (format on save, secret-pattern warnings, shell guard)—for IDE sessions, not Git.
 
-**Unit tests:** Prefer fakes and in-memory **`adapters/out`**; keep the default test run **fast**.
+**Unit tests:** Prefer **fakes** and small **test doubles** for ports; keep the default test run **fast**.
 
 **Integration tests:** Use a **build tag** (e.g. `//go:build integration`) and/or a separate Makefile target; optionally centralize helpers under **`internal/tests`** (like several reference repos).
 
@@ -275,7 +269,7 @@ Network client
 
 ## Testing strategy
 
-- **SHOULD:** Test **domain** and **app** with **port fakes** or **`adapters/out/memory`**.
+- **SHOULD:** Test **domain** and **app** with **port fakes** or test doubles.
 - **SHOULD:** Add integration tests **only** where boundaries matter; tag or script them separately.
 - **MAY:** Add contract-style tests for critical port behavior expected by app.
 

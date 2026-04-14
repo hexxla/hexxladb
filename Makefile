@@ -1,4 +1,4 @@
-.PHONY: help ci test vet fmt lint mod-tidy govulncheck clean \
+.PHONY: help ci integration bench fuzz test vet fmt lint mod-tidy govulncheck clean \
 	pre-commit-install pre-commit-run pre-commit-update run build
 
 # Bare `make` runs the full CI pipeline (same as `make ci`). Use `make help` to list targets.
@@ -6,25 +6,42 @@
 
 help:
 	@echo "make ci              Full pipeline (same as GitHub Actions: ./scripts/ci.sh)"
+	@echo "make integration     Optional slower tests (go test -tags=integration -race ./...)"
+	@echo "make bench           Run benchmarks (go test -bench=. -benchmem ./...; not in CI)"
+	@echo "make fuzz            Short fuzz smoke (internal/record + internal/engine; not in CI)"
 	@echo "make test|vet|fmt    Tests (-race), vet, gofmt -w"
 	@echo "make lint            golangci-lint (binary on PATH)"
 	@echo "make govulncheck     Vulnerability scan only (also runs inside make ci)"
 	@echo "make mod-tidy        go mod tidy"
-	@echo "make run|build|clean Run server, build bin/app, remove bin/"
+	@echo "make run|build|clean Run cmd/hexxladb, build bin/hexxladb, remove bin/"
 	@echo "make pre-commit-*    Optional Git hooks (see CONTRIBUTING.md)"
 
 # Run the full pipeline (same as CI). Install golangci-lint locally for the lint step.
 ci:
 	@./scripts/ci.sh
 
-# Run the HTTP demo (see README for env vars).
+# Optional durability/stress tests (not run in default CI). See CONTRIBUTING.md.
+integration:
+	go test -count=1 -race -tags=integration ./...
+
+# Benchmarks — not part of default CI (keeps PRs fast). See CONTRIBUTING.md.
+bench:
+	go test -count=1 -bench=. -benchmem ./...
+
+# Short fuzz smoke — not part of default CI. For longer runs: go test -fuzz=... -fuzztime=30s ./path
+fuzz:
+	go test ./internal/record -fuzz=FuzzDecodeCell -fuzztime=2s
+	go test ./internal/engine -fuzz=FuzzDecodeHeaderPage -fuzztime=2s
+	go test ./internal/engine -fuzz=FuzzParseAndReplayWAL -fuzztime=2s
+
+# Run the composition-root binary (see README for env vars).
 run:
-	go run ./cmd/app
+	go run ./cmd/hexxladb
 
 # Production-style binary under bin/ (gitignored).
 build:
 	@mkdir -p bin
-	go build -o bin/app ./cmd/app
+	go build -o bin/hexxladb ./cmd/hexxladb
 
 clean:
 	rm -rf bin

@@ -1,0 +1,70 @@
+package hexxladb
+
+import (
+	"errors"
+	"fmt"
+	"sync"
+
+	"github.com/hexxla/hexxladb/internal/engine"
+)
+
+// DB is a handle to an embedded HexxlaDB database. Construction is via [Open].
+// Concurrent [View] calls are serialized with readers; [Update] and [Batch] are exclusive.
+type DB struct {
+	mu    sync.RWMutex
+	eng   *engine.Engine
+	btree *engine.BTree
+}
+
+// ErrCorruptDatabase means the database or WAL failed validation on open.
+var ErrCorruptDatabase = errors.New("hexxladb: corrupt database")
+
+// Open opens or creates a database at path. On success, any redo WAL is applied.
+func Open(path string, opts *Options) (*DB, error) {
+	eopts, err := buildEngineOptions(path, opts)
+	if err != nil {
+		return nil, err
+	}
+	eng, err := engine.Open(path, eopts)
+	if err != nil {
+		if errors.Is(err, engine.ErrCorruptHeader) || errors.Is(err, engine.ErrCorruptWAL) {
+			return nil, fmt.Errorf("%w: %w", ErrCorruptDatabase, err)
+		}
+		return nil, err
+	}
+	hdr, err := eng.ReadHeader()
+	if err != nil {
+		_ = eng.Close()
+		return nil, err
+	}
+	if err := openValidateEncryption(opts, hdr); err != nil {
+		_ = eng.Close()
+		return nil, err
+	}
+	bt := engine.OpenBTree(eng)
+	return &DB{eng: eng, btree: bt}, nil
+}
+
+// Close releases resources associated with the database.
+// It waits for any in-flight [View], [Update], or [Batch] to finish.
+func (db *DB) Close() error {
+	if db == nil {
+		return nil
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if db.eng == nil {
+		return nil
+	}
+	err := db.eng.Close()
+	db.eng = nil
+	db.btree = nil
+	return err
+}
+
+func (db *DB) activeEng() *engine.Engine {
+	if db == nil || db.eng == nil {
+		return nil
+	}
+	return db.eng
+}
