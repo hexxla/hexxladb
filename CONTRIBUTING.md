@@ -18,6 +18,12 @@ make run
 
 Copy [`.env.example`](.env.example) to `.env` if you use a local env file (the binary does not load `.env` by itself — export variables in your shell or use a process manager).
 
+## Branches and pull requests
+
+- **`main`** is the integration branch: keep it **CI-green** (`make ci`) before you push.
+- **Feature work:** branch from up-to-date **`main`** (`feat/…`, `fix/…`). Open a **pull request** into `main` for review and merge.
+- **Spikes / experiments:** use a dedicated branch (e.g. `spike/…`); merge to `main` only when the team wants that code and docs on the default branch. After a spike is merged, continue new work from **`main`**, not from the old spike tip (unless you explicitly depend on unmerged commits).
+
 ## Quality gates
 
 **`make ci`** is the single pre-push gate: it runs **[`scripts/ci.sh`](scripts/ci.sh)** — the same script **GitHub Actions** invokes (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)). You do **not** need to run the script separately unless you are debugging one step. A bare **`make`** (no target) runs the same pipeline.

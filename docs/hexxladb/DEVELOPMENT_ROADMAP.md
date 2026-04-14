@@ -294,6 +294,7 @@ Each milestone should end with **`make ci`** green ([HEXAGONAL_ARCHITECTURE.md](
 ## Open points
 
 - **MVCC / `as_of`:** design `View`/`Tx` so snapshot isolation can land post-v1 without breaking callers.
+- **Next milestone (chosen for integration branch):** **Phase G** — changefeed / provenance log ([`SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md`](./SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md)); default work branch name **`feat/phase-g-changefeed`**. Alternatives: Seam **`ValidityWire`** (smaller gap in §4.2), **E2+** MVCC (large epic).
 
 ---
 
