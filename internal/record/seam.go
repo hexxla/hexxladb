@@ -54,6 +54,14 @@ func encodeSeamPayloadV1(r SeamRecord, id ulid.ULID) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	dst, err = appendValidity(dst, r.Validity)
+	if err != nil {
+		return nil, err
+	}
+	dst, err = appendProvenance(dst, r.Provenance)
+	if err != nil {
+		return nil, err
+	}
 	return dst, nil
 }
 
@@ -99,6 +107,20 @@ func decodeSeamPayloadV1(data []byte) (SeamRecord, error) {
 		return SeamRecord{}, err
 	}
 	r.ResolutionNote, data, err = readString32(data)
+	if err != nil {
+		return SeamRecord{}, err
+	}
+	if len(data) == 0 {
+		return r, nil
+	}
+	r.Validity, data, err = readValidity(data)
+	if err != nil {
+		return SeamRecord{}, err
+	}
+	if len(data) == 0 {
+		return r, nil
+	}
+	r.Provenance, data, err = readProvenance(data)
 	if err != nil {
 		return SeamRecord{}, err
 	}

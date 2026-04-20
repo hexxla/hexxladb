@@ -2,6 +2,15 @@ package hexxladb
 
 // Options configures opening a database (see [Open]).
 type Options struct {
+	// EnableMVCC, when true, creates new databases at engine format v2 with MVCC versioned keys (see [docs/hexxladb/MVCC_E2_DECISIONS.md]).
+	// Existing v1 files are never auto-upgraded; they keep single-version behavior until migrated.
+	EnableMVCC bool
+	// ChangelogEnabled, when true, maintains an append-only logical changefeed file (see [docs/hexxladb/CHANGEFEED.md]).
+	ChangelogEnabled bool
+	// ChangelogPath overrides the default path (<dbpath>-changelog). Empty means default.
+	ChangelogPath string
+	// ChangelogLazy, when true, avoids fsync after each commit batch (faster; may lose tail records on crash).
+	ChangelogLazy bool
 	// BeforeWritePage optional transform before a data page is logged and written.
 	// If [EncryptionKey] or [Passphrase] is set, custom hooks must not be used.
 	BeforeWritePage func(pageID uint64, plain []byte) (out []byte, err error)

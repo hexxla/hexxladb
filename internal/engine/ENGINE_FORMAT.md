@@ -24,14 +24,16 @@ HexxlaDB v1 engine shell: **64 KiB pages**, one **primary database file** and on
 | Offset | Size | Field                                                                                                                                            |
 | ------ | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 0      | 8    | **Magic** ASCII `HEXXLADB` + NUL                                                                                                                 |
-| 8      | 4    | **format_version** `uint32` (1)                                                                                                                  |
+| 8      | 4    | **format_version** `uint32` (**1** = single-version cells; **2** = MVCC; see [MVCC_E2_DECISIONS.md](../../docs/hexxladb/MVCC_E2_DECISIONS.md))        |
 | 12     | 4    | **page_size** `uint32` (65536)                                                                                                                   |
 | 16     | 8    | **last_wal_seq** `uint64` — last WAL sequence applied to the primary file                                                                        |
 | 24     | 8    | **next_page_id** `uint64` — allocator hint for M4+ (shell may still update)                                                                      |
 | 32     | 8    | **btree_root_page** `uint64` — B+ tree root (**0** = empty); see [ORDERED_STORE.md](./ORDERED_STORE.md)                                          |
-| 40     | 4    | **features** `uint32` — bit **0** = data pages encrypted at rest (AES-256-XTS via hooks); see [ENCRYPTION.md](../../docs/hexxladb/ENCRYPTION.md) |
-| 44     | 16   | **encryption_salt** — used with Argon2id when opening with a passphrase; **zeros** if only a raw key is used                                     |
-| 60     | 452  | **reserved** (zero)                                                                                                                              |
+| 40     | 4    | **features** `uint32` — bit **0** = encrypted data pages; bit **1** = keyed WAL MAC enabled; see [ENCRYPTION.md](../../docs/hexxladb/ENCRYPTION.md) |
+| 44     | 16   | **encryption_salt** — used with Argon2id passphrase mode and keyed encryption verifier derivation                                                  |
+| 60     | 8    | **commit_seq** `uint64` — last committed logical sequence (**format_version ≥ 2**); **zero** when **format_version == 1** (treated as unused)     |
+| 68     | 32   | **encryption_key_check** — keyed verifier for deterministic wrong-key detection on encrypted DBs                                                  |
+| 100    | 412  | **reserved** (zero)                                                                                                                              |
 
 Unrecognized **format_version** → open fails (forward-only policy; migration tooling later).
 
@@ -48,6 +50,7 @@ Unrecognized **format_version** → open fails (forward-only policy; migration t
 | **page_id** | `uint64`         | Target page; **≥ 1** (page 0 is not WAL-patched by shell tests)                                                                                                |
 | **crc32**   | `uint32`         | IEEE CRC-32 of **payload**                                                                                                                                     |
 | **payload** | `[PageSize]byte` | Full page image (same bytes written to the primary — **ciphertext** when encryption hooks are enabled; see [ENCRYPTION.md](../../docs/hexxladb/ENCRYPTION.md)) |
+| **mac**     | `[32]byte` (optional) | Present when header feature bit 1 is set. HMAC-SHA256 over `seq || page_id || payload` using key derived from encryption key material. |
 
 Records are read sequentially from the start of the WAL file. Partial tail → **`ErrCorruptWAL`**.
 

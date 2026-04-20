@@ -37,4 +37,6 @@ After `Key` (`PackedCoord`): `RawContent` (str32), `Provenance` (see below), `Va
 
 ## Seam payload v1
 
-16-byte **ULID** raw (`oklog/ulid`), then `CellA`/`CellB` `PackedCoord`, `SeamType` str32, `Reason` str32, `ConfidenceDelta` float64, `DetectedAt` int64 nano, `ResolutionStatus` str32, `ResolutionNote` str32.
+16-byte **ULID** raw (`oklog/ulid`), then `CellA`/`CellB` `PackedCoord`, `SeamType` str32, `Reason` str32, `ConfidenceDelta` float64, `DetectedAt` int64 nano, `ResolutionStatus` str32, `ResolutionNote` str32, then optional **`Validity`** (same two optional-int64 encoding as **Cell**), then optional **`Provenance`** (same as **Cell** — `SourceID` str32, `Confidence` float64, `CreatedAt`/`UpdatedAt` int64 nano).
+
+Records written before these suffixes existed end immediately after `ResolutionNote` (or after **`Validity`** only); decoders treat missing **`Validity`** as an open window; missing **`Provenance`** as empty.

@@ -7,13 +7,10 @@ import (
 	"strings"
 
 	"github.com/hexxla/hexxladb/internal/index"
-	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
-var emptySecondaryVal = []byte{}
-
-func (tx *Tx) removeCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) error {
+func (tx *Tx) removeSeamSecondaryIndex(rec record.SeamRecord, commitSeq uint64) error {
 	if tx == nil || tx.db == nil {
 		return ErrClosed
 	}
@@ -22,12 +19,34 @@ func (tx *Tx) removeCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) 
 	}
 	sid := strings.TrimSpace(rec.Provenance.SourceID)
 	if sid != "" {
-		var k []byte
-		var err error
+		var (
+			k   []byte
+			err error
+		)
 		if tx.db.useMVCC {
-			k, err = index.SourceKeyWithVersion(sid, rec.Key, commitSeq)
+			k, err = index.SeamSourceKeyWithVersion(sid, rec.ID, commitSeq)
 		} else {
-			k, err = index.SourceKey(sid, rec.Key)
+			k, err = index.SeamSourceKey(sid, rec.ID)
+		}
+		if err != nil {
+			if errors.Is(err, index.ErrSourceIDTooLong) {
+				return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+			}
+			return err
+		}
+		if err := tx.db.btree.Delete(k); err != nil {
+			return err
+		}
+	}
+	if b, ok := index.WeekBucketFromValidity(rec.Validity); ok {
+		var (
+			k   []byte
+			err error
+		)
+		if tx.db.useMVCC {
+			k, err = index.SeamTimeKeyWithVersion(b, rec.ID, commitSeq)
+		} else {
+			k, err = index.SeamTimeKey(b, rec.ID)
 		}
 		if err != nil {
 			return err
@@ -36,29 +55,20 @@ func (tx *Tx) removeCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) 
 			return err
 		}
 	}
-	if b, ok := index.WeekBucketFromValidity(rec.Validity); ok {
-		var k []byte
-		if tx.db.useMVCC {
-			k = index.TimeKeyWithVersion(b, rec.Key, commitSeq)
-		} else {
-			k = index.TimeKey(b, rec.Key)
-		}
-		if err := tx.db.btree.Delete(k); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
-func (tx *Tx) putCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) error {
+func (tx *Tx) putSeamSecondaryIndex(rec record.SeamRecord, commitSeq uint64) error {
 	sid := strings.TrimSpace(rec.Provenance.SourceID)
 	if sid != "" {
-		var k []byte
-		var err error
+		var (
+			k   []byte
+			err error
+		)
 		if tx.db.useMVCC {
-			k, err = index.SourceKeyWithVersion(sid, rec.Key, commitSeq)
+			k, err = index.SeamSourceKeyWithVersion(sid, rec.ID, commitSeq)
 		} else {
-			k, err = index.SourceKey(sid, rec.Key)
+			k, err = index.SeamSourceKey(sid, rec.ID)
 		}
 		if err != nil {
 			if errors.Is(err, index.ErrSourceIDTooLong) {
@@ -71,11 +81,17 @@ func (tx *Tx) putCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) err
 		}
 	}
 	if b, ok := index.WeekBucketFromValidity(rec.Validity); ok {
-		var k []byte
+		var (
+			k   []byte
+			err error
+		)
 		if tx.db.useMVCC {
-			k = index.TimeKeyWithVersion(b, rec.Key, commitSeq)
+			k, err = index.SeamTimeKeyWithVersion(b, rec.ID, commitSeq)
 		} else {
-			k = index.TimeKey(b, rec.Key)
+			k, err = index.SeamTimeKey(b, rec.ID)
+		}
+		if err != nil {
+			return err
 		}
 		if err := tx.Put(k, emptySecondaryVal); err != nil {
 			return err
@@ -84,9 +100,8 @@ func (tx *Tx) putCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) err
 	return nil
 }
 
-// AscendCellsBySource scans the source/ secondary index for sourceID and calls fn with each
-// decoded cell at that source (same PackedCoord as in the index key). ctx is checked between entries.
-func (tx *Tx) AscendCellsBySource(ctx context.Context, sourceID string, fn func(record.CellRecord) bool) error {
+// AscendSeamsBySource scans the seam-source/ secondary index for sourceID and loads each seam primary by ULID.
+func (tx *Tx) AscendSeamsBySource(ctx context.Context, sourceID string, fn func(record.SeamRecord) bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -99,9 +114,9 @@ func (tx *Tx) AscendCellsBySource(ctx context.Context, sourceID string, fn func(
 	var from, to []byte
 	var err error
 	if tx.db.useMVCC {
-		from, to, err = index.SourceRangePrefixAllVersions(sourceID)
+		from, to, err = index.SeamSourceRangePrefixAllVersions(sourceID)
 	} else {
-		from, to, err = index.SourceRangePrefix(sourceID)
+		from, to, err = index.SeamSourceRangePrefix(sourceID)
 	}
 	if err != nil {
 		if errors.Is(err, index.ErrSourceIDTooLong) {
@@ -109,27 +124,31 @@ func (tx *Tx) AscendCellsBySource(ctx context.Context, sourceID string, fn func(
 		}
 		return err
 	}
-	seen := make(map[lattice.PackedCoord]struct{})
+	seen := make(map[string]struct{})
 	var scanErr error
 	err = tx.AscendRange(from, to, func(k, _ []byte) bool {
 		if err := ctx.Err(); err != nil {
 			scanErr = err
 			return false
 		}
-		_, p, err := index.ParseSourceKey(k)
+		_, ulidStr, err := index.ParseSeamSourceKey(k)
 		if err != nil {
 			return true
 		}
-		if _, dup := seen[p]; dup {
+		if _, dup := seen[ulidStr]; dup {
 			return true
 		}
-		seen[p] = struct{}{}
-		rec, ok, err := tx.GetCell(p)
+		seen[ulidStr] = struct{}{}
+		raw, _, ok, err := tx.getSeamVisibleRaw(ulidStr)
 		if err != nil || !ok {
 			if err != nil {
 				scanErr = err
 				return false
 			}
+			return true
+		}
+		rec, err := record.DecodeSeam(raw)
+		if err != nil {
 			return true
 		}
 		return fn(rec)
@@ -140,9 +159,8 @@ func (tx *Tx) AscendCellsBySource(ctx context.Context, sourceID string, fn func(
 	return scanErr
 }
 
-// AscendCellsInTimeBucket scans the time/ secondary index for the UTC week bucket (see [index.WeekBucketFromValidity])
-// and calls fn with each decoded cell in that bucket.
-func (tx *Tx) AscendCellsInTimeBucket(ctx context.Context, bucket int64, fn func(record.CellRecord) bool) error {
+// AscendSeamsInTimeBucket scans the seam-time/ secondary index for the UTC week bucket and loads each seam primary.
+func (tx *Tx) AscendSeamsInTimeBucket(ctx context.Context, bucket int64, fn func(record.SeamRecord) bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -154,31 +172,35 @@ func (tx *Tx) AscendCellsInTimeBucket(ctx context.Context, bucket int64, fn func
 	}
 	var from, to []byte
 	if tx.db.useMVCC {
-		from, to = index.TimeRangePrefixAllVersions(bucket)
+		from, to = index.SeamTimeRangePrefixAllVersions(bucket)
 	} else {
-		from, to = index.TimeRangePrefix(bucket)
+		from, to = index.SeamTimeRangePrefix(bucket)
 	}
-	seen := make(map[lattice.PackedCoord]struct{})
+	seen := make(map[string]struct{})
 	var scanErr error
 	err := tx.AscendRange(from, to, func(k, _ []byte) bool {
 		if err := ctx.Err(); err != nil {
 			scanErr = err
 			return false
 		}
-		_, p, err := index.ParseTimeKey(k)
+		_, ulidStr, err := index.ParseSeamTimeKey(k)
 		if err != nil {
 			return true
 		}
-		if _, dup := seen[p]; dup {
+		if _, dup := seen[ulidStr]; dup {
 			return true
 		}
-		seen[p] = struct{}{}
-		rec, ok, err := tx.GetCell(p)
+		seen[ulidStr] = struct{}{}
+		raw, _, ok, err := tx.getSeamVisibleRaw(ulidStr)
 		if err != nil || !ok {
 			if err != nil {
 				scanErr = err
 				return false
 			}
+			return true
+		}
+		rec, err := record.DecodeSeam(raw)
+		if err != nil {
 			return true
 		}
 		return fn(rec)

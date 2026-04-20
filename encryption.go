@@ -2,6 +2,7 @@ package hexxladb
 
 import (
 	"crypto/aes"
+	"crypto/hmac"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -78,4 +79,23 @@ func DeriveKeyFromPassphrase(passphrase string, salt []byte) ([]byte, error) {
 	const threads = 4
 	const keyLen = 32
 	return argon2.IDKey([]byte(passphrase), salt, time, memory, threads, keyLen), nil
+}
+
+func deriveEncryptionKeyCheck(xtsKey []byte, salt [16]byte) [engine.HeaderEncryptionKeyCheckLen]byte {
+	mac := hmac.New(sha256.New, xtsKey)
+	_, _ = mac.Write([]byte("hexxladb-m9-key-check-v1"))
+	_, _ = mac.Write(salt[:])
+	sum := mac.Sum(nil)
+	var out [engine.HeaderEncryptionKeyCheckLen]byte
+	copy(out[:], sum[:engine.HeaderEncryptionKeyCheckLen])
+	return out
+}
+
+func deriveWALMACKey(xtsKey []byte) [32]byte {
+	mac := hmac.New(sha256.New, xtsKey)
+	_, _ = mac.Write([]byte("hexxladb-m9-wal-mac-v1"))
+	sum := mac.Sum(nil)
+	var out [32]byte
+	copy(out[:], sum[:32])
+	return out
 }

@@ -127,8 +127,10 @@ Morton ordering is chosen because space-filling curves of this family map spatia
 - `edge/<packed_from>/<packed_to>/<type>`
 - `seam/<ulid>` → full seam record
 - `seam-by-cells/<packed_a>/<packed_b>/<ulid>` → secondary index (canonical cell pair + id)
-- `time/<valid_bucket>/<packed_coord>` → temporal index
-- `source/<source_id>/<packed_coord>`
+- `time/<valid_bucket>/<packed_coord>` → temporal index (cells)
+- `source/<source_id>/<packed_coord>` (cells; encoding: length-prefixed `source_id` + packed coord — see implementation)
+- `seam-time/<valid_bucket>/<ulid>` → temporal index for seams (week bucket from seam validity `ValidFrom`)
+- `seam-source/<source_id>/<ulid>` → source index for seams (length-prefixed `source_id` + ULID)
 - `embed/<partition>/<vector_ref>` → **optional** future hybrid index (ANN pointer for seed selection); **not required in v1**—HexxlaDB has **no vector columns** and **no ANN indexes** in the minimal engine; seed selection is a **separate** orchestration concern (embeddings, lexical search, tags, or explicit coordinates are all valid **outside** the core store API—see **Hybrid Retrieval Path**).
 
 `nbr/` keys are optional as noted above.

@@ -1,14 +1,30 @@
 # Microbenchmarks (reference)
 
-This document records **how** to run engine hot-path benchmarks and a **sample** result set for regression comparison. **Absolute numbers are machine-dependent** — always compare on the same hardware and Go version.
+This document records **how** to run engine hot-path benchmarks and a **sample** result set for regression comparison. **Absolute numbers are machine-dependent** — always compare on the same hardware and Go version. For **marketing / slide-ready** tables and a **coverage matrix**, see **[`MARKETING_BENCHMARKS.md`](./MARKETING_BENCHMARKS.md)**.
 
 ## How to run
 
 ```bash
+# make bench / make bench-stress default TMPDIR to repo-local ./.tmp
 make bench
 # or:
 go test -count=1 -bench=. -benchmem ./internal/lattice ./internal/engine ./internal/record
+
+# Public API: PutCell (single bench) + read/scan with sub-benchmarks cells_512 … cells_10000 (or cells_50000 with extreme):
+go test -count=1 -bench=BenchmarkAPI -benchmem ./.
+
+# Default read/scan sub-benchmarks use preload 512 and 2000 only. Add 10k: HEXXLA_BENCH_PRELOAD=all. Add 50k (needs lots of disk under $TMPDIR):
+HEXXLA_BENCH_PRELOAD=all TMPDIR=$(pwd)/.tmp go test -count=1 -bench=BenchmarkAPI -benchmem ./.
+HEXXLA_BENCH_PRELOAD=extreme TMPDIR=$(pwd)/.tmp go test -count=1 -bench=BenchmarkAPI -benchmem ./.   # adds cells_50000; needs lots of disk
+
+# Longer API read/scan sub-benchmarks (500ms per sub-name; 512 / 2k / 10k only — not in CI):
+make bench-stress
+
+# One preload size, e.g. 10k tree only:
+go test -count=1 -bench='BenchmarkAPI_GetCell/cells_10000' -benchmem -benchtime=1s ./.
 ```
+
+See [`api_bench_test.go`](../../api_bench_test.go) — includes baseline **`BenchmarkAPI_PutCell`**, MVCC variant **`BenchmarkAPI_PutCell_MVCC`**, and encrypted read variant **`BenchmarkAPI_GetCell_Encrypted`**.
 
 Fuzz smoke (not timed like benchmarks):
 
@@ -47,8 +63,36 @@ Tree setup: **500** keys for `Get`; **100** keys + update key for `PutUpdate`; *
 | ---------------- | ----- | ---- | --------- |
 | EncodeDecodeCell | 621   | 152  | 7         |
 
+### Public API ([`api_bench_test.go`](../../api_bench_test.go))
+
+Read/scan benchmarks preload **N** cells (same `source/` and `time/` secondaries). Sub-names **`cells_10000`** require **`HEXXLA_BENCH_PRELOAD=all`**; **`cells_50000`** requires **`HEXXLA_BENCH_PRELOAD=extreme`** (heavy disk use). **`make bench-stress`** sets **`all`** only (not **extreme**), so it stays runnable on typical `/tmp` sizes. **`PutCell`** benchmark grows a fresh DB one insert per iteration (unique grid coords). **Numbers vary widely** with disk and `GOMAXPROCS` — capture your own table after `make bench-stress` or a filtered `-bench=…/cells_…`.
+
+- `BenchmarkAPI_PutCell`: one `Update` + `PutCell` per iteration.
+- `BenchmarkAPI_PutCell_MVCC`: same workload with `Options.EnableMVCC=true`.
+- `BenchmarkAPI_GetCell/cells_N`: hot-key `GetCell` after **N**-cell preload.
+- `BenchmarkAPI_GetCell_Encrypted/cells_N`: `GetCell` with AES-XTS enabled.
+- `BenchmarkAPI_AscendCellsBySource/cells_N`: full `source/` scan over **N** rows.
+- `BenchmarkAPI_LoadContext/cells_N`: `LoadContext` ring walk at center `(0,0)` with **N** cells in DB.
+- `BenchmarkAPI_LoadContextAt/cells_N`: same with **[`record.ValidAt`](../../internal/record/validity.go)** at a fixed `asOf`.
+- `BenchmarkAPI_WalkRing/cells_N`: one **`WalkRing`** at ring **2** (12 positions); reports **`ring_cells`**.
+- `BenchmarkAPI_WalkRingAt/cells_N`: **`WalkRingAt`** with validity filter; reports **`ring_cells`**.
+
+Each read/scan sub-benchmark reports an extra **`cells`** metric (preload row count). Ring benchmarks also report **`ring_cells`**.
+
 ## Interpretation
 
 - **Lattice** paths are sub-microsecond to ~160 ns/op with **zero heap allocs** on the measured loops — consistent with stdlib-only hot paths ([`HEXXLA_DB.md`](./HEXXLA_DB.md) asks for benchmark validation of Morton locality claims; these measure **packing**, not end-to-end I/O).
 - **B+ tree** figures include **durability** (WAL append + fsync path in `Put`); `Get`/`AscendRange` still reflect real disk-backed page reads through the engine.
-- Re-run after changes to [`internal/engine/btree.go`](../../internal/engine/btree.go), [`internal/lattice/packed.go`](../../internal/lattice/packed.go), or record codecs when tuning performance.
+- Re-run after changes to [`internal/engine/btree.go`](../../internal/engine/btree.go), [`internal/lattice/packed.go`](../../internal/lattice/packed.go), record codecs, or [`primitives.go`](../../primitives.go) / [`cell_secondary.go`](../../cell_secondary.go) when tuning performance.
+- **API** benchmarks include **WAL + fsync** behavior on `PutCell` paths; compare on the same filesystem when tracking regressions.
+
+## Readiness acceptance matrix (R3)
+
+Before claiming a production-readiness update, capture and archive:
+
+- `make ci`
+- `make integration`
+- `make stress` (or a documented reduced profile)
+- `make bench-stress`
+
+Include environment notes (`go version`, CPU, storage type, `TMPDIR`) so regression comparisons remain reproducible.

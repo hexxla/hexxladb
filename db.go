@@ -5,15 +5,18 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/hexxla/hexxladb/internal/changelog"
 	"github.com/hexxla/hexxladb/internal/engine"
 )
 
 // DB is a handle to an embedded HexxlaDB database. Construction is via [Open].
 // Concurrent [View] calls are serialized with readers; [Update] and [Batch] are exclusive.
 type DB struct {
-	mu    sync.RWMutex
-	eng   *engine.Engine
-	btree *engine.BTree
+	mu        sync.RWMutex
+	eng       *engine.Engine
+	btree     *engine.BTree
+	changelog *changelog.Log
+	useMVCC   bool // true when on-disk format is v2+ (MVCC physical keys; see [Options.EnableMVCC]).
 }
 
 // ErrCorruptDatabase means the database or WAL failed validation on open.
@@ -30,6 +33,9 @@ func Open(path string, opts *Options) (*DB, error) {
 		if errors.Is(err, engine.ErrCorruptHeader) || errors.Is(err, engine.ErrCorruptWAL) {
 			return nil, fmt.Errorf("%w: %w", ErrCorruptDatabase, err)
 		}
+		if errors.Is(err, engine.ErrBadEncryptionKey) {
+			return nil, ErrEncryptionKeyMismatch
+		}
 		return nil, err
 	}
 	hdr, err := eng.ReadHeader()
@@ -41,8 +47,32 @@ func Open(path string, opts *Options) (*DB, error) {
 		_ = eng.Close()
 		return nil, err
 	}
+	if eopts != nil && eopts.ExpectEncryptionKeyCheck &&
+		hdr.Features&engine.FeatureEncryptedDataPages != 0 &&
+		hdr.EncryptionKeyCheck == ([engine.HeaderEncryptionKeyCheckLen]byte{}) {
+		if err := eng.UpdateHeader(func(h *engine.Header) {
+			h.EncryptionKeyCheck = eopts.EncryptionKeyCheck
+		}); err != nil {
+			_ = eng.Close()
+			return nil, err
+		}
+	}
 	bt := engine.OpenBTree(eng)
-	return &DB{eng: eng, btree: bt}, nil
+	db := &DB{eng: eng, btree: bt, useMVCC: hdr.FormatVersion >= 2}
+	if opts != nil && opts.ChangelogEnabled {
+		clPath := opts.ChangelogPath
+		if clPath == "" {
+			clPath = path + "-changelog"
+		}
+		syncWrites := !opts.ChangelogLazy
+		cl, err := changelog.Open(clPath, syncWrites)
+		if err != nil {
+			_ = eng.Close()
+			return nil, err
+		}
+		db.changelog = cl
+	}
+	return db, nil
 }
 
 // Close releases resources associated with the database.
@@ -56,7 +86,14 @@ func (db *DB) Close() error {
 	if db.eng == nil {
 		return nil
 	}
-	err := db.eng.Close()
+	var err error
+	if db.changelog != nil {
+		err = db.changelog.Close()
+		db.changelog = nil
+	}
+	if e := db.eng.Close(); e != nil && err == nil {
+		err = e
+	}
 	db.eng = nil
 	db.btree = nil
 	return err

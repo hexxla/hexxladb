@@ -1,6 +1,6 @@
 # MVCC and `as_of` — design gate (Phase E)
 
-**Status:** Design document (Phase **E0**). **Production MVCC** (E2+) is not shipped; the engine remains single-version for normal `Open` paths. **Phase E1** adds experimental **Option A** helpers and tests under [`internal/mvccspike`](../../internal/mvccspike) only (see §9).
+**Status:** Design + implementation reference. **E2+ MVP is shipped** (format v2, `commit_seq`, `ViewAt(read_seq)`, version-suffixed cell/source/time/facet keys). Remaining follow-ons include version GC policy and wall-clock `time.Time -> read_seq` mapping.
 
 **Normative product context:** [HEXXLA_DB.md](./HEXXLA_DB.md) (snapshots / `as_of`), [HEXXLA.md](./HEXXLA.md) (validity and retrieval). **Current engine:** [ENGINE_FORMAT.md](../../internal/engine/ENGINE_FORMAT.md), [ORDERED_STORE.md](../../internal/engine/ORDERED_STORE.md).
 
@@ -21,10 +21,8 @@
 
 Two concepts must be distinguished:
 
-| Concept | Role |
-|--------|------|
-| **Commit sequence** | Monotonic `uint64` (or wider) assigned **in commit order** on `Update`. Unambiguous total order for “which writes are visible.” |
-| **Wall-clock `as_of`** | User-facing instant (e.g. `time.Time` UTC). May align with **transaction timestamps** or **validity** semantics from records. |
+- **Commit sequence:** monotonic `uint64` (or wider) assigned **in commit order** on `Update`. Unambiguous total order for visibility.
+- **Wall-clock `as_of`:** user-facing instant (e.g. `time.Time` UTC). May align with transaction timestamps or validity semantics.
 
 **Recommended v1 MVCC shape:**
 
@@ -108,12 +106,10 @@ Old versions are reclaimable when **no snapshot** can reference them:
 
 ## 8. Decision log
 
-| Decision | Status | Notes |
-|----------|--------|--------|
-| Storage model (§3 A vs B vs C) | **E1: Option A prototyped** | **Option A** (version suffix on `cell/` keys: `CellKey(p) \|\| be64(commit_seq)`) implemented in [`internal/mvccspike`](../../internal/mvccspike); range scan + max `commit_seq ≤ read_seq` visibility stub in tests. **B/C not prototyped** in E1 — revisit if allocator or key-size pressure argues for chains or page MVCC. |
-| `ViewAt` by `commit_seq` vs `time.Time` | **Pending E3 API** | May ship seq-first for simplicity. |
-| Secondary index versioning (§4) | **Pending E4** | Align with Hexxla product semantics. |
-| WAL strategy (§5) | **E1 measured (rough); E2 confirms** | Default remains page-level redo (§5). E1 microbenchmark: two `Put`s vs one per `Update` ~**2×** ns/op and alloc bytes on a representative dev host (see §9); expect proportionally more redo volume when every logical write appends a version row. |
+- **Storage model (§3 A vs B vs C):** **E1 Option A prototyped**. Version suffix on `cell/` keys implemented in [`internal/mvccspike`](../../internal/mvccspike). B/C not prototyped in E1.
+- **`ViewAt` by `commit_seq` vs `time.Time`:** **Resolved** — both are supported (`ViewAt` + `ViewAtTime`).
+- **Secondary index versioning (§4):** **Resolved for current families** — source/time/seam secondaries are snapshot-visible.
+- **WAL strategy (§5):** page-level redo remains default; E1 measured approximate 2x overhead for two physical writes vs one.
 
 ---
 
@@ -129,20 +125,28 @@ Old versions are reclaimable when **no snapshot** can reference them:
 
 ---
 
-## 10. Phase E2+ — Implementation (deferred)
+## 10. Phase E2+ — Implementation status
 
-Work proceeds after E0 review; **E1 Option A** is recorded in §8–§9 (prototype only). Full engine MVCC remains gated on E2 planning.
+**Shipped in this repository:** format-v2 `commit_seq`, `ViewAt(read_seq)`, `ViewAtTime(time.Time)` wall-clock mapping, versioned primaries for cells/facets/seams, and snapshot-visible reads for source/time/seam secondary scans.
 
-| Milestone | Scope |
-|-----------|--------|
-| **E2** | Engine: allocation, GC, recovery with multi-version pages/btree. |
-| **E3** | Public API: `ViewAt` / snapshot `Tx`; `Update` commits advance `commit_seq`. |
-| **E4** | Primitives: `LoadContext`, `FindSeams`, secondaries, Phase C helpers vs snapshot semantics. |
+**Remaining hardening focus:** retention policy automation, long-run churn validation, and operator runbooks (see **[`HEXXLA_READINESS_ROADMAP.md`](./HEXXLA_READINESS_ROADMAP.md)**).
+
+**Locked milestone sequence (order matters):**
+
+- **E2a:** Format/header (`format_version`, persisted `commit_seq`, migration path). Exit: open/version tests.
+- **E2b:** Engine version rows + WAL behavior + GC hooks/deferred sweep. Exit: crash/reopen and stale-version bounds.
+- **E3:** Public API snapshots (`ViewAt`, `ViewAtTime`) with atomic `commit_seq` advance. Exit: race tests + docs.
+- **E4:** Primitives + secondary index snapshot semantics. Exit: integration tests and roadmap sync.
+
+**Out of scope for E2+ until re-scoped:** Phase **H** `embed/` keys; full **logical WAL** for MVCC (§5 optional follow-on).
+
+- **E2:** Engine + format (multi-version storage, recovery, GC).
+- **E3:** Public API (snapshot reads + commit sequencing).
+- **E4:** Primitives + secondary indexes under snapshot rules.
 
 ---
 
 ## References
 
-- Gap plan: [SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md](./SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md) — Phase E.
-- Risks: MVCC complexity — [SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md](./SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md) §5.
+- Consolidated plan and remaining gaps: [HEXXLA_READINESS_ROADMAP.md](./HEXXLA_READINESS_ROADMAP.md).
 - Checklist: [HEXXLA_DB_V1.md](../checklist/HEXXLA_DB_V1.md).

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/oklog/ulid/v2"
@@ -165,7 +166,118 @@ func TestSeam_roundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != orig {
+	if !reflect.DeepEqual(got, orig) {
+		t.Fatalf("got %+v want %+v", got, orig)
+	}
+}
+
+func TestSeam_validityRoundTrip(t *testing.T) {
+	t.Parallel()
+	id := ulid.MustNew(ulid.Now(), rand.Reader).String()
+	ca := mustPack(t, 0, 0)
+	cb := mustPack(t, 0, 1)
+	var lo int64 = 100
+	var hi int64 = 200
+	orig := record.SeamRecord{
+		ID:               id,
+		CellA:            ca,
+		CellB:            cb,
+		SeamType:         "t",
+		Reason:           "r",
+		ConfidenceDelta:  0.25,
+		DetectedAt:       99,
+		ResolutionStatus: "open",
+		ResolutionNote:   "",
+		Validity:         record.ValidityWire{ValidFrom: &lo, ValidTo: &hi},
+	}
+	b, err := record.EncodeSeam(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := record.DecodeSeam(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, orig) {
+		t.Fatalf("got %+v want %+v", got, orig)
+	}
+}
+
+func TestSeam_decodeLegacyPayloadWithoutValiditySuffix(t *testing.T) {
+	t.Parallel()
+	id := ulid.MustNew(ulid.Now(), rand.Reader).String()
+	ca := mustPack(t, 0, 0)
+	cb := mustPack(t, 0, 1)
+	orig := record.SeamRecord{
+		ID:               id,
+		CellA:            ca,
+		CellB:            cb,
+		SeamType:         "t",
+		Reason:           "r",
+		ConfidenceDelta:  0.25,
+		DetectedAt:       99,
+		ResolutionStatus: "open",
+		ResolutionNote:   "",
+	}
+	full, err := record.EncodeSeam(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, payload, err := record.ParseEnvelope(record.MagicSeam, full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Strip empty ValidityWire (2 bytes) + empty ProvenanceWire (str32 + 3×int64) — simulates payloads that ended at ResolutionNote.
+	const emptyValidityAndProvenanceTail = 2 + (4 + 8 + 8 + 8)
+	if len(payload) < emptyValidityAndProvenanceTail {
+		t.Fatalf("short payload len=%d", len(payload))
+	}
+	legacyPayload := payload[:len(payload)-emptyValidityAndProvenanceTail]
+	legacy, err := record.AppendEnvelope(nil, record.MagicSeam, record.FormatVersionV1, legacyPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := record.DecodeSeam(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := orig
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v want %+v", got, want)
+	}
+}
+
+func TestSeam_provenanceRoundTrip(t *testing.T) {
+	t.Parallel()
+	id := ulid.MustNew(ulid.Now(), rand.Reader).String()
+	ca := mustPack(t, 0, 0)
+	cb := mustPack(t, 0, 1)
+	orig := record.SeamRecord{
+		ID:               id,
+		CellA:            ca,
+		CellB:            cb,
+		SeamType:         "t",
+		Reason:           "r",
+		ConfidenceDelta:  0.25,
+		DetectedAt:       99,
+		ResolutionStatus: "open",
+		ResolutionNote:   "",
+		Provenance: record.ProvenanceWire{
+			SourceID:   "sensor-1",
+			Confidence: 0.9,
+			CreatedAt:  1,
+			UpdatedAt:  2,
+		},
+	}
+	b, err := record.EncodeSeam(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := record.DecodeSeam(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, orig) {
 		t.Fatalf("got %+v want %+v", got, orig)
 	}
 }

@@ -9,7 +9,10 @@
 
 ## Header metadata
 
-When encryption is enabled on a **new** database, the engine sets header **`Features`** bit **`FeatureEncryptedDataPages`** and stores a **16-byte** **`EncryptionSalt`** (random for passphrase mode; zeros when only a raw [`Options.EncryptionKey`](../../options.go) is used).
+When encryption is enabled on a **new** database, the engine sets header **`Features`** bit **`FeatureEncryptedDataPages`** and stores:
+
+- a **16-byte** **`EncryptionSalt`** (random), and
+- an **`encryption_key_check`** verifier for deterministic wrong-key detection.
 
 See [`internal/engine/ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md) for offsets.
 
@@ -24,13 +27,17 @@ Do **not** use [`EncryptionKey`](../../options.go) and [`Passphrase`](../../opti
 
 Redo WAL records store the **same bytes** written to the primary file **after** `BeforeWrite` — i.e. **ciphertext** when encryption is enabled. Replay applies those full page images to the primary without a second transform, matching the engine’s normal write path.
 
+For encrypted databases, WAL records also carry a keyed **HMAC-SHA256** authenticator (`seq || page_id || payload`) so tampering is rejected during replay.
+
 **Threat model:** protects **ciphertext at rest** on disk and on the WAL file if both are copied together. It does **not** authenticate plaintext: **XTS does not provide integrity** comparable to an AEAD; a tampered ciphertext may decrypt to arbitrary bytes. Callers who need **tamper detection** should plan a future format that adds authentication (or use external full-disk encryption).
 
 **Runtime:** key material and decrypted pages in memory are **not** hardened against a local attacker with memory access; that is out of scope for M9.
 
 ## Wrong key
 
-Opening with a **wrong** key does not reliably fail at `Open` (no MAC). Operations may return corruption or parse errors. Callers should treat unexpected errors after `Open` as possible key mismatch when the file is marked encrypted.
+Opening with a **wrong** key/passphrase now fails at **`Open`** with **[`ErrEncryptionKeyMismatch`](../../errors.go)** when the database has an `encryption_key_check` verifier (new encrypted DBs and legacy encrypted DBs after first successful open with a key).
+
+Legacy encrypted files without a verifier are upgraded in-place on successful keyed open (header update only), enabling deterministic mismatch detection on subsequent opens.
 
 ## Related errors
 
@@ -39,3 +46,11 @@ Opening with a **wrong** key does not reliably fail at `Open` (no MAC). Operatio
 [`ErrDatabaseNotEncrypted`](../../errors.go) — encryption options supplied but the existing file is plaintext.
 
 [`ErrEncryptionOptions`](../../errors.go) — encryption combined with custom page hooks or conflicting key options.
+
+[`ErrEncryptionKeyMismatch`](../../errors.go) — provided key/passphrase does not match the database verifier.
+
+## Hardening acceptance criteria (M9+)
+
+- Wrong key/passphrase fails deterministically at `Open` for encrypted files with an `encryption_key_check`.
+- Corrupt/truncated WAL remains rejected on replay (`ErrCorruptWAL` -> public `ErrCorruptDatabase` path).
+- Offline key rotation preserves logical key/value contents and invalidates old credentials.

@@ -55,4 +55,8 @@ type SeamRecord struct {
 	DetectedAt       int64 // unix nano UTC
 	ResolutionStatus string
 	ResolutionNote   string
+	// Validity optional half-open window [ValidFrom, ValidTo); encoded as a trailing suffix on v1 payload when present (see FORMAT.md).
+	Validity ValidityWire
+	// Provenance optional; SourceID drives seam-source/ secondary keys (see HEXXLA_DB.md). Encoded after Validity when present.
+	Provenance ProvenanceWire
 }

@@ -1,4 +1,4 @@
-.PHONY: help ci integration bench fuzz test vet fmt lint mod-tidy govulncheck clean \
+.PHONY: help ci integration stress bench bench-stress fuzz test vet fmt lint mod-tidy govulncheck clean bench-tmp \
 	pre-commit-install pre-commit-run pre-commit-update run build
 
 # Bare `make` runs the full CI pipeline (same as `make ci`). Use `make help` to list targets.
@@ -7,7 +7,9 @@
 help:
 	@echo "make ci              Full pipeline (same as GitHub Actions: ./scripts/ci.sh)"
 	@echo "make integration     Optional slower tests (go test -tags=integration -race ./...)"
+	@echo "make stress          Optional very large cell-count tests (go test -tags=stress -race ./...; not CI)"
 	@echo "make bench           Run benchmarks (go test -bench=. -benchmem ./...; not in CI)"
+	@echo "make bench-stress    Longer API benches (default preload=all: 512..10k; HEXXLA_BENCH_PRELOAD=extreme for 50k; not CI)"
 	@echo "make fuzz            Short fuzz smoke (internal/record + internal/engine; not in CI)"
 	@echo "make test|vet|fmt    Tests (-race), vet, gofmt -w"
 	@echo "make lint            golangci-lint (binary on PATH)"
@@ -15,6 +17,10 @@ help:
 	@echo "make mod-tidy        go mod tidy"
 	@echo "make run|build|clean Run cmd/hexxladb, build bin/hexxladb, remove bin/"
 	@echo "make pre-commit-*    Optional Git hooks (see CONTRIBUTING.md)"
+
+# Benchmark temp directory (defaults to repo-local ./.tmp; override with TMPDIR=/path).
+bench-tmp:
+	@mkdir -p $(or $(TMPDIR),$(CURDIR)/.tmp)
 
 # Run the full pipeline (same as CI). Install golangci-lint locally for the lint step.
 ci:
@@ -24,9 +30,19 @@ ci:
 integration:
 	go test -count=1 -race -tags=integration ./...
 
+# Extreme scale (100k+ cells by default; minutes, large disk). See CONTRIBUTING.md.
+stress:
+	go test -count=1 -race -tags=stress ./...
+
 # Benchmarks — not part of default CI (keeps PRs fast). See CONTRIBUTING.md.
 bench:
-	go test -count=1 -bench=. -benchmem ./...
+	@$(MAKE) bench-tmp
+	TMPDIR=$(or $(TMPDIR),$(CURDIR)/.tmp) go test -count=1 -bench=. -benchmem ./...
+
+# Longer runs: preload 512, 2k, 10k (default). Override: make bench-stress HEXXLA_BENCH_PRELOAD=extreme (adds 50k; needs huge TMPDIR). See BENCHMARKS.md.
+bench-stress:
+	@$(MAKE) bench-tmp
+	TMPDIR=$(or $(TMPDIR),$(CURDIR)/.tmp) HEXXLA_BENCH_PRELOAD=$(or $(HEXXLA_BENCH_PRELOAD),all) go test -count=1 -bench='BenchmarkAPI_(GetCell|AscendCellsBySource|LoadContext|LoadContextAt|WalkRing|WalkRingAt)/' -benchmem -benchtime=500ms ./.
 
 # Short fuzz smoke — not part of default CI. For longer runs: go test -fuzz=... -fuzztime=30s ./path
 fuzz:

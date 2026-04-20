@@ -65,7 +65,32 @@ func SourceRangePrefix(sourceID string) (from, to []byte, err error) {
 	return from, to, nil
 }
 
-// ParseSourceKey extracts source id and packed coord from a key built by [SourceKey].
+// SourceKeyWithVersion appends MVCC [VersionSuffixLen] commit_seq (big-endian) to [SourceKey].
+func SourceKeyWithVersion(sourceID string, p lattice.PackedCoord, commitSeq uint64) ([]byte, error) {
+	base, err := SourceKey(sourceID, p)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, len(base)+VersionSuffixLen)
+	out = append(out, base...)
+	var suf [VersionSuffixLen]byte
+	binary.BigEndian.PutUint64(suf[:], commitSeq)
+	return append(out, suf[:]...), nil
+}
+
+// SourceRangePrefixAllVersions widens [SourceRangePrefix] so AscendRange includes every MVCC suffix
+// for that source_id.
+func SourceRangePrefixAllVersions(sourceID string) (from, to []byte, err error) {
+	from, to, err = SourceRangePrefix(sourceID)
+	if err != nil {
+		return nil, nil, err
+	}
+	from = append(append([]byte(nil), from...), make([]byte, VersionSuffixLen)...)
+	to = append(append([]byte(nil), to...), bytes.Repeat([]byte{0xff}, VersionSuffixLen)...)
+	return from, to, nil
+}
+
+// ParseSourceKey extracts source id and packed coord from a key built by [SourceKey] or [SourceKeyWithVersion].
 func ParseSourceKey(key []byte) (sourceID string, p lattice.PackedCoord, err error) {
 	if !bytes.HasPrefix(key, []byte(SourcePrefix)) {
 		return "", lattice.PackedCoord{}, errors.New("index: not a source key")
@@ -85,7 +110,11 @@ func ParseSourceKey(key []byte) (sourceID string, p lattice.PackedCoord, err err
 		return "", lattice.PackedCoord{}, errors.New("index: source key separator")
 	}
 	rest = rest[1:]
-	if len(rest) != PackedCoordKeyLen {
+	switch len(rest) {
+	case PackedCoordKeyLen:
+	case PackedCoordKeyLen + VersionSuffixLen:
+		rest = rest[:PackedCoordKeyLen]
+	default:
 		return "", lattice.PackedCoord{}, errors.New("index: source key packed len")
 	}
 	var pc lattice.PackedCoord

@@ -9,8 +9,23 @@ import (
 
 const hkdfInfoXTS = "hexxladb-m9-aes-xts-v1"
 
+func engineOptsWithMVCC(base *engine.Options, opts *Options) *engine.Options {
+	if opts == nil || !opts.EnableMVCC {
+		return base
+	}
+	if base == nil {
+		return &engine.Options{UseFormatV2: true}
+	}
+	base.UseFormatV2 = true
+	return base
+}
+
 func buildEngineOptions(path string, opts *Options) (*engine.Options, error) {
 	if opts == nil {
+		hdr, err := engine.ReadHeaderFile(path)
+		if err == nil && hdr.Features&engine.FeatureEncryptedDataPages != 0 {
+			return nil, ErrEncryptionKeyRequired
+		}
 		return nil, nil
 	}
 	customHooks := opts.BeforeWritePage != nil || opts.AfterReadPage != nil
@@ -22,15 +37,15 @@ func buildEngineOptions(path string, opts *Options) (*engine.Options, error) {
 		return nil, ErrEncryptionOptions
 	}
 	if customHooks {
-		return &engine.Options{
+		return engineOptsWithMVCC(&engine.Options{
 			Hooks: &engine.PageHooks{
 				BeforeWrite: opts.BeforeWritePage,
 				AfterRead:   opts.AfterReadPage,
 			},
-		}, nil
+		}, opts), nil
 	}
 	if !hasEnc {
-		return nil, nil
+		return engineOptsWithMVCC(nil, opts), nil
 	}
 
 	if len(opts.EncryptionKey) > 0 {
@@ -48,10 +63,20 @@ func buildEngineOptions(path string, opts *Options) (*engine.Options, error) {
 			return nil, statErr
 		}
 		if isNew {
-			return &engine.Options{
-				Hooks:          hooks,
-				NewEncryptedDB: true,
-			}, nil
+			var salt [16]byte
+			if _, err := rand.Read(salt[:]); err != nil {
+				return nil, err
+			}
+			check := deriveEncryptionKeyCheck(xtsKey, salt)
+			return engineOptsWithMVCC(&engine.Options{
+				Hooks:                    hooks,
+				NewEncryptedDB:           true,
+				EncryptionSalt:           salt,
+				EncryptionKeyCheck:       check,
+				ExpectEncryptionKeyCheck: true,
+				WALMACKey:                deriveWALMACKey(xtsKey),
+				EnableWALMAC:             true,
+			}, opts), nil
 		}
 		hdr, err := engine.ReadHeaderFile(path)
 		if err != nil {
@@ -60,7 +85,13 @@ func buildEngineOptions(path string, opts *Options) (*engine.Options, error) {
 		if hdr.Features&engine.FeatureEncryptedDataPages == 0 {
 			return nil, ErrDatabaseNotEncrypted
 		}
-		return &engine.Options{Hooks: hooks}, nil
+		return engineOptsWithMVCC(&engine.Options{
+			Hooks:                    hooks,
+			EncryptionKeyCheck:       deriveEncryptionKeyCheck(xtsKey, hdr.EncryptionSalt),
+			ExpectEncryptionKeyCheck: true,
+			WALMACKey:                deriveWALMACKey(xtsKey),
+			EnableWALMAC:             true,
+		}, opts), nil
 	}
 
 	// Passphrase
@@ -86,11 +117,16 @@ func buildEngineOptions(path string, opts *Options) (*engine.Options, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &engine.Options{
-			Hooks:          hooks,
-			NewEncryptedDB: true,
-			EncryptionSalt: salt,
-		}, nil
+		check := deriveEncryptionKeyCheck(xtsKey, salt)
+		return engineOptsWithMVCC(&engine.Options{
+			Hooks:                    hooks,
+			NewEncryptedDB:           true,
+			EncryptionSalt:           salt,
+			EncryptionKeyCheck:       check,
+			ExpectEncryptionKeyCheck: true,
+			WALMACKey:                deriveWALMACKey(xtsKey),
+			EnableWALMAC:             true,
+		}, opts), nil
 	}
 
 	hdr, err := engine.ReadHeaderFile(path)
@@ -112,7 +148,13 @@ func buildEngineOptions(path string, opts *Options) (*engine.Options, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &engine.Options{Hooks: hooks}, nil
+	return engineOptsWithMVCC(&engine.Options{
+		Hooks:                    hooks,
+		EncryptionKeyCheck:       deriveEncryptionKeyCheck(xtsKey, hdr.EncryptionSalt),
+		ExpectEncryptionKeyCheck: true,
+		WALMACKey:                deriveWALMACKey(xtsKey),
+		EnableWALMAC:             true,
+	}, opts), nil
 }
 
 func openValidateEncryption(opts *Options, hdr engine.Header) error {

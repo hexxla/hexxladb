@@ -1,4 +1,5 @@
-// Package mvccspike holds Phase E1 MVCC storage experiments; it is not used by production Open paths.
+// Package mvccspike holds Phase E1 MVCC storage experiments. Production MVCC reuses the same
+// Option A key layout and [SelectVisible] via [github.com/hexxla/hexxladb/internal/index] and package hexxladb.
 //
 // This file implements the “version suffix on logical keys” layout from MVCC_DESIGN.md §3: each
 // physical btree key is [index.CellKey] for the logical cell plus an 8-byte big-endian commit_seq.

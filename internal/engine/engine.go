@@ -9,11 +9,13 @@ import (
 
 // Engine is a minimal page-oriented store with redo WAL (M3 shell).
 type Engine struct {
-	path    string
-	db      *os.File
-	wal     *os.File
-	hooks   PageHooks
-	lastSeq uint64
+	path          string
+	db            *os.File
+	wal           *os.File
+	hooks         PageHooks
+	lastSeq       uint64
+	walMACEnabled bool
+	walMACKey     [32]byte
 }
 
 // WalPath returns the WAL path for a primary database path.
@@ -41,14 +43,22 @@ func Open(path string, opts *Options) (*Engine, error) {
 	}
 
 	if st.Size() == 0 {
+		ver := formatVersionV1
+		if opts != nil && opts.UseFormatV2 {
+			ver = formatVersionV2
+		}
 		hdr := Header{
-			FormatVersion: formatVersionV1,
+			FormatVersion: ver,
 			PageSize:      uint32(PageSize),
 			LastWALSeq:    0,
 			NextPageID:    1,
+			CommitSeq:     0,
 		}
 		if opts != nil && opts.NewEncryptedDB {
 			hdr.Features |= FeatureEncryptedDataPages
+			if opts.EnableWALMAC {
+				hdr.Features |= FeatureWALKeyedMAC
+			}
 			if opts.EncryptionSalt == ([16]byte{}) {
 				if _, err := rand.Read(hdr.EncryptionSalt[:]); err != nil {
 					_ = db.Close()
@@ -57,6 +67,7 @@ func Open(path string, opts *Options) (*Engine, error) {
 			} else {
 				hdr.EncryptionSalt = opts.EncryptionSalt
 			}
+			hdr.EncryptionKeyCheck = opts.EncryptionKeyCheck
 		}
 		if err := writeHeaderAt(db, hdr); err != nil {
 			_ = db.Close()
@@ -76,6 +87,12 @@ func Open(path string, opts *Options) (*Engine, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if opts != nil && opts.ExpectEncryptionKeyCheck && hdr.Features&FeatureEncryptedDataPages != 0 {
+		if hdr.EncryptionKeyCheck != ([HeaderEncryptionKeyCheckLen]byte{}) && hdr.EncryptionKeyCheck != opts.EncryptionKeyCheck {
+			_ = db.Close()
+			return nil, ErrBadEncryptionKey
+		}
+	}
 
 	walPath := WalPath(path)
 	// #nosec G304 -- WAL path is derived from the primary DB path (same contract as primary).
@@ -85,16 +102,32 @@ func Open(path string, opts *Options) (*Engine, error) {
 		return nil, err
 	}
 
+	// Replay the full WAL. A fixed 1 GiB read cap truncated large sessions and made
+	// replay fail with ErrCorruptWAL (partial tail). Cap allocation at 16 GiB instead.
+	const maxWALReplayBytes = 16 << 30
+	walInfo, err := wal.Stat()
+	if err != nil {
+		_ = db.Close()
+		_ = wal.Close()
+		return nil, err
+	}
+	if walInfo.Size() > maxWALReplayBytes {
+		_ = db.Close()
+		_ = wal.Close()
+		return nil, fmt.Errorf("%w: WAL size %d exceeds max replay size", ErrCorruptWAL, walInfo.Size())
+	}
 	if _, err := wal.Seek(0, io.SeekStart); err != nil {
 		_ = db.Close()
 		_ = wal.Close()
 		return nil, err
 	}
-	walData, err := io.ReadAll(io.LimitReader(wal, 1<<30)) // 1 GiB cap for M3 shell
-	if err != nil {
-		_ = db.Close()
-		_ = wal.Close()
-		return nil, err
+	walData := make([]byte, walInfo.Size())
+	if len(walData) > 0 {
+		if _, err := io.ReadFull(wal, walData); err != nil {
+			_ = db.Close()
+			_ = wal.Close()
+			return nil, err
+		}
 	}
 
 	apply := func(_ uint64, pageID uint64, payload []byte) error {
@@ -106,7 +139,17 @@ func Open(path string, opts *Options) (*Engine, error) {
 		return err
 	}
 
-	maxSeq, err := parseAndReplayWAL(walData, hdr.LastWALSeq, apply)
+	walMACEnabled := hdr.Features&FeatureWALKeyedMAC != 0
+	var walMACKey [32]byte
+	if walMACEnabled {
+		if opts == nil || !opts.EnableWALMAC {
+			_ = db.Close()
+			_ = wal.Close()
+			return nil, ErrBadEncryptionKey
+		}
+		walMACKey = opts.WALMACKey
+	}
+	maxSeq, err := parseAndReplayWALWithMAC(walData, hdr.LastWALSeq, apply, walMACKey, walMACEnabled)
 	if err != nil {
 		_ = db.Close()
 		_ = wal.Close()
@@ -145,11 +188,13 @@ func Open(path string, opts *Options) (*Engine, error) {
 	}
 
 	e := &Engine{
-		path:    path,
-		db:      db,
-		wal:     wal,
-		hooks:   hooks,
-		lastSeq: newLast,
+		path:          path,
+		db:            db,
+		wal:           wal,
+		hooks:         hooks,
+		lastSeq:       newLast,
+		walMACEnabled: walMACEnabled,
+		walMACKey:     walMACKey,
 	}
 	return e, nil
 }
@@ -210,7 +255,7 @@ func (e *Engine) WritePage(pageID uint64, data []byte) error {
 	}
 
 	seq := e.lastSeq + 1
-	rec := encodeWALRecord(seq, pageID, plain)
+	rec := encodeWALRecordWithMAC(seq, pageID, plain, e.walMACKey, e.walMACEnabled)
 	if _, err := e.wal.Write(rec); err != nil {
 		return err
 	}

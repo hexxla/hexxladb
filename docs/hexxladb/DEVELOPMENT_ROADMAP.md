@@ -18,7 +18,7 @@ This roadmap defines **phases** from first code to **production-ready** embedded
 | [MODERN_GO.md](../context/MODERN_GO.md) | Go 1.21–1.26 release inventory; use as a lookup for stdlib and toolchain behavior. |
 | [AGENTS.md](../../AGENTS.md) | Agent instructions; keep this roadmap updated when milestones or scope change (see roadmap section there). |
 | [H3_REFERENCE.md](./H3_REFERENCE.md) | Uber H3 vs HexxlaDB: what to borrow (testing, bit-layout discipline) vs what not to port. |
-| [MVCC_DESIGN.md](./MVCC_DESIGN.md) | Phase E gate: MVCC / `as_of` snapshot model, WAL/GC/migration; E1 Option A prototype in [`internal/mvccspike`](../../internal/mvccspike); E2+ implementation deferral. |
+| [MVCC_DESIGN.md](./MVCC_DESIGN.md) | MVCC / `as_of` snapshot model, WAL/GC/migration. E2+ MVP shipped; follow-ons focus on GC/time-to-seq mapping/ops hardening. |
 
 **Split of concerns:** Normative **distance, neighbors, ring / `load_context` ordering** are in **HEXXLA.md**. **Keys, Morton keyspace, WAL, record families** are in **HEXXLA_DB.md**. Implementations must stay consistent with both.
 
@@ -235,9 +235,9 @@ Each milestone should end with **`make ci`** green ([HEXAGONAL_ARCHITECTURE.md](
 
 - **At-rest encryption:** [`Options.EncryptionKey`](../../options.go) / [`Options.Passphrase`](../../options.go) — **AES-256-XTS** on data pages (**≥ 1**); **HKDF** + optional **Argon2id** ([`encryption.go`](../../encryption.go)); header **`Features`** / **`EncryptionSalt`** ([`internal/engine/header.go`](../../internal/engine/header.go)); **[`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md)** + **[`ENCRYPTION.md`](./ENCRYPTION.md)**.
 - **WAL:** redo records store **post-hook** page bytes (**ciphertext** when enabled), consistent with the primary file — see **WAL policy** in [`ENCRYPTION.md`](./ENCRYPTION.md).
-- **API:** [`ErrEncryptionKeyRequired`](../../errors.go), [`ErrDatabaseNotEncrypted`](../../errors.go), [`ErrEncryptionOptions`](../../errors.go); [`PageHooks`](../../internal/engine/hooks.go) take **`pageID`** for tweak/nonce schemes.
+- **API:** [`ErrEncryptionKeyRequired`](../../errors.go), [`ErrDatabaseNotEncrypted`](../../errors.go), [`ErrEncryptionOptions`](../../errors.go), [`ErrEncryptionKeyMismatch`](../../errors.go); [`PageHooks`](../../internal/engine/hooks.go) take **`pageID`** for tweak/nonce schemes.
 - **Tests:** [`encryption_test.go`](../../encryption_test.go), [`db_encryption_test.go`](../../db_encryption_test.go); **`make ci`** green.
-- **Scope cuts:** no AEAD/authentication layer in v1 (XTS only); wrong key may not fail until reads; memory hardening deferred.
+- **Scope cuts:** no AEAD/authentication layer in v1 (XTS only); memory hardening deferred.
 
 ### M10 complete (2026-04-13)
 
@@ -252,31 +252,47 @@ Each milestone should end with **`make ci`** green ([HEXAGONAL_ARCHITECTURE.md](
 - **Read filters (not MVCC):** [`record.ValidAt`](../../internal/record/validity.go) — half-open **`[ValidFrom, ValidTo)`** on **`ValidityWire`**; **[`Tx.WalkRingAt`](../../primitives.go)** and **[`Tx.LoadContextAt`](../../primitives.go)** skip cells outside **`asOf`**.
 - **Facet ring loads:** **[`Tx.WalkRingFacets`](../../primitives.go)** — 6-bit **`facetMask`** for **`facet_id`** **`0..5`**, optional **`asOf`** on the cell; cost documented in **[`TX.md`](./TX.md)**.
 - **Port:** [`domain.Storage`](../../internal/domain/storage.go) + [`hexxladbout`](../../internal/adapters/out/hexxladb/storage.go); tests [`phase_c_test.go`](../../phase_c_test.go), [`internal/record/validity_test.go`](../../internal/record/validity_test.go).
-- **Plan:** [`SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md`](./SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md) Phase C **Done** block.
+- **Consolidated readiness status:** [`HEXXLA_READINESS_ROADMAP.md`](./HEXXLA_READINESS_ROADMAP.md).
 
 ### Phase D complete (spec integration track)
 
 - **Secondary indexes:** [`internal/index/source_key.go`](../../internal/index/source_key.go), [`time_key.go`](../../internal/index/time_key.go); **[`engine.BTree.Delete`](../../internal/engine/btree_delete.go)** for stale keys; **[`Tx.PutCell`](../../primitives.go)** dual-write; **[`Tx.AscendCellsBySource`](../../cell_secondary.go)**, **[`Tx.AscendCellsInTimeBucket`](../../cell_secondary.go)**.
 - **Port:** [`domain.Storage`](../../internal/domain/storage.go) + [`hexxladbout`](../../internal/adapters/out/hexxladb/storage.go); tests [`phase_d_test.go`](../../phase_d_test.go), [`internal/engine/btree_test.go`](../../internal/engine/btree_test.go) (`TestBTree_delete`).
-- **Gaps:** seam **`ValidityWire`** / seam **`source/`**·**`time/`** secondaries called out in [`SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md`](./SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md).
+- **Gaps:** see consolidated list in [`HEXXLA_READINESS_ROADMAP.md`](./HEXXLA_READINESS_ROADMAP.md).
 
 ### Phase E — design + E1 prototype (MVCC / `as_of`)
 
-- **Design doc:** [`MVCC_DESIGN.md`](./MVCC_DESIGN.md) — snapshot identity, version storage options, visibility, WAL, GC, migration, decision log; **E2+ implementation** deferred.
-- **E1:** Option A experiment [`internal/mvccspike`](../../internal/mvccspike) (not production); §8 decision log updated — see [`MVCC_DESIGN.md`](./MVCC_DESIGN.md) §9.
-- **Plan:** [`SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md`](./SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md) Phase E **Done (E0 + E1 prototype)** + E2+ deferred notes.
+- **Design doc:** [`MVCC_DESIGN.md`](./MVCC_DESIGN.md) — snapshot identity, version storage options, visibility, WAL, GC, migration, decision log.
+- **E1:** Option A experiment [`internal/mvccspike`](../../internal/mvccspike) informed production key layout.
+- **E2+ MVP shipped:** format v2 + `commit_seq`, `ViewAt(read_seq)`, version-suffixed key families for cells/facets/cell secondaries.
+- **Remaining follow-ons:** version GC/reclamation, wall-clock mapping to `read_seq`, and operational tooling.
 
 ### Phase F complete (spec integration track)
 
 - **Public API:** **[`DB.Batch`](../../db.go)** — alias for **[`DB.Update`](../../db.go)**; locking and semantics identical ([`TX.md`](./TX.md)).
 - **Tests:** [`db_test.go`](../../db_test.go).
-- **Plan:** [`SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md`](./SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md) Phase F **Done** block.
+- **Consolidated readiness status:** [`HEXXLA_READINESS_ROADMAP.md`](./HEXXLA_READINESS_ROADMAP.md).
+
+### Phase G complete (spec integration track)
+
+- **Logical changefeed:** [`internal/changelog`](../../internal/changelog); **[`Options`](../../options.go)** `ChangelogEnabled` / `ChangelogPath` / `ChangelogLazy`; **[`DB.ReadChangelogSince`](../../db_changelog.go)**; docs [`CHANGEFEED.md`](./CHANGEFEED.md).
+- **Tests:** [`internal/changelog/changelog_test.go`](../../internal/changelog/changelog_test.go), [`db_test.go`](../../db_test.go).
+- **Consolidated readiness status:** [`HEXXLA_READINESS_ROADMAP.md`](./HEXXLA_READINESS_ROADMAP.md).
+
+### Post–G — Seam `ValidityWire` + seam secondaries (spec §4.2 / Phase D)
+
+- **Wire:** [`SeamRecord.Validity`](../../internal/record/types.go), [`SeamRecord.Provenance`](../../internal/record/types.go) — trailing suffixes on seam payload v1 ([`internal/record/seam.go`](../../internal/record/seam.go), [`FORMAT.md`](../../internal/record/FORMAT.md)).
+- **API:** **[`Tx.FindSeamsAt`](../../primitives.go)**; **[`Tx.AscendSeamsBySource`](../../seam_secondary.go)**, **[`Tx.AscendSeamsInTimeBucket`](../../seam_secondary.go)**; **[`domain.Storage`](../../internal/domain/storage.go)** + **[`hexxladbout`](../../internal/adapters/out/hexxladb/storage.go)**.
+- **Indexes:** [`internal/index/seam_secondary_keys.go`](../../internal/index/seam_secondary_keys.go) (`seam-source/`, `seam-time/`); dual-write on **[`PutSeam`](../../primitives.go)**.
+- **Tests:** [`internal/record/record_test.go`](../../internal/record/record_test.go), [`phase_c_test.go`](../../phase_c_test.go), [`seam_secondary_test.go`](../../seam_secondary_test.go).
+- **Docs:** [`TX.md`](./TX.md); [`HEXXLA_READINESS_ROADMAP.md`](./HEXXLA_READINESS_ROADMAP.md).
 
 ## Testing strategy
 
 - **Default:** `go test ./...` stays **fast**—pure tests for `internal/lattice`, `internal/record`, fakes / memory adapters for `internal/app`.
-- **Integration:** real temp files, WAL replay, optional process-kill tests behind **`integration`** build tag if needed.
-- **Benchmarks:** `testing.B.Loop` where appropriate ([MODERN_GO.md](../context/MODERN_GO.md)); lattice and scan hot paths.
+- **Integration:** real temp files, WAL replay, optional process-kill tests behind **`integration`** build tag if needed. **Scale:** [`scale_integration_test.go`](../../scale_integration_test.go) (`make integration`) loads **10k** cells ( **1k** with `-short`), secondaries, and reopen checks. **Stress:** [`stress_integration_test.go`](../../stress_integration_test.go) (`make stress`, tag **`stress`**) defaults to **100k** cells (`HEXXLA_STRESS_CELLS`, max 500k).
+- **Benchmarks:** `testing.B.Loop` where appropriate ([MODERN_GO.md](../context/MODERN_GO.md)); lattice and scan hot paths; public API benches in [`api_bench_test.go`](../../api_bench_test.go) with **`cells_N`** sub-benchmarks (`make bench` / `make bench-stress`; **`HEXXLA_BENCH_PRELOAD=all`** adds 10k; **`extreme`** adds 50k and needs large **`TMPDIR`**).
+- **Example CLI:** [`cmd/hexxladb/main.go`](../../cmd/hexxladb/main.go) supports **`-demo`** / **`-path`** / **`-cells`**; **[`examples/storage_walkthrough`](../../examples/storage_walkthrough/main.go)** runs every **[`domain.Storage`](../../internal/domain/storage.go)** method in one script (see [README](../../README.md)).
 
 ## Production-ready definition
 
@@ -294,7 +310,7 @@ Each milestone should end with **`make ci`** green ([HEXAGONAL_ARCHITECTURE.md](
 ## Open points
 
 - **MVCC / `as_of`:** design `View`/`Tx` so snapshot isolation can land post-v1 without breaking callers.
-- **Next milestone (chosen for integration branch):** **Phase G** — changefeed / provenance log ([`SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md`](./SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md)); default work branch name **`feat/phase-g-changefeed`**. Alternatives: Seam **`ValidityWire`** (smaller gap in §4.2), **E2+** MVCC (large epic).
+- **Next milestone (suggested):** **post-E2+ hardening** — transaction late-failure semantics, MVCC GC/reclamation, context/ops ergonomics, and benchmark+usage baselines.
 
 ---
 

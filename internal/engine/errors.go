@@ -15,6 +15,9 @@ var (
 	// ErrBadPageSize means the payload length is not exactly PageSize.
 	ErrBadPageSize = errors.New("engine: page payload must be PageSize bytes")
 
+	// ErrBadEncryptionKey means the provided encryption key/passphrase does not match the database verifier.
+	ErrBadEncryptionKey = errors.New("engine: encryption key mismatch")
+
 	// ErrCorruptTree means a B+ tree page failed validation.
 	ErrCorruptTree = errors.New("engine: corrupt B+ tree page")
 

@@ -20,10 +20,17 @@ type Header struct {
 	Features uint32
 	// EncryptionSalt is used for Argon2id passphrase KDF when Features&FeatureEncryptedDataPages; otherwise zeros.
 	EncryptionSalt [16]byte
+	// CommitSeq is the last assigned logical commit sequence (MVCC). On-disk at offset 60 for format v2; v1 treats as 0.
+	CommitSeq uint64
+	// EncryptionKeyCheck is a keyed verifier for deterministic wrong-key detection on encrypted DBs.
+	EncryptionKeyCheck [HeaderEncryptionKeyCheckLen]byte
 }
 
 // FeatureEncryptedDataPages marks btree data pages (page_id >= 1) as encrypted on disk and in the WAL.
 const FeatureEncryptedDataPages uint32 = 1 << 0
+
+// FeatureWALKeyedMAC marks WAL records as carrying a keyed MAC trailer for tamper detection.
+const FeatureWALKeyedMAC uint32 = 1 << 1
 
 func decodeHeaderPage(page []byte) (Header, error) {
 	if len(page) < headerPrefixSize {
@@ -41,7 +48,13 @@ func decodeHeaderPage(page []byte) (Header, error) {
 		Features:      binary.BigEndian.Uint32(page[40:44]),
 	}
 	copy(h.EncryptionSalt[:], page[44:60])
-	if h.FormatVersion != formatVersionV1 {
+	copy(h.EncryptionKeyCheck[:], page[HeaderEncryptionKeyCheckOffset:HeaderEncryptionKeyCheckOffset+HeaderEncryptionKeyCheckLen])
+	switch h.FormatVersion {
+	case formatVersionV1:
+		h.CommitSeq = 0
+	case formatVersionV2:
+		h.CommitSeq = binary.BigEndian.Uint64(page[HeaderCommitSeqOffset : HeaderCommitSeqOffset+8])
+	default:
 		return Header{}, fmt.Errorf("%w: version %d", ErrCorruptHeader, h.FormatVersion)
 	}
 	if h.PageSize != uint32(PageSize) {
@@ -60,6 +73,12 @@ func encodeHeaderPage(h Header) []byte {
 	binary.BigEndian.PutUint64(page[32:40], h.BTreeRoot)
 	binary.BigEndian.PutUint32(page[40:44], h.Features)
 	copy(page[44:60], h.EncryptionSalt[:])
+	if h.FormatVersion == formatVersionV2 {
+		binary.BigEndian.PutUint64(page[HeaderCommitSeqOffset:HeaderCommitSeqOffset+8], h.CommitSeq)
+	} else {
+		binary.BigEndian.PutUint64(page[HeaderCommitSeqOffset:HeaderCommitSeqOffset+8], 0)
+	}
+	copy(page[HeaderEncryptionKeyCheckOffset:HeaderEncryptionKeyCheckOffset+HeaderEncryptionKeyCheckLen], h.EncryptionKeyCheck[:])
 	return page
 }
 

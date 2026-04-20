@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/hexxla/hexxladb/internal/changelog"
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
@@ -19,11 +20,20 @@ func (tx *Tx) PutFacet(rec record.FacetRecord) error {
 	if err != nil {
 		return err
 	}
-	key, err := index.FacetKey(rec.Key, rec.FacetID)
+	var key []byte
+	if tx.db.useMVCC {
+		key, err = index.FacetKeyWithVersion(rec.Key, rec.FacetID, tx.writeSeq)
+	} else {
+		key, err = index.FacetKey(rec.Key, rec.FacetID)
+	}
 	if err != nil {
 		return err
 	}
-	return tx.Put(key, data)
+	if err := tx.Put(key, data); err != nil {
+		return err
+	}
+	tx.noteChangelog(changelog.OpPutFacet, key, data)
+	return nil
 }
 
 // UpdateFacet writes a facet only if rec.DerivationHash equals SHA-256 of the cell's current RawContent
@@ -58,11 +68,7 @@ func (tx *Tx) GetFacet(key lattice.PackedCoord, facetID byte) (record.FacetRecor
 	if tx.db.activeEng() == nil {
 		return record.FacetRecord{}, false, ErrDatabaseClosed
 	}
-	k, err := index.FacetKey(key, facetID)
-	if err != nil {
-		return record.FacetRecord{}, false, err
-	}
-	raw, ok, err := tx.Get(k)
+	raw, ok, err := tx.getFacetVisibleRaw(key, facetID)
 	if err != nil || !ok {
 		return record.FacetRecord{}, ok, err
 	}
@@ -82,21 +88,40 @@ func (tx *Tx) AscendFacetsForCell(key lattice.PackedCoord, fn func(record.FacetR
 	if tx.db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
-	lo, err := index.FacetRangeLower(key)
-	if err != nil {
-		return err
-	}
-	hi, err := index.FacetRangeUpper(key)
-	if err != nil {
-		return err
-	}
-	return tx.AscendRange(lo, hi, func(_, v []byte) bool {
-		rec, err := record.DecodeFacet(v)
+	if !tx.db.useMVCC {
+		lo, err := index.FacetRangeLower(key)
 		if err != nil {
-			return false
+			return err
 		}
-		return fn(rec)
-	})
+		hi, err := index.FacetRangeUpper(key)
+		if err != nil {
+			return err
+		}
+		return tx.AscendRange(lo, hi, func(_, v []byte) bool {
+			rec, err := record.DecodeFacet(v)
+			if err != nil {
+				return false
+			}
+			return fn(rec)
+		})
+	}
+	for facetID := byte(0); facetID <= index.MaxFacetID; facetID++ {
+		raw, ok, err := tx.getFacetVisibleRaw(key, facetID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		rec, err := record.DecodeFacet(raw)
+		if err != nil {
+			return err
+		}
+		if !fn(rec) {
+			break
+		}
+	}
+	return nil
 }
 
 // PutEdge writes an edge at edge/<from>/<to>/<relation_type>. Only allowed inside [DB.Update].
@@ -118,7 +143,11 @@ func (tx *Tx) PutEdge(rec record.EdgeRecord) error {
 		}
 		return err
 	}
-	return tx.Put(key, data)
+	if err := tx.Put(key, data); err != nil {
+		return err
+	}
+	tx.noteChangelog(changelog.OpPutEdge, key, data)
+	return nil
 }
 
 // GetEdge returns the edge for (from, to, relationType), or (zero, false, nil) if missing.

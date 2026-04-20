@@ -47,7 +47,9 @@ Shortcuts:
 | `make clean`       | Remove `bin/` (from `make build`)                                             |
 | `make help`        | List Makefile targets                                                         |
 | `make integration` | Optional **`//go:build integration`** tests (`-race`); not part of default CI |
+| `make stress`      | Optional **`//go:build stress`** tests (very large `PutCell` counts; **not** CI) |
 | `make bench`       | Benchmarks (`go test -bench=. -benchmem ./...`); **not** run in default CI    |
+| `make bench-stress` | Longer **`BenchmarkAPI_*`** (preload 512 / 2k / 10k per sub-bench; **not** 50k — see [`BENCHMARKS.md`](docs/hexxladb/BENCHMARKS.md)); **not** in CI |
 | `make fuzz`        | Short fuzz smoke on internal decoders (~2s per target); **not** in default CI |
 
 ## Benchmarks and fuzzing
@@ -66,6 +68,10 @@ Compatibility expectations for releases and on-disk format: **[`VERSIONING.md`](
 | [`internal/adapters`](internal/adapters) | Add **`in/`** / **`out/`** packages when you add transports or infrastructure (see [`internal/adapters/README.md`](internal/adapters/README.md)). |
 
 Prefer **table-driven** tests and **`t.Parallel()`** where data is independent. **Durability / heavier tests** use **`//go:build integration`** (see [`db_durability_test.go`](db_durability_test.go) vs [`durability_integration_test.go`](durability_integration_test.go)); run them with **`make integration`**. Default **`make ci`** does **not** include the integration tag so PRs stay fast.
+
+**Scale integration:** [`scale_integration_test.go`](scale_integration_test.go) writes **~10k** `PutCell` rows ( **~1k** when **`go test -short`** is set) plus secondary index checks and reopen verification. Expect **seconds** of runtime and **tens of MB** temp disk under `-race`; run before release or when changing the btree / secondaries.
+
+**Stress (tag `stress`):** [`stress_integration_test.go`](stress_integration_test.go) defaults to **100k** cells (override **`HEXXLA_STRESS_CELLS`**, max **500k**). Run with **`make stress`** only — expect **minutes**, **hundreds of MB** temp disk, and heavy I/O; not included in **`make integration`**.
 
 ## Architecture
 

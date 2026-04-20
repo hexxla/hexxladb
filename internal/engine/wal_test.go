@@ -69,6 +69,19 @@ func TestWAL_corruptCRC(t *testing.T) {
 	}
 }
 
+func TestWAL_macMismatchRejected(t *testing.T) {
+	t.Parallel()
+	payload := makeTestPage('m')
+	var key [32]byte
+	key[0] = 1
+	rec := encodeWALRecordWithMAC(1, 1, payload, key, true)
+	rec[len(rec)-1] ^= 0xff
+	_, err := parseAndReplayWALWithMAC(rec, 0, func(uint64, uint64, []byte) error { return nil }, key, true)
+	if !errors.Is(err, ErrCorruptWAL) {
+		t.Fatalf("want ErrCorruptWAL, got %v", err)
+	}
+}
+
 func makeTestPage(fill byte) []byte {
 	b := bytes.Repeat([]byte{fill}, PageSize)
 	return b

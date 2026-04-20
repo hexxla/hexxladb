@@ -35,6 +35,7 @@ __debug_bin_*
 /target/
 /release/
 /tmp/
+/.tmp/
 /temp/
 
 # If you later vendor dependencies (uncomment to ignore the tree)

@@ -57,7 +57,25 @@ func TimeRangePrefix(bucket int64) (from, to []byte) {
 	return from, to
 }
 
-// ParseTimeKey extracts bucket and packed coord from a key built by [TimeKey].
+// TimeKeyWithVersion appends MVCC [VersionSuffixLen] commit_seq to [TimeKey].
+func TimeKeyWithVersion(bucket int64, p lattice.PackedCoord, commitSeq uint64) []byte {
+	base := TimeKey(bucket, p)
+	out := make([]byte, 0, len(base)+VersionSuffixLen)
+	out = append(out, base...)
+	var suf [VersionSuffixLen]byte
+	binary.BigEndian.PutUint64(suf[:], commitSeq)
+	return append(out, suf[:]...)
+}
+
+// TimeRangePrefixAllVersions widens [TimeRangePrefix] to include every MVCC suffix in the bucket.
+func TimeRangePrefixAllVersions(bucket int64) (from, to []byte) {
+	fromB, toB := TimeRangePrefix(bucket)
+	from = append(append([]byte(nil), fromB...), make([]byte, VersionSuffixLen)...)
+	to = append(append([]byte(nil), toB...), bytes.Repeat([]byte{0xff}, VersionSuffixLen)...)
+	return from, to
+}
+
+// ParseTimeKey extracts bucket and packed coord from a key built by [TimeKey] or [TimeKeyWithVersion].
 func ParseTimeKey(key []byte) (bucket int64, p lattice.PackedCoord, err error) {
 	if !bytes.HasPrefix(key, []byte(TimePrefix)) {
 		return 0, lattice.PackedCoord{}, errors.New("index: not a time key")
@@ -71,6 +89,13 @@ func ParseTimeKey(key []byte) (bucket int64, p lattice.PackedCoord, err error) {
 		return 0, lattice.PackedCoord{}, errors.New("index: time key separator")
 	}
 	rest = rest[9:]
+	switch len(rest) {
+	case PackedCoordKeyLen:
+	case PackedCoordKeyLen + VersionSuffixLen:
+		rest = rest[:PackedCoordKeyLen]
+	default:
+		return 0, lattice.PackedCoord{}, errors.New("index: time key packed len")
+	}
 	var pc lattice.PackedCoord
 	pc[1] = binary.BigEndian.Uint64(rest[0:8])
 	pc[0] = binary.BigEndian.Uint64(rest[8:16])

@@ -1,6 +1,10 @@
 package hexxladb
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/hexxla/hexxladb/internal/changelog"
+)
 
 // Stable sentinel errors for the public API. Use [errors.Is] and [errors.As].
 var (
@@ -38,9 +42,24 @@ var (
 	// ErrEncryptionOptions means encryption options conflict with custom page hooks.
 	ErrEncryptionOptions = errors.New("hexxladb: encryption options conflict with custom page hooks")
 
+	// ErrEncryptionKeyMismatch means provided key/passphrase does not match the encrypted database.
+	ErrEncryptionKeyMismatch = errors.New("hexxladb: encryption key mismatch")
+
 	// ErrCellNotFound means no cell exists at the key required for the operation (e.g. [Tx.UpdateFacet]).
 	ErrCellNotFound = errors.New("hexxladb: cell not found")
 
 	// ErrFacetDerivationMismatch means [Tx.UpdateFacet] was rejected: facet DerivationHash does not match SHA-256 of the cell RawContent.
 	ErrFacetDerivationMismatch = errors.New("hexxladb: facet derivation hash mismatch")
+
+	// ErrChangelogDisabled means [DB.ReadChangelogSince] was called but changelog was not enabled in [Options].
+	ErrChangelogDisabled = errors.New("hexxladb: changelog not enabled")
+
+	// ErrReadSeqFuture means [DB.ViewAt] was called with a read_seq greater than the database's committed [engine.Header.CommitSeq].
+	ErrReadSeqFuture = errors.New("hexxladb: read_seq beyond last commit")
+
+	// ErrCommitFinalization means callback writes may have reached storage but post-callback finalization failed.
+	ErrCommitFinalization = errors.New("hexxladb: commit finalization failed")
 )
+
+// ErrChangelogCorrupt means the logical changelog file failed validation (docs/hexxladb/CHANGEFEED.md).
+var ErrChangelogCorrupt = changelog.ErrCorrupt
