@@ -89,42 +89,174 @@ Use this roadmap instead of maintaining separate "implementation status" and "ga
 2. **Advanced lifecycle automation** (policy-driven pruning scheduling APIs/tooling).
 3. **Future spec areas** currently out of v1 (embedding partitions, scale-out replication/tiering, super-hex sharding).
 
+## Optional API Surface Improvements (Post-v1)
+
+### Native View Types & Client Assembly
+
+**Current State:** Codebase provides efficient wire formats (`record.CellRecord`, `record.SeamRecord`) with separate query APIs. HEXXLA.md spec expects aggregated view types (`CellView`, `ContextPack`, `SeamRef`).
+
+**Optional Improvements:**
+
+#### 1. Native View Types
+
+```go
+// CellView provides read-only aggregated view matching HEXXLA.md spec
+type CellView struct {
+    Coord        lattice.Coord
+    RawContent   string
+    Provenance   record.ProvenanceWire
+    Validity     record.ValidityWire
+    Tags         []string
+    ClusterHint  *lattice.Coord
+    Facets       []FacetView
+    ActiveFacet  int
+    Edges        []EdgeView
+    Seams        []SeamRef
+}
+
+// ContextPack provides token-budgeted context matching HEXXLA.md spec
+type ContextPack struct {
+    Cells       []CellView
+    TotalTokens int
+    Seams       []Seam
+}
+
+// SeamRef provides lightweight seam reference for CellView
+type SeamRef struct {
+    ID               string
+    SeamType         string
+    ResolutionStatus   string
+}
+```
+
+#### 2. Cell Aggregation Methods
+
+```go
+// AssembleCellView creates aggregated CellView from wire records + related data
+func (tx *Tx) AssembleCellView(ctx context.Context, coord lattice.Coord, asOf *time.Time) (CellView, error)
+
+// LoadContextPack returns token-budgeted ContextPack matching HEXXLA.md spec
+func (tx *Tx) LoadContextPack(ctx context.Context, center lattice.Coord, maxR, maxTokens int, filters Filter) (ContextPack, error)
+```
+
+#### 3. Token Budgeting Implementation
+
+```go
+// TokenBudgeter provides token counting and truncation logic
+type TokenBudgeter interface {
+    CountTokens(content string) int
+    TruncateToTokenBudget(items []CellView, maxTokens int) []CellView
+}
+
+// LoadContextWithBudgeting implements token-aware context loading
+func (tx *Tx) LoadContextWithBudgeting(ctx context.Context, center lattice.Coord, maxR, maxTokens int, budgeter TokenBudgeter) (ContextPack, error)
+```
+
+**Benefits:**
+
+- **Client convenience:** Eliminates manual assembly of view types
+- **Spec compliance:** Direct match to HEXXLA.md expected API surface
+- **Token efficiency:** Native budgeting with automatic truncation
+- **Performance:** Server-side aggregation reduces round trips
+
+**Implementation Priority:** P2 (post-production) - non-critical for core functionality
+
 ## Execution roadmap
 
-## Phase R1 — MVCC operations hardening
+## Phase R1 - MVCC operations hardening (1-2 weeks, P0)
 
-- Finalize retention + prune policy.
-- Add long-run stress tests validating bounded growth.
-- Document default operating profiles by workload class.
+**Steps:**
 
-**Exit criteria:** stable storage growth behavior under sustained updates, documented operator defaults.
+1. **Define retention policies**
+   - Add configurable retention windows (`RetentionWindow` option)
+   - Implement default profiles by workload class
+   - Document SLA guidance
 
-## Phase R2 — Temporal semantics and observability
+2. **Add deterministic scheduling**
+   - Create `PruneScheduler` with configurable intervals
+   - Add incremental reclaim logic
+   - Implement background pruning hooks
 
-- Lock down commit-seq/time mapping decisions (or explicitly keep internal-only).
-- Add telemetry guidance for snapshot usage and changelog lag.
-- Add recovery drills and expected operator responses.
+3. **Stress validation**
+   - Create long-run churn tests (`100k+` updates)
+   - Validate bounded file growth under sustained load
+   - Add storage growth monitoring
 
-**Exit criteria:** predictable temporal semantics and actionable runtime observability.
+**Exit criteria:** Stable storage growth behavior under sustained updates, documented operator defaults.
 
-## Phase R3 — Production runbooks and acceptance gates
+## Phase R2 - Temporal semantics and observability (1-2 weeks, P0)
 
-- Publish concise production acceptance checklist.
-- Validate backup/restore, reopen/replay, rotation, and corruption-path playbooks.
-- Validate benchmark/stress reproducibility and environment defaults.
+**Steps:**
 
-**Exit criteria:** merge-ready production handbook with repeatable verification steps.
+1. **Lock down temporal semantics**
+   - Finalize commit-seq/time mapping decisions
+   - Add deterministic snapshot resolution guarantees
+   - Document temporal behavior contract
+
+2. **Add telemetry guidance**
+   - Define snapshot usage metrics
+   - Add changelog lag monitoring
+   - Create operational dashboards spec
+
+3. **Recovery drills**
+   - Document expected failure modes
+   - Create recovery procedures
+   - Add automated recovery validation
+
+**Exit criteria:** Predictable temporal semantics with actionable runtime observability.
+
+## Phase R3 - Production runbooks and acceptance gates (2-3 weeks, P1)
+
+**Steps:**
+
+1. **Production acceptance checklist**
+   - Define acceptance criteria matrix
+   - Create validation scripts
+   - Document environment requirements
+
+2. **Backup/restore validation**
+   - Implement clean shutdown drills
+   - Add crash-recovery scenarios
+   - Validate encryption key rotation
+
+3. **Benchmark reproducibility**
+   - Standardize benchmark environments
+   - Add performance regression guards
+   - Create stress test matrices
+
+**Exit criteria:** Merge-ready production handbook with repeatable verification steps.
+
+## Phase R4 - Scale & performance hardening (2-4 weeks, P1 - optional)
+
+**Steps:**
+
+1. **Expand stress testing**
+   - Large dataset validation (`1M+` cells)
+   - Mixed workload scenarios
+   - Resource utilization profiling
+
+2. **Performance optimization**
+   - Latency tracking under load
+   - Memory usage optimization
+   - I/O pattern improvements
+
+3. **Contention scenarios**
+   - Encrypted + MVCC benchmarks
+   - Concurrency stress tests
+   - Resource exhaustion handling
+
+**Exit criteria:** Production-ready performance characteristics under target workloads.
 
 ## Documentation cleanup decisions
 
-| Document | Decision | Reason |
-| -------- | -------- | ------ |
-| `SPEC_IMPLEMENTATION_STATUS.md` | **Delete** | Overlaps with this consolidated roadmap and drifts quickly. |
-| `SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md` | **Delete** | Historical and internally conflicting snapshots; content folded into this roadmap. |
-| `DEVELOPMENT_ROADMAP.md` | **Keep** | Milestone chronology and architecture sequence remain useful. |
-| `HEXXLA_DB.md` | **Keep** | Normative storage/database spec. |
-| `HEXXLA.md` | **Keep** | Product memory-model spec. |
-| `TX.md`, `ENCRYPTION.md`, `CHANGEFEED.md`, `BENCHMARKS.md`, `OPERATIONS.md` | **Keep** | Focused operational/API references; now cross-reference this roadmap for readiness state. |
+| Document                                                                    | Decision   | Reason                                                                                    |
+| --------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------- |
+| `SPEC_IMPLEMENTATION_STATUS.md`                                             | **Delete** | Overlaps with this consolidated roadmap and drifts quickly.                               |
+| `SPEC_GAP_ANALYSIS_AND_INTEGRATION_PLAN.md`                                 | **Delete** | Historical and internally conflicting snapshots; content folded into this roadmap.        |
+| `DEVELOPMENT_ROADMAP.md`                                                    | **Keep**   | Milestone chronology and architecture sequence remain useful.                             |
+| `HEXXLA_DB.md`                                                              | **Keep**   | Normative storage/database spec.                                                          |
+| `HEXXLA.md`                                                                 | **Keep**   | Product memory-model spec.                                                                |
+| `TX.md`, `ENCRYPTION.md`, `CHANGEFEED.md`, `BENCHMARKS.md`, `OPERATIONS.md` | **Keep**   | Focused operational/API references; now cross-reference this roadmap for readiness state. |
 
 ## Maintenance rule
 

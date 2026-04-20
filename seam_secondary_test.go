@@ -49,7 +49,7 @@ func TestTx_PutSeam_secondaryIndexes(t *testing.T) {
 		Validity:         record.ValidityWire{ValidFrom: &vf},
 		Provenance:       record.ProvenanceWire{SourceID: "seam-src"},
 	}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(context.Background(), rec) }); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
@@ -84,7 +84,7 @@ func TestTx_PutSeam_secondaryIndexes(t *testing.T) {
 	rec2.Provenance.SourceID = "seam-other"
 	vf2 := int64(12 * index.WeekNanos)
 	rec2.Validity.ValidFrom = &vf2
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(rec2) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(context.Background(), rec2) }); err != nil {
 		t.Fatal(err)
 	}
 	nSrc = 0
@@ -161,11 +161,11 @@ func TestTx_AscendSeamsBySource_mvccSnapshotIsolation(t *testing.T) {
 		DetectedAt: 1,
 		Provenance: record.ProvenanceWire{SourceID: "old-src"},
 	}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(context.Background(), rec) }); err != nil {
 		t.Fatal(err)
 	}
 	rec.Provenance.SourceID = "new-src"
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(context.Background(), rec) }); err != nil {
 		t.Fatal(err)
 	}
 

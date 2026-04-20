@@ -133,7 +133,7 @@ func TestTx_FindSeams_ResolveSeam(t *testing.T) {
 	}
 
 	err = db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutSeam(seam)
+		return tx.PutSeam(context.Background(), seam)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -225,7 +225,7 @@ func TestTx_PutSeam_endpointMismatch(t *testing.T) {
 	p1, _ := lattice.Pack(lattice.Coord{Q: 1, R: 0})
 	p2, _ := lattice.Pack(lattice.Coord{Q: 2, R: 0})
 	err = db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutSeam(record.SeamRecord{
+		return tx.PutSeam(context.Background(), record.SeamRecord{
 			ID: id, CellA: p0, CellB: p1, SeamType: "t",
 		})
 	})
@@ -233,7 +233,7 @@ func TestTx_PutSeam_endpointMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutSeam(record.SeamRecord{
+		return tx.PutSeam(context.Background(), record.SeamRecord{
 			ID: id, CellA: p0, CellB: p2, SeamType: "t",
 		})
 	})
@@ -258,7 +258,7 @@ func TestTx_FindSeams_dedupesBothEndpointsInBall(t *testing.T) {
 	p0, _ := lattice.Pack(lattice.Coord{Q: 0, R: 0})
 	p1, _ := lattice.Pack(lattice.Coord{Q: 1, R: 0})
 	err = db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutSeam(record.SeamRecord{ID: id, CellA: p0, CellB: p1, SeamType: "t"})
+		return tx.PutSeam(context.Background(), record.SeamRecord{ID: id, CellA: p0, CellB: p1, SeamType: "t"})
 	})
 	if err != nil {
 		t.Fatal(err)

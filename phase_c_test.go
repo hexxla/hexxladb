@@ -49,7 +49,7 @@ func TestTx_FindSeamsAt_validityFilter(t *testing.T) {
 		ResolutionNote:   "",
 		Validity:         record.ValidityWire{ValidFrom: &lo, ValidTo: &hi},
 	}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(seam) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(context.Background(), seam) }); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
