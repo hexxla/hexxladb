@@ -131,7 +131,7 @@ func (db *DB) PruneCellVersions(beforeSeq uint64, maxDelete int) (deleted int, e
 // PruneCellVersionsByProfile applies one prune pass using profile-driven defaults.
 // It returns the number of removed rows from this single pass.
 func (db *DB) PruneCellVersionsByProfile(beforeSeq uint64, profile MVCCPruneProfile) (int, error) {
-	maxDelete := 2048
+	var maxDelete int
 	switch profile {
 	case "", MVCCPruneBalanced:
 		maxDelete = 2048
