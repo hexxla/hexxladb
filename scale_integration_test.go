@@ -64,7 +64,7 @@ func TestIntegration_putManyCells_survivesReopen(t *testing.T) {
 					},
 					Validity: record.ValidityWire{ValidFrom: &vf},
 				}
-				if err := tx.PutCell(rec); err != nil {
+				if err := tx.PutCell(context.Background(), rec); err != nil {
 					return err
 				}
 			}

@@ -1,7 +1,7 @@
-// Storage walkthrough: exercises [domain.Storage] via the outbound adapter, the same
+// Storage walkthrough: exercises [domain.Storage] via outbound adapter, same
 // surface a Hexxla-style service uses. Run from repo root:
 //
-//	go run ./examples/storage_walkthrough -path /tmp/walkthrough.db
+//	go run ./examples/storage_walkthrough -path .tmp/walkthrough.db
 //
 // This is orchestration and I/O only — no business rules (see HEXAGONAL_ARCHITECTURE.md).
 package main

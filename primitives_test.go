@@ -189,7 +189,10 @@ func TestTx_LoadContext(t *testing.T) {
 	center := lattice.Coord{Q: 0, R: 0}
 	p0, _ := lattice.Pack(center)
 	err = db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutCell(context.Background(), record.CellRecord{Key: p0, RawContent: "center"})
+		if err := tx.PutCell(context.Background(), record.CellRecord{Key: p0, RawContent: "center"}); err != nil {
+			return err
+		}
+		return nil
 	})
 	if err != nil {
 		t.Fatal(err)

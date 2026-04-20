@@ -13,28 +13,28 @@ This repository is a [hexagonal](docs/context/HEXAGONAL_ARCHITECTURE.md) Go modu
 Smoke test (domain port, single cell):
 
 ```bash
-HEXXLA_DB_PATH=/tmp/hexxla.db make run
-# or: HEXXLA_DB_PATH=/tmp/hexxla.db go run ./cmd/hexxladb
+HEXXLA_DB_PATH=.tmp/hexxla.db make run
+# or: HEXXLA_DB_PATH=.tmp/hexxla.db go run ./cmd/hexxladb
 ```
 
 Multi-cell demo (grid **`PutCell`**, **`AscendCellsBySource`**, reopen **`GetCell`**):
 
 ```bash
-go run ./cmd/hexxladb -demo -path /tmp/hexxla-demo.db -cells 500
-# equivalent: HEXXLA_DB_PATH=/tmp/hexxla-demo.db go run ./cmd/hexxladb -demo -cells 500
+go run ./cmd/hexxladb -demo -path .tmp/hexxla-demo.db -cells 500
+# equivalent: HEXXLA_DB_PATH=.tmp/hexxla-demo.db go run ./cmd/hexxladb -demo -cells 500
 ```
 
 **`domain.Storage` tour** (cells, secondaries, rings, context, facets, edges, seams — same port the Hexxla adapter implements):
 
 ```bash
-go run ./examples/storage_walkthrough -path /tmp/hexxla-walkthrough.db
+go run ./examples/storage_walkthrough -path .tmp/hexxla-walkthrough.db
 ```
 
 Build a binary:
 
 ```bash
 make build
-./bin/hexxladb -demo -path /tmp/hexxla-demo.db
+./bin/hexxladb -demo -path .tmp/hexxla-demo.db
 ```
 
 ### Flags (`cmd/hexxladb`)
