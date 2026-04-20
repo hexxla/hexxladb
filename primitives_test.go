@@ -34,7 +34,7 @@ func TestTx_PutCell_GetCell_roundTrip(t *testing.T) {
 	}
 
 	err = db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutCell(rec)
+		return tx.PutCell(context.Background(), rec)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestTx_WalkRing(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if err := tx.PutCell(record.CellRecord{Key: p, RawContent: string(rune('a' + i))}); err != nil {
+			if err := tx.PutCell(context.Background(), record.CellRecord{Key: p, RawContent: string(rune('a' + i))}); err != nil {
 				return err
 			}
 		}
@@ -189,7 +189,7 @@ func TestTx_LoadContext(t *testing.T) {
 	center := lattice.Coord{Q: 0, R: 0}
 	p0, _ := lattice.Pack(center)
 	err = db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutCell(record.CellRecord{Key: p0, RawContent: "center"})
+		return tx.PutCell(context.Background(), record.CellRecord{Key: p0, RawContent: "center"})
 	})
 	if err != nil {
 		t.Fatal(err)

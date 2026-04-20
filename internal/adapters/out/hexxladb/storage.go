@@ -30,7 +30,7 @@ func (s *Storage) PutCell(ctx context.Context, rec record.CellRecord) error {
 		return err
 	}
 	return s.DB.Update(func(tx *hxdb.Tx) error {
-		return tx.PutCell(rec)
+		return tx.PutCell(ctx, rec)
 	})
 }
 
@@ -63,6 +63,20 @@ func (s *Storage) AscendCellsInTimeBucket(ctx context.Context, bucket int64, fn 
 	})
 }
 
+// AscendSeamsBySource implements [domain.Storage].
+func (s *Storage) AscendSeamsBySource(ctx context.Context, sourceID string, fn func(record.SeamRecord) bool) error {
+	return s.DB.View(func(tx *hxdb.Tx) error {
+		return tx.AscendSeamsBySource(ctx, sourceID, fn)
+	})
+}
+
+// AscendSeamsInTimeBucket implements [domain.Storage].
+func (s *Storage) AscendSeamsInTimeBucket(ctx context.Context, bucket int64, fn func(record.SeamRecord) bool) error {
+	return s.DB.View(func(tx *hxdb.Tx) error {
+		return tx.AscendSeamsInTimeBucket(ctx, bucket, fn)
+	})
+}
+
 // WalkRing implements [domain.Storage].
 func (s *Storage) WalkRing(ctx context.Context, center lattice.Coord, ring int, fn func(lattice.Coord, []byte, bool) bool) error {
 	return s.DB.View(func(tx *hxdb.Tx) error {
@@ -83,6 +97,17 @@ func (s *Storage) FindSeams(ctx context.Context, center lattice.Coord, radius in
 	err := s.DB.View(func(tx *hxdb.Tx) error {
 		var inner error
 		out, inner = tx.FindSeams(ctx, center, radius, unresolvedOnly)
+		return inner
+	})
+	return out, err
+}
+
+// FindSeamsAt implements [domain.Storage].
+func (s *Storage) FindSeamsAt(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool, asOf time.Time) ([]record.SeamRecord, error) {
+	var out []record.SeamRecord
+	err := s.DB.View(func(tx *hxdb.Tx) error {
+		var inner error
+		out, inner = tx.FindSeamsAt(ctx, center, radius, unresolvedOnly, asOf)
 		return inner
 	})
 	return out, err
@@ -133,7 +158,7 @@ func (s *Storage) PutSeam(ctx context.Context, rec record.SeamRecord) error {
 		return err
 	}
 	return s.DB.Update(func(tx *hxdb.Tx) error {
-		return tx.PutSeam(rec)
+		return tx.PutSeam(ctx, rec)
 	})
 }
 

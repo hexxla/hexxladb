@@ -1,6 +1,7 @@
 package hexxladb_test
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"sync"
@@ -8,6 +9,8 @@ import (
 	"time"
 
 	"github.com/hexxla/hexxladb"
+	"github.com/hexxla/hexxladb/internal/lattice"
+	"github.com/hexxla/hexxladb/internal/record"
 )
 
 func TestOpen_close_roundTrip(t *testing.T) {
@@ -196,6 +199,107 @@ func TestDB_updateBlocksView(t *testing.T) {
 	close(done)
 	if err := <-ch; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDB_ReadChangelogSince_disabled(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	db, err := hexxladb.Open(filepath.Join(dir, "c.db"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = db.ReadChangelogSince(0, 10)
+	if !errors.Is(err, hexxladb.ErrChangelogDisabled) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestDB_ReadChangelogSince_PutCell(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "chg.db")
+	db, err := hexxladb.Open(path, &hexxladb.Options{ChangelogEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	p, err := lattice.Pack(lattice.Coord{Q: 0, R: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.PutCell(context.Background(), record.CellRecord{Key: p, RawContent: "x"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := db.ReadChangelogSince(0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("want 1 record, got %d", len(recs))
+	}
+	if recs[0].Op != hexxladb.ChangelogOpPutCell {
+		t.Fatalf("op=%d", recs[0].Op)
+	}
+	more, err := db.ReadChangelogSince(recs[0].Seq, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(more) != 0 {
+		t.Fatalf("expected no tail after seq, got %d", len(more))
+	}
+}
+
+func TestDB_changelog_resumeAfterReopen(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "chg_reopen.db")
+	db, err := hexxladb.Open(path, &hexxladb.Options{ChangelogEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := lattice.Pack(lattice.Coord{Q: 1, R: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.PutCell(context.Background(), record.CellRecord{Key: p, RawContent: "a"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recs1, err := db.ReadChangelogSince(0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs1) != 1 {
+		t.Fatalf("before close: want 1 changelog record, got %d", len(recs1))
+	}
+	lastSeq := recs1[len(recs1)-1].Seq
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db2, err := hexxladb.Open(path, &hexxladb.Options{ChangelogEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db2.Close() })
+	fromStart, err := db2.ReadChangelogSince(0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fromStart) != 1 || fromStart[0].Seq != lastSeq {
+		t.Fatalf("after reopen ReadSince(0): got %d records, want seq %d", len(fromStart), lastSeq)
+	}
+	tail, err := db2.ReadChangelogSince(lastSeq, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tail) != 0 {
+		t.Fatalf("after reopen ReadSince(lastSeq): want empty, got %d", len(tail))
 	}
 }
 

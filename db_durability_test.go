@@ -2,6 +2,7 @@ package hexxladb_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"hash/crc32"
 	"os"
@@ -89,7 +90,7 @@ func TestDB_committedCellsSurviveReopen(t *testing.T) {
 	}
 	rec := record.CellRecord{Key: p, RawContent: "blob"}
 	err = db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutCell(rec)
+		return tx.PutCell(context.Background(), rec)
 	})
 	if err != nil {
 		t.Fatal(err)

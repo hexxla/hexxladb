@@ -18,12 +18,18 @@ type Storage interface {
 	AscendCellsBySource(ctx context.Context, sourceID string, fn func(record.CellRecord) bool) error
 	// AscendCellsInTimeBucket scans the time/ secondary index for a UTC week bucket index.
 	AscendCellsInTimeBucket(ctx context.Context, bucket int64, fn func(record.CellRecord) bool) error
+	// AscendSeamsBySource scans the seam-source/ secondary index for sourceID.
+	AscendSeamsBySource(ctx context.Context, sourceID string, fn func(record.SeamRecord) bool) error
+	// AscendSeamsInTimeBucket scans the seam-time/ secondary index for a UTC week bucket.
+	AscendSeamsInTimeBucket(ctx context.Context, bucket int64, fn func(record.SeamRecord) bool) error
 	// WalkRing visits each cell on the ring at hex distance ring from center
 	// (load_context ring order). fn receives raw bytes and ok=false when missing.
 	WalkRing(ctx context.Context, center lattice.Coord, ring int, fn func(lattice.Coord, []byte, bool) bool) error
 	// WalkRingAt calls fn only for cells whose validity contains asOf (single-version filter; not MVCC).
 	WalkRingAt(ctx context.Context, center lattice.Coord, ring int, asOf time.Time, fn func(lattice.Coord, record.CellRecord) bool) error
 	FindSeams(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool) ([]record.SeamRecord, error)
+	// FindSeamsAt is like FindSeams but only includes seams whose validity contains asOf (single-version filter; not MVCC).
+	FindSeamsAt(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool, asOf time.Time) ([]record.SeamRecord, error)
 	LoadContext(ctx context.Context, center lattice.Coord, maxR, maxCells int) ([]record.CellRecord, error)
 	// LoadContextAt is like LoadContext but skips cells whose validity does not contain asOf.
 	LoadContextAt(ctx context.Context, center lattice.Coord, maxR, maxCells int, asOf time.Time) ([]record.CellRecord, error)

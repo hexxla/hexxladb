@@ -2,15 +2,79 @@ package hexxladb_test
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/oklog/ulid/v2"
+
 	"github.com/hexxla/hexxladb"
 	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
 )
+
+func TestTx_FindSeamsAt_validityFilter(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	db, err := hexxladb.Open(filepath.Join(dir, "seams_at.db"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	a := lattice.Coord{Q: 0, R: 0}
+	b := lattice.Coord{Q: 1, R: 0}
+	pa, err := lattice.Pack(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pb, err := lattice.Pack(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lo int64 = 100
+	var hi int64 = 200
+	id := ulid.MustNew(ulid.Now(), rand.Reader).String()
+	seam := record.SeamRecord{
+		ID:               id,
+		CellA:            pa,
+		CellB:            pb,
+		SeamType:         "t",
+		Reason:           "",
+		ConfidenceDelta:  0,
+		DetectedAt:       1,
+		ResolutionStatus: "",
+		ResolutionNote:   "",
+		Validity:         record.ValidityWire{ValidFrom: &lo, ValidTo: &hi},
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(seam) }); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	asOfInside := time.Unix(0, 150).UTC()
+	err = db.View(func(tx *hexxladb.Tx) error {
+		seams, err := tx.FindSeamsAt(ctx, a, 2, false, asOfInside)
+		if err != nil {
+			return err
+		}
+		if len(seams) != 1 || seams[0].ID != id {
+			t.Fatalf("inside window: got %+v", seams)
+		}
+		seams, err = tx.FindSeamsAt(ctx, a, 2, false, time.Unix(0, 50).UTC())
+		if err != nil {
+			return err
+		}
+		if len(seams) != 0 {
+			t.Fatalf("before window: want 0, got %d", len(seams))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestTx_WalkRingAt_validityFilter(t *testing.T) {
 	t.Parallel()
@@ -33,7 +97,7 @@ func TestTx_WalkRingAt_validityFilter(t *testing.T) {
 		RawContent: "x",
 		Validity:   record.ValidityWire{ValidFrom: &lo, ValidTo: &hi},
 	}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
 		t.Fatal(err)
 	}
 
@@ -101,10 +165,10 @@ func TestTx_LoadContextAt_maxCellsAfterFilter(t *testing.T) {
 	var past int64 = 200
 	rec1 := record.CellRecord{Key: p1, RawContent: "b", Validity: record.ValidityWire{ValidFrom: &past, ValidTo: nil}}
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		if err := tx.PutCell(rec0); err != nil {
+		if err := tx.PutCell(context.Background(), rec0); err != nil {
 			return err
 		}
-		return tx.PutCell(rec1)
+		return tx.PutCell(context.Background(), rec1)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +226,7 @@ func TestTx_WalkRingFacets_maskAndAsOf(t *testing.T) {
 	f0 := record.FacetRecord{Key: p, FacetID: 0, DerivedContent: "f0", DerivationHash: record.HashRawContent([]byte("raw"))}
 	f2 := record.FacetRecord{Key: p, FacetID: 2, DerivedContent: "f2", DerivationHash: record.HashRawContent([]byte("raw"))}
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		if err := tx.PutCell(cell); err != nil {
+		if err := tx.PutCell(context.Background(), cell); err != nil {
 			return err
 		}
 		if err := tx.PutFacet(f0); err != nil {

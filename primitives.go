@@ -9,48 +9,73 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"github.com/hexxla/hexxladb/internal/changelog"
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
-// PutCell writes a versioned cell record at cell/<packed> for rec.Key.
+// PutCell writes a cell record at cell/<packed> for rec.Key (v1) or version-suffixed keys (MVCC).
 // It maintains source/ and time/ secondary indexes (see [Tx.AscendCellsBySource], [Tx.AscendCellsInTimeBucket]).
 // Only allowed inside [DB.Update].
-func (tx *Tx) PutCell(rec record.CellRecord) error {
-	if err := tx.requireWritable(); err != nil {
+func (tx *Tx) PutCell(ctx context.Context, rec record.CellRecord) error {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	old, had, err := tx.GetCell(rec.Key)
-	if err != nil {
+	if err := tx.requireWritable(); err != nil {
 		return err
 	}
 	data, err := record.EncodeCell(rec)
 	if err != nil {
 		return err
 	}
-	key := index.CellKey(rec.Key)
+	if !tx.db.useMVCC {
+		old, had, err := tx.GetCell(rec.Key)
+		if err != nil {
+			return err
+		}
+		key := index.CellKey(rec.Key)
+		if err := tx.Put(key, data); err != nil {
+			return err
+		}
+		if had {
+			if err := tx.removeCellSecondaryIndex(old, 0); err != nil {
+				return err
+			}
+		}
+		if err := tx.putCellSecondaryIndex(rec, 0); err != nil {
+			return err
+		}
+		tx.noteChangelog(changelog.OpPutCell, key, data)
+		return nil
+	}
+	old, oldSeq, had, err := tx.visibleCellAndSeq(rec.Key)
+	if err != nil {
+		return err
+	}
+	key := index.CellKeyWithVersion(rec.Key, tx.writeSeq)
 	if err := tx.Put(key, data); err != nil {
 		return err
 	}
-	if had {
-		if err := tx.removeCellSecondaryIndex(old); err != nil {
+	if had && !tx.db.useMVCC {
+		if err := tx.removeCellSecondaryIndex(old, oldSeq); err != nil {
 			return err
 		}
 	}
-	return tx.putCellSecondaryIndex(rec)
+	if err := tx.putCellSecondaryIndex(rec, tx.writeSeq); err != nil {
+		return err
+	}
+	tx.cellOverlay[rec.Key] = rec
+	tx.noteChangelog(changelog.OpPutCell, index.CellKey(rec.Key), data)
+	return nil
 }
 
-// GetCell returns the decoded cell at key, or (zero, false, nil) if missing.
+// GetCell returns the decoded cell visible at the transaction's snapshot, or (zero, false, nil) if missing.
 func (tx *Tx) GetCell(key lattice.PackedCoord) (record.CellRecord, bool, error) {
 	if tx == nil || tx.db == nil {
 		return record.CellRecord{}, false, ErrClosed
 	}
-	e := tx.db.activeEng()
-	if e == nil {
-		return record.CellRecord{}, false, ErrDatabaseClosed
-	}
-	raw, ok, err := tx.db.btree.Get(index.CellKey(key))
+	raw, _, ok, err := tx.getCellVisibleRaw(key)
 	if err != nil || !ok {
 		return record.CellRecord{}, ok, err
 	}
@@ -85,7 +110,7 @@ func (tx *Tx) WalkRing(ctx context.Context, center lattice.Coord, ring int, fn f
 		if err != nil {
 			return err
 		}
-		raw, ok, err := tx.db.btree.Get(index.CellKey(p))
+		raw, _, ok, err := tx.getCellVisibleRaw(p)
 		if err != nil {
 			return err
 		}
@@ -138,7 +163,10 @@ func (tx *Tx) WalkRingAt(ctx context.Context, center lattice.Coord, ring int, as
 // PutSeam writes a seam record at seam/<ulid> and a secondary seam-by-cells/<lo>/<hi>/<ulid>
 // index entry (empty value). If a primary already exists for the ULID, CellA/CellB must match
 // the stored endpoints or [ErrSeamEndpointMismatch] is returned. Only allowed inside [DB.Update].
-func (tx *Tx) PutSeam(rec record.SeamRecord) error {
+func (tx *Tx) PutSeam(ctx context.Context, rec record.SeamRecord) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}
@@ -146,7 +174,19 @@ func (tx *Tx) PutSeam(rec record.SeamRecord) error {
 	if err != nil {
 		return err
 	}
-	if raw, ok, err := tx.Get(pk); err != nil {
+	if tx.db.useMVCC {
+		old, _, ok, err := tx.visibleSeamAndSeq(rec.ID)
+		if err != nil {
+			return err
+		}
+		if ok {
+			elo, ehi := record.CanonicalCellPair(old.CellA, old.CellB)
+			nlo, nhi := record.CanonicalCellPair(rec.CellA, rec.CellB)
+			if elo != nlo || ehi != nhi {
+				return ErrSeamEndpointMismatch
+			}
+		}
+	} else if raw, ok, err := tx.Get(pk); err != nil {
 		return err
 	} else if ok {
 		old, err := record.DecodeSeam(raw)
@@ -158,12 +198,22 @@ func (tx *Tx) PutSeam(rec record.SeamRecord) error {
 		if elo != nlo || ehi != nhi {
 			return ErrSeamEndpointMismatch
 		}
+		if err := tx.removeSeamSecondaryIndex(old, 0); err != nil {
+			return err
+		}
 	}
 	data, err := record.EncodeSeam(rec)
 	if err != nil {
 		return err
 	}
-	if err := tx.Put(pk, data); err != nil {
+	writeKey := pk
+	if tx.db.useMVCC {
+		writeKey, err = index.SeamKeyWithVersion(rec.ID, tx.writeSeq)
+		if err != nil {
+			return err
+		}
+	}
+	if err := tx.Put(writeKey, data); err != nil {
 		return err
 	}
 	lo, hi := record.CanonicalCellPair(rec.CellA, rec.CellB)
@@ -171,7 +221,18 @@ func (tx *Tx) PutSeam(rec record.SeamRecord) error {
 	if err != nil {
 		return err
 	}
-	return tx.Put(sk, nil)
+	if err := tx.Put(sk, nil); err != nil {
+		return err
+	}
+	secSeq := uint64(0)
+	if tx.db.useMVCC {
+		secSeq = tx.writeSeq
+	}
+	if err := tx.putSeamSecondaryIndex(rec, secSeq); err != nil {
+		return err
+	}
+	tx.noteChangelog(changelog.OpPutSeam, pk, data)
+	return nil
 }
 
 // MarkConflict creates a manual seam between two cells (spec: mark_conflict): new ULID,
@@ -205,7 +266,7 @@ func (tx *Tx) MarkConflict(cellA, cellB lattice.Coord, reason string) error {
 		ResolutionStatus: "",
 		ResolutionNote:   "",
 	}
-	return tx.PutSeam(rec)
+	return tx.PutSeam(context.Background(), rec)
 }
 
 // FindSeams returns seams where at least one endpoint lies within hex distance
@@ -215,6 +276,16 @@ func (tx *Tx) MarkConflict(cellA, cellB lattice.Coord, reason string) error {
 // M7 uses the seam-by-cells secondary index: for each cell in the ball of radius R
 // around center, range scans list incident seams; results are deduplicated by ULID.
 func (tx *Tx) FindSeams(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool) ([]record.SeamRecord, error) {
+	return tx.findSeams(ctx, center, radius, unresolvedOnly, nil)
+}
+
+// FindSeamsAt is like [Tx.FindSeams] but only includes seams whose [record.ValidityWire]
+// contains asOf (single-version read filter; not MVCC).
+func (tx *Tx) FindSeamsAt(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool, asOf time.Time) ([]record.SeamRecord, error) {
+	return tx.findSeams(ctx, center, radius, unresolvedOnly, &asOf)
+}
+
+func (tx *Tx) findSeams(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool, asOf *time.Time) ([]record.SeamRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -250,7 +321,7 @@ func (tx *Tx) FindSeams(ctx context.Context, center lattice.Coord, radius int, u
 				scanErr = err
 				return false
 			}
-			if err := tx.collectSeamFind(&out, seen, id, center, radius, unresolvedOnly); err != nil {
+			if err := tx.collectSeamFind(&out, seen, id, center, radius, unresolvedOnly, asOf); err != nil {
 				scanErr = err
 				return false
 			}
@@ -275,7 +346,7 @@ func (tx *Tx) FindSeams(ctx context.Context, center lattice.Coord, radius int, u
 				scanErr = err
 				return false
 			}
-			if err := tx.collectSeamFind(&out, seen, id, center, radius, unresolvedOnly); err != nil {
+			if err := tx.collectSeamFind(&out, seen, id, center, radius, unresolvedOnly, asOf); err != nil {
 				scanErr = err
 				return false
 			}
@@ -290,15 +361,11 @@ func (tx *Tx) FindSeams(ctx context.Context, center lattice.Coord, radius int, u
 	return out, nil
 }
 
-func (tx *Tx) collectSeamFind(out *[]record.SeamRecord, seen map[string]struct{}, id string, center lattice.Coord, radius int, unresolvedOnly bool) error {
+func (tx *Tx) collectSeamFind(out *[]record.SeamRecord, seen map[string]struct{}, id string, center lattice.Coord, radius int, unresolvedOnly bool, asOf *time.Time) error {
 	if _, dup := seen[id]; dup {
 		return nil
 	}
-	pk, err := index.SeamKey(id)
-	if err != nil {
-		return err
-	}
-	raw, ok, err := tx.db.btree.Get(pk)
+	raw, _, ok, err := tx.getSeamVisibleRaw(id)
 	if err != nil {
 		return err
 	}
@@ -309,6 +376,10 @@ func (tx *Tx) collectSeamFind(out *[]record.SeamRecord, seen map[string]struct{}
 	rec, err := record.DecodeSeam(raw)
 	if err != nil {
 		return err
+	}
+	if asOf != nil && !record.ValidAt(rec.Validity, asOf.UnixNano()) {
+		seen[id] = struct{}{}
+		return nil
 	}
 	if unresolvedOnly && strings.TrimSpace(rec.ResolutionStatus) != "" {
 		seen[id] = struct{}{}
@@ -507,7 +578,11 @@ func (tx *Tx) ResolveSeam(id, resolutionStatus, resolutionNote string) error {
 	if err != nil {
 		return err
 	}
-	return tx.Put(key, data)
+	if err := tx.Put(key, data); err != nil {
+		return err
+	}
+	tx.noteChangelog(changelog.OpResolveSeam, key, data)
+	return nil
 }
 
 func (tx *Tx) requireWritable() error {

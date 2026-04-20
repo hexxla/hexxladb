@@ -2,6 +2,7 @@ package hexxladb_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -32,7 +33,7 @@ func TestPhaseD_PutCell_secondaryIndexes(t *testing.T) {
 		Provenance: record.ProvenanceWire{SourceID: "src-a"},
 		Validity:   record.ValidityWire{ValidFrom: &vf},
 	}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
@@ -72,7 +73,7 @@ func TestPhaseD_PutCell_secondaryIndexes(t *testing.T) {
 	rec2.Provenance.SourceID = "src-b"
 	vf2 := int64(10 * index.WeekNanos)
 	rec2.Validity.ValidFrom = &vf2
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(rec2) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec2) }); err != nil {
 		t.Fatal(err)
 	}
 	bySource = 0
@@ -99,5 +100,35 @@ func TestPhaseD_PutCell_secondaryIndexes(t *testing.T) {
 	}
 	if bySource != 1 {
 		t.Fatalf("new source count=%d", bySource)
+	}
+}
+
+func TestPhaseD_AscendCellsBySource_contextCanceled(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	db, err := hexxladb.Open(filepath.Join(dir, "d_ctx.db"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	p, err := lattice.Pack(lattice.Coord{Q: 1, R: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := record.CellRecord{
+		Key:        p,
+		RawContent: "x",
+		Provenance: record.ProvenanceWire{SourceID: "src-a"},
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = db.View(func(tx *hexxladb.Tx) error {
+		return tx.AscendCellsBySource(ctx, "src-a", func(record.CellRecord) bool { return true })
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("want context.Canceled, got %v", err)
 	}
 }

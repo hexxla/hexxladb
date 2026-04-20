@@ -88,7 +88,7 @@ func TestTx_UpdateFacet(t *testing.T) {
 		Provenance: record.ProvenanceWire{SourceID: "s", Confidence: 1, CreatedAt: 1, UpdatedAt: 1},
 		Validity:   record.ValidityWire{},
 	}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(cell) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), cell) }); err != nil {
 		t.Fatal(err)
 	}
 
