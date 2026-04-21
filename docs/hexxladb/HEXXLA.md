@@ -2,8 +2,8 @@
 
 ## A Hexagonal Spatial Memory Operating System for LLMs
 
-**Version 1.9**  
-**Date:** April 2026  
+**Version 1.9**
+**Date:** April 2026
 **Project Name:** Hexxla
 
 ## Vision

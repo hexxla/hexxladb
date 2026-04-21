@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "hooks": {
+    "post_write_code": [
+      {
+        "command": ".windsurf/hooks/format-go.sh",
+        "matcher": "*.go"
+      },
+      {
+        "command": ".windsurf/hooks/scan-secrets-edited.sh",
+        "matcher": "*.go"
+      }
+    ],
+    "pre_run_command": [
+      {
+        "command": ".windsurf/hooks/guard-shell.sh",
+        "matcher": "curl|wget|sudo |^rm|kubectl delete|docker push"
+      }
+    ],
+    "pre_user_prompt": [
+      {
+        "command": ".windsurf/hooks/scan-prompt-secrets.sh"
+      }
+    ]
+  }
+}

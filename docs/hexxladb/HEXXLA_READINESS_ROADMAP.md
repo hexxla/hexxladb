@@ -1,6 +1,6 @@
 # HEXXLA readiness roadmap (consolidated)
 
-**Audience:** HexxlaDB maintainers and Hexxla integrators preparing LLM-memory production rollout.  
+**Audience:** HexxlaDB maintainers and Hexxla integrators preparing LLM-memory production rollout.
 **Status:** Living roadmap; update this file when scope or implementation status changes.
 
 ## Purpose

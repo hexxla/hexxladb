@@ -63,8 +63,8 @@ Thumbs.db
 .vscode/
 *.swp
 *~
-
-# Cursor: this template commits .cursor/ (rules, skills, agent notes). Do not ignore it here.
+#
+# IDE-specific directories: .cursor/ for Cursor, .windsurf/ for Windsurf (rules, skills, agent notes). Do not ignore them here.
 
 # Roadmap removed from template; keep local copies out of git if you recreate the path
 /docs/ROADMAP.md

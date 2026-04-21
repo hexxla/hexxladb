@@ -1,7 +1,7 @@
 # HexxlaDB – Ideal Native Database Specification
 
-**Version 1.3**  
-**Date:** April 2026  
+**Version 1.3**
+**Date:** April 2026
 **Project Name:** Hexxla
 
 ## Vision

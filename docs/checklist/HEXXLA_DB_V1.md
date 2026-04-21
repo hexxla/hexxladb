@@ -1,6 +1,6 @@
 # HexxlaDB v1 — implementation checklist (foundations)
 
-**Audience:** Engineers and coding agents implementing the first embedded-engine wave.  
+**Audience:** Engineers and coding agents implementing the first embedded-engine wave.
 **Normative product spec:** [`docs/hexxladb/HEXXLA_DB.md`](../hexxladb/HEXXLA_DB.md) (keyspace, objects, primitives, locked architecture). This checklist records **engineering commitments** and **build order**; it does not replace the spec.
 
 **Hexagonal wiring for the service in this repo:** [`docs/context/HEXAGONAL_ARCHITECTURE.md`](../context/HEXAGONAL_ARCHITECTURE.md) — ports in `internal/domain` / `internal/app`, adapters in `internal/adapters/...`, composition in `cmd/...`.

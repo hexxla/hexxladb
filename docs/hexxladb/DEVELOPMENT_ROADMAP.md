@@ -1,6 +1,6 @@
 # HexxlaDB — development roadmap
 
-**Audience:** Engineers and agents implementing HexxlaDB and integrating it with the Hexxla service.  
+**Audience:** Engineers and agents implementing HexxlaDB and integrating it with the Hexxla service.
 **Status:** Living document; revise as milestones land.
 
 ## Purpose

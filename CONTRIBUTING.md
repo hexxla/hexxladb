@@ -37,20 +37,20 @@ That includes: **`gofmt -l`**, **`go vet ./...`**, **`go test -race ./...`**, **
 
 Shortcuts:
 
-| Command            | Purpose                                                                       |
-| ------------------ | ----------------------------------------------------------------------------- |
-| `make test`        | Tests with `-race`                                                            |
-| `make vet`         | `go vet` only                                                                 |
-| `make govulncheck` | Vulnerability scan only (also part of `make ci`)                              |
-| `make lint`        | golangci-lint (requires binary on `PATH`)                                     |
-| `make fmt`         | `gofmt -w` on module `.go` files                                              |
-| `make clean`       | Remove `bin/` (from `make build`)                                             |
-| `make help`        | List Makefile targets                                                         |
-| `make integration` | Optional **`//go:build integration`** tests (`-race`); not part of default CI |
-| `make stress`      | Optional **`//go:build stress`** tests (very large `PutCell` counts; **not** CI) |
-| `make bench`       | Benchmarks (`go test -bench=. -benchmem ./...`); **not** run in default CI    |
+| Command             | Purpose                                                                                                                                             |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `make test`         | Tests with `-race`                                                                                                                                  |
+| `make vet`          | `go vet` only                                                                                                                                       |
+| `make govulncheck`  | Vulnerability scan only (also part of `make ci`)                                                                                                    |
+| `make lint`         | golangci-lint (requires binary on `PATH`)                                                                                                           |
+| `make fmt`          | `gofmt -w` on module `.go` files                                                                                                                    |
+| `make clean`        | Remove `bin/` (from `make build`)                                                                                                                   |
+| `make help`         | List Makefile targets                                                                                                                               |
+| `make integration`  | Optional **`//go:build integration`** tests (`-race`); not part of default CI                                                                       |
+| `make stress`       | Optional **`//go:build stress`** tests (very large `PutCell` counts; **not** CI)                                                                    |
+| `make bench`        | Benchmarks (`go test -bench=. -benchmem ./...`); **not** run in default CI                                                                          |
 | `make bench-stress` | Longer **`BenchmarkAPI_*`** (preload 512 / 2k / 10k per sub-bench; **not** 50k — see [`BENCHMARKS.md`](docs/hexxladb/BENCHMARKS.md)); **not** in CI |
-| `make fuzz`        | Short fuzz smoke on internal decoders (~2s per target); **not** in default CI |
+| `make fuzz`         | Short fuzz smoke on internal decoders (~2s per target); **not** in default CI                                                                       |
 
 ## Benchmarks and fuzzing
 
@@ -82,6 +82,11 @@ Follow **[`docs/context/HEXAGONAL_ARCHITECTURE.md`](docs/context/HEXAGONAL_ARCHI
 - **Dependabot** — [`.github/dependabot.yml`](.github/dependabot.yml) opens weekly PRs for **`gomod`** dependency updates (tune schedule and limits there).
 - **Secret scanning** — enable **secret scanning** (and push protection if your plan allows) in the repository or organization **Settings → Code security**. That is the primary guard against committed credentials; editor hooks are a convenience, not a substitute.
 
-## Cursor / editor assets
+## IDE / editor assets
 
-This repo **tracks** **`.cursor/`** (rules, skills, optional hook scripts referenced by **`.cursor/hooks.json`**) so forks get the same agent and editor guidance. It is **not** listed in **`.gitignore`**.
+This repo **tracks** IDE-specific directories for both Cursor and Windsurf:
+
+- **`.cursor/`** (rules, skills, optional hook scripts referenced by **`.cursor/hooks.json`**)
+- **`.windsurf/`** (rules, skills, optional hook scripts referenced by **`.windsurf/hooks.json`**)
+
+These directories are **not** listed in **`.gitignore`** so they're available for forks and contributors using either IDE.

@@ -1,6 +1,6 @@
 # H3 (Uber) vs HexxlaDB — concepts and adoption notes
 
-**Purpose:** Record what the [H3](https://github.com/uber/h3) codebase is, how it differs from HexxlaDB’s problem, and what is safe to **reuse as ideas** versus what **not** to port.  
+**Purpose:** Record what the [H3](https://github.com/uber/h3) codebase is, how it differs from HexxlaDB’s problem, and what is safe to **reuse as ideas** versus what **not** to port.
 **H3 source reviewed:** local tree (e.g. `/home/anon/Documents/code/h3/`), layout typical of upstream `uber/h3` — C library under `src/h3lib/`.
 
 ## What H3 is
