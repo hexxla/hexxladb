@@ -12,7 +12,7 @@ import (
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
-func TestPhaseD_PutCell_secondaryIndexes(t *testing.T) {
+func TestPutCell_secondaryIndexes(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	db, err := hexxladb.Open(filepath.Join(dir, "d.db"), nil)
@@ -103,7 +103,7 @@ func TestPhaseD_PutCell_secondaryIndexes(t *testing.T) {
 	}
 }
 
-func TestPhaseD_AscendCellsBySource_contextCanceled(t *testing.T) {
+func TestAscendCellsBySource_contextCanceled(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	db, err := hexxladb.Open(filepath.Join(dir, "d_ctx.db"), nil)
