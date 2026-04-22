@@ -178,6 +178,8 @@ type ContextPack struct {
 
 Ordering rule: concentric rings from center outward, then axial spiral order within each ring starting from the positive-q direction. If token budget is exceeded, the system drops the lowest-confidence items from outer rings first.
 
+**HexxlaDB Go library:** The embedded module **`github.com/hexxla/hexxladb`** exposes **`record.CellRecord`** (and related wire types), not the nominal `Cell` / `CellView` structs above. Neighborhood loading is **[`Tx.LoadContext`](https://pkg.go.dev/github.com/hexxla/hexxladb#Tx.LoadContext)** with a **`maxCells`** cap (see **[HEXXLA_DB.md](HEXXLA_DB.md)** primitives)—integrators implement token budgeting and assemble a **`ContextPack`**-shaped value if needed. Optional higher-level view helpers are described in **[HEXXLA_READINESS_ROADMAP.md](HEXXLA_READINESS_ROADMAP.md)** (Optional API Surface Improvements).
+
 ## Contradiction Engine (Normative Source)
 
 Conflicts are modeled as explicit seams: visible, queryable relations between cells.
@@ -245,6 +247,7 @@ These extensions will be evaluated only after v1 benchmarks confirm baseline val
 
 - **Language:** Go
 - **Persistence:** **HexxlaDB** (**HEXXLA_DB.md**) — custom embedded engine (pages, WAL, Morton-keyed storage); durable and crash-recoverable; **not** a third-party ordered-KV/SQL core or SQLite.
+- **Stable import:** **`github.com/hexxla/hexxladb`** — root package holds **`Open`**, **`DB`**, **`Tx`**, and lattice-aware primitives; **`internal/record`** types are returned by queries. Product-level **`Cell`**, **`CellView`**, and token-based **`ContextPack`** in this document are **normative shapes** for integrators; map them from **`record.CellRecord`** and related APIs unless/until optional assembly helpers ship (see roadmap link above).
 - **Process cache:** Optional in-memory structures (e.g. `map[Coord]*Cell`) for hot paths; durable state remains in HexxlaDB.
 - **API:** HTTP/JSON tool interface for LLM clients.
 - **Visualization:** Lightweight honeycomb dashboard with seam highlighting.

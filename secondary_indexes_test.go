@@ -103,6 +103,61 @@ func TestPutCell_secondaryIndexes(t *testing.T) {
 	}
 }
 
+func TestTx_AscendCellsBySource_mvccSnapshotIsolation(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	db, err := hexxladb.Open(filepath.Join(dir, "cell_src_mvcc.db"), &hexxladb.Options{EnableMVCC: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	c := lattice.Coord{Q: 2, R: -1}
+	p, err := lattice.Pack(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := record.CellRecord{
+		Key:        p,
+		RawContent: "snap",
+		Provenance: record.ProvenanceWire{SourceID: "old-src"},
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+		t.Fatal(err)
+	}
+	rec.Provenance.SourceID = "new-src"
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	countOld := 0
+	if err := db.ViewAt(1, func(tx *hexxladb.Tx) error {
+		return tx.AscendCellsBySource(ctx, "old-src", func(record.CellRecord) bool {
+			countOld++
+			return true
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if countOld != 1 {
+		t.Fatalf("expected old source cell in seq=1 snapshot, got %d", countOld)
+	}
+
+	countNew := 0
+	if err := db.ViewAt(2, func(tx *hexxladb.Tx) error {
+		return tx.AscendCellsBySource(ctx, "new-src", func(record.CellRecord) bool {
+			countNew++
+			return true
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if countNew != 1 {
+		t.Fatalf("expected new source cell in seq=2 snapshot, got %d", countNew)
+	}
+}
+
 func TestAscendCellsBySource_contextCanceled(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

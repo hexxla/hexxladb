@@ -17,20 +17,20 @@
 
 Hexxla separates **approximate seed selection** (how you pick a starting `Coord`) from **deterministic lattice work** (everything after the seed). **Embeddings are optional** and only one way to obtain a seed; alternatives include **explicit coordinates**, **lexical / tag / `source_id` discovery**, and **agent-driven navigation**—see **[`HEXXLA.md`](../hexxladb/HEXXLA.md)** (Retrieval and Context Orchestration).
 
-- [ ] **HexxlaDB v1** does **not** depend on embeddings: **no vector columns**, **no ANN indexes** in the engine; all keys and core operations use **`PackedCoord`**, tags, provenance, validity, seams, and related non-vector indexes per spec.
-- [ ] The optional **`embed/<partition>/<vector_ref>`** key in [`HEXXLA_DB.md`](../hexxladb/HEXXLA_DB.md) Storage Layout is **reserved for future hybrid use**—not required to ship or use v1.
-- [ ] **Keep seed discovery outside** the stable `hexxladb` surface: orchestration lives in the **service / app layer** (or a higher-level package); the DB API accepts coordinates and runs **`WalkRing`**, **`LoadContext`**, **`FindSeams`**, etc.
-- [ ] Do **not** add engine primitives like **`FindSeedsByEmbedding`** on the v1 **public** API unless a milestone explicitly requires it; prefer optional helpers **above** the engine.
+- [x] **HexxlaDB v1** does **not** depend on embeddings: **no vector columns**, **no ANN indexes** in the engine; all keys and core operations use **`PackedCoord`**, tags, provenance, validity, seams, and related non-vector indexes per spec.
+- [x] The optional **`embed/<partition>/<vector_ref>`** key in [`HEXXLA_DB.md`](../hexxladb/HEXXLA_DB.md) Storage Layout is **reserved for future hybrid use**—not required to ship or use v1.
+- [x] **Keep seed discovery outside** the stable `hexxladb` surface: orchestration lives in the **service / app layer** (or a higher-level package); the DB API accepts coordinates and runs **`WalkRing`**, **`LoadContext`**, **`FindSeams`**, etc.
+- [x] Do **not** add engine primitives like **`FindSeedsByEmbedding`** on the v1 **public** API unless a milestone explicitly requires it; prefer optional helpers **above** the engine.
 
 ---
 
 ## 1. Locked constraints (from spec)
 
-- [ ] **Hex-native embedded engine** — custom on-disk format, crash recovery, embeddable in Go; lattice operations are primitives, not translated queries over a generic KV/SQL core ([`HEXXLA_DB.md` § Architecture Position](../hexxladb/HEXXLA_DB.md)).
-- [ ] **Morton (Z-order) `PackedCoord` keyspace** — ring walks and neighborhood loads as native prefix/range scans over that keyspace.
-- [ ] **No SQLite**; **no third-party ordered-KV or SQL engine as the storage core** (e.g. Pebble, RocksDB, SQLite).
-- [ ] **Edge vs Seam** — distinct logical concepts and **distinct storage families**; read aggregates vs primary storage per spec.
-- [ ] **MVCC path** — design transactions and snapshots for future `as_of`; **full MVCC not required in v1** (see Concurrency below).
+- [x] **Hex-native embedded engine** — custom on-disk format, crash recovery, embeddable in Go; lattice operations are primitives, not translated queries over a generic KV/SQL core ([`HEXXLA_DB.md` § Architecture Position](../hexxladb/HEXXLA_DB.md)).
+- [x] **Morton (Z-order) `PackedCoord` keyspace** — ring walks and neighborhood loads as native prefix/range scans over that keyspace.
+- [x] **No SQLite**; **no third-party ordered-KV or SQL engine as the storage core** (e.g. Pebble, RocksDB, SQLite).
+- [x] **Edge vs Seam** — distinct logical concepts and **distinct storage families**; read aggregates vs primary storage per spec.
+- [x] **MVCC path** — format **v2+** databases created with [`Options.EnableMVCC`](../../options.go) use versioned keys and snapshot reads ([`ViewAt`](../../tx.go), [`ViewAtTime`](../../tx.go)); existing v1 files stay single-version unless migrated (see Concurrency below).
 
 ---
 
@@ -90,8 +90,8 @@ Hexxla separates **approximate seed selection** (how you pick a starting `Coord`
 ## 7. Concurrency
 
 - [x] **Single writer, multiple readers** for v1 — [`DB`](../../db.go) uses **`sync.RWMutex`** ([`docs/hexxladb/TX.md`](../hexxladb/TX.md)).
-- [x] **Writer path isolated** (`RWMutex`: `Update` exclusive, `View` shared) — future **`as_of`** can add snapshot pinning without breaking the API shape.
-- [x] **No full MVCC in v1** — **`View`/`Update`/`Tx`** present; versioned snapshots later.
+- [x] **Writer path isolated** (`RWMutex`: `Update` exclusive, `View` shared) — snapshot reads use pinned `read_seq` when MVCC is enabled.
+- [x] **MVCC (format v2+)** — new databases opened with [`Options.EnableMVCC`](../../options.go) use version-suffixed keys and [`ViewAt`](../../tx.go) / [`ViewAtTime`](../../tx.go); v1 on-disk format remains non-MVCC. See **[`HEXXLA_READINESS_ROADMAP.md`](../hexxladb/HEXXLA_READINESS_ROADMAP.md)** (MVCC section).
 
 ---
 
@@ -127,14 +127,14 @@ Hexxla separates **approximate seed selection** (how you pick a starting `Coord`
 - [ ] Federation, replication, consensus — **out of v1**; one keyspace per process is acceptable for years.
 - [ ] Directory-of-SSTables / leveled compaction — **later**, unless benchmarks force a minimal step.
 - [ ] **Vector storage, ANN indexes, and embedding-backed seed APIs inside the engine** — **out of v1**; optional `embed/` keyspace is for **future** hybrid indexing only (see [Seed selection vs HexxlaDB](#seed-selection-vs-hexxladb-product-boundary)).
-- [ ] **Secondary index primitives** (`tag`, `source_id`, etc.) **not** on the stable v1 **public** API unless a milestone explicitly requires them — keep in **`internal/index`** keyed by [`HEXXLA_DB.md`](../hexxladb/HEXXLA_DB.md) Storage Layout.
+- [x] **`source_id` and time-bucket secondaries** — shipped on the stable API as [`Tx.AscendCellsBySource`](../../primitives.go), [`Tx.AscendCellsInTimeBucket`](../../cell_secondary.go), [`Tx.AscendSeamsBySource`](../../seam_secondary.go), [`Tx.AscendSeamsInTimeBucket`](../../seam_secondary.go) (keys per [`HEXXLA_DB.md`](../hexxladb/HEXXLA_DB.md)). **Tag** indexes remain deferred unless explicitly added.
 
 ---
 
 ## 12. Optional / TBD (implementation plan may decide)
 
-- [ ] **`Changefeed` / event stream** — add only if **zero overhead when disabled**; otherwise defer and document extension point.
-- [ ] **WAL encryption vs plaintext WAL** — final policy if encrypt-everything proves too costly for recovery (must be documented).
+- [x] **Logical changefeed** — optional append-only changelog via [`Options.ChangelogEnabled`](../../options.go); **no overhead** when disabled (`changelog` nil). See [`docs/hexxladb/CHANGEFEED.md`](../hexxladb/CHANGEFEED.md).
+- [x] **WAL + encryption** — WAL records store ciphertext when at-rest encryption is enabled; see [`docs/hexxladb/ENCRYPTION.md`](../hexxladb/ENCRYPTION.md).
 
 ---
 
@@ -146,7 +146,7 @@ Hexxla separates **approximate seed selection** (how you pick a starting `Coord`
 | Transaction API | **Bolt-style `View` / `Update` + `*Tx`** for v1; not `Batch`-primary. |
 | `PackedCoord` | **`[2]uint64` or `{Hi, Lo uint64}`**; not `math/big` on hot paths. |
 | Ring order | **One canonical iteration** — rings outward from center; within-ring order fixed and **tested** (align with [`HEXXLA.md`](../hexxladb/HEXXLA.md) `load_context` ordering). |
-| Index API | **Spatial + seam flows** on public API; **tag/source** and similar **internal** until a milestone demands. |
+| Index API | **Spatial + seam flows** on public API; **`source/`** and **time/** secondaries exposed via ascend helpers; **tag** indexes still internal until explicitly surfaced. |
 | On-disk files | **Single main file + separate WAL file** for v1. |
 | Page size | **64 KiB**, compile-time constant for v1. |
 | Format compatibility | **Forward-only** within major; **major bump** = new magic and/or migration tool / new directory layout. |
@@ -159,5 +159,6 @@ Hexxla separates **approximate seed selection** (how you pick a starting `Coord`
 | --- | --- |
 | [`docs/hexxladb/HEXXLA_DB.md`](../hexxladb/HEXXLA_DB.md) | Product and storage specification (normative). |
 | [`docs/hexxladb/HEXXLA.md`](../hexxladb/HEXXLA.md) | Hexxla memory model, geometry, retrieval (product the DB supports). |
+| [`docs/hexxladb/HEXXLA_READINESS_ROADMAP.md`](../hexxladb/HEXXLA_READINESS_ROADMAP.md) | Consolidated readiness, gaps, and optional post-v1 API notes. |
 | [`docs/hexxladb/DEVELOPMENT_ROADMAP.md`](../hexxladb/DEVELOPMENT_ROADMAP.md) | Phases, milestones, folder layout, implementation sequencing. |
 | [`docs/context/HEXAGONAL_ARCHITECTURE.md`](../context/HEXAGONAL_ARCHITECTURE.md) | Ports, adapters, `cmd` composition for this repo’s service. |

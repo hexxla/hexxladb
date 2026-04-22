@@ -57,6 +57,8 @@ func (tx *Tx) PutCell(ctx context.Context, rec record.CellRecord) error {
 	if err := tx.Put(key, data); err != nil {
 		return err
 	}
+	// Non-MVCC: replace-in-place secondary keys. MVCC: keep prior commit's source/time
+	// keys so snapshot reads ([ViewAt]) still see correct index entries; reclaim via pruning.
 	if had && !tx.db.useMVCC {
 		if err := tx.removeCellSecondaryIndex(old, oldSeq); err != nil {
 			return err
@@ -174,6 +176,8 @@ func (tx *Tx) PutSeam(ctx context.Context, rec record.SeamRecord) error {
 	if err != nil {
 		return err
 	}
+	// MVCC does not remove seam-source/seam-time keys on overwrite: entries are versioned by
+	// commit_seq and must remain for [ViewAt] scans; pruning reclaims superseded versions.
 	if tx.db.useMVCC {
 		old, _, ok, err := tx.visibleSeamAndSeq(rec.ID)
 		if err != nil {
