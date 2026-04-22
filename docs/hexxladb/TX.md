@@ -8,12 +8,12 @@
 - **`Update`** acquires a **write lock**: exclusive access—no concurrent **`View`**, **`Update`**, or **`Batch`** until the callback returns.
 - **`Batch`** is **equivalent** to **`Update`** (same lock and semantics). It exists for alignment with the spec’s `Batch` name and ecosystem expectations; there is no separate internal batching or WAL coalescing in v1.
 
-This matches **single writer, multiple readers** ([checklist §7](../checklist/HEXXLA_DB_V1.md)).
+This matches **single writer, multiple readers** — see **Locking** above.
 
 ## Snapshot semantics (M5) and MVCC (E2+)
 
 - **Format v1:** A **`View`** sees the **ordered store** (B+ tree) as it was when the read lock was acquired—i.e. **last committed state** at that moment.
-- **Format v2 (MVCC):** Open a **new** database with **[`Options.EnableMVCC`](../../options.go)**. **`View`** pins **`read_seq = header.CommitSeq`** at transaction start (last committed snapshot). **`ViewAt(read_seq uint64)`** pins an **older** committed snapshot; **`read_seq`** must not exceed **`CommitSeq`** or **[`ErrReadSeqFuture`](../../errors.go)** is returned. **`ViewAtTime(time.Time)`** maps wall-clock to the most recent commit with `commit_time <= as_of` and pins that snapshot. If no commit exists at/before `as_of`, it resolves to `read_seq=0` (empty snapshot). Each successful **`Update`** / **`Batch`** advances **`CommitSeq`** by one and writes commit-time metadata for deterministic `as_of` resolution.
+- **Format v2 (MVCC):** Open a **new** database with **[`Options.EnableMVCC`](../../options.go)**. **`View`** pins **`read_seq = header.CommitSeq`** at transaction start (last committed snapshot). **`ViewAt(read_seq uint64)`** pins an **older** committed snapshot; **`read_seq`** must not exceed **`CommitSeq`** or **[`ErrReadSeqFuture`](../../errors.go)** is returned. **`ViewAtTime(time.Time)`** maps wall-clock to the most recent commit with `commit_time <= as_of` and pins that snapshot. If no commit exists at/before `as_of`, it resolves to `read_seq=0` (empty snapshot). Each successful **`Update`** / **`Batch`** records an **`__meta/commit-time/`** entry (wall time sampled at **transaction start**, before the callback) and, after the callback, advances **`CommitSeq`** in the header for deterministic `as_of` resolution.
 
 ## `Close`
 
@@ -27,7 +27,7 @@ This matches **single writer, multiple readers** ([checklist §7](../checklist/H
 
 ## Commit finalization failures
 
-`Update` / `Batch` run in two stages: callback execution (where writes happen) and post-callback finalization (changelog append and, for MVCC, header `CommitSeq` update).
+`Update` / `Batch` run in two stages: for MVCC, a start-of-transaction btree write (commit timeline) and then the callback (where `PutCell` and other logical writes happen), then post-callback finalization (changelog append and header `CommitSeq` update). If the callback returns an error, the timeline entry for that transaction is rolled back from the btree.
 
 If finalization fails, the API returns **[`ErrCommitFinalization`](../../errors.go)** (wrapped with cause). Callers should treat this as a **commit outcome uncertainty**: callback writes may already be persisted even though the transaction returned an error.
 
@@ -49,7 +49,7 @@ Mapping to [`HEXXLA_DB.md`](./HEXXLA_DB.md) Native Query Primitives:
 
 ## Validity filters and facet ring loads (Phase C)
 
-Single-version **read filters** on the current committed cell and seam (not MVCC; for true `as_of` snapshots and remaining MVCC follow-ons see [`HEXXLA_READINESS_ROADMAP.md`](./HEXXLA_READINESS_ROADMAP.md)):
+Single-version **read filters** on the current committed cell and seam (not MVCC; for **`ViewAt`** / **`ViewAtTime`** see **Snapshot semantics** above and [`MVCC_TEMPORAL.md`](./MVCC_TEMPORAL.md)):
 
 - **[`record.ValidAt`](../../internal/record/validity.go)** — half-open validity window **`[ValidFrom, ValidTo)`** in Unix nanoseconds UTC (`nil` bound = open on that side).
 - **[`Tx.WalkRingAt`](../../primitives.go)** — same ring order as **`WalkRing`**, but invokes the callback only for cells whose **`Validity`** contains **`asOf`** (missing or out-of-window cells are skipped).
@@ -73,7 +73,7 @@ Per [HEXXLA_DB.md](./HEXXLA_DB.md) Storage Layout, **`PutCell`** dual-writes sec
 
 On v1 overwrite, stale secondaries are removed via **[`engine.BTree.Delete`](../../internal/engine/btree_delete.go)** before attaching new index keys.
 
-Read paths for **cells**: **[`Tx.AscendCellsBySource`](../../cell_secondary.go)** (prefix scan by **`source_id`**), **[`Tx.AscendCellsInTimeBucket`](../../cell_secondary.go)** (one UTC week bucket).
+Read paths for **cells**: **[`Tx.AscendCellsBySource`](../../cell_secondary.go)** (prefix scan by **`source_id`**), **[`Tx.AscendCellsInTimeBucket`](../../cell_secondary.go)** (one UTC week bucket), **[`Tx.AscendCellsByTag`](../../cell_secondary.go)** (prefix scan by **`tag`**; secondaries maintained by **`PutCell`**).
 
 ## Logical changefeed (Phase G)
 

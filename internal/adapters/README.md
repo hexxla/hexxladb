@@ -1,7 +1,7 @@
-# Adapters (placeholder)
+# Adapters
 
-Inbound (**`in/`**) and outbound (**`out/`**) adapters are added here when you integrate transports (HTTP, gRPC, CLI) or infrastructure (databases, queues).
+**Outbound:** **[`internal/adapters/out/hexxladb`](./out/hexxladb)** implements **[`domain.Storage`](../domain/storage.go)** over **`package hexxladb`** (see **`cmd/hexxladb`**).
 
-**`internal/domain`** and **`internal/app`** define ports; **`cmd/...`** constructs and injects implementations. See **[`docs/context/HEXAGONAL_ARCHITECTURE.md`](../../docs/context/HEXAGONAL_ARCHITECTURE.md)**.
+**Inbound:** This module **does not** ship HTTP, gRPC, health checks, or other production transports. Services that use HexxlaDB add their own **`adapters/in`** (or equivalent) **in their repo** and wire **`internal/app`** / **`domain`** per **[`docs/hexxladb/HEXXLA_PRODUCT_WIRING.md`](../../docs/hexxladb/HEXXLA_PRODUCT_WIRING.md)** and **[`docs/context/HEXAGONAL_ARCHITECTURE.md`](../../docs/context/HEXAGONAL_ARCHITECTURE.md)**.
 
-There are no adapter packages in this tree yet; removing empty Go packages avoids unused import noise.
+**`internal/domain`** and **`internal/app`** define ports; **`cmd/...`** in this repo is for embedding demos and composition examples only.

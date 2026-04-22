@@ -2,7 +2,7 @@
 
 **Audience:** Operators and **automated consumers** (indexers, agents, orchestrators) that need a **durable, ordered** stream of **semantic** mutations—not page-image WAL records.
 
-**Readiness context:** [HEXXLA_READINESS_ROADMAP.md](./HEXXLA_READINESS_ROADMAP.md) (Remaining gaps and roadmap).
+**Rollout context:** [ADOPTION.md](./ADOPTION.md). For production checklist (consumers + soak): [OPERATIONS.md](./OPERATIONS.md) section **HEXXLA.md rollout alignment**. Fill **[`OPERATOR_EVIDENCE.md`](./OPERATOR_EVIDENCE.md)** §3 for changefeed checkpoints.
 
 ## North star
 
@@ -46,6 +46,10 @@ When an `Update`/`Batch` returns **[`ErrCommitFinalization`](../../errors.go)** 
 
 This keeps downstream memory/context indexes consistent even when logical log durability lags data durability.
 
+**Retries:** backoff and retry **`ReadChangelogSince`** on transient I/O errors; treat **`ErrChangelogCorrupt`** as terminal for that tail (see **Recovery** below)—do not spin tight loops.
+
+**Lag:** combine **`changelog_records_lag`** (table above) with application-level alerting when consumers fall behind **`CommitSeq`** expectations.
+
 ## Recovery
 
 - On open, the implementation scans the log to determine the **next sequence number** and validate frames.
@@ -54,6 +58,19 @@ This keeps downstream memory/context indexes consistent even when logical log du
 ## Operations emitted
 
 One event per successful **mutation** on [`Tx`](../../tx.go) / primitives: **PutCell**, **PutSeam**, **ResolveSeam**, **PutFacet**, **UpdateFacet**, **PutEdge**, **LinkCells**. **MarkConflict** is recorded as **PutSeam** (same encoded seam path) with seam payload distinguishing `mark_conflict`. **Read-only** [`View`](../../db.go) emits nothing.
+
+## Observability (recommended metrics)
+
+There is **no** in-process metrics registry in HexxlaDB itself; exporters should instrument the embedding service.
+
+| Signal | Meaning |
+|--------|---------|
+| `changelog_records_lag` | Difference between latest applied DB `CommitSeq` (or app-level mutation counter) and last fully processed changelog sequence (your consumer cursor). |
+| `changelog_read_errors_total` | Count of [`ErrChangelogCorrupt`](../../errors.go) or I/O failures from [`ReadChangelogSince`](../../db_changelog.go). |
+| `commit_finalization_errors_total` | [`ErrCommitFinalization`](../../errors.go) from [`Update`](../../tx.go) (possible **data committed without changelog row**—see reconciliation runbook above). |
+| `changelog_append_latency_ms` | Time spent in changelog append path per commit (detect fsync stalls when sync mode is on). |
+
+**Dashboards:** plot lag over time; alert when lag grows unbounded or corrupt-tail errors spike.
 
 ## Related
 

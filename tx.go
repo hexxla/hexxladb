@@ -1,6 +1,7 @@
 package hexxladb
 
 import (
+	"bytes"
 	"fmt"
 	"time"
 
@@ -119,6 +120,7 @@ func (db *DB) Update(fn func(*Tx) error) error {
 		return err
 	}
 	var tx *Tx
+	var metaTimelineKey []byte
 	if db.useMVCC {
 		tx = &Tx{
 			db:          db,
@@ -127,11 +129,23 @@ func (db *DB) Update(fn func(*Tx) error) error {
 			writeSeq:    hdr.CommitSeq + 1,
 			cellOverlay: make(map[lattice.PackedCoord]record.CellRecord),
 		}
+		// Insert commit-time row before MVCC physical cells so btree key order matches sorted key
+		// order (__meta/commit-time/… sorts before cell/…). Writing cells first then meta produced a
+		// shape where leaf delete/rebalance could corrupt pages (see internal/engine/btree_test.go).
+		wall := time.Now().UTC().UnixNano()
+		metaTimelineKey = index.CommitTimeKey(wall, tx.writeSeq)
+		if err := db.btree.Put(metaTimelineKey, emptySecondaryVal); err != nil {
+			return fmt.Errorf("%w: commit timeline: %w", ErrCommitFinalization, err)
+		}
 	} else {
 		tx = &Tx{db: db, writable: true}
 	}
-	if err := fn(tx); err != nil {
-		return err
+	fnErr := fn(tx)
+	if fnErr != nil {
+		if metaTimelineKey != nil {
+			_ = db.btree.Delete(metaTimelineKey)
+		}
+		return fnErr
 	}
 	if db.changelog != nil && len(tx.clog) > 0 {
 		wall := time.Now().UnixNano()
@@ -140,10 +154,6 @@ func (db *DB) Update(fn func(*Tx) error) error {
 		}
 	}
 	if db.useMVCC {
-		commitWall := time.Now().UTC().UnixNano()
-		if err := db.btree.Put(index.CommitTimeKey(commitWall, tx.writeSeq), emptySecondaryVal); err != nil {
-			return fmt.Errorf("%w: commit timeline: %w", ErrCommitFinalization, err)
-		}
 		if err := db.eng.UpdateHeader(func(h *engine.Header) {
 			h.CommitSeq = tx.writeSeq
 		}); err != nil {
@@ -173,6 +183,10 @@ func (tx *Tx) Get(key []byte) (val []byte, ok bool, err error) {
 }
 
 // Put inserts or replaces a key/value pair. Only allowed inside [DB.Update].
+//
+// MVCC (format v2): low-level insertion order matters for internal-tree invariants.
+// Prefer [Tx.PutCell], [Tx.PutFacet], and other primitives over raw Put for application data.
+// See docs/hexxladb/MVCC_DESIGN.md (engineering debt: cell/ before __meta/ ordering).
 func (tx *Tx) Put(key, val []byte) error {
 	if tx == nil || tx.db == nil {
 		return ErrClosed
@@ -183,6 +197,11 @@ func (tx *Tx) Put(key, val []byte) error {
 	e := tx.db.activeEng()
 	if e == nil {
 		return ErrDatabaseClosed
+	}
+	if tx.db.useMVCC && bytes.HasPrefix(key, []byte(index.CellPrefix)) {
+		if _, _, err := index.ParseCellVersionKey(key); err != nil {
+			return fmt.Errorf("%w: MVCC databases require version-suffixed cell/ keys — use Tx.PutCell: %w", ErrInvalidArgument, err)
+		}
 	}
 	return tx.db.btree.Put(key, val)
 }

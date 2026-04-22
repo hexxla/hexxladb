@@ -7,6 +7,77 @@ import (
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
+// PruneScheduler holds defaults for operator-driven periodic pruning. It does not start
+// background goroutines; invoke [PruneScheduler.Tick] from your process scheduler or timer.
+type PruneScheduler struct {
+	// Profile selects batch sizes consistent with [PruneCellVersionsByProfile]. Empty defaults to [MVCCPruneBalanced].
+	Profile MVCCPruneProfile
+}
+
+// Tick runs one [PruneCellVersions] pass using [DB.MVCCPrunePlan]. Returns deleted row count (0 when no policy or nothing to reclaim).
+func (s PruneScheduler) Tick(db *DB) (deleted int, err error) {
+	if db == nil {
+		return 0, ErrDatabaseClosed
+	}
+	p := s.Profile
+	if p == "" {
+		p = MVCCPruneBalanced
+	}
+	beforeSeq, maxDel, ok, err := db.MVCCPrunePlan(p)
+	if err != nil {
+		return 0, err
+	}
+	if !ok || maxDel <= 0 {
+		return 0, nil
+	}
+	return db.PruneCellVersions(beforeSeq, maxDel)
+}
+
+// SuggestedPruneBeforeSeq returns beforeSeq suitable for [PruneCellVersions] based on [Options.MVCCRetention]
+// captured at [Open]. ok is false when MVCC is off or RetainCommitsBehindHead is zero (operator chooses beforeSeq explicitly).
+func (db *DB) SuggestedPruneBeforeSeq() (beforeSeq uint64, ok bool, err error) {
+	if db == nil {
+		return 0, false, ErrDatabaseClosed
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.activeEng() == nil {
+		return 0, false, ErrDatabaseClosed
+	}
+	if !db.useMVCC || db.mvccRetention.RetainCommitsBehindHead == 0 {
+		return 0, false, nil
+	}
+	hdr, err := db.eng.ReadHeader()
+	if err != nil {
+		return 0, false, err
+	}
+	c := db.mvccRetention.RetainCommitsBehindHead
+	if hdr.CommitSeq > c {
+		return hdr.CommitSeq - c, true, nil
+	}
+	return 0, true, nil
+}
+
+// MVCCPrunePlan combines [SuggestedPruneBeforeSeq] with profile-driven batch sizing for one prune pass.
+func (db *DB) MVCCPrunePlan(profile MVCCPruneProfile) (beforeSeq uint64, maxDelete int, ok bool, err error) {
+	var bs uint64
+	bs, ok, err = db.SuggestedPruneBeforeSeq()
+	if err != nil || !ok {
+		return 0, 0, ok, err
+	}
+	switch profile {
+	case "", MVCCPruneBalanced:
+		maxDelete = 2048
+	case MVCCPruneLowLatency:
+		maxDelete = 512
+	case MVCCPruneLongHistory:
+		maxDelete = 256
+	default:
+		return 0, 0, false, ErrInvalidArgument
+	}
+	return bs, maxDelete, true, nil
+}
+
 // MVCCStats summarizes current MVCC storage shape (cell versions only).
 type MVCCStats struct {
 	CommitSeq     uint64

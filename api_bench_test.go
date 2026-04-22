@@ -195,6 +195,32 @@ func BenchmarkAPI_GetCell_Encrypted(b *testing.B) {
 	}
 }
 
+// BenchmarkAPI_GetCell_MVCC_Encrypted composes MVCC + at-rest encryption on one open Options.
+func BenchmarkAPI_GetCell_MVCC_Encrypted(b *testing.B) {
+	for _, n := range apiBenchPreloadSizes(b) {
+		b.Run(fmt.Sprintf("cells_%d", n), func(b *testing.B) {
+			opts := &hexxladb.Options{
+				EnableMVCC:    true,
+				EncryptionKey: []byte("sixteen.byte.key!!"),
+			}
+			db, key := benchAPIPreloadCellsWithOptions(b, n, opts)
+			b.Cleanup(func() { _ = db.Close() })
+			b.ReportMetric(float64(n), "cells")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				err := db.View(func(tx *hexxladb.Tx) error {
+					_, _, err := tx.GetCell(key)
+					return err
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 // BenchmarkAPI_ViewUpdateContention measures mixed readers/writers on one DB.
 func BenchmarkAPI_ViewUpdateContention(b *testing.B) {
 	db, key := benchAPIPreloadCells(b, 2000)

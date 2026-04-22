@@ -1,4 +1,6 @@
-// Package app holds application orchestration and use cases.
-// See docs/context/HEXAGONAL_ARCHITECTURE.md. Inbound and outbound adapters live under
-// internal/adapters/in and internal/adapters/out when you add them.
+// Package app holds application orchestration and use cases ([Service.PutCell], etc.).
+// See docs/context/HEXAGONAL_ARCHITECTURE.md and docs/hexxladb/HEXXLA_PRODUCT_WIRING.md
+// for layering (embedding vs consumer services). HexxlaDB ships outbound adapters under
+// internal/adapters/out; inbound transports are implemented by services that import this module,
+// not inside hexxladb.
 package app

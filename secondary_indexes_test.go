@@ -32,6 +32,7 @@ func TestPutCell_secondaryIndexes(t *testing.T) {
 		RawContent: "x",
 		Provenance: record.ProvenanceWire{SourceID: "src-a"},
 		Validity:   record.ValidityWire{ValidFrom: &vf},
+		Tags:       []string{"tag-a"},
 	}
 	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
 		t.Fatal(err)
@@ -67,12 +68,26 @@ func TestPutCell_secondaryIndexes(t *testing.T) {
 	if byTime != 1 {
 		t.Fatalf("AscendCellsInTimeBucket count=%d", byTime)
 	}
+	var byTag int
+	err = db.View(func(tx *hexxladb.Tx) error {
+		return tx.AscendCellsByTag(ctx, "tag-a", func(record.CellRecord) bool {
+			byTag++
+			return true
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if byTag != 1 {
+		t.Fatalf("AscendCellsByTag count=%d", byTag)
+	}
 
-	// Change source and validity — old secondary keys removed
+	// Change source, validity, and tags — old secondary keys removed
 	rec2 := rec
 	rec2.Provenance.SourceID = "src-b"
 	vf2 := int64(10 * index.WeekNanos)
 	rec2.Validity.ValidFrom = &vf2
+	rec2.Tags = []string{"tag-b"}
 	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec2) }); err != nil {
 		t.Fatal(err)
 	}
@@ -100,6 +115,52 @@ func TestPutCell_secondaryIndexes(t *testing.T) {
 	}
 	if bySource != 1 {
 		t.Fatalf("new source count=%d", bySource)
+	}
+	byTag = 0
+	err = db.View(func(tx *hexxladb.Tx) error {
+		return tx.AscendCellsByTag(ctx, "tag-a", func(record.CellRecord) bool {
+			byTag++
+			return true
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if byTag != 0 {
+		t.Fatalf("old tag still indexed: %d", byTag)
+	}
+	byTag = 0
+	err = db.View(func(tx *hexxladb.Tx) error {
+		return tx.AscendCellsByTag(ctx, "tag-b", func(record.CellRecord) bool {
+			byTag++
+			return true
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if byTag != 1 {
+		t.Fatalf("new tag count=%d", byTag)
+	}
+}
+
+func TestTx_Put_mvcc_rejects_raw_cell_key_without_version_suffix(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	db, err := hexxladb.Open(filepath.Join(dir, "mvcc_raw_put.db"), &hexxladb.Options{EnableMVCC: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	p, err := lattice.Pack(lattice.Coord{Q: 0, R: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.Update(func(tx *hexxladb.Tx) error {
+		return tx.Put(index.CellKey(p), []byte{1})
+	})
+	if !errors.Is(err, hexxladb.ErrInvalidArgument) {
+		t.Fatalf("want ErrInvalidArgument, got %v", err)
 	}
 }
 
@@ -155,6 +216,62 @@ func TestTx_AscendCellsBySource_mvccSnapshotIsolation(t *testing.T) {
 	}
 	if countNew != 1 {
 		t.Fatalf("expected new source cell in seq=2 snapshot, got %d", countNew)
+	}
+}
+
+func TestTx_AscendCellsByTag_mvccSnapshotIsolation(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	db, err := hexxladb.Open(filepath.Join(dir, "cell_tag_mvcc.db"), &hexxladb.Options{EnableMVCC: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	c := lattice.Coord{Q: -2, R: 3}
+	p, err := lattice.Pack(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := record.CellRecord{
+		Key:        p,
+		RawContent: "tag-snap",
+		Provenance: record.ProvenanceWire{SourceID: "s"},
+		Tags:       []string{"alpha"},
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+		t.Fatal(err)
+	}
+	rec.Tags = []string{"beta"}
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	countAlpha := 0
+	if err := db.ViewAt(1, func(tx *hexxladb.Tx) error {
+		return tx.AscendCellsByTag(ctx, "alpha", func(record.CellRecord) bool {
+			countAlpha++
+			return true
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if countAlpha != 1 {
+		t.Fatalf("expected alpha tag in seq=1 snapshot, got %d", countAlpha)
+	}
+
+	countBeta := 0
+	if err := db.ViewAt(2, func(tx *hexxladb.Tx) error {
+		return tx.AscendCellsByTag(ctx, "beta", func(record.CellRecord) bool {
+			countBeta++
+			return true
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if countBeta != 1 {
+		t.Fatalf("expected beta tag in seq=2 snapshot, got %d", countBeta)
 	}
 }
 

@@ -12,11 +12,12 @@ import (
 // DB is a handle to an embedded HexxlaDB database. Construction is via [Open].
 // Concurrent [View] calls are serialized with readers; [Update] and [Batch] are exclusive.
 type DB struct {
-	mu        sync.RWMutex
-	eng       *engine.Engine
-	btree     *engine.BTree
-	changelog *changelog.Log
-	useMVCC   bool // true when on-disk format is v2+ (MVCC physical keys; see [Options.EnableMVCC]).
+	mu            sync.RWMutex
+	eng           *engine.Engine
+	btree         *engine.BTree
+	changelog     *changelog.Log
+	useMVCC       bool          // true when on-disk format is v2+ (MVCC physical keys; see [Options.EnableMVCC]).
+	mvccRetention MVCCRetention // copy of [Options.MVCCRetention] at [Open] for [SuggestedPruneBeforeSeq].
 }
 
 // ErrCorruptDatabase means the database or WAL failed validation on open.
@@ -59,6 +60,9 @@ func Open(path string, opts *Options) (*DB, error) {
 	}
 	bt := engine.OpenBTree(eng)
 	db := &DB{eng: eng, btree: bt, useMVCC: hdr.FormatVersion >= 2}
+	if opts != nil {
+		db.mvccRetention = opts.MVCCRetention
+	}
 	if opts != nil && opts.ChangelogEnabled {
 		clPath := opts.ChangelogPath
 		if clPath == "" {

@@ -129,7 +129,11 @@ Old versions are reclaimable when **no snapshot** can reference them:
 
 **Shipped in this repository:** format-v2 `commit_seq`, `ViewAt(read_seq)`, `ViewAtTime(time.Time)` wall-clock mapping, versioned primaries for cells/facets/seams, and snapshot-visible reads for source/time/seam secondary scans.
 
-**Remaining hardening focus:** retention policy automation, long-run churn validation, and operator runbooks (see **[`HEXXLA_READINESS_ROADMAP.md`](./HEXXLA_READINESS_ROADMAP.md)**).
+**Hardening shipped in-tree:** MVCC churn + prune integration test (`make integration`), retention/prune helpers and **[`MVCC_RETENTION.md`](./MVCC_RETENTION.md)**, commit **`__meta/commit-time/`** btree rows **before** logical `cell/` writes so sorted-key order matches insert order (prune/delete safe on the supported [`Update`](../../tx.go) path—see roadmap §4). Regression: [`internal/engine/btree_test.go`](../../internal/engine/btree_test.go).
+
+**Remaining integrator-owned:** org SLA tables, production soak evidence, runbooks in your environment (see **[`ADOPTION.md`](./ADOPTION.md)**, **[`OPERATIONS.md`](./OPERATIONS.md)**).
+
+**Engineering debt (non-blocking):** raw [`Tx.Put`](../../tx.go) under MVCC that inserts **`cell/`** before **`__meta/commit-time/`** can still stress B+tree delete/rebalance; avoid unless you control ordering or fix engine—supported writers use **`Update`** / **`PutCell`**. **`cell/`** keys without a MVCC suffix are rejected (**[`ADR_MVCC_RAW_TX_PUT.md`](./ADR_MVCC_RAW_TX_PUT.md)**).
 
 **Locked milestone sequence (order matters):**
 
@@ -148,5 +152,4 @@ Old versions are reclaimable when **no snapshot** can reference them:
 
 ## References
 
-- Consolidated plan and remaining gaps: [HEXXLA_READINESS_ROADMAP.md](./HEXXLA_READINESS_ROADMAP.md).
-- Checklist: [HEXXLA_DB_V1.md](../checklist/HEXXLA_DB_V1.md).
+- Adoption and rollout context: [ADOPTION.md](./ADOPTION.md).

@@ -1,6 +1,6 @@
 # PackedCoord v1 bit layout (design gate)
 
-This document locks the 128-bit `PackedCoord` encoding used for Morton-ordered keys. If the layout changes incompatibly, bump engine format version / magic per [DEVELOPMENT_ROADMAP.md](../../docs/hexxladb/DEVELOPMENT_ROADMAP.md).
+This document locks the 128-bit `PackedCoord` encoding used for Morton-ordered keys. If the layout changes incompatibly, bump engine format version / magic per [`ENGINE_FORMAT.md`](../engine/ENGINE_FORMAT.md) and [`HEXXLA_DB.md`](../../docs/hexxladb/HEXXLA_DB.md).
 
 ## Coordinate bounds
 

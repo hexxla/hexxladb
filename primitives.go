@@ -16,7 +16,8 @@ import (
 )
 
 // PutCell writes a cell record at cell/<packed> for rec.Key (v1) or version-suffixed keys (MVCC).
-// It maintains source/ and time/ secondary indexes (see [Tx.AscendCellsBySource], [Tx.AscendCellsInTimeBucket]).
+// It maintains source/, time/, and tag/ secondary indexes (see [Tx.AscendCellsBySource],
+// [Tx.AscendCellsInTimeBucket], [Tx.AscendCellsByTag]).
 // Only allowed inside [DB.Update].
 func (tx *Tx) PutCell(ctx context.Context, rec record.CellRecord) error {
 	if err := ctx.Err(); err != nil {

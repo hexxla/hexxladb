@@ -1,6 +1,10 @@
 # Microbenchmarks (reference)
 
-This document records **how** to run engine hot-path benchmarks and a **sample** result set for regression comparison. **Absolute numbers are machine-dependent** — always compare on the same hardware and Go version. For **marketing / slide-ready** tables and a **coverage matrix**, see **[`MARKETING_BENCHMARKS.md`](./MARKETING_BENCHMARKS.md)**.
+This document records **how** to run engine hot-path benchmarks and a **sample** result set for regression comparison. **Absolute numbers are machine-dependent** — always compare on the same hardware and Go version.
+
+**Slide-style claims:** capture numbers on a **named** machine first (`go version`, CPU, disk, `TMPDIR`), then reuse the **coverage matrix** below to say what was measured.
+
+**Correctness / MVCC churn (not microbench):** use **`make integration`** for MVCC sustained-update + prune coverage; see **[`OPERATIONS.md`](./OPERATIONS.md)** soak checklist.
 
 ## How to run
 
@@ -24,7 +28,7 @@ make bench-stress
 go test -count=1 -bench='BenchmarkAPI_GetCell/cells_10000' -benchmem -benchtime=1s ./.
 ```
 
-See [`api_bench_test.go`](../../api_bench_test.go) — includes baseline **`BenchmarkAPI_PutCell`**, MVCC variant **`BenchmarkAPI_PutCell_MVCC`**, and encrypted read variant **`BenchmarkAPI_GetCell_Encrypted`**.
+See [`api_bench_test.go`](../../api_bench_test.go) — includes baseline **`BenchmarkAPI_PutCell`**, MVCC variant **`BenchmarkAPI_PutCell_MVCC`**, encrypted read **`BenchmarkAPI_GetCell_Encrypted`**, combined **`BenchmarkAPI_GetCell_MVCC_Encrypted`**, and mixed reader/writer **`BenchmarkAPI_ViewUpdateContention`**.
 
 Fuzz smoke (not timed like benchmarks):
 
@@ -33,6 +37,25 @@ make fuzz
 ```
 
 See also [CONTRIBUTING.md](../../CONTRIBUTING.md).
+
+## Benchmark coverage matrix (API area → benchmark)
+
+| API area | Benchmark(s) | Notes |
+| -------- | ------------ | ----- |
+| Lattice Pack/Unpack/Distance | `internal/lattice` `BenchmarkPack`, etc. | Hot path |
+| Record encode/decode cell | `internal/record` `BenchmarkEncodeDecodeCell` | |
+| Engine B+ tree Get/Put/AscendRange | `internal/engine` `BenchmarkBTree*` | |
+| `PutCell` (one insert per iter, growing DB) | `BenchmarkAPI_PutCell` | |
+| `PutCell` with MVCC enabled | `BenchmarkAPI_PutCell_MVCC` | |
+| `GetCell` after preload | `BenchmarkAPI_GetCell/cells_*` | |
+| `GetCell` encrypted | `BenchmarkAPI_GetCell_Encrypted/cells_*` | |
+| `GetCell` MVCC + encrypted | `BenchmarkAPI_GetCell_MVCC_Encrypted/cells_*` | |
+| Concurrent View + Update | `BenchmarkAPI_ViewUpdateContention` | See interpretation below |
+| `AscendCellsBySource` full scan | `BenchmarkAPI_AscendCellsBySource/cells_*` | |
+| `LoadContext` neighborhood | `BenchmarkAPI_LoadContext/cells_*` | |
+| `LoadContextAt` (validity filter) | `BenchmarkAPI_LoadContextAt/cells_*` | |
+| `WalkRing` / `WalkRingAt` | `BenchmarkAPI_WalkRing* / cells_*` | |
+| Seams, facets, edges, changelog | — | Exercise via [`examples/storage_walkthrough`](../../examples/storage_walkthrough/main.go) |
 
 ## Sample output (one machine)
 
@@ -71,6 +94,8 @@ Read/scan benchmarks preload **N** cells (same `source/` and `time/` secondaries
 - `BenchmarkAPI_PutCell_MVCC`: same workload with `Options.EnableMVCC=true`.
 - `BenchmarkAPI_GetCell/cells_N`: hot-key `GetCell` after **N**-cell preload.
 - `BenchmarkAPI_GetCell_Encrypted/cells_N`: `GetCell` with AES-XTS enabled.
+- `BenchmarkAPI_GetCell_MVCC_Encrypted/cells_N`: `EnableMVCC` + `EncryptionKey` on the same DB (read path).
+- `BenchmarkAPI_ViewUpdateContention`: parallel `View` (`GetCell`) vs occasional `Update` (`Tx.Put` on a tiny side key).
 - `BenchmarkAPI_AscendCellsBySource/cells_N`: full `source/` scan over **N** rows.
 - `BenchmarkAPI_LoadContext/cells_N`: `LoadContext` ring walk at center `(0,0)` with **N** cells in DB.
 - `BenchmarkAPI_LoadContextAt/cells_N`: same with **[`record.ValidAt`](../../internal/record/validity.go)** at a fixed `asOf`.
@@ -86,9 +111,22 @@ Each read/scan sub-benchmark reports an extra **`cells`** metric (preload row co
 - Re-run after changes to [`internal/engine/btree.go`](../../internal/engine/btree.go), [`internal/lattice/packed.go`](../../internal/lattice/packed.go), record codecs, or [`primitives.go`](../../primitives.go) / [`cell_secondary.go`](../../cell_secondary.go) when tuning performance.
 - **API** benchmarks include **WAL + fsync** behavior on `PutCell` paths; compare on the same filesystem when tracking regressions.
 
-## Readiness acceptance matrix (R3)
+## Benchmark coverage gaps (encrypted, MVCC, contention)
 
-Before claiming a production-readiness update, capture and archive:
+Use this when evaluating scale confidence beyond default CI ([`ADOPTION.md`](./ADOPTION.md)).
+
+| Scenario | Covered in [`api_bench_test.go`](../../api_bench_test.go) | Gap / note |
+|----------|-------------------------------------------------------------|------------|
+| MVCC write path | `BenchmarkAPI_PutCell_MVCC` | Single-threaded; DB remains single-writer—multi-writer load belongs in **app** tests. |
+| Encrypted read after preload | `BenchmarkAPI_GetCell_Encrypted/cells_*` | — |
+| Concurrent **View** + **Update** | `BenchmarkAPI_ViewUpdateContention` | Writer is **`Tx.Put`** on a raw key (not `PutCell`); models mutex + WAL contention, not MVCC churn. |
+| MVCC + encryption same DB | `BenchmarkAPI_GetCell_MVCC_Encrypted/cells_*` | Write-heavy combined scenario still covered separately (`PutCell_MVCC` vs encrypt-only reads). |
+
+**Archive:** after `make bench-stress`, append a dated row to your internal sheet with `go version`, CPU, disk, `TMPDIR`, and key benchmark lines (`BenchmarkAPI_*`). Refresh when changing [`internal/engine`](../../internal/engine), [`primitives.go`](../../primitives.go), or encryption/MVCC paths.
+
+## Release / regression capture
+
+Before claiming a performance or readiness update, capture and archive:
 
 - `make ci`
 - `make integration`

@@ -177,7 +177,7 @@ The repo is a **minimal composition root**, not an empty skeleton:
 - **`cmd/hexxladb/main.go`** — **`config.Load()`**, **`slog`** JSON handler, **`app.New()`**, then exits (library-first; add servers or signal handling here if you build a long-running process). Wire **`hexxladb.Open`**, adapters, and any transports here.
 - **`internal/config`** — **`Config`** + **`Load()`** from the environment (**`LOG_LEVEL`** for now).
 - **`internal/domain`** — shared limits (**`MaxContentLen`**) and sentinel errors (**`ErrContentTooLarge`**, **`ErrInvalidInput`**); extend with pure types and rules as features land.
-- **`internal/lattice`** — pure hex geometry (**`Coord`**, distance); **`PackedCoord`** / Morton in later milestones (see **`docs/hexxladb/DEVELOPMENT_ROADMAP.md`**).
+- **`internal/lattice`** — pure hex geometry (**`Coord`**, distance); **`PackedCoord`** / Morton encoding (**[`PACKED_COORD.md`](../../internal/lattice/PACKED_COORD.md)**).
 - **`internal/app`** — **`Service`** shell; add ports and use cases when you wire storage or APIs.
 - **`internal/adapters`** — placeholder only (**[`internal/adapters/README.md`](../../internal/adapters/README.md)**); add **`in/`** and **`out/`** packages when you introduce transports or infrastructure.
 

@@ -12,9 +12,9 @@ This addendum locks choices referenced in [`MVCC_DESIGN.md`](./MVCC_DESIGN.md) �
 
 - **Option A** — version suffix on logical keys: physical key = `logical_key || encode_uint64_be(commit_seq)` for **`cell/`** primary rows. Helpers live in [`internal/index/cell_version.go`](../../internal/index/cell_version.go); visibility uses [`SelectVisible`](../../internal/mvccspike/version_suffix_cell_key.go) (largest `commit_seq ≤ read_seq`).
 
-## §4 Secondary indexes (`source/`, `time/`)
+## §4 Secondary indexes (`source/`, `time/`, `tag/`)
 
-- **Index-as-of snapshot:** secondary keys include the same **`commit_seq`** suffix as the cell primary row they index, so each committed version has consistent primary + secondary entries. Scans dedupe by logical [`PackedCoord`](../../internal/lattice/packed.go) and resolve the visible cell via [`GetCell`](../../primitives.go) at the transaction’s **`read_seq`**.
+- **Index-as-of snapshot:** secondary keys include the same **`commit_seq`** suffix as the cell primary row they index, so each committed version has consistent primary + secondary entries. Scans dedupe by logical [`PackedCoord`](../../internal/lattice/packed.go) and resolve the visible cell via [`GetCell`](../../primitives.go) at the transaction’s **`read_seq`**. Tag secondaries use [`internal/index/tag_key.go`](../../internal/index/tag_key.go).
 
 ## §5 WAL
 

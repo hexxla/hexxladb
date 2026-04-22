@@ -1,6 +1,6 @@
 # HexxlaDB – Ideal Native Database Specification
 
-**Version 1.3**
+**Version 1.4**
 **Date:** April 2026
 **Project Name:** Hexxla
 
@@ -25,7 +25,7 @@ This document is the canonical implementation specification.
 - **Edge** volume and **Seam** conflict patterns as **two distinct storage families** with purpose-built indexes
 - **MVCC** for `as_of` snapshots and consistent lattice views
 
-The physical layer may still use **B+-trees, leveled runs, or SSTable-style** components you own and tune for Morton keys—that is not the same as shipping a generic LSM wrapper.
+The reference implementation uses a single **B+-tree** over Morton-prefixed keys ([`ORDERED_STORE.md`](../../internal/engine/ORDERED_STORE.md)). Alternative **leveled / SSTable-style** structures remain a **future** exploration if profiling demands—they are **not** part of the shipped v1 engine.
 
 **SQLite** is not used.
 
@@ -48,9 +48,9 @@ Import **`hexxladb`** as the root package; keep the stable surface (`Open`, `DB`
 
 **Concurrency and temporal support:** MVCC-style snapshot isolation is native, enabling `as_of` queries and consistent lattice views.
 
-**Key design:** Morton-packed coordinates and the prefixes in **Storage Layout** make ring enumeration, super-hex sharding, and locality-preserving operations first-class in the engine—not bolted on after the fact.
+**Key design:** Morton-packed coordinates and the prefixes in **Storage Layout** make ring enumeration and locality-preserving scans first-class—**super-hex sharding** as an operational routing layer is **not** required for v1 (reserved high bits in `PackedCoord` support future partitioning ideas; see **[`ADOPTION.md`](./ADOPTION.md)** post–v1 note).
 
-**v1 minimal engine shape:** Fixed-size pages (e.g. 16 or 64 KiB); B+-tree or leveled/SSTable structures with **Morton-prefixed keys** so spatial locality maps to on-disk locality; WAL for durability and crash recovery.
+**v1 minimal engine shape:** Fixed pages (**64 KiB** in the reference implementation—[`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md)); **one B+-tree** primary store + WAL for durability and crash recovery.
 
 ## Core Data Model
 
@@ -63,7 +63,7 @@ Import **`hexxladb`** as the root package; keep the stable surface (`Open`, `DB`
   - `Validity`.
   - `Tags`.
   - `ClusterHint`.
-- Indexes: coordinate (primary), `source_id`, tags, validity ranges.
+- Secondary indexes (btree families): **`source/<source_id>/…`**, **`time/<valid_bucket>/…`**, and **`tag/<tag>/…`** for cells (see **Storage Layout**). **`Tags`** are stored on the cell record and mirrored into **`tag/`** for **[`Tx.AscendCellsByTag`](../../cell_secondary.go)** (same MVCC suffix rules as other cell secondaries when format v2 is enabled). Validity filtering uses **`time/`** plus record validity fields.
 
 ### 2. Facet
 
@@ -95,7 +95,7 @@ Import **`hexxladb`** as the root package; keep the stable surface (`Open`, `DB`
   - `DetectedAt`.
   - `ResolutionStatus`.
   - `ResolutionNote`.
-- Additional indexes: resolution status, detection time (see secondary index above for cell participation).
+- Additional btree indexes for seams: **`seam-time/<bucket>/<ulid>`** (temporal bucket by validity / detection), **`seam-source/<source_id>/<ulid>`** (lexicographic by seam provenance source). **`ResolutionStatus`** lives on the **primary** `seam/<ulid>` record (filter after read or scan)—**not** a separate btree index family in v1.
 
 Seam creation, detection, and resolution rules are defined normatively in **HEXXLA.md** (Contradiction Engine). This document covers only storage layout and indexing.
 
@@ -129,11 +129,22 @@ Morton ordering is chosen because space-filling curves of this family map spatia
 - `seam-by-cells/<packed_a>/<packed_b>/<ulid>` → secondary index (canonical cell pair + id)
 - `time/<valid_bucket>/<packed_coord>` → temporal index (cells)
 - `source/<source_id>/<packed_coord>` (cells; encoding: length-prefixed `source_id` + packed coord — see implementation)
+- `tag/<tag>/<packed_coord>` → tag index for cells (length-prefixed UTF-8 tag + packed coord — see **`internal/index/tag_key.go`**)
 - `seam-time/<valid_bucket>/<ulid>` → temporal index for seams (week bucket from seam validity `ValidFrom`)
 - `seam-source/<source_id>/<ulid>` → source index for seams (length-prefixed `source_id` + ULID)
 - `embed/<partition>/<vector_ref>` → **optional** future hybrid index (ANN pointer for seed selection); **not required in v1**—HexxlaDB has **no vector columns** and **no ANN indexes** in the minimal engine; seed selection is a **separate** orchestration concern (embeddings, lexical search, tags, or explicit coordinates are all valid **outside** the core store API—see **Hybrid Retrieval Path**).
 
 `nbr/` keys are optional as noted above.
+
+### MVCC physical keys (`format_version` ≥ 2)
+
+Logical layout above describes **logical** families. When **[`Options.EnableMVCC`](../../options.go)** opens a **format v2** database, **version suffixes** are appended to physical btree keys for cells, facets, edges, seams, and secondaries (including **`source/`**, **`time/`**, **`tag/`**) so multiple committed versions coexist; visibility is **`commit_seq`**-scoped (**[`ViewAt`](../../tx.go)**, **`ViewAtTime`**). Normative behavior: **[`MVCC_DESIGN.md`](./MVCC_DESIGN.md)**; encoding helpers include **[`cell_version.go`](../../internal/index/cell_version.go)**, **[`facet_key.go`](../../internal/index/facet_key.go)** (`FacetKeyWithVersion`), **[`seam_version_key.go`](../../internal/index/seam_version_key.go)**, **[`tag_key.go`](../../internal/index/tag_key.go)**, and secondary key helpers with version suffixes in **`internal/index`**.
+
+Timeline keys **`__meta/commit-time/<wall_nanos>/<commit_seq>`** map wall-clock **`as_of`** to snapshots (**[`TX.md`](./TX.md)**). They are **not** optional for **`ViewAtTime`** on format v2.
+
+### Logical changefeed (auxiliary file)
+
+Optional append-only **changelog** for consumers lives in a **sidecar file** `{primary}-changelog` when enabled—not a btree prefix. See **[`CHANGEFEED.md`](./CHANGEFEED.md)** and **`internal/changelog`**.
 
 ## Native Query Primitives
 
@@ -163,20 +174,25 @@ AND optional seam filters apply
 
 ## Scalability and Concurrency Features
 
-- Locality-preserving sharding by super-hex regions.
-- MVCC snapshots for consistent lattice views.
-- Append-only event log or changefeed for full provenance.
-- Materialized views for summary cells and cluster promotions.
-- Hot/cold tiering: active rings in memory, cold data on SSD or object storage.
+**Shipped in v1 (reference implementation):**
+
+- **MVCC** snapshots for consistent lattice views ([`MVCC_DESIGN.md`](./MVCC_DESIGN.md)).
+- Optional **logical changefeed** (`{db}-changelog`) when configured ([`CHANGEFEED.md`](./CHANGEFEED.md)).
+
+**Future / product-tier (not required for embedded v1):**
+
+- Locality-preserving **sharding** by super-hex or region prefixes.
+- **Materialized views** for summary cells and cluster promotions (often fed by changefeed consumers).
+- **Hot/cold tiering**: active rings in memory, cold data on SSD or object storage.
 
 ## Built-in Lattice Operations
 
 - Axial to cube coordinate conversion.
 - Hex distance calculation, as defined in **HEXXLA.md** (Geometric Model).
 - Ring enumeration and spiral traversal.
-- Super-hex clustering.
 - Six-direction neighbor traversal.
-- Facet rotation as a lightweight view operation.
+- **`ClusterHint`** on cells for product-level clustering hints; **super-hex aggregation** as a first-class engine algorithm is **not** shipped in v1 (orchestration / future milestone).
+- Facet rotation as a **client/view** concern (`ActiveFacet` is not a dedicated disk field—see **[`HEXXLA_LIBRARY_MAPPING.md`](./HEXXLA_LIBRARY_MAPPING.md)**).
 
 ## v1 Scope and Non-Goals
 
@@ -185,7 +201,7 @@ AND optional seam filters apply
 - Core objects with defined packing scheme.
 - Ring walking and basic neighborhood operations.
 - Cells, facets, edges, seams, and validity.
-- **Embedded persistence** via the **custom HexxlaDB engine** (pages, WAL, Morton-keyed trees/levels); durable, crash-recoverable; **no** third-party ordered-KV/SQL core or SQLite.
+- **Embedded persistence** via the **custom HexxlaDB engine** (pages, WAL, Morton-keyed **B+-tree**); durable, crash-recoverable; **no** third-party ordered-KV/SQL core or SQLite.
 - Core query primitives.
 - **No embedding or ANN requirement:** operations are keyed by **`PackedCoord`** and non-vector indexes; optional `embed/` keyspace and hybrid retrieval are **future/optional**—v1 remains useful with explicit coords, tags, or external seeding only.
 
@@ -202,7 +218,7 @@ Semantic Seed → Spatial Expansion (`walk_ring`) → Filter (validity, seams, f
 
 ## Recommended Implementation Path
 
-- **v1:** Implement the **custom engine** described in **HexxlaDB Architecture Position (Locked)**: **fixed pages (16 or 64 KiB)**, **WAL**, **Morton-prefixed B+-tree or SSTable-style levels**, and the keyspace in this document. Ship production-shaped durability and recovery from the first version; lattice ops stay in **`internal/lattice/`** and **`internal/engine/`**, not in a third-party KV adapter layer.
-- **Later:** Optional replication, tiering (hot rings vs cold tiers), or distributed front-ends where operational needs require them—still on top of the same hex-native key and index contracts.
+- **v1 (reference):** **64 KiB** pages, **WAL**, **Morton-prefixed B+-tree**, keyspace in this document; lattice ops in **`internal/lattice/`**, persistence in **`internal/engine/`**. See **[`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md)** for on-disk header and versioning.
+- **Later:** Optional SSTable/leveled tiers if benchmarks justify; replication, tiering, distributed front-ends—still on the same hex-native **logical** key contracts.
 
 This keeps the hexagonal lattice as the organizing principle of storage, not a translation layer over a generic database.

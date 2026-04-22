@@ -3,6 +3,7 @@ package hexxladb_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -213,6 +214,54 @@ func TestMVCC_StatsAndPruneCellVersions(t *testing.T) {
 		return nil
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMVCC_SuggestedPruneBeforeSeq_andPlan(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "retention.db")
+	db, err := hexxladb.Open(path, &hexxladb.Options{
+		EnableMVCC:    true,
+		MVCCRetention: hexxladb.MVCCRetention{RetainCommitsBehindHead: 50},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	p := lattice.PackedCoord{1, 2}
+	for i := range 60 {
+		raw := fmt.Sprintf("v%d", i)
+		if err := db.Update(func(tx *hexxladb.Tx) error {
+			return tx.PutCell(context.Background(), record.CellRecord{Key: p, RawContent: raw})
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bs, ok, err := db.SuggestedPruneBeforeSeq()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected suggested beforeSeq")
+	}
+	hdr, err := engine.ReadHeaderFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := hdr.CommitSeq - 50; bs != want {
+		t.Fatalf("beforeSeq: got %d want %d", bs, want)
+	}
+	before, maxD, ok2, err := db.MVCCPrunePlan(hexxladb.MVCCPruneBalanced)
+	if err != nil || !ok2 || maxD <= 0 || before != bs {
+		t.Fatalf("plan before=%v max=%v ok=%v err=%v", before, maxD, ok2, err)
+	}
+	if _, _, _, err := db.MVCCPrunePlan(hexxladb.MVCCPruneProfile("nope")); !errors.Is(err, hexxladb.ErrInvalidArgument) {
+		t.Fatalf("plan bad profile: %v", err)
+	}
+	var sched hexxladb.PruneScheduler
+	if _, err := sched.Tick(db); err != nil {
 		t.Fatal(err)
 	}
 }

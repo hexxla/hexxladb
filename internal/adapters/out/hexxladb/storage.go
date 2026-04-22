@@ -63,6 +63,13 @@ func (s *Storage) AscendCellsInTimeBucket(ctx context.Context, bucket int64, fn 
 	})
 }
 
+// AscendCellsByTag implements [domain.Storage].
+func (s *Storage) AscendCellsByTag(ctx context.Context, tag string, fn func(record.CellRecord) bool) error {
+	return s.DB.View(func(tx *hxdb.Tx) error {
+		return tx.AscendCellsByTag(ctx, tag, fn)
+	})
+}
+
 // AscendSeamsBySource implements [domain.Storage].
 func (s *Storage) AscendSeamsBySource(ctx context.Context, sourceID string, fn func(record.SeamRecord) bool) error {
 	return s.DB.View(func(tx *hxdb.Tx) error {

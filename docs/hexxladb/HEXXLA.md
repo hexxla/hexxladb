@@ -178,7 +178,7 @@ type ContextPack struct {
 
 Ordering rule: concentric rings from center outward, then axial spiral order within each ring starting from the positive-q direction. If token budget is exceeded, the system drops the lowest-confidence items from outer rings first.
 
-**HexxlaDB Go library:** The embedded module **`github.com/hexxla/hexxladb`** exposes **`record.CellRecord`** (and related wire types), not the nominal `Cell` / `CellView` structs above. Neighborhood loading is **[`Tx.LoadContext`](https://pkg.go.dev/github.com/hexxla/hexxladb#Tx.LoadContext)** with a **`maxCells`** cap (see **[HEXXLA_DB.md](HEXXLA_DB.md)** primitives)—integrators implement token budgeting and assemble a **`ContextPack`**-shaped value if needed. Optional higher-level view helpers are described in **[HEXXLA_READINESS_ROADMAP.md](HEXXLA_READINESS_ROADMAP.md)** (Optional API Surface Improvements).
+**HexxlaDB Go library:** The embedded module **`github.com/hexxla/hexxladb`** exposes **`record.CellRecord`** (and related wire types), not the nominal `Cell` / `CellView` structs above. Wire-first neighborhood loading is **[`Tx.LoadContext`](https://pkg.go.dev/github.com/hexxla/hexxladb#Tx.LoadContext)** with a **`maxCells`** cap (see **[HEXXLA_DB.md](HEXXLA_DB.md)** primitives). Token-budgeted **`ContextPack`** assembly is **[`Tx.LoadContextWithBudgeting`](https://pkg.go.dev/github.com/hexxla/hexxladb#Tx.LoadContextWithBudgeting)** / **[`Tx.LoadContextPack`](https://pkg.go.dev/github.com/hexxla/hexxladb#Tx.LoadContextPack)** with **[`LoadContextBudgetConfig`](https://pkg.go.dev/github.com/hexxla/hexxladb#LoadContextBudgetConfig)**; filtering helpers include **`FilterCellViews`**, **`TruncateCellViewsToTokenBudget`** ([**`views.go`**](../../views.go)). Concept mapping: **[`HEXXLA_LIBRARY_MAPPING.md`](./HEXXLA_LIBRARY_MAPPING.md)**; rollout and backlog context: **[`ADOPTION.md`](./ADOPTION.md)**.
 
 ## Contradiction Engine (Normative Source)
 
@@ -201,7 +201,7 @@ All resolutions create a full audit trail. Superseded seams remain queryable for
 
 Seams stay first-class and visible. They are never collapsed into ordinary edges.
 
-(See **HEXXLA_DB.md** for storage layout, seam keys (`seam/<ulid>`, `seam-by-cells/...`), and indexing.)
+(See **HEXXLA_DB.md** for storage layout, seam keys (`seam/<ulid>`, `seam-by-cells/...`), cell secondaries (`source/`, `time/`, `tag/`), and indexing.)
 
 ## Time and Evolution
 
@@ -270,3 +270,46 @@ Evaluation focuses on:
 ## Final Positioning
 
 Hexxla is a hexagonal spatial memory operating system for LLMs. Embeddings or lexical search find the starting point; the lattice governs local structure, context packing, and conflict handling. This delivers a practical, original, and buildable improvement to long-term memory architectures.
+
+## HexxlaDB and HEXXLA (how to use the library today)
+
+**Scope:** This repository ships **HexxlaDB** (`package hexxladb`) — the embedded engine — not the full HEXXLA product (HTTP/JSON gateway, embedding/index services, dashboards). Those live in a **consumer service** that imports `hexxladb` and implements orchestration in **domain** / **app** layers (see **[HEXXLA_PRODUCT_WIRING.md](./HEXXLA_PRODUCT_WIRING.md)**). The sections below describe how **today’s** HexxlaDB API fulfills the **normative requirements** in this document until HEXXLA is built as a separate composition root.
+
+### Mapping: HEXXLA intent → HexxlaDB primitives
+
+| HEXXLA concept (this doc)                  | HexxlaDB surface (stable, root package)                                                                                                       | Notes                                                                                                                          |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Spatial addressing `(q,r)` / packed keys   | **`Coord`**, **`Pack`**, **`Unpack`**, **`Ring`**, **`WalkRings`**                                                                            | Same ring order as **`Tx.LoadContext`** / **`LoadContextPack`**.                                                               |
+| Persist a memory cell                      | **`Tx.PutCell`** → stores **`record.CellRecord`** (wire types in **`internal/record`**)                                                       | Immutable raw + provenance + validity + tags; secondaries **`source/`**, **`time/`**, **`tag/`** maintained automatically.     |
+| Read one cell                              | **`Tx.GetCell`**                                                                                                                              | Snapshot-visible version when MVCC enabled.                                                                                    |
+| Neighborhood / N-ring load (wire-first)    | **`Tx.LoadContext`**, **`Tx.LoadContextAt`**                                                                                                  | **`maxR`** + **`maxCells`** / validity **`asOf`**; distinct from MVCC **`DB.ViewAt`**.                                         |
+| Token-budget **`ContextPack`**             | **`Tx.LoadContextWithBudgeting`** / **`Tx.LoadContextPack`**, **`LoadContextBudgetConfig`**, **`TokenBudgeter`** (e.g. **`ByteLenBudgeter`**) | Optional **`FilterCellViews`**, **`TruncateCellViewsToTokenBudget`**.                                                          |
+| Facets (derived views, hash discipline)    | **`Tx.PutFacet`**, **`Tx.UpdateFacet`**, **`Tx.GetFacet`**, **`Tx.AscendFacetsForCell`**, **`Tx.WalkRingFacets`**                             | Product maps **FacetView** from assembled **`CellView`**.                                                                      |
+| Edges (adjacency / conversation graph)     | **`Tx.LinkCells`** (sugar) or **`Tx.PutEdge`**, **`Tx.GetEdge`**, **`Tx.AscendEdgesFrom`**                                                    | Distinct from seams.                                                                                                           |
+| Contradictions / seams                     | **`Tx.PutSeam`**, **`Tx.FindSeams`**, **`Tx.FindSeamsAt`**, **`Tx.ResolveSeam`**, **`Tx.MarkConflict`**                                       | Storage: **`seam/<ulid>`** + **`seam-by-cells/…`**; seam secondaries **`AscendSeamsBySource`**, **`AscendSeamsInTimeBucket`**. |
+| Secondary discovery (no full lattice walk) | **`Tx.AscendCellsBySource`**, **`Tx.AscendCellsInTimeBucket`**, **`Tx.AscendCellsByTag`**                                                     | Same for seams where indexed.                                                                                                  |
+| MVCC “as of” snapshot (engine time)        | **`DB.ViewAt`**, **`DB.ViewAtTime`**, **`DB.Update`**                                                                                         | Orthogonal to **validity** windows on records; see **MVCC_TEMPORAL.md**.                                                       |
+| Retention / observability (optional)       | **`DB.StatsMVCC`**, **`DB.PruneCellVersions`**, **`DB.SuggestedPruneBeforeSeq`**, **`DB.ReadChangelogSince`** (if enabled)                    | Operational; not required for core memory semantics.                                                                           |
+| At-rest encryption (optional)              | **`Options`** encryption fields, **`DeriveKeyFromPassphrase`**, **`RotateEncryption`**                                                        | See **ENCRYPTION.md**.                                                                                                         |
+| Raw btree escape hatch                     | **`Tx.Get`**, **`Tx.Put`**, **`Tx.AscendRange`**                                                                                              | Rare; prefer lattice primitives for HEXXLA-shaped code.                                                                        |
+
+Canonical key layout and primitive behavior: **HEXXLA_DB.md**. Concept ↔ API naming: **HEXXLA_LIBRARY_MAPPING.md**. Every exported **`hexxladb`** symbol (with demo gap notes): **[API_REFERENCE.md](./API_REFERENCE.md)**.
+
+### Reference exercise: `examples/live_session_demo`
+
+The **live session demo** seeds a file under **`./.tmp/`** and runs **automated checks** plus an optional **“HEXXLA service simulation”** block (budget ladder, tag recall, sweep timings). It is a **smoke / teaching** path, **not** exhaustive API coverage.
+
+**Used by the demo (illustrative):** **`Open`**, **`DB.View`** / **`DB.Update`**, **`DB.ViewAtTime`**, **`Tx.PutCell`**, **`Tx.GetCell`**, **`Tx.PutFacet`**, **`Tx.LinkCells`**, **`Tx.PutSeam`**, **`Tx.AscendCellsBySource`**, **`Tx.AscendCellsByTag`**, **`Tx.AscendCellsInTimeBucket`**, **`Tx.LoadContext`**, **`Tx.LoadContextPack`**, **`Tx.LoadContextAt`**, **`Tx.GetFacet`**, **`Tx.FindSeams`**, **`WalkRings`**, **`DefaultAssembleCellViewOpts`**, **`LoadContextBudgetConfig`**, **`ByteLenBudgeter`**, optional **`Options.EnableMVCC`**.
+
+**Not exercised there (still part of HEXXLA-ready surface):** low-level **`Tx.Get`/`Put`/`AscendRange`**; **`WalkRing`**, **`WalkRingAt`**, **`WalkRingFacets`**; **`AssembleCellView`** alone; **`LoadContextWithBudgeting`** name (demo uses **`LoadContextPack`** alias); **`UpdateFacet`**; explicit **`PutEdge`** / **`GetEdge`** / **`AscendEdgesFrom`**; **`MarkConflict`**, **`ResolveSeam`**, **`FindSeamsAt`**; seam secondary ascents; **`FilterCellViews`** / **`TruncateCellViewsToTokenBudget`**; **`DB.ViewAt`** (by **`read_seq`**); **`Batch`**; changelog; MVCC stats/prune; encryption rotation.
+
+**Expectations:** When **`make ci`** and **`go test ./examples/live_session_demo/`** pass, the demo’s **verify** step confirms that **counts**, **neighborhood loads**, **time-bucket index**, **facet**, **seams**, and **temporal read paths** behave consistently for the scripted dataset — i.e. the exercised subset is **working as intended** for that scenario. Broader correctness is covered by the main module’s tests and benchmarks (**BENCHMARKS.md**).
+
+### Building HEXXLA on top
+
+1. **Choose seed coordinates** outside the engine (embeddings, lexical hit, or explicit user anchor) — HexxlaDB does not pick seeds for you.
+2. **Write path:** **`Update`** → **`PutCell`** / **`PutFacet`** / **`LinkCells`** / **`PutSeam`** (or **`MarkConflict`**) with policies from **domain** rules.
+3. **Read path:** **`View`** → **`LoadContextPack`** (prompt assembly) plus **`AscendCellsByTag`** / **`AscendCellsBySource`** for dashboards and analytics.
+4. **Operational:** enable MVCC/changelog/encryption only when the service needs those deployment modes.
+
+This staged use of HexxlaDB matches **HEXXLA.md**’s separation of **memory model** (here) from **storage layout** (**HEXXLA_DB.md**) and keeps the future HEXXLA binary free of **`internal/engine`** imports (**[HEXAGONAL_ARCHITECTURE.md](../context/HEXAGONAL_ARCHITECTURE.md)**).

@@ -7,7 +7,7 @@
 help:
 	@echo "make ci              Full pipeline (same as GitHub Actions: ./scripts/ci.sh)"
 	@echo "make integration     Optional slower tests (go test -tags=integration -race ./...)"
-	@echo "make stress          Optional very large cell-count tests (go test -tags=stress -race ./...; not CI)"
+	@echo "make stress          Optional very large cell-count tests (TMPDIR defaults to ./.tmp; not CI)"
 	@echo "make bench           Run benchmarks (go test -bench=. -benchmem ./...; not in CI)"
 	@echo "make bench-stress    Longer API benches (default preload=all: 512..10k; HEXXLA_BENCH_PRELOAD=extreme for 50k; not CI)"
 	@echo "make fuzz            Short fuzz smoke (internal/record + internal/engine; not in CI)"
@@ -30,9 +30,10 @@ ci:
 integration:
 	go test -count=1 -race -tags=integration ./...
 
-# Extreme scale (100k+ cells by default; minutes, large disk). See CONTRIBUTING.md.
+# Extreme scale (100k+ cells by default; minutes, large disk). TMPDIR defaults to repo ./.tmp (override if needed). See CONTRIBUTING.md.
 stress:
-	go test -count=1 -race -tags=stress ./...
+	@$(MAKE) bench-tmp
+	TMPDIR=$(or $(TMPDIR),$(CURDIR)/.tmp) go test -count=1 -race -tags=stress ./...
 
 # Benchmarks — not part of default CI (keeps PRs fast). See CONTRIBUTING.md.
 bench:

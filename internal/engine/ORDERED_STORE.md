@@ -72,3 +72,7 @@ Byte keys are **opaque** to **`BTree`**. Canonical **`cell/`** keys live in **[`
 ## WAL / durability
 
 Tree pages are ordinary data pages: **`WritePage`** appends WAL records and updates the header’s **`last_wal_seq`**. No separate WAL format beyond ENGINE_FORMAT.
+
+## MVCC (format v2) and raw `Put`
+
+The B+ tree remains **byte-key ordered** and opaque to MVCC versioning. Application writers should use **`Tx.PutCell`** / **`Update`** paths so **`cell/`** and **`__meta/`** timeline keys stay consistent. Raw **`Tx.Put`** with **`cell/`** keys inserted before **`__meta/commit-time/`** keys can stress delete/rebalance paths (documented engineering debt in [MVCC_DESIGN.md](../../docs/hexxladb/MVCC_DESIGN.md)); avoid unless you control ordering end-to-end.

@@ -18,6 +18,8 @@ type Storage interface {
 	AscendCellsBySource(ctx context.Context, sourceID string, fn func(record.CellRecord) bool) error
 	// AscendCellsInTimeBucket scans the time/ secondary index for a UTC week bucket index.
 	AscendCellsInTimeBucket(ctx context.Context, bucket int64, fn func(record.CellRecord) bool) error
+	// AscendCellsByTag scans the tag/ secondary index for tag.
+	AscendCellsByTag(ctx context.Context, tag string, fn func(record.CellRecord) bool) error
 	// AscendSeamsBySource scans the seam-source/ secondary index for sourceID.
 	AscendSeamsBySource(ctx context.Context, sourceID string, fn func(record.SeamRecord) bool) error
 	// AscendSeamsInTimeBucket scans the seam-time/ secondary index for a UTC week bucket.

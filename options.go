@@ -1,10 +1,23 @@
 package hexxladb
 
+// MVCCRetention configures optional defaults for [DB.SuggestedPruneBeforeSeq] and [DB.MVCCPrunePlan].
+// Zero values mean automatic prune suggestions are disabled (operators pass explicit beforeSeq to [DB.PruneCellVersions]).
+type MVCCRetention struct {
+	// RetainCommitsBehindHead keeps at least this much commit history: only cell versions with
+	// commit_seq strictly less than (current CommitSeq - RetainCommitsBehindHead) are eligible
+	// for pruning (the latest version per logical cell is always kept). For example, with
+	// RetainCommitsBehindHead=1000 and CommitSeq=5000, [SuggestedPruneBeforeSeq] returns 4000,
+	// so [PruneCellVersions](4000, ...) may delete stale rows with seq < 4000.
+	RetainCommitsBehindHead uint64
+}
+
 // Options configures opening a database (see [Open]).
 type Options struct {
 	// EnableMVCC, when true, creates new databases at engine format v2 with MVCC versioned keys (see [docs/hexxladb/MVCC_E2_DECISIONS.md]).
 	// Existing v1 files are never auto-upgraded; they keep single-version behavior until migrated.
 	EnableMVCC bool
+	// MVCCRetention is optional policy for [DB.SuggestedPruneBeforeSeq] / [DB.MVCCPrunePlan] (ignored for v1 files).
+	MVCCRetention MVCCRetention
 	// ChangelogEnabled, when true, maintains an append-only logical changefeed file (see [docs/hexxladb/CHANGEFEED.md]).
 	ChangelogEnabled bool
 	// ChangelogPath overrides the default path (<dbpath>-changelog). Empty means default.

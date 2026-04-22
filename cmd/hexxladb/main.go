@@ -9,6 +9,8 @@
 //     adapters should use only the public hexxladb API (see docs).
 //  5. Exit, or run your own long-lived work — this repo is library-first, so
 //     this command finishes after wiring unless you add servers or workers.
+//     Product transports (HTTP/JSON, observability) live in services that import this module,
+//     not in hexxladb itself — see docs/hexxladb/HEXXLA_PRODUCT_WIRING.md.
 //
 // Copy or adapt this file when integrating hexxladb into another module; keep
 // business rules in internal/ (or your own packages), not in main.
