@@ -65,6 +65,8 @@ Thumbs.db
 *~
 #
 # IDE-specific directories: .cursor/ for Cursor, .windsurf/ for Windsurf (rules, skills, agent notes). Do not ignore them here.
+# Cursor agent plans (local scratch; never commit)
+.cursor/plans/
 
 # Roadmap removed from template; keep local copies out of git if you recreate the path
 /docs/ROADMAP.md
