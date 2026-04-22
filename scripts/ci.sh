@@ -33,7 +33,7 @@ fi
 echo "==> go vet (includes compiler-backed checks on packages)"
 go vet ./...
 
-echo "==> Hex boundaries (domain/app must not import internal/engine or internal/index)"
+echo "==> Hex boundaries (full hexagonal architecture validation per HEXAGONAL_ARCHITECTURE.md)"
 ./scripts/check-hex-boundaries.sh
 
 echo "==> go test (compiles packages + runs tests; -race catches data races)"
