@@ -166,7 +166,16 @@ func (tx *Tx) WalkRingAt(ctx context.Context, center lattice.Coord, ring int, as
 // PutSeam writes a seam record at seam/<ulid> and a secondary seam-by-cells/<lo>/<hi>/<ulid>
 // index entry (empty value). If a primary already exists for the ULID, CellA/CellB must match
 // the stored endpoints or [ErrSeamEndpointMismatch] is returned. Only allowed inside [DB.Update].
+//
+// The logical changefeed records this as [ChangelogOpPutSeam]. [Tx.ResolveSeam] uses the same
+// storage path but logs [ChangelogOpResolveSeam].
 func (tx *Tx) PutSeam(ctx context.Context, rec record.SeamRecord) error {
+	return tx.putSeamWithOp(ctx, rec, changelog.OpPutSeam)
+}
+
+// putSeamWithOp implements seam primary + secondary writes and MVCC indexing; clogOp is either
+// OpPutSeam or OpResolveSeam so consumers can distinguish workflow resolution from other seam writes.
+func (tx *Tx) putSeamWithOp(ctx context.Context, rec record.SeamRecord, clogOp byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -236,7 +245,7 @@ func (tx *Tx) PutSeam(ctx context.Context, rec record.SeamRecord) error {
 	if err := tx.putSeamSecondaryIndex(rec, secSeq); err != nil {
 		return err
 	}
-	tx.noteChangelog(changelog.OpPutSeam, pk, data)
+	tx.noteChangelog(clogOp, pk, data)
 	return nil
 }
 
@@ -556,17 +565,14 @@ func (tx *Tx) WalkRingFacets(ctx context.Context, center lattice.Coord, ring int
 	return nil
 }
 
-// ResolveSeam loads seam/<id>, updates resolution fields, and writes it back.
+// ResolveSeam updates resolution fields on the visible seam for id.
+// Storage and MVCC indexing match [Tx.PutSeam]; the changefeed records [ChangelogOpResolveSeam].
 // Only allowed inside [DB.Update].
 func (tx *Tx) ResolveSeam(id, resolutionStatus, resolutionNote string) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}
-	key, err := index.SeamKey(id)
-	if err != nil {
-		return err
-	}
-	raw, ok, err := tx.Get(key)
+	raw, _, ok, err := tx.getSeamVisibleRaw(id)
 	if err != nil {
 		return err
 	}
@@ -579,15 +585,7 @@ func (tx *Tx) ResolveSeam(id, resolutionStatus, resolutionNote string) error {
 	}
 	rec.ResolutionStatus = resolutionStatus
 	rec.ResolutionNote = resolutionNote
-	data, err := record.EncodeSeam(rec)
-	if err != nil {
-		return err
-	}
-	if err := tx.Put(key, data); err != nil {
-		return err
-	}
-	tx.noteChangelog(changelog.OpResolveSeam, key, data)
-	return nil
+	return tx.putSeamWithOp(context.Background(), rec, changelog.OpResolveSeam)
 }
 
 func (tx *Tx) requireWritable() error {

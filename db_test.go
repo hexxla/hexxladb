@@ -2,11 +2,14 @@ package hexxladb_test
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/oklog/ulid/v2"
 
 	"github.com/hexxla/hexxladb"
 	"github.com/hexxla/hexxladb/internal/lattice"
@@ -250,6 +253,54 @@ func TestDB_ReadChangelogSince_PutCell(t *testing.T) {
 	}
 	if len(more) != 0 {
 		t.Fatalf("expected no tail after seq, got %d", len(more))
+	}
+}
+
+func TestDB_ReadChangelogSince_ResolveSeam_emits_OpResolveSeam(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "chg_resolve.db")
+	db, err := hexxladb.Open(path, &hexxladb.Options{ChangelogEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	p0, err := lattice.Pack(lattice.Coord{Q: 0, R: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p1, err := lattice.Pack(lattice.Coord{Q: 1, R: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := ulid.MustNew(ulid.Now(), rand.Reader).String()
+
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.PutSeam(context.Background(), record.SeamRecord{
+			ID: id, CellA: p0, CellB: p1, SeamType: "t",
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.ResolveSeam(id, "done", "note")
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	recs, err := db.ReadChangelogSince(0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("want 2 changelog records, got %d", len(recs))
+	}
+	if recs[0].Op != hexxladb.ChangelogOpPutSeam {
+		t.Fatalf("first op=%d want PutSeam", recs[0].Op)
+	}
+	if recs[1].Op != hexxladb.ChangelogOpResolveSeam {
+		t.Fatalf("second op=%d want ResolveSeam", recs[1].Op)
 	}
 }
 

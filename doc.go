@@ -11,7 +11,7 @@
 //     Phase A adds [Tx.PutFacet], [Tx.GetFacet], [Tx.AscendFacetsForCell], [Tx.PutEdge], [Tx.GetEdge], [Tx.AscendEdgesFrom] ([facets_edges.go]);
 //     Phase B adds [Tx.MarkConflict], [Tx.UpdateFacet], [Tx.LinkCells] (spec-named sugar; see docs/hexxladb/TX.md).
 //     Phase C adds [record.ValidAt], [Tx.WalkRingAt], [Tx.LoadContextAt], [Tx.WalkRingFacets] (validity read filters + facet_mask ring walks; not MVCC).
-//     Phase D adds [Tx.AscendCellsBySource], [Tx.AscendCellsInTimeBucket], [Tx.AscendCellsByTag] (cells) and [Tx.AscendSeamsBySource], [Tx.AscendSeamsInTimeBucket] (seams); maintains cell source/ + time/ + tag/ from [Tx.PutCell] ([cell_secondary.go]) and seam-source/ + seam-time/ from [Tx.PutSeam] ([seam_secondary.go]).
+//     Phase D adds [Tx.AscendCellsBySource], [Tx.AscendCellsInTimeBucket], [Tx.AscendCellsByTag], [Tx.AscendDistinctTags], [Tx.ListExistingTopics] (cells) and [Tx.AscendSeamsBySource], [Tx.AscendSeamsInTimeBucket] (seams); maintains cell source/ + time/ + tag/ from [Tx.PutCell] ([cell_secondary.go]) and seam-source/ + seam-time/ from [Tx.PutSeam] ([seam_secondary.go]).
 //     HEXXLA-shaped views ([views.go]): [CellView], [ContextPack], [Tx.AssembleCellView], [Tx.LoadContextWithBudgeting], [Tx.LoadContextPack], [CellViewPredicate], [FilterCellViews], [TruncateCellViewsToTokenBudget], [TokenBudgeter].
 //   - [ErrCorruptDatabase], [ErrDatabaseClosed], [ErrTxReadOnly], [ErrNilCallback], [ErrNotImplemented], [ErrClosed],
 //     [ErrSeamNotFound], [ErrSeamEndpointMismatch] (M7 seam dual-write), [ErrInvalidArgument],
@@ -32,5 +32,5 @@
 // Outbound adapters should call only types and functions exported from package
 // hexxladb, not internal/engine (see docs/context/HEXAGONAL_ARCHITECTURE.md).
 //
-// MVCC: docs/hexxladb/MVCC_DESIGN.md, docs/hexxladb/MVCC_E2_DECISIONS.md, docs/hexxladb/MVCC_RETENTION.md, docs/hexxladb/MVCC_TEMPORAL.md; mapping: docs/hexxladb/HEXXLA_LIBRARY_MAPPING.md; see also internal/mvccspike.
+// MVCC: docs/hexxladb/MVCC_DESIGN.md, docs/hexxladb/MVCC_E2_DECISIONS.md, docs/hexxladb/MVCC_RETENTION.md, docs/hexxladb/MVCC_TEMPORAL.md; mapping: docs/hexxladb/HEXXLA_LIBRARY_MAPPING.md; service integration: docs/hexxladb/SERVICE_INTEGRATION.md; see also internal/mvccspike.
 package hexxladb

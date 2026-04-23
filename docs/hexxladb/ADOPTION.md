@@ -3,6 +3,7 @@
 **Normative product and storage:** [`HEXXLA.md`](./HEXXLA.md), [`HEXXLA_DB.md`](./HEXXLA_DB.md).
 **Concept → API mapping:** [`HEXXLA_LIBRARY_MAPPING.md`](./HEXXLA_LIBRARY_MAPPING.md).
 **Service wiring (ports / adapters):** [`HEXXLA_PRODUCT_WIRING.md`](./HEXXLA_PRODUCT_WIRING.md), [`../context/HEXAGONAL_ARCHITECTURE.md`](../context/HEXAGONAL_ARCHITECTURE.md).
+**Orchestration and data-design guidance (non-normative):** [`SERVICE_INTEGRATION.md`](./SERVICE_INTEGRATION.md).
 
 ## What the library provides (v1)
 

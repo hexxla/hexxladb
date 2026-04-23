@@ -9,8 +9,9 @@ type ChangelogRecord = changelog.Record
 
 // Changelog operation codes (stable for consumers).
 const (
-	ChangelogOpPutCell     = changelog.OpPutCell
-	ChangelogOpPutSeam     = changelog.OpPutSeam
+	ChangelogOpPutCell = changelog.OpPutCell
+	ChangelogOpPutSeam = changelog.OpPutSeam
+	// ChangelogOpResolveSeam is emitted only by [Tx.ResolveSeam] (same btree layout as PutSeam).
 	ChangelogOpResolveSeam = changelog.OpResolveSeam
 	ChangelogOpPutFacet    = changelog.OpPutFacet
 	ChangelogOpPutEdge     = changelog.OpPutEdge

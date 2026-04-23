@@ -6,7 +6,7 @@
 
 - **`View`** acquires a **read lock**: many concurrent **`View`** calls can run; they block only while an **`Update`** or **`Batch`** holds the exclusive lock.
 - **`Update`** acquires a **write lock**: exclusive access—no concurrent **`View`**, **`Update`**, or **`Batch`** until the callback returns.
-- **`Batch`** is **equivalent** to **`Update`** (same lock and semantics). It exists for alignment with the spec’s `Batch` name and ecosystem expectations; there is no separate internal batching or WAL coalescing in v1.
+- **`Batch`** is **equivalent** to **`Update`** (same lock and semantics). It exists for alignment with the spec’s `Batch` name and ecosystem expectations; there is no separate internal batching or WAL coalescing in v1 (see **[`DURABILITY.md`](./DURABILITY.md)** for engine `WritePage` / redo ordering and future group-commit constraints).
 
 This matches **single writer, multiple readers** — see **Locking** above.
 
@@ -73,7 +73,7 @@ Per [HEXXLA_DB.md](./HEXXLA_DB.md) Storage Layout, **`PutCell`** dual-writes sec
 
 On v1 overwrite, stale secondaries are removed via **[`engine.BTree.Delete`](../../internal/engine/btree_delete.go)** before attaching new index keys.
 
-Read paths for **cells**: **[`Tx.AscendCellsBySource`](../../cell_secondary.go)** (prefix scan by **`source_id`**), **[`Tx.AscendCellsInTimeBucket`](../../cell_secondary.go)** (one UTC week bucket), **[`Tx.AscendCellsByTag`](../../cell_secondary.go)** (prefix scan by **`tag`**; secondaries maintained by **`PutCell`**).
+Read paths for **cells**: **[`Tx.AscendCellsBySource`](../../cell_secondary.go)** (prefix scan by **`source_id`**), **[`Tx.AscendCellsInTimeBucket`](../../cell_secondary.go)** (one UTC week bucket), **[`Tx.AscendCellsByTag`](../../cell_secondary.go)** (prefix scan by **`tag`**; secondaries maintained by **`PutCell`**), **[`Tx.AscendDistinctTags`](../../cell_secondary.go)** / **[`Tx.ListExistingTopics`](../../cell_secondary.go)** (distinct **`tag`** values visible at this snapshot).
 
 ## Logical changefeed (Phase G)
 

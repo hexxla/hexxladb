@@ -42,3 +42,19 @@ func (s *Service) AscendCellsByTag(ctx context.Context, tag string, fn func(reco
 	}
 	return s.Storage.AscendCellsByTag(ctx, tag, fn)
 }
+
+// AscendDistinctTags lists distinct tag strings via [domain.Storage].
+func (s *Service) AscendDistinctTags(ctx context.Context, fn func(tag string) bool) error {
+	if s == nil || s.Storage == nil {
+		return ErrNoStorage
+	}
+	return s.Storage.AscendDistinctTags(ctx, fn)
+}
+
+// ListExistingTopics returns sorted distinct tags via [domain.Storage].
+func (s *Service) ListExistingTopics(ctx context.Context) ([]string, error) {
+	if s == nil || s.Storage == nil {
+		return nil, ErrNoStorage
+	}
+	return s.Storage.ListExistingTopics(ctx)
+}

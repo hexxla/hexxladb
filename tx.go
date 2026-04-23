@@ -22,6 +22,8 @@ type Tx struct {
 	readSeq uint64
 	// writeSeq is the commit_seq assigned to writes in this Update (hdr.CommitSeq+1). Zero in read-only txs.
 	writeSeq uint64
+	// cachedBTreeRoot is hdr.BTreeRoot captured when a read-only tx opens (View paths); unused for writers.
+	cachedBTreeRoot uint64
 	// cellOverlay holds uncommitted cell writes in the current Update (read-your-writes).
 	cellOverlay map[lattice.PackedCoord]record.CellRecord
 }
@@ -44,7 +46,7 @@ func (db *DB) View(fn func(*Tx) error) error {
 	if err != nil {
 		return err
 	}
-	tx := &Tx{db: db, writable: false, readSeq: hdr.CommitSeq}
+	tx := &Tx{db: db, writable: false, readSeq: hdr.CommitSeq, cachedBTreeRoot: hdr.BTreeRoot}
 	return fn(tx)
 }
 
@@ -69,7 +71,7 @@ func (db *DB) ViewAt(readSeq uint64, fn func(*Tx) error) error {
 	if readSeq > hdr.CommitSeq {
 		return ErrReadSeqFuture
 	}
-	tx := &Tx{db: db, writable: false, readSeq: readSeq}
+	tx := &Tx{db: db, writable: false, readSeq: readSeq, cachedBTreeRoot: hdr.BTreeRoot}
 	return fn(tx)
 }
 
@@ -98,7 +100,7 @@ func (db *DB) ViewAtTime(asOf time.Time, fn func(*Tx) error) error {
 			return err
 		}
 	}
-	tx := &Tx{db: db, writable: false, readSeq: readSeq}
+	tx := &Tx{db: db, writable: false, readSeq: readSeq, cachedBTreeRoot: hdr.BTreeRoot}
 	return fn(tx)
 }
 
@@ -178,6 +180,9 @@ func (tx *Tx) Get(key []byte) (val []byte, ok bool, err error) {
 	e := tx.db.activeEng()
 	if e == nil {
 		return nil, false, ErrDatabaseClosed
+	}
+	if !tx.writable {
+		return tx.db.btree.GetUsingRoot(tx.cachedBTreeRoot, key)
 	}
 	return tx.db.btree.Get(key)
 }

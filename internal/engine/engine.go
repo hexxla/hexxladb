@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"sync"
+	"unsafe"
 )
 
 // Engine is a minimal page-oriented store with redo WAL (M3 shell).
@@ -218,21 +221,63 @@ func (e *Engine) Close() error {
 	return nil
 }
 
-// ReadPage returns page pageID (0 = header page including meta prefix).
-func (e *Engine) ReadPage(pageID uint64) ([]byte, error) {
-	if e.db == nil {
-		return nil, fmt.Errorf("engine: closed")
+var pageBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, PageSize)
+		return &b
+	},
+}
+
+func releaseNothing() {}
+
+func sliceSameBase(a, b []byte) bool {
+	if len(a) != len(b) || len(a) == 0 {
+		return len(a) == len(b)
 	}
-	buf := make([]byte, PageSize)
+	return unsafe.SliceData(a) == unsafe.SliceData(b)
+}
+
+// readPagePooled reads a physical page into a pooled buffer when possible.
+// Release must be called exactly once after the returned slice is no longer used.
+// AfterRead hooks may return a freshly allocated slice; release is always safe to call.
+func (e *Engine) readPagePooled(pageID uint64) (data []byte, release func(), err error) {
+	if e.db == nil {
+		return nil, releaseNothing, fmt.Errorf("engine: closed")
+	}
+
+	bp := pageBufPool.Get().(*[]byte)
+	buf := (*bp)[:PageSize]
+
 	off, err := pageByteOffset(pageID)
 	if err != nil {
-		return nil, err
+		pageBufPool.Put(bp)
+		return nil, releaseNothing, err
 	}
-	_, err = e.db.ReadAt(buf, off)
+	if _, err := e.db.ReadAt(buf, off); err != nil {
+		pageBufPool.Put(bp)
+		return nil, releaseNothing, err
+	}
+	out, err := e.hooks.transformRead(pageID, buf)
+	if err != nil {
+		pageBufPool.Put(bp)
+		return nil, releaseNothing, err
+	}
+	if sliceSameBase(out, buf) {
+		return out, func() { pageBufPool.Put(bp) }, nil
+	}
+	pageBufPool.Put(bp)
+	return out, releaseNothing, nil
+}
+
+// ReadPage returns page pageID (0 = header page including meta prefix).
+// Internal btree paths use readPagePooled instead to avoid copying.
+func (e *Engine) ReadPage(pageID uint64) ([]byte, error) {
+	data, release, err := e.readPagePooled(pageID)
 	if err != nil {
 		return nil, err
 	}
-	return e.hooks.transformRead(pageID, buf)
+	defer release()
+	return slices.Clone(data), nil
 }
 
 // WritePage writes a full data page (pageID >= 1). Logs redo, fsyncs, updates header.
@@ -263,6 +308,13 @@ func (e *Engine) WritePage(pageID uint64, data []byte) error {
 		return err
 	}
 
+	return e.persistRedoPage(seq, pageID, plain)
+}
+
+// persistRedoPage writes the plaintext page and header after the WAL record for seq
+// is already durable (caller must have synced the WAL). Used by [Engine.WritePage]
+// and by tests exploring batched WAL sync + sequential primary application.
+func (e *Engine) persistRedoPage(seq, pageID uint64, plain []byte) error {
 	off, err := pageByteOffset(pageID)
 	if err != nil {
 		return err

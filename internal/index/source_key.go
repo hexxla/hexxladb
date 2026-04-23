@@ -17,19 +17,13 @@ const MaxSourceIDBytes = 220
 
 // SourceKey returns source/<u16be len><id bytes>/<packed_coord> for lexicographic scans by source.
 func SourceKey(sourceID string, p lattice.PackedCoord) ([]byte, error) {
-	id := []byte(sourceID)
-	if len(id) > MaxSourceIDBytes {
-		return nil, ErrSourceIDTooLong
-	}
-	if len(id) > 0xffff {
-		return nil, ErrSourceIDTooLong
-	}
-	buf := make([]byte, 0, len(SourcePrefix)+2+len(id)+1+PackedCoordKeyLen)
+	buf := make([]byte, 0, len(SourcePrefix)+2+len(sourceID)+1+PackedCoordKeyLen)
 	buf = append(buf, SourcePrefix...)
-	var lenBE [2]byte
-	binary.BigEndian.PutUint16(lenBE[:], uint16(len(id))) //nolint:gosec // G115 — len(id) ≤ MaxSourceIDBytes.
-	buf = append(buf, lenBE[:]...)
-	buf = append(buf, id...)
+	var err error
+	buf, err = appendLenPrefixedUTF8(buf, sourceID, MaxSourceIDBytes, ErrSourceIDTooLong)
+	if err != nil {
+		return nil, err
+	}
 	buf = append(buf, '/')
 	buf = appendPackedCoordBE(buf, p)
 	return buf, nil

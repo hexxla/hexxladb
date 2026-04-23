@@ -26,32 +26,31 @@ func (t *BTree) allocPageID() (uint64, error) {
 }
 
 func (t *BTree) setParent(pageID, parentID uint64) error {
-	page, err := t.eng.ReadPage(pageID)
+	page, release, err := t.eng.readPagePooled(pageID)
 	if err != nil {
 		return err
 	}
+	defer release()
 	binary.BigEndian.PutUint64(page[16:24], parentID)
 	return t.eng.WritePage(pageID, page)
 }
 
-// Get returns the value for key, or (nil, false, nil) if missing.
-func (t *BTree) Get(key []byte) (val []byte, ok bool, err error) {
-	hdr, err := t.eng.ReadHeader()
-	if err != nil {
-		return nil, false, err
-	}
-	pid := hdr.BTreeRoot
-	if pid == 0 {
+// GetUsingRoot traverses from root without reading the database header on-disk.
+// Caller must supply a btree root captured at snapshot open when consistency requires it.
+func (t *BTree) GetUsingRoot(root uint64, key []byte) (val []byte, ok bool, err error) {
+	if root == 0 {
 		return nil, false, nil
 	}
+	pid := root
 	for {
-		page, err := t.eng.ReadPage(pid)
+		page, release, err := t.eng.readPagePooled(pid)
 		if err != nil {
 			return nil, false, err
 		}
 		switch page[5] {
 		case btreeKindLeaf:
 			ld, err := parseLeafPage(page)
+			release()
 			if err != nil {
 				return nil, false, err
 			}
@@ -62,15 +61,26 @@ func (t *BTree) Get(key []byte) (val []byte, ok bool, err error) {
 			return nil, false, nil
 		case btreeKindInternal:
 			in, err := parseInternalPage(page)
+			release()
 			if err != nil {
 				return nil, false, err
 			}
 			ci := internalPickChild(in.keys, key)
 			pid = in.ptrs[ci]
 		default:
+			release()
 			return nil, false, ErrCorruptTree
 		}
 	}
+}
+
+// Get returns the value for key, or (nil, false, nil) if missing.
+func (t *BTree) Get(key []byte) (val []byte, ok bool, err error) {
+	hdr, err := t.eng.ReadHeader()
+	if err != nil {
+		return nil, false, err
+	}
+	return t.GetUsingRoot(hdr.BTreeRoot, key)
 }
 
 // Put inserts or replaces a key/value pair.
@@ -138,10 +148,11 @@ func (t *BTree) putFirst(key, val []byte) error {
 }
 
 func (t *BTree) insertAt(pid uint64, key, val []byte) (split bool, newRight uint64, sep []byte, err error) {
-	page, err := t.eng.ReadPage(pid)
+	page, release, err := t.eng.readPagePooled(pid)
 	if err != nil {
 		return false, 0, nil, err
 	}
+	defer release()
 	switch page[5] {
 	case btreeKindLeaf:
 		return t.insertIntoLeaf(pid, page, key, val)
@@ -303,11 +314,12 @@ func (t *BTree) AscendRange(from, to []byte, fn func(k, v []byte) bool) error {
 	}
 	started := false
 	for pid != 0 {
-		page, err := t.eng.ReadPage(pid)
+		page, release, err := t.eng.readPagePooled(pid)
 		if err != nil {
 			return err
 		}
 		ld, err := parseLeafPage(page)
+		release()
 		if err != nil {
 			return err
 		}
@@ -333,14 +345,16 @@ func (t *BTree) AscendRange(from, to []byte, fn func(k, v []byte) bool) error {
 func (t *BTree) leftmostLeaf(root uint64, from []byte) (uint64, error) {
 	pid := root
 	for {
-		page, err := t.eng.ReadPage(pid)
+		page, release, err := t.eng.readPagePooled(pid)
 		if err != nil {
 			return 0, err
 		}
 		if page[5] == btreeKindLeaf {
+			release()
 			return pid, nil
 		}
 		in, err := parseInternalPage(page)
+		release()
 		if err != nil {
 			return 0, err
 		}

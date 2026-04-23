@@ -1,7 +1,7 @@
 # HexxlaDB API reference (full inventory)
 
 **Audience:** Anyone integrating **`package hexxladb`** (`github.com/hexxla/hexxladb`).
-**Normative storage:** **[HEXXLA_DB.md](./HEXXLA_DB.md)**. Transactions and snapshots: **[TX.md](./TX.md)**. Concept mapping for Hexxla: **[HEXXLA_LIBRARY_MAPPING.md](./HEXXLA_LIBRARY_MAPPING.md)**.
+**Normative storage:** **[HEXXLA_DB.md](./HEXXLA_DB.md)**. Transactions and snapshots: **[TX.md](./TX.md)**. Concept mapping for Hexxla: **[HEXXLA_LIBRARY_MAPPING.md](./HEXXLA_LIBRARY_MAPPING.md)**. Service-layer conventions: **[SERVICE_INTEGRATION.md](./SERVICE_INTEGRATION.md)**.
 
 This document lists **every exported symbol** in the root package as of the current tree, grouped by role. Use it as the single checklist when auditing coverage (tests, demos, product adapters). Generated docs: [pkg.go.dev](https://pkg.go.dev/github.com/hexxla/hexxladb); the **[`doc.go`](../../doc.go)** package comment stays the short overview.
 
@@ -78,6 +78,8 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 | **[`(*Tx).AscendCellsBySource`](../../cell_secondary.go)** | Prefix on **`source/<source_id>/…`**. |
 | **[`(*Tx).AscendCellsInTimeBucket`](../../cell_secondary.go)** | One UTC week bucket from **`time/`**. |
 | **[`(*Tx).AscendCellsByTag`](../../cell_secondary.go)** | Prefix on **`tag/<tag>/…`**. |
+| **[`(*Tx).AscendDistinctTags`](../../cell_secondary.go)** | Distinct tag strings visible at this snapshot (streams via callback). |
+| **[`(*Tx).ListExistingTopics`](../../cell_secondary.go)** | Sorted distinct tags (topic names) for tools. |
 | **[`(*Tx).AscendSeamsBySource`](../../seam_secondary.go)** | **`seam-source/…`**. |
 | **[`(*Tx).AscendSeamsInTimeBucket`](../../seam_secondary.go)** | **`seam-time/…`**. |
 
@@ -131,7 +133,7 @@ Methods on **`Coord`** / **`PackedCoord`** (e.g. **`Distance`**, **`Neighbors`**
 | --- | --- |
 | **[`(*DB).ReadChangelogSince`](../../db_changelog.go)** | Requires **`Options.ChangelogEnabled`**. |
 | **[`ChangelogRecord`](../../db_changelog.go)** | Typed alias of internal record. |
-| **`ChangelogOpPutCell`**, **`ChangelogOpPutSeam`**, **`ChangelogOpResolveSeam`**, **`ChangelogOpPutFacet`**, **`ChangelogOpPutEdge`** | Stable op codes. |
+| **`ChangelogOpPutCell`**, **`ChangelogOpPutSeam`**, **`ChangelogOpResolveSeam`** (only **`ResolveSeam`**), **`ChangelogOpPutFacet`**, **`ChangelogOpPutEdge`** | Stable op codes. |
 
 See **[CHANGEFEED.md](./CHANGEFEED.md)**.
 
@@ -174,9 +176,14 @@ Use **`errors.Is` / `errors.As`** for stable handling.
 
 ---
 
-## Live demo (`examples/live_session_demo`) — what it does *not* call (and why)
+## Live demos and coverage
 
-The demo is a **single-session smoke test** for Hexxla-shaped writes and reads. Omitted APIs fall into a few buckets: **low-level escape hatches**, **validity-specialized variants**, **seam lifecycle / conflict sugar**, **post-assembly helpers**, **operator features**, **encryption ops**.
+- **Exhaustive public-API walk (ELI5 + real files):** [`examples/full_api_demo`](../../examples/full_api_demo/) — **`go run ./examples/full_api_demo`** seeds **`./.tmp/full_api_demo/`** (MVCC + changelog main file; optional encrypted file) and prints one section per major **`package hexxladb`** capability.
+- **Session-shaped teaching demo:** [`examples/live_session_demo`](../../examples/live_session_demo/) — scripted LLM-session cells; smaller output.
+
+## What `examples/live_session_demo` does *not* call (and why)
+
+That demo is a **single-session smoke test** for Hexxla-shaped writes and reads; it stays readable. Omitted APIs fall into a few buckets: **low-level escape hatches**, **validity-specialized variants**, **seam lifecycle / conflict sugar**, **post-assembly helpers**, **operator features**, **encryption ops**. Use **`full_api_demo`** for breadth; keep **`live_session_demo`** for narrative density.
 
 ### Raw btree: `Tx.Get`, `Tx.Put`, `Tx.AscendRange`
 

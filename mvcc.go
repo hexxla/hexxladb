@@ -15,7 +15,7 @@ func (tx *Tx) getCellVisibleRaw(key lattice.PackedCoord) (raw []byte, commitSeq 
 		return nil, 0, false, ErrDatabaseClosed
 	}
 	if !tx.db.useMVCC {
-		raw, ok, err = tx.db.btree.Get(index.CellKey(key))
+		raw, ok, err = tx.Get(index.CellKey(key))
 		if err != nil || !ok {
 			return nil, 0, ok, err
 		}

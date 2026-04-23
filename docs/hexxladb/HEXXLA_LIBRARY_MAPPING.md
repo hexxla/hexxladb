@@ -55,5 +55,6 @@
 ## Related
 
 - [ADOPTION.md](./ADOPTION.md) — Operational rollout and post–v1 backlog pointer.
+- [SERVICE_INTEGRATION.md](./SERVICE_INTEGRATION.md) — Best practices for services (tags, seeds, edges, writes).
 - [HEXXLA_PRODUCT_WIRING.md](./HEXXLA_PRODUCT_WIRING.md) — Where HTTP/orchestration work belongs (hexagonal).
 - [HEXXLA.md](./HEXXLA.md) — Product memory model.

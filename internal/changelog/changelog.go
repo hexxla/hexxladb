@@ -27,6 +27,7 @@ const (
 
 // Operation codes (must stay stable for consumers).
 // UpdateFacet is recorded as OpPutFacet; LinkCells as OpPutEdge; MarkConflict as OpPutSeam.
+// ResolveSeam uses the same seam write path as PutSeam but is logged as OpResolveSeam.
 const (
 	OpPutCell     = byte(1)
 	OpPutSeam     = byte(2)

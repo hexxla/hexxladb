@@ -25,10 +25,11 @@ func (t *BTree) Delete(key []byte) error {
 		return nil
 	}
 	parentPIDs, childIdxs := lpath.parentPIDs, lpath.childIdxs
-	page, err := t.eng.ReadPage(leafPID)
+	page, release, err := t.eng.readPagePooled(leafPID)
 	if err != nil {
 		return err
 	}
+	defer release()
 	ld, err := parseLeafPage(page)
 	if err != nil {
 		return err
@@ -82,12 +83,13 @@ type leafPath struct {
 func (t *BTree) findLeafWithKey(root uint64, key []byte) (path leafPath, leafPID uint64, keyIdx int, ok bool, err error) {
 	pid := root
 	for {
-		page, err := t.eng.ReadPage(pid)
+		page, release, err := t.eng.readPagePooled(pid)
 		if err != nil {
 			return leafPath{}, 0, 0, false, err
 		}
 		if page[5] == btreeKindLeaf {
 			ld, err := parseLeafPage(page)
+			release()
 			if err != nil {
 				return leafPath{}, 0, 0, false, err
 			}
@@ -98,6 +100,7 @@ func (t *BTree) findLeafWithKey(root uint64, key []byte) (path leafPath, leafPID
 			return path, pid, i, true, nil
 		}
 		in, err := parseInternalPage(page)
+		release()
 		if err != nil {
 			return leafPath{}, 0, 0, false, err
 		}
@@ -118,10 +121,11 @@ func (t *BTree) removeChildFromParentChain(parentPIDs []uint64, childIdxs []int,
 }
 
 func (t *BTree) removeInternalChild(parentPID uint64, childIdx int, root uint64) (uint64, error) {
-	page, err := t.eng.ReadPage(parentPID)
+	page, release, err := t.eng.readPagePooled(parentPID)
 	if err != nil {
 		return root, err
 	}
+	defer release()
 	in, err := parseInternalPage(page)
 	if err != nil {
 		return root, err
@@ -152,11 +156,12 @@ func (t *BTree) removeInternalChild(parentPID uint64, childIdx int, root uint64)
 
 func (t *BTree) rebalanceLeaf(parentPIDs []uint64, childIdxs []int, leafPID uint64, ld *leafData, root uint64) (uint64, error) {
 	if ld.next != 0 {
-		rp, err := t.eng.ReadPage(ld.next)
+		rp, releaseRP, err := t.eng.readPagePooled(ld.next)
 		if err != nil {
 			return root, err
 		}
 		rd, err := parseLeafPage(rp)
+		releaseRP()
 		if err != nil {
 			return root, err
 		}
@@ -177,20 +182,22 @@ func (t *BTree) rebalanceLeaf(parentPIDs []uint64, childIdxs []int, leafPID uint
 	if idx == 0 {
 		return root, nil
 	}
-	page, err := t.eng.ReadPage(parentPID)
+	page, releaseP, err := t.eng.readPagePooled(parentPID)
 	if err != nil {
 		return root, err
 	}
 	in, err := parseInternalPage(page)
+	releaseP()
 	if err != nil {
 		return root, err
 	}
 	leftPID := in.ptrs[idx-1]
-	leftPage, err := t.eng.ReadPage(leftPID)
+	leftPage, releaseLP, err := t.eng.readPagePooled(leftPID)
 	if err != nil {
 		return root, err
 	}
 	leftd, err := parseLeafPage(leftPage)
+	releaseLP()
 	if err != nil {
 		return root, err
 	}
@@ -304,10 +311,11 @@ func (t *BTree) updateSeparator(parentPID uint64, keyIdx int, newSep []byte, roo
 	if keyIdx < 0 {
 		return root, nil
 	}
-	page, err := t.eng.ReadPage(parentPID)
+	page, release, err := t.eng.readPagePooled(parentPID)
 	if err != nil {
 		return root, err
 	}
+	defer release()
 	in, err := parseInternalPage(page)
 	if err != nil {
 		return root, err

@@ -74,11 +74,11 @@ Captured with: `go test -count=1 -bench=. -benchmem` on **linux/amd64**, Go tool
 
 Tree setup: **500** keys for `Get`; **100** keys + update key for `PutUpdate`; **200** keys for `AscendRange` (see [`btree_bench_test.go`](../../internal/engine/btree_bench_test.go)).
 
-| Benchmark        | ns/op   | B/op    | allocs/op |
-| ---------------- | ------- | ------- | --------- |
-| BTreeGet         | 104,912 | 199,200 | 75        |
-| BTreePutUpdate   | 315,195 | 535,290 | 67        |
-| BTreeAscendRange | 364,461 | 663,921 | 281       |
+| Benchmark        | ns/op  | B/op   | allocs/op |
+| ---------------- | ------ | ------ | --------- |
+| BTreeGet         | 72,425 | 69,127 | 75        |
+| BTreePutUpdate   | 299,163 | 407,042 | 67        |
+| BTreeAscendRange | 189,159| 74,837 | 281       |
 
 ### Record ([`internal/record`](../../internal/record))
 
@@ -107,7 +107,7 @@ Each read/scan sub-benchmark reports an extra **`cells`** metric (preload row co
 ## Interpretation
 
 - **Lattice** paths are sub-microsecond to ~160 ns/op with **zero heap allocs** on the measured loops — consistent with stdlib-only hot paths ([`HEXXLA_DB.md`](./HEXXLA_DB.md) asks for benchmark validation of Morton locality claims; these measure **packing**, not end-to-end I/O).
-- **B+ tree** figures include **durability** (WAL append + fsync path in `Put`); `Get`/`AscendRange` still reflect real disk-backed page reads through the engine.
+- **B+ tree** figures include **durability** (WAL append + fsync path in `Put`); `Get`/`AscendRange` reflect disk-backed reads through pooled page buffers (`Engine.readPagePooled` / `release` pattern in the btree).
 - Re-run after changes to [`internal/engine/btree.go`](../../internal/engine/btree.go), [`internal/lattice/packed.go`](../../internal/lattice/packed.go), record codecs, or [`primitives.go`](../../primitives.go) / [`cell_secondary.go`](../../cell_secondary.go) when tuning performance.
 - **API** benchmarks include **WAL + fsync** behavior on `PutCell` paths; compare on the same filesystem when tracking regressions.
 
