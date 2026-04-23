@@ -1,6 +1,6 @@
 package record
 
-// Binary record envelope and payload versioning (M2 design gate).
+// Binary record envelope and payload versioning.
 // See FORMAT.md for full layout.
 
 const (

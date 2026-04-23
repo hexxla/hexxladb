@@ -8,7 +8,7 @@ import (
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
-// Storage is the outbound port for M6 cell and seam persistence. Implementations
+// Storage is the outbound port for cell and seam persistence. Implementations
 // live under internal/adapters/out/... and must call only package hexxladb at
 // the module root—not internal/engine or internal/index.
 type Storage interface {

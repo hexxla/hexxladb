@@ -11,7 +11,7 @@ import (
 	"unsafe"
 )
 
-// Engine is a minimal page-oriented store with redo WAL (M3 shell).
+// Engine is a minimal page-oriented store with redo WAL.
 type Engine struct {
 	path    string
 	db      *os.File
