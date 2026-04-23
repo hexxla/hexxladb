@@ -15,7 +15,7 @@ import (
 
 // simulateHexxlaService approximates what a HEXXLA gateway would measure in production:
 // token-budget behavior, secondary-index recall, seam visibility, and read-path latency.
-// Numbers are illustrative (single-shot timings); run benchmarks for rigorous stats (see docs/hexxladb/BENCHMARKS.md).
+// Numbers are illustrative (single-shot timings); run `make bench` for rigorous stats.
 func simulateHexxlaService(ctx context.Context, db *hexxladb.DB, center lattice.Coord, loadR, seamScanR, nTurns int) error {
 	candidateCap := max(512, nTurns+128)
 	cfgBase := hexxladb.LoadContextBudgetConfig{

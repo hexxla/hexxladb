@@ -1,9 +1,15 @@
 # HexxlaDB API reference (full inventory)
 
 **Audience:** Anyone integrating **`package hexxladb`** (`github.com/hexxla/hexxladb`).
-**Normative storage:** **[HEXXLA_DB.md](./HEXXLA_DB.md)**. Transactions and snapshots: **[TX.md](./TX.md)**. Concept mapping for Hexxla: **[HEXXLA_LIBRARY_MAPPING.md](./HEXXLA_LIBRARY_MAPPING.md)**. Service-layer conventions: **[SERVICE_INTEGRATION.md](./SERVICE_INTEGRATION.md)**.
+**Normative storage:** **[HEXXLA_DB.md](./HEXXLA_DB.md)**. Transactions and snapshots: **[TX.md](./TX.md)**. Memory model: **[HEXXLA.md](./HEXXLA.md)**.
 
 This document lists **every exported symbol** in the root package as of the current tree, grouped by role. Use it as the single checklist when auditing coverage (tests, demos, product adapters). Generated docs: [pkg.go.dev](https://pkg.go.dev/github.com/hexxla/hexxladb); the **[`doc.go`](../../doc.go)** package comment stays the short overview.
+
+---
+
+## Storage limits (engine B+ tree)
+
+Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored in the engine B+ tree. **Maximum key length: 256 bytes; maximum value length: 512 bytes** per page layout in [`internal/engine/btree_page.go`](../../internal/engine/btree_page.go). Rationale and format details: **[`ORDERED_STORE.md`](../../internal/engine/ORDERED_STORE.md)**. **Cell** (and other encoded) records must fit in that value budget; larger logical payloads require application-level chunking or external blob storage.
 
 ---
 
@@ -118,6 +124,7 @@ Methods on **`Coord`** / **`PackedCoord`** (e.g. **`Distance`**, **`Neighbors`**
 | Symbol | Notes |
 | --- | --- |
 | **[`(*DB).StatsMVCC`](../../mvcc_lifecycle.go)** | Counters for versioned rows. |
+| **[`(*DB).GroupWALStats`](../../db.go)** | Group-WAL flusher metrics (when group commit is configured). |
 | **[`(*DB).SuggestedPruneBeforeSeq`](../../mvcc_lifecycle.go)** | Policy from **`MVCCRetention`**. |
 | **[`(*DB).MVCCPrunePlan`](../../mvcc_lifecycle.go)** | Combine suggestion + batch size profile. |
 | **[`(*DB).PruneCellVersions`](../../mvcc_lifecycle.go)** | Delete stale cell versions before **`beforeSeq`**. |
@@ -240,7 +247,7 @@ That demo is a **single-session smoke test** for Hexxla-shaped writes and reads;
 - **Why omitted:** Requires **`Options.ChangelogEnabled`** and sidecar file; orthogonal to lattice semantics in a single-binary demo.
 - **Use when:** Downstream replication, audit, incremental indexers — **service** deployment concern.
 
-### MVCC: `StatsMVCC`, `SuggestedPruneBeforeSeq`, `MVCCPrunePlan`, `PruneCellVersions*`, `PruneScheduler`
+### MVCC: `StatsMVCC`, `GroupWALStats`, `SuggestedPruneBeforeSeq`, `MVCCPrunePlan`, `PruneCellVersions*`, `PruneScheduler`
 
 - **Why omitted:** Long-running disk retention; demo uses default file or optional **`-mvcc`** without filling history so far that pruning matters.
 - **Use when:** Production **disk** and **latency** governance — **not** prompt assembly.
@@ -257,13 +264,13 @@ That demo is a **single-session smoke test** for Hexxla-shaped writes and reads;
 | Doc | Purpose |
 | --- | --- |
 | **[HEXXLA_DB.md](./HEXXLA_DB.md)** | Keyspace, record families, indexes. |
-| **[TX.md](./TX.md)** | Locking, MVCC vs validity, phases. |
-| **[HEXXLA.md](./HEXXLA.md)** | Hexxla memory model + library mapping section. |
-| **[MVCC_TEMPORAL.md](./MVCC_TEMPORAL.md)** | Snapshot time vs validity windows. |
-| **[MVCC_RETENTION.md](./MVCC_RETENTION.md)** | Pruning policy. |
-| **[ENCRYPTION.md](./ENCRYPTION.md)** | Threat model and options. |
+| **[TX.md](./TX.md)** | Locking, MVCC snapshot + temporal semantics, validity filters. |
+| **[HEXXLA.md](./HEXXLA.md)** | Hexxla memory model + library mapping. |
+| **[OPERATIONS.md](./OPERATIONS.md)** | Embedding, backups, MVCC retention/prune, incident response. |
+| **[DURABILITY.md](./DURABILITY.md)** | WAL, group commit, durability barriers. |
+| **[ENCRYPTION.md](./ENCRYPTION.md)** | Threat model and key options. |
 | **[CHANGEFEED.md](./CHANGEFEED.md)** | Logical changelog semantics. |
-| **[BENCHMARKS.md](./BENCHMARKS.md)** | Performance baselines (not API inventory). |
+| **[../ROADMAP.md](../ROADMAP.md)** | Non-goals, spec-vs-code backlog. |
 
 ---
 

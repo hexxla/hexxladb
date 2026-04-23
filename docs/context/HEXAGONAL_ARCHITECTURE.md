@@ -184,7 +184,7 @@ The repo is a **minimal composition root**, not an empty skeleton:
 ### Logging and signals
 
 - **Logging:** The composition root sets **`slog.SetDefault`** with a JSON handler. Keep **business** logging out of **`internal/domain`** unless it helps operators without transport details.
-- **Signals:** The process exits cleanly on **`SIGINT`** / **`SIGTERM`**. When you add an **`http.Server`** or gRPC server, set **timeouts** on the server, use **`Shutdown`** with a **deadline context**, and pass **`r.Context()`** (or equivalent) into **`internal/app`** so work cancels with the client—see **`docs/context/RESILIENCY.md`** for timeout patterns.
+- **Signals:** The process exits cleanly on **`SIGINT`** / **`SIGTERM`**. When you add an **`http.Server`** or gRPC server, set **timeouts** on the server, use **`Shutdown`** with a **deadline context**, and pass **`r.Context()`** (or equivalent) into **`internal/app`** so work cancels with the client.
 
 ---
 

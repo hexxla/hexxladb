@@ -104,7 +104,8 @@ func (db *DB) ViewAtTime(asOf time.Time, fn func(*Tx) error) error {
 	return fn(tx)
 }
 
-// Update runs fn inside a read-write transaction. Exclusive: no concurrent View, Update, or Batch.
+// Update runs fn inside a read-write transaction. The callback is exclusive; engine commit may
+// release the DB lock briefly—see [docs/hexxladb/TX.md].
 func (db *DB) Update(fn func(*Tx) error) error {
 	if fn == nil {
 		return ErrNilCallback
@@ -117,6 +118,16 @@ func (db *DB) Update(fn func(*Tx) error) error {
 	if db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
+	if err := db.eng.BeginWriteTxn(); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			db.eng.AbortWriteTxn()
+		}
+	}()
+
 	hdr, err := db.eng.ReadHeader()
 	if err != nil {
 		return err
@@ -124,11 +135,12 @@ func (db *DB) Update(fn func(*Tx) error) error {
 	var tx *Tx
 	var metaTimelineKey []byte
 	if db.useMVCC {
+		wseq := db.writeSeqNext.Add(1)
 		tx = &Tx{
 			db:          db,
 			writable:    true,
 			readSeq:     hdr.CommitSeq,
-			writeSeq:    hdr.CommitSeq + 1,
+			writeSeq:    wseq,
 			cellOverlay: make(map[lattice.PackedCoord]record.CellRecord),
 		}
 		// Insert commit-time row before MVCC physical cells so btree key order matches sorted key
@@ -149,6 +161,19 @@ func (db *DB) Update(fn func(*Tx) error) error {
 		}
 		return fnErr
 	}
+	// Group WAL (always on in [hexxladb]): enqueue then [Unlock] [db.mu] so another [Update] can
+	// run and enqueue a second flusher job; re-lock before MVCC + changelog.
+	wait, wErr := db.eng.CommitWriteTxnBeginAsync()
+	if wErr != nil {
+		return fmt.Errorf("%w: engine commit: %w", ErrCommitFinalization, wErr)
+	}
+	db.mu.Unlock()
+	cErr := wait()
+	db.mu.Lock()
+	if cErr != nil {
+		return fmt.Errorf("%w: engine commit: %w", ErrCommitFinalization, cErr)
+	}
+	committed = true
 	if db.changelog != nil && len(tx.clog) > 0 {
 		wall := time.Now().UnixNano()
 		if err := db.changelog.AppendBatch(wall, tx.clog); err != nil {
@@ -191,7 +216,7 @@ func (tx *Tx) Get(key []byte) (val []byte, ok bool, err error) {
 //
 // MVCC (format v2): low-level insertion order matters for internal-tree invariants.
 // Prefer [Tx.PutCell], [Tx.PutFacet], and other primitives over raw Put for application data.
-// See docs/hexxladb/MVCC_DESIGN.md (engineering debt: cell/ before __meta/ ordering).
+// MVCC invariant: write __meta/commit-time/ keys before cell/ keys to keep timeline consistent.
 func (tx *Tx) Put(key, val []byte) error {
 	if tx == nil || tx.db == nil {
 		return ErrClosed

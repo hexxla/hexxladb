@@ -14,13 +14,14 @@ import (
 )
 
 // Tour seed tuning — see seedTourMain for every write into full_api_tour.db (MVCC lattice + bumps).
+// Cell blobs must stay within the engine ordered-store value limit (512 bytes encoded; see docs/hexxladb/API_REFERENCE.md);
+// this tour keeps RawContent + metadata within that budget.
 const (
 	// tourLatticeFillR places one cell at every axial coordinate in rings [0,tourLatticeFillR] around the origin (~61 hexes when 4).
 	tourLatticeFillR = 4
 	// tourMVCCLastVersion is the final hello-version-N on the center cell (loops 2..N).
-	// With the full R=4 lattice, PruneCellVersions currently trips btree corruption above ~137
-	// versions — keep N ≤ 137 until the prune path is fixed (still far larger than the old 18-version tour).
-	tourMVCCLastVersion = 137
+	// Stress: lattice + many center versions + prune is covered by TestIntegration_MVCC_latticeAndHighChurnPrune.
+	tourMVCCLastVersion = 250
 	// tourChangelogReadCap must cover all mutation records written by this tour or ReadChangelogSince truncates.
 	tourChangelogReadCap = 500000
 )

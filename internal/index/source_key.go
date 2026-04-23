@@ -32,26 +32,18 @@ func SourceKey(sourceID string, p lattice.PackedCoord) ([]byte, error) {
 // SourceRangePrefix returns [from, to] inclusive byte bounds for AscendRange over all cells
 // with the given source_id (any PackedCoord).
 func SourceRangePrefix(sourceID string) (from, to []byte, err error) {
-	id := []byte(sourceID)
-	if len(id) > MaxSourceIDBytes {
-		return nil, nil, ErrSourceIDTooLong
+	head, hErr := lenPrefixedIDPrefixAfterASCII(SourcePrefix, []byte(sourceID), MaxSourceIDBytes, ErrSourceIDTooLong)
+	if hErr != nil {
+		return nil, nil, hErr
 	}
-	from = make([]byte, 0, len(SourcePrefix)+2+len(id)+1+PackedCoordKeyLen)
-	from = append(from, SourcePrefix...)
-	var lenBE [2]byte
-	binary.BigEndian.PutUint16(lenBE[:], uint16(len(id))) //nolint:gosec // G115 — len(id) ≤ MaxSourceIDBytes.
-	from = append(from, lenBE[:]...)
-	from = append(from, id...)
-	from = append(from, '/')
 	// Lower bound: zero packed coord
+	from = make([]byte, 0, len(head)+PackedCoordKeyLen)
+	from = append(from, head...)
 	var z lattice.PackedCoord
 	from = appendPackedCoordBE(from, z)
 	// Upper bound: max packed coord (total order upper sentinel)
-	to = make([]byte, 0, len(SourcePrefix)+2+len(id)+1+PackedCoordKeyLen)
-	to = append(to, SourcePrefix...)
-	to = append(to, lenBE[:]...)
-	to = append(to, id...)
-	to = append(to, '/')
+	to = make([]byte, 0, len(head)+PackedCoordKeyLen)
+	to = append(to, head...)
 	var maxP lattice.PackedCoord
 	maxP[0] = ^uint64(0)
 	maxP[1] = ^uint64(0)

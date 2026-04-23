@@ -68,9 +68,6 @@ Thumbs.db
 # Cursor agent plans (local scratch; never commit)
 .cursor/plans/
 
-# Roadmap removed from template; keep local copies out of git if you recreate the path
-/docs/ROADMAP.md
-
 # --- Optional: uncomment when you add these stacks ---
 # node_modules/
 # .terraform/

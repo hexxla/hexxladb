@@ -10,6 +10,111 @@ import (
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
+// TestBTree_hexxladbLatticeChurnPruneShape matches hexxladb integration: WalkRings R=4 (61 coords),
+// one transaction seeds all cells at seq 1, then 249 updates only on the center cell (seq 2..250),
+// each commit writing __meta/commit-time then cell keys (see [Tx] MVCC ordering). Finally delete
+// stale center versions like [hexxladb.DB.PruneCellVersions] (cell prefix scan, seq < beforeSeq).
+func TestBTree_hexxladbLatticeChurnPruneShape(t *testing.T) {
+	t.Parallel()
+	const fillR = 4
+	const lastVersion = 250
+	const retainBehind uint64 = 8
+
+	c0 := lattice.Coord{Q: 0, R: 0}
+	p0, err := lattice.Pack(c0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coords := lattice.WalkRings(nil, c0, fillR)
+	if len(coords) != 61 {
+		t.Fatalf("coords: %d", len(coords))
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lattice_churn.db")
+	e, err := Open(path, &Options{UseFormatV2: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = e.Close() }()
+	bt := OpenBTree(e)
+
+	// Commit 1: meta + all 61 cells at seq 1.
+	{
+		wall := int64(1 * 1e9)
+		mk := index.CommitTimeKey(wall, 1)
+		if err := bt.Put(mk, nil); err != nil {
+			t.Fatal(err)
+		}
+		for _, coord := range coords {
+			packed, err := lattice.Pack(coord)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ck := index.CellKeyWithVersion(packed, 1)
+			if err := bt.Put(ck, []byte("v1")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for v := uint64(2); v <= lastVersion; v++ {
+		wall := int64(v * 1e9)
+		mk := index.CommitTimeKey(wall, v)
+		if err := bt.Put(mk, nil); err != nil {
+			t.Fatalf("meta v=%d: %v", v, err)
+		}
+		ck := index.CellKeyWithVersion(p0, v)
+		if err := bt.Put(ck, []byte("x")); err != nil {
+			t.Fatalf("cell v=%d: %v", v, err)
+		}
+	}
+
+	beforeSeq := lastVersion - retainBehind // 242
+	// Latest per logical cell (cell prefix); then collect stale center versions only.
+	latest := make(map[lattice.PackedCoord]uint64)
+	err = bt.AscendRange([]byte(index.CellPrefix), nil, func(k, _ []byte) bool {
+		p, seq, err := index.ParseCellVersionKey(k)
+		if err != nil {
+			return true
+		}
+		if cur, ok := latest[p]; !ok || seq > cur {
+			latest[p] = seq
+		}
+		return true
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var toDelete [][]byte
+	err = bt.AscendRange([]byte(index.CellPrefix), nil, func(k, _ []byte) bool {
+		p, seq, err := index.ParseCellVersionKey(k)
+		if err != nil {
+			return true
+		}
+		if seq < beforeSeq && seq != latest[p] {
+			toDelete = append(toDelete, append([]byte(nil), k...))
+		}
+		return true
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range toDelete {
+		if err := bt.Delete(k); err != nil {
+			_, seq, _ := index.ParseCellVersionKey(k)
+			t.Fatalf("delete seq=%d: %v", seq, err)
+		}
+	}
+
+	got, ok, err := bt.Get(index.CellKeyWithVersion(p0, lastVersion))
+	if err != nil || !ok {
+		t.Fatalf("latest center: ok=%v err=%v", ok, err)
+	}
+	if string(got) != "x" {
+		t.Fatalf("latest value: %s", got)
+	}
+}
+
 func TestBTree_putGet(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

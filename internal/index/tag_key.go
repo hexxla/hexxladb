@@ -42,24 +42,16 @@ func TagKeyWithVersion(tag string, p lattice.PackedCoord, commitSeq uint64) ([]b
 
 // TagRangePrefix returns inclusive [from, to] for AscendRange over all cells with this tag (any PackedCoord).
 func TagRangePrefix(tag string) (from, to []byte, err error) {
-	t := []byte(tag)
-	if len(t) > MaxTagBytes {
-		return nil, nil, ErrTagTooLong
+	head, hErr := lenPrefixedIDPrefixAfterASCII(TagPrefix, []byte(tag), MaxTagBytes, ErrTagTooLong)
+	if hErr != nil {
+		return nil, nil, hErr
 	}
-	from = make([]byte, 0, len(TagPrefix)+2+len(t)+1+PackedCoordKeyLen)
-	from = append(from, TagPrefix...)
-	var lenBE [2]byte
-	binary.BigEndian.PutUint16(lenBE[:], uint16(len(t))) //nolint:gosec // len(t) ≤ MaxTagBytes (uint16 safe)
-	from = append(from, lenBE[:]...)
-	from = append(from, t...)
-	from = append(from, '/')
+	from = make([]byte, 0, len(head)+PackedCoordKeyLen)
+	from = append(from, head...)
 	var z lattice.PackedCoord
 	from = appendPackedCoordBE(from, z)
-	to = make([]byte, 0, len(TagPrefix)+2+len(t)+1+PackedCoordKeyLen)
-	to = append(to, TagPrefix...)
-	to = append(to, lenBE[:]...)
-	to = append(to, t...)
-	to = append(to, '/')
+	to = make([]byte, 0, len(head)+PackedCoordKeyLen)
+	to = append(to, head...)
 	var maxP lattice.PackedCoord
 	maxP[0] = ^uint64(0)
 	maxP[1] = ^uint64(0)

@@ -2,7 +2,7 @@
 
 **Audience:** Operators and **automated consumers** (indexers, agents, orchestrators) that need a **durable, ordered** stream of **semantic** mutations—not page-image WAL records.
 
-**Rollout context:** [ADOPTION.md](./ADOPTION.md). For production checklist (consumers + soak): [OPERATIONS.md](./OPERATIONS.md) section **HEXXLA.md rollout alignment**. Fill **[`OPERATOR_EVIDENCE.md`](./OPERATOR_EVIDENCE.md)** §3 for changefeed checkpoints.
+**Operations context:** [OPERATIONS.md](./OPERATIONS.md) covers backups, retention, and incident response for changefeed consumers.
 
 ## North star
 
@@ -75,4 +75,3 @@ There is **no** in-process metrics registry in HexxlaDB itself; exporters should
 ## Related
 
 - [TX.md](./TX.md) — transaction boundaries (`Update` / `Batch`).
-- [MODERN_GO.md](../context/MODERN_GO.md) — Go version and stdlib reference.

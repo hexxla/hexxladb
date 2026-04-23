@@ -1,7 +1,7 @@
 // Package mvccspike holds Phase E1 MVCC storage experiments. Production MVCC reuses the same
 // Option A key layout and [SelectVisible] via [github.com/hexxla/hexxladb/internal/index] and package hexxladb.
 //
-// This file implements the “version suffix on logical keys” layout from MVCC_DESIGN.md §3: each
+// This file implements the “version suffix on logical keys” layout for MVCC format v2: each
 // physical btree key is [index.CellKey] for the logical cell plus an 8-byte big-endian commit_seq.
 // Visibility picks the largest commit_seq ≤ read_seq (see [SelectVisible]).
 package mvccspike
