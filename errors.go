@@ -15,7 +15,7 @@ var (
 	ErrSeamNotFound = errors.New("hexxladb: seam not found")
 
 	// ErrSeamEndpointMismatch means [Tx.PutSeam] would change CellA/CellB for an existing ULID;
-	// seam endpoints are immutable for a given ULID (M7+).
+	// seam endpoints are immutable once established.
 	ErrSeamEndpointMismatch = errors.New("hexxladb: seam endpoint mismatch for ULID")
 
 	// ErrInvalidArgument means a parameter was out of range or invalid for the API.

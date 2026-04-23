@@ -287,8 +287,9 @@ func (tx *Tx) MarkConflict(cellA, cellB lattice.Coord, reason string) error {
 // radius of center. If unresolvedOnly is true, only seams with empty
 // ResolutionStatus are returned.
 //
-// M7 uses the seam-by-cells secondary index: for each cell in the ball of radius R
-// around center, range scans list incident seams; results are deduplicated by ULID.
+// The implementation uses the seam-by-cells secondary index: for each cell in the
+// ball of radius R around center, range scans list incident seams; results are
+// deduplicated by ULID.
 func (tx *Tx) FindSeams(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool) ([]record.SeamRecord, error) {
 	return tx.findSeams(ctx, center, radius, unresolvedOnly, nil)
 }

@@ -11,7 +11,7 @@ type GroupWAL struct {
 	MaxBatchWait time.Duration
 }
 
-// Options configures the engine shell (M3).
+// Options configures the embedded storage engine.
 type Options struct {
 	// Hooks optional page transforms (e.g. encryption).
 	Hooks *PageHooks

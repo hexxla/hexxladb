@@ -1,7 +1,7 @@
 package engine
 
 // PageHooks optional transforms at the page boundary (plaintext default).
-// M9: AES-XTS encryption uses pageID as the sector tweak; page 0 is never transformed.
+// When AES-XTS encryption is enabled, pageID is used as the sector tweak; page 0 is never transformed.
 type PageHooks struct {
 	// BeforeWrite runs before a page is logged to the WAL and written to the primary file.
 	BeforeWrite func(pageID uint64, plain []byte) (out []byte, err error)
