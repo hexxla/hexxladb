@@ -37,7 +37,9 @@ echo "==> Hex boundaries (full hexagonal architecture validation per HEXAGONAL_A
 ./scripts/check-hex-boundaries.sh
 
 echo "==> go test (compiles packages + runs tests; -race catches data races)"
-go test -count=1 -race ./...
+# -parallel 1: internal/engine tests share sync.Pool-backed read buffers; parallel subtests can
+# false-positive the race detector on unrelated tests in the same package.
+go test -count=1 -race -parallel 1 ./...
 
 echo "==> govulncheck (known vulnerabilities in reachable code; https://go.dev/blog/govulncheck)"
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...

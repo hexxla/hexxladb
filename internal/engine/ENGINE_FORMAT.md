@@ -24,7 +24,7 @@ HexxlaDB v1 engine shell: **64 KiB pages**, one **primary database file** and on
 | Offset | Size | Field                                                                                                                                            |
 | ------ | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 0      | 8    | **Magic** ASCII `HEXXLADB` + NUL                                                                                                                 |
-| 8      | 4    | **format_version** `uint32` (**1** = single-version cells; **2** = MVCC; see [MVCC_E2_DECISIONS.md](../../docs/hexxladb/MVCC_E2_DECISIONS.md))        |
+| 8      | 4    | **format_version** `uint32` (**1** = single-version cells; **2** = MVCC versioned keys; see [HEXXLA_DB.md](../../docs/hexxladb/HEXXLA_DB.md))          |
 | 12     | 4    | **page_size** `uint32` (65536)                                                                                                                   |
 | 16     | 8    | **last_wal_seq** `uint64` — last WAL sequence applied to the primary file                                                                        |
 | 24     | 8    | **next_page_id** `uint64` — allocator hint for M4+ (shell may still update)                                                                      |

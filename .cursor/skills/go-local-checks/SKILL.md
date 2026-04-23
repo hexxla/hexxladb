@@ -7,7 +7,7 @@ description: Run standard local Go quality checks for this repo. Use when valida
 
 ## Canonical command
 
-Use **`make ci`** or **`./scripts/ci.sh`** — same steps as GitHub Actions (format check, `go vet`, `go test -race`, **govulncheck**, **golangci-lint**, `go mod tidy` + git check when `go.mod` is tracked or `CI=true`). Optionally install **Git pre-commit** hooks via **`make pre-commit-install`** (see **`.pre-commit-config.yaml`**) for checks on every commit; still run **`make ci`** before pushing.
+Use **`make ci`** or **`./scripts/ci.sh`** — same steps as the default [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) job (format check, `go vet`, `go test -race`, **govulncheck**, **golangci-lint**, `go mod tidy` + git check when `go.mod` is tracked or `CI=true`). Slower **`//go:build integration`** tests are in **`make integration`**; CI also has a [weekly + manual](.github/workflows/integration.yml) workflow for the same. Optionally install **Git pre-commit** hooks via **`make pre-commit-install`** (see **`.pre-commit-config.yaml`**) for checks on every commit; still run **`make ci`** before pushing.
 
 ## Tooling model (modern Go)
 

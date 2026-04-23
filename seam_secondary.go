@@ -10,6 +10,30 @@ import (
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
+// seamSourceSecondaryKey returns the seam-source/ index key or (nil, nil) when no provenance source.
+func (tx *Tx) seamSourceSecondaryKey(rec record.SeamRecord, commitSeq uint64) ([]byte, error) {
+	sid := strings.TrimSpace(rec.Provenance.SourceID)
+	if sid == "" {
+		return nil, nil
+	}
+	if tx.db.useMVCC {
+		return index.SeamSourceKeyWithVersion(sid, rec.ID, commitSeq)
+	}
+	return index.SeamSourceKey(sid, rec.ID)
+}
+
+// seamTimeSecondaryKey returns the seam-time/ index key or (nil, nil) when validity has no week bucket.
+func (tx *Tx) seamTimeSecondaryKey(rec record.SeamRecord, commitSeq uint64) ([]byte, error) {
+	b, ok := index.WeekBucketFromValidity(rec.Validity)
+	if !ok {
+		return nil, nil
+	}
+	if tx.db.useMVCC {
+		return index.SeamTimeKeyWithVersion(b, rec.ID, commitSeq)
+	}
+	return index.SeamTimeKey(b, rec.ID)
+}
+
 func (tx *Tx) removeSeamSecondaryIndex(rec record.SeamRecord, commitSeq uint64) error {
 	if tx == nil || tx.db == nil {
 		return ErrClosed
@@ -17,41 +41,24 @@ func (tx *Tx) removeSeamSecondaryIndex(rec record.SeamRecord, commitSeq uint64) 
 	if tx.db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
-	sid := strings.TrimSpace(rec.Provenance.SourceID)
-	if sid != "" {
-		var (
-			k   []byte
-			err error
-		)
-		if tx.db.useMVCC {
-			k, err = index.SeamSourceKeyWithVersion(sid, rec.ID, commitSeq)
-		} else {
-			k, err = index.SeamSourceKey(sid, rec.ID)
+	k, err := tx.seamSourceSecondaryKey(rec, commitSeq)
+	if err != nil {
+		if errors.Is(err, index.ErrSourceIDTooLong) {
+			return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 		}
-		if err != nil {
-			if errors.Is(err, index.ErrSourceIDTooLong) {
-				return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-			}
-			return err
-		}
+		return err
+	}
+	if k != nil {
 		if err := tx.db.btree.Delete(k); err != nil {
 			return err
 		}
 	}
-	if b, ok := index.WeekBucketFromValidity(rec.Validity); ok {
-		var (
-			k   []byte
-			err error
-		)
-		if tx.db.useMVCC {
-			k, err = index.SeamTimeKeyWithVersion(b, rec.ID, commitSeq)
-		} else {
-			k, err = index.SeamTimeKey(b, rec.ID)
-		}
-		if err != nil {
-			return err
-		}
-		if err := tx.db.btree.Delete(k); err != nil {
+	tk, err := tx.seamTimeSecondaryKey(rec, commitSeq)
+	if err != nil {
+		return err
+	}
+	if tk != nil {
+		if err := tx.db.btree.Delete(tk); err != nil {
 			return err
 		}
 	}
@@ -59,45 +66,42 @@ func (tx *Tx) removeSeamSecondaryIndex(rec record.SeamRecord, commitSeq uint64) 
 }
 
 func (tx *Tx) putSeamSecondaryIndex(rec record.SeamRecord, commitSeq uint64) error {
-	sid := strings.TrimSpace(rec.Provenance.SourceID)
-	if sid != "" {
-		var (
-			k   []byte
-			err error
-		)
-		if tx.db.useMVCC {
-			k, err = index.SeamSourceKeyWithVersion(sid, rec.ID, commitSeq)
-		} else {
-			k, err = index.SeamSourceKey(sid, rec.ID)
+	k, err := tx.seamSourceSecondaryKey(rec, commitSeq)
+	if err != nil {
+		if errors.Is(err, index.ErrSourceIDTooLong) {
+			return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 		}
-		if err != nil {
-			if errors.Is(err, index.ErrSourceIDTooLong) {
-				return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-			}
-			return err
-		}
+		return err
+	}
+	if k != nil {
 		if err := tx.Put(k, emptySecondaryVal); err != nil {
 			return err
 		}
 	}
-	if b, ok := index.WeekBucketFromValidity(rec.Validity); ok {
-		var (
-			k   []byte
-			err error
-		)
-		if tx.db.useMVCC {
-			k, err = index.SeamTimeKeyWithVersion(b, rec.ID, commitSeq)
-		} else {
-			k, err = index.SeamTimeKey(b, rec.ID)
-		}
-		if err != nil {
-			return err
-		}
-		if err := tx.Put(k, emptySecondaryVal); err != nil {
+	tk, err := tx.seamTimeSecondaryKey(rec, commitSeq)
+	if err != nil {
+		return err
+	}
+	if tk != nil {
+		if err := tx.Put(tk, emptySecondaryVal); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (tx *Tx) seamSourceScanBounds(sourceID string) (from, to []byte, err error) {
+	if tx.db.useMVCC {
+		return index.SeamSourceRangePrefixAllVersions(sourceID)
+	}
+	return index.SeamSourceRangePrefix(sourceID)
+}
+
+func (tx *Tx) seamTimeScanBounds(bucket int64) (from, to []byte) {
+	if tx.db.useMVCC {
+		return index.SeamTimeRangePrefixAllVersions(bucket)
+	}
+	return index.SeamTimeRangePrefix(bucket)
 }
 
 // AscendSeamsBySource scans the seam-source/ secondary index for sourceID and loads each seam primary by ULID.
@@ -111,13 +115,7 @@ func (tx *Tx) AscendSeamsBySource(ctx context.Context, sourceID string, fn func(
 	if tx.db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
-	var from, to []byte
-	var err error
-	if tx.db.useMVCC {
-		from, to, err = index.SeamSourceRangePrefixAllVersions(sourceID)
-	} else {
-		from, to, err = index.SeamSourceRangePrefix(sourceID)
-	}
+	from, to, err := tx.seamSourceScanBounds(sourceID)
 	if err != nil {
 		if errors.Is(err, index.ErrSourceIDTooLong) {
 			return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
@@ -170,12 +168,7 @@ func (tx *Tx) AscendSeamsInTimeBucket(ctx context.Context, bucket int64, fn func
 	if tx.db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
-	var from, to []byte
-	if tx.db.useMVCC {
-		from, to = index.SeamTimeRangePrefixAllVersions(bucket)
-	} else {
-		from, to = index.SeamTimeRangePrefix(bucket)
-	}
+	from, to := tx.seamTimeScanBounds(bucket)
 	seen := make(map[string]struct{})
 	var scanErr error
 	err := tx.AscendRange(from, to, func(k, _ []byte) bool {

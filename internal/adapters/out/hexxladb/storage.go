@@ -24,12 +24,37 @@ func NewStorage(db *hxdb.DB) *Storage {
 	return &Storage{DB: db}
 }
 
-// PutCell implements [domain.Storage].
-func (s *Storage) PutCell(ctx context.Context, rec record.CellRecord) error {
+func (s *Storage) withUpdate(ctx context.Context, fn func(*hxdb.Tx) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return s.DB.Update(func(tx *hxdb.Tx) error {
+	return s.DB.Update(fn)
+}
+
+// viewPair runs View and captures one value plus error from fn (typical for slice returns).
+func viewPair[T any](s *Storage, fn func(*hxdb.Tx) (T, error)) (T, error) {
+	var out T
+	err := s.DB.View(func(tx *hxdb.Tx) error {
+		var inner error
+		out, inner = fn(tx)
+		return inner
+	})
+	return out, err
+}
+
+// viewTriple runs View and captures value, ok flag, and error from fn (typical for Get* APIs).
+func viewTriple[T any](s *Storage, fn func(*hxdb.Tx) (T, bool, error)) (out T, ok bool, err error) {
+	err = s.DB.View(func(tx *hxdb.Tx) error {
+		var inner error
+		out, ok, inner = fn(tx)
+		return inner
+	})
+	return out, ok, err
+}
+
+// PutCell implements [domain.Storage].
+func (s *Storage) PutCell(ctx context.Context, rec record.CellRecord) error {
+	return s.withUpdate(ctx, func(tx *hxdb.Tx) error {
 		return tx.PutCell(ctx, rec)
 	})
 }
@@ -39,14 +64,9 @@ func (s *Storage) GetCell(ctx context.Context, key lattice.PackedCoord) (record.
 	if err := ctx.Err(); err != nil {
 		return record.CellRecord{}, false, err
 	}
-	var out record.CellRecord
-	var ok bool
-	err := s.DB.View(func(tx *hxdb.Tx) error {
-		var inner error
-		out, ok, inner = tx.GetCell(key)
-		return inner
+	return viewTriple(s, func(tx *hxdb.Tx) (record.CellRecord, bool, error) {
+		return tx.GetCell(key)
 	})
-	return out, ok, err
 }
 
 // AscendCellsBySource implements [domain.Storage].
@@ -67,6 +87,20 @@ func (s *Storage) AscendCellsInTimeBucket(ctx context.Context, bucket int64, fn 
 func (s *Storage) AscendCellsByTag(ctx context.Context, tag string, fn func(record.CellRecord) bool) error {
 	return s.DB.View(func(tx *hxdb.Tx) error {
 		return tx.AscendCellsByTag(ctx, tag, fn)
+	})
+}
+
+// AscendDistinctTags implements [domain.Storage].
+func (s *Storage) AscendDistinctTags(ctx context.Context, fn func(tag string) bool) error {
+	return s.DB.View(func(tx *hxdb.Tx) error {
+		return tx.AscendDistinctTags(ctx, fn)
+	})
+}
+
+// ListExistingTopics implements [domain.Storage].
+func (s *Storage) ListExistingTopics(ctx context.Context) ([]string, error) {
+	return viewPair(s, func(tx *hxdb.Tx) ([]string, error) {
+		return tx.ListExistingTopics(ctx)
 	})
 }
 
@@ -100,46 +134,30 @@ func (s *Storage) WalkRingAt(ctx context.Context, center lattice.Coord, ring int
 
 // FindSeams implements [domain.Storage].
 func (s *Storage) FindSeams(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool) ([]record.SeamRecord, error) {
-	var out []record.SeamRecord
-	err := s.DB.View(func(tx *hxdb.Tx) error {
-		var inner error
-		out, inner = tx.FindSeams(ctx, center, radius, unresolvedOnly)
-		return inner
+	return viewPair(s, func(tx *hxdb.Tx) ([]record.SeamRecord, error) {
+		return tx.FindSeams(ctx, center, radius, unresolvedOnly)
 	})
-	return out, err
 }
 
 // FindSeamsAt implements [domain.Storage].
 func (s *Storage) FindSeamsAt(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool, asOf time.Time) ([]record.SeamRecord, error) {
-	var out []record.SeamRecord
-	err := s.DB.View(func(tx *hxdb.Tx) error {
-		var inner error
-		out, inner = tx.FindSeamsAt(ctx, center, radius, unresolvedOnly, asOf)
-		return inner
+	return viewPair(s, func(tx *hxdb.Tx) ([]record.SeamRecord, error) {
+		return tx.FindSeamsAt(ctx, center, radius, unresolvedOnly, asOf)
 	})
-	return out, err
 }
 
 // LoadContext implements [domain.Storage].
 func (s *Storage) LoadContext(ctx context.Context, center lattice.Coord, maxR, maxCells int) ([]record.CellRecord, error) {
-	var out []record.CellRecord
-	err := s.DB.View(func(tx *hxdb.Tx) error {
-		var inner error
-		out, inner = tx.LoadContext(ctx, center, maxR, maxCells)
-		return inner
+	return viewPair(s, func(tx *hxdb.Tx) ([]record.CellRecord, error) {
+		return tx.LoadContext(ctx, center, maxR, maxCells)
 	})
-	return out, err
 }
 
 // LoadContextAt implements [domain.Storage].
 func (s *Storage) LoadContextAt(ctx context.Context, center lattice.Coord, maxR, maxCells int, asOf time.Time) ([]record.CellRecord, error) {
-	var out []record.CellRecord
-	err := s.DB.View(func(tx *hxdb.Tx) error {
-		var inner error
-		out, inner = tx.LoadContextAt(ctx, center, maxR, maxCells, asOf)
-		return inner
+	return viewPair(s, func(tx *hxdb.Tx) ([]record.CellRecord, error) {
+		return tx.LoadContextAt(ctx, center, maxR, maxCells, asOf)
 	})
-	return out, err
 }
 
 // WalkRingFacets implements [domain.Storage].
@@ -151,50 +169,35 @@ func (s *Storage) WalkRingFacets(ctx context.Context, center lattice.Coord, ring
 
 // ResolveSeam implements [domain.Storage].
 func (s *Storage) ResolveSeam(ctx context.Context, id, resolutionStatus, resolutionNote string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return s.DB.Update(func(tx *hxdb.Tx) error {
+	return s.withUpdate(ctx, func(tx *hxdb.Tx) error {
 		return tx.ResolveSeam(id, resolutionStatus, resolutionNote)
 	})
 }
 
 // PutSeam implements [domain.Storage].
 func (s *Storage) PutSeam(ctx context.Context, rec record.SeamRecord) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return s.DB.Update(func(tx *hxdb.Tx) error {
+	return s.withUpdate(ctx, func(tx *hxdb.Tx) error {
 		return tx.PutSeam(ctx, rec)
 	})
 }
 
 // MarkConflict implements [domain.Storage].
 func (s *Storage) MarkConflict(ctx context.Context, cellA, cellB lattice.Coord, reason string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return s.DB.Update(func(tx *hxdb.Tx) error {
+	return s.withUpdate(ctx, func(tx *hxdb.Tx) error {
 		return tx.MarkConflict(cellA, cellB, reason)
 	})
 }
 
 // PutFacet implements [domain.Storage].
 func (s *Storage) PutFacet(ctx context.Context, rec record.FacetRecord) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return s.DB.Update(func(tx *hxdb.Tx) error {
+	return s.withUpdate(ctx, func(tx *hxdb.Tx) error {
 		return tx.PutFacet(rec)
 	})
 }
 
 // UpdateFacet implements [domain.Storage].
 func (s *Storage) UpdateFacet(ctx context.Context, rec record.FacetRecord) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return s.DB.Update(func(tx *hxdb.Tx) error {
+	return s.withUpdate(ctx, func(tx *hxdb.Tx) error {
 		return tx.UpdateFacet(rec)
 	})
 }
@@ -204,14 +207,9 @@ func (s *Storage) GetFacet(ctx context.Context, key lattice.PackedCoord, facetID
 	if err := ctx.Err(); err != nil {
 		return record.FacetRecord{}, false, err
 	}
-	var out record.FacetRecord
-	var ok bool
-	err := s.DB.View(func(tx *hxdb.Tx) error {
-		var inner error
-		out, ok, inner = tx.GetFacet(key, facetID)
-		return inner
+	return viewTriple(s, func(tx *hxdb.Tx) (record.FacetRecord, bool, error) {
+		return tx.GetFacet(key, facetID)
 	})
-	return out, ok, err
 }
 
 // AscendFacetsForCell implements [domain.Storage].
@@ -231,20 +229,14 @@ func (s *Storage) AscendFacetsForCell(ctx context.Context, key lattice.PackedCoo
 
 // PutEdge implements [domain.Storage].
 func (s *Storage) PutEdge(ctx context.Context, rec record.EdgeRecord) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return s.DB.Update(func(tx *hxdb.Tx) error {
+	return s.withUpdate(ctx, func(tx *hxdb.Tx) error {
 		return tx.PutEdge(rec)
 	})
 }
 
 // LinkCells implements [domain.Storage].
 func (s *Storage) LinkCells(ctx context.Context, from, to lattice.Coord, relationType string, weight float64, prov record.ProvenanceWire) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return s.DB.Update(func(tx *hxdb.Tx) error {
+	return s.withUpdate(ctx, func(tx *hxdb.Tx) error {
 		return tx.LinkCells(from, to, relationType, weight, prov)
 	})
 }
@@ -254,14 +246,9 @@ func (s *Storage) GetEdge(ctx context.Context, from, to lattice.PackedCoord, rel
 	if err := ctx.Err(); err != nil {
 		return record.EdgeRecord{}, false, err
 	}
-	var out record.EdgeRecord
-	var ok bool
-	err := s.DB.View(func(tx *hxdb.Tx) error {
-		var inner error
-		out, ok, inner = tx.GetEdge(from, to, relationType)
-		return inner
+	return viewTriple(s, func(tx *hxdb.Tx) (record.EdgeRecord, bool, error) {
+		return tx.GetEdge(from, to, relationType)
 	})
-	return out, ok, err
 }
 
 // AscendEdgesFrom implements [domain.Storage].

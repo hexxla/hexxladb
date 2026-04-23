@@ -16,9 +16,9 @@ There are **three different ways** to ask questions — easy to mix up:
 
 **Seams** in that backpack matter: if a contradiction touches the region you’re loading, it can still show up so the model **sees** the conflict.
 
-**Where does the seed come from?** HexxlaDB does **not** run vector search. **You** (or your app) decide the starting hex — often after **embedding / lexical search / user choice** — then pass that coordinate as **`center`** to **`LoadContextPack`**. So: **search picks the pin on the map**; **HexxlaDB expands spatially from that pin**. “Relevant” here is mainly **near on the lattice** plus **budget rules**, not a second semantic ranking inside **`LoadContextPack`**. Extra filtering or reranking belongs in your **product layer** (see **`docs/hexxladb/HEXXLA_LIBRARY_MAPPING.md`**).
+**Where does the seed come from?** HexxlaDB does **not** run vector search. **You** (or your app) decide the starting hex — often after **embedding / lexical search / user choice** — then pass that coordinate as **`center`** to **`LoadContextPack`**. So: **search picks the pin on the map**; **HexxlaDB expands spatially from that pin**. “Relevant” here is mainly **near on the lattice** plus **budget rules**, not a second semantic ranking inside **`LoadContextPack`**. Extra filtering or reranking belongs in your **product layer**.
 
-**Other ideas in one line:** **Validity** = when a sticker is “true” in the real world. **`ViewAt` / `ViewAtTime`** = what the **database** knew at a past commit (**MVCC**), separate from validity. **`examples/live_session_demo`** walks all of this with a scripted session and prints counts and sample packs under **`./.tmp/`**.
+**Other ideas in one line:** **Validity** = when a sticker is “true” in the real world. **`ViewAt` / `ViewAtTime`** = what the **database** knew at a past commit (**MVCC**), separate from validity. **`examples/live_session_demo`** tells a scripted session story under **`./.tmp/`**; **`examples/full_api_demo`** runs the **full exported API** with kid-friendly (**ELI5**) narration and live seeded files under **`./.tmp/full_api_demo/`**.
 
 ---
 
@@ -65,7 +65,7 @@ Secondary indexes support walking cells by **source**, **time bucket**, and **ta
 
 ## What you build on top
 
-HexxlaDB gives **primitives**; **seed selection** (how you pick the first coordinate), **ranking beyond ring order**, and **HTTP/JSON services** live in your application — see **`docs/hexxladb/HEXXLA_LIBRARY_MAPPING.md`** and **`docs/hexxladb/HEXXLA_PRODUCT_WIRING.md`**.
+HexxlaDB gives **primitives**; **seed selection** (how you pick the first coordinate), **ranking beyond ring order**, and **HTTP/JSON services** live in your application — see **[`docs/hexxladb/HEXXLA.md`](docs/hexxladb/HEXXLA.md)** for the memory-model view and **[`docs/context/HEXAGONAL_ARCHITECTURE.md`](docs/context/HEXAGONAL_ARCHITECTURE.md)** for boundaries.
 
 ---
 
@@ -82,7 +82,7 @@ HexxlaDB gives **primitives**; **seed selection** (how you pick the first coordi
 
 ## Public API inventory (`package hexxladb`)
 
-**Full exported symbol checklist (single source for coverage audits):** **[`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.md)** — tables by subsystem, sentinel errors, and notes on **`examples/live_session_demo`** gaps.
+**Full exported symbol checklist (single source for coverage audits):** **[`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.md)** — tables by subsystem, sentinel errors, **`examples/full_api_demo`** vs **`examples/live_session_demo`** coverage.
 
 Overview and deep links: **[`doc.go`](doc.go)** (package comment), **`docs/hexxladb/TX.md`**, **`docs/hexxladb/HEXXLA_DB.md`**.
 
@@ -92,7 +92,7 @@ Overview and deep links: **[`doc.go`](doc.go)** (package comment), **`docs/hexxl
 | **Transactions**        | [`(*DB).View`](tx.go), [`(*DB).Update`](tx.go), [`(*DB).Batch`](tx.go) (= Update), [`(*DB).ViewAt`](tx.go), [`(*DB).ViewAtTime`](tx.go), [`(*Tx).Writable`](tx.go)                                                                                                                                                                                                                                                                                                                                                                                 |
 | **Byte-key store**      | [`(*Tx).Get`](tx.go), [`(*Tx).Put`](tx.go), [`(*Tx).AscendRange`](tx.go)                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | **Cells & walks**       | [`(*Tx).PutCell`](primitives.go), [`(*Tx).GetCell`](primitives.go), [`(*Tx).WalkRing`](primitives.go), [`(*Tx).WalkRingAt`](primitives.go), [`(*Tx).LoadContext`](primitives.go), [`(*Tx).LoadContextAt`](primitives.go), [`(*Tx).WalkRingFacets`](primitives.go)                                                                                                                                                                                                                                                                                  |
-| **Cell indexes**        | [`(*Tx).AscendCellsBySource`](cell_secondary.go), [`(*Tx).AscendCellsInTimeBucket`](cell_secondary.go), [`(*Tx).AscendCellsByTag`](cell_secondary.go)                                                                                                                                                                                                                                                                                                                                                                                              |
+| **Cell indexes**        | [`(*Tx).AscendCellsBySource`](cell_secondary.go), [`(*Tx).AscendCellsInTimeBucket`](cell_secondary.go), [`(*Tx).AscendCellsByTag`](cell_secondary.go), [`(*Tx).AscendDistinctTags`](cell_secondary.go), [`(*Tx).ListExistingTopics`](cell_secondary.go)                                                                                                                                                                                                                                                                                             |
 | **Seams**               | [`(*Tx).PutSeam`](primitives.go), [`(*Tx).FindSeams`](primitives.go), [`(*Tx).FindSeamsAt`](primitives.go), [`(*Tx).ResolveSeam`](primitives.go), [`(*Tx).MarkConflict`](primitives.go), [`(*Tx).AscendSeamsBySource`](seam_secondary.go), [`(*Tx).AscendSeamsInTimeBucket`](seam_secondary.go)                                                                                                                                                                                                                                                    |
 | **Facets & edges**      | [`(*Tx).PutFacet`](facets_edges.go), [`(*Tx).GetFacet`](facets_edges.go), [`(*Tx).UpdateFacet`](facets_edges.go), [`(*Tx).AscendFacetsForCell`](facets_edges.go), [`(*Tx).PutEdge`](facets_edges.go), [`(*Tx).GetEdge`](facets_edges.go), [`(*Tx).AscendEdgesFrom`](facets_edges.go), [`(*Tx).LinkCells`](facets_edges.go)                                                                                                                                                                                                                         |
 | **HEXXLA-shaped views** | [`(*Tx).AssembleCellView`](views.go), [`(*Tx).LoadContextWithBudgeting`](views.go), [`(*Tx).LoadContextPack`](views.go), [`CellView`](views.go), [`ContextPack`](views.go), [`FacetView`](views.go), [`EdgeView`](views.go), [`SeamRef`](views.go), [`TokenBudgeter`](views.go), [`ByteLenBudgeter`](views.go), [`AssembleCellViewOpts`](views.go), [`DefaultAssembleCellViewOpts`](views.go), [`LoadContextBudgetConfig`](views.go), [`CellViewPredicate`](views.go), [`FilterCellViews`](views.go), [`TruncateCellViewsToTokenBudget`](views.go) |
@@ -369,9 +369,8 @@ _, _ = db.ReadChangelogSince(0, 100)
 
 ## Production readiness
 
-- **Adoption and operations context:** [`docs/hexxladb/ADOPTION.md`](docs/hexxladb/ADOPTION.md)
-- **MVCC retention:** [`docs/hexxladb/MVCC_RETENTION.md`](docs/hexxladb/MVCC_RETENTION.md)
-- **Operations & drills:** [`docs/hexxladb/OPERATIONS.md`](docs/hexxladb/OPERATIONS.md)
+- **Operations, retention & drills:** [`docs/hexxladb/OPERATIONS.md`](docs/hexxladb/OPERATIONS.md)
+- **Roadmap & non-goals:** [`docs/ROADMAP.md`](docs/ROADMAP.md)
 - **Verification:** `make ci` (default); `make integration` (includes MVCC churn + prune integration test)
 
 ---
@@ -440,17 +439,24 @@ func main() {
 
 End-to-end adapter walkthrough: **`go run ./examples/storage_walkthrough -path .tmp/walk.db`** (from a clone of this repository).
 
+Full **`package hexxladb`** tour (ELI5 narration, MVCC + changelog + optional encryption): **`go run ./examples/full_api_demo`** — output explains each step in simple language; see **[`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.md)** for the symbol checklist.
+
 ---
 
 ## Documentation map
 
 | Doc                                                                                | Purpose                                              |
 | ---------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| [`docs/hexxladb/HEXXLA.md`](docs/hexxladb/HEXXLA.md)                               | Memory model, geometry, retrieval story              |
-| [`docs/hexxladb/HEXXLA_DB.md`](docs/hexxladb/HEXXLA_DB.md)                         | Keys, indexes, native query primitives               |
-| [`docs/hexxladb/TX.md`](docs/hexxladb/TX.md)                                       | Transactions, MVCC timeline, changelog interaction   |
-| [`docs/context/HEXAGONAL_ARCHITECTURE.md`](docs/context/HEXAGONAL_ARCHITECTURE.md) | Ports, adapters — how services embed this library    |
-| [`docs/hexxladb/ADOPTION.md`](docs/hexxladb/ADOPTION.md)                           | Operators: retention, soak, rollout; post–v1 backlog |
+| [`docs/hexxladb/HEXXLA.md`](docs/hexxladb/HEXXLA.md)                               | Memory model, geometry, retrieval story                    |
+| [`docs/hexxladb/HEXXLA_DB.md`](docs/hexxladb/HEXXLA_DB.md)                         | Keys, indexes, native query primitives (how it works)      |
+| [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.md)                 | Full exported symbol inventory                             |
+| [`docs/hexxladb/TX.md`](docs/hexxladb/TX.md)                                       | Transactions, MVCC snapshot + temporal semantics           |
+| [`docs/hexxladb/OPERATIONS.md`](docs/hexxladb/OPERATIONS.md)                       | Backups, retention, incident response, soak checklist      |
+| [`docs/hexxladb/DURABILITY.md`](docs/hexxladb/DURABILITY.md)                       | WAL, group commit, durability barriers                     |
+| [`docs/hexxladb/ENCRYPTION.md`](docs/hexxladb/ENCRYPTION.md)                       | Optional at-rest encryption                                |
+| [`docs/hexxladb/CHANGEFEED.md`](docs/hexxladb/CHANGEFEED.md)                       | Optional logical changelog                                 |
+| [`docs/context/HEXAGONAL_ARCHITECTURE.md`](docs/context/HEXAGONAL_ARCHITECTURE.md) | Ports, adapters — how services embed this library          |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md)                                               | Out-of-scope boundaries, backlog, near-term candidates     |
 
 ---
 

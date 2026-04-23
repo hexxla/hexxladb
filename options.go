@@ -1,5 +1,7 @@
 package hexxladb
 
+import "time"
+
 // MVCCRetention configures optional defaults for [DB.SuggestedPruneBeforeSeq] and [DB.MVCCPrunePlan].
 // Zero values mean automatic prune suggestions are disabled (operators pass explicit beforeSeq to [DB.PruneCellVersions]).
 type MVCCRetention struct {
@@ -13,7 +15,8 @@ type MVCCRetention struct {
 
 // Options configures opening a database (see [Open]).
 type Options struct {
-	// EnableMVCC, when true, creates new databases at engine format v2 with MVCC versioned keys (see [docs/hexxladb/MVCC_E2_DECISIONS.md]).
+	// EnableMVCC, when true, creates new databases at engine format v2 with MVCC versioned keys
+	// (see [docs/hexxladb/TX.md] for snapshot semantics and [docs/hexxladb/OPERATIONS.md] for retention/pruning).
 	// Existing v1 files are never auto-upgraded; they keep single-version behavior until migrated.
 	EnableMVCC bool
 	// MVCCRetention is optional policy for [DB.SuggestedPruneBeforeSeq] / [DB.MVCCPrunePlan] (ignored for v1 files).
@@ -37,4 +40,12 @@ type Options struct {
 	// Passphrase optional user passphrase; combined with Argon2id and the per-database salt in the file header.
 	// Mutually exclusive with [EncryptionKey] and custom page hooks.
 	Passphrase string
+
+	// UsePrimaryFdatasync, when true, uses fdatasync(2) on the primary data file on supported
+	// platforms (e.g. Linux) instead of fsync(2) for engine durability barriers. Default false; see
+	// [docs/hexxladb/DURABILITY.md] before enabling in production.
+	UsePrimaryFdatasync bool
+	// GroupWALMaxBatchWait is passed to the engine group-WAL flusher as the coalescing window after
+	// the first job in a batch. Zero means a 2ms default in the engine. See [docs/hexxladb/DURABILITY.md].
+	GroupWALMaxBatchWait time.Duration
 }

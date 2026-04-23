@@ -1,6 +1,9 @@
 package engine
 
-import "bytes"
+import (
+	"bytes"
+	"fmt"
+)
 
 // minLeafKeys is the minimum key count for a non-root leaf.
 const minLeafKeys = (maxLeafEntries + 1) / 2
@@ -25,10 +28,11 @@ func (t *BTree) Delete(key []byte) error {
 		return nil
 	}
 	parentPIDs, childIdxs := lpath.parentPIDs, lpath.childIdxs
-	page, err := t.eng.ReadPage(leafPID)
+	page, release, err := t.eng.readPagePooled(leafPID)
 	if err != nil {
 		return err
 	}
+	defer release()
 	ld, err := parseLeafPage(page)
 	if err != nil {
 		return err
@@ -45,6 +49,14 @@ func (t *BTree) Delete(key []byte) error {
 	hdr, err = t.eng.ReadHeader()
 	if err != nil {
 		return err
+	}
+	// Deleting the leftmost key in a leaf increases the min key in that leaf's subtree; every
+	// internal separator that equals the old first key (keys[i-1] for ptrs[i]) must be updated
+	// up the spine while this node remains the leftmost under each ancestor.
+	if len(ld.keys) > 0 && keyIdx == 0 {
+		if err := t.cascadeNewMinToAncestors(parentPIDs, childIdxs, ld.keys[0], hdr.BTreeRoot); err != nil {
+			return err
+		}
 	}
 	if len(ld.keys) == 0 {
 		if hdr.BTreeRoot == leafPID {
@@ -64,7 +76,7 @@ func (t *BTree) Delete(key []byte) error {
 	}
 	newRoot, err := t.rebalanceLeaf(parentPIDs, childIdxs, leafPID, ld, hdr.BTreeRoot)
 	if err != nil {
-		return err
+		return fmt.Errorf("rebalance: %w", err)
 	}
 	if newRoot != hdr.BTreeRoot {
 		return t.eng.UpdateHeader(func(h *Header) { h.BTreeRoot = newRoot })
@@ -82,12 +94,13 @@ type leafPath struct {
 func (t *BTree) findLeafWithKey(root uint64, key []byte) (path leafPath, leafPID uint64, keyIdx int, ok bool, err error) {
 	pid := root
 	for {
-		page, err := t.eng.ReadPage(pid)
+		page, release, err := t.eng.readPagePooled(pid)
 		if err != nil {
 			return leafPath{}, 0, 0, false, err
 		}
 		if page[5] == btreeKindLeaf {
 			ld, err := parseLeafPage(page)
+			release()
 			if err != nil {
 				return leafPath{}, 0, 0, false, err
 			}
@@ -98,6 +111,7 @@ func (t *BTree) findLeafWithKey(root uint64, key []byte) (path leafPath, leafPID
 			return path, pid, i, true, nil
 		}
 		in, err := parseInternalPage(page)
+		release()
 		if err != nil {
 			return leafPath{}, 0, 0, false, err
 		}
@@ -118,28 +132,63 @@ func (t *BTree) removeChildFromParentChain(parentPIDs []uint64, childIdxs []int,
 }
 
 func (t *BTree) removeInternalChild(parentPID uint64, childIdx int, root uint64) (uint64, error) {
-	page, err := t.eng.ReadPage(parentPID)
+	page, release, err := t.eng.readPagePooled(parentPID)
 	if err != nil {
 		return root, err
 	}
 	in, err := parseInternalPage(page)
+	release()
 	if err != nil {
 		return root, err
 	}
 	newPtrs, newKeys, err := removePtrAndKey(in.ptrs, in.keys, childIdx)
 	if err != nil {
-		return root, err
+		return root, fmt.Errorf("remove child %d from parent %d (nptrs=%d): %w", childIdx, parentPID, len(in.ptrs), err)
 	}
 	hdr, err := t.eng.ReadHeader()
 	if err != nil {
 		return root, err
 	}
-	if hdr.BTreeRoot == parentPID && len(newPtrs) == 1 {
-		return newPtrs[0], nil
+	// Root collapse: when parentPID is the B+ tree root and it is left with a single remaining
+	// child, that child becomes the new root (depth decreases by 1). If the root goes empty, the
+	// whole tree is empty.
+	if parentPID == hdr.BTreeRoot {
+		if len(newPtrs) == 0 {
+			return 0, nil
+		}
+		if len(newPtrs) == 1 {
+			if err := t.setParent(newPtrs[0], 0); err != nil {
+				return root, err
+			}
+			return newPtrs[0], nil
+		}
+		ipg, err := buildInternalPage(in.parent, newPtrs, newKeys)
+		if err != nil {
+			return root, err
+		}
+		if err := t.eng.WritePage(parentPID, ipg); err != nil {
+			return root, err
+		}
+		return hdr.BTreeRoot, nil
 	}
-	if len(newKeys) == 0 && len(newPtrs) == 1 {
-		return newPtrs[0], nil
+	// Non-root internal that lost its last child: remove it from its grandparent (cascades
+	// subtree-empty notifications up the spine).
+	if len(newPtrs) == 0 {
+		gp, gidx, found, err := t.findParentOfPage(hdr.BTreeRoot, parentPID)
+		if err != nil {
+			return root, err
+		}
+		if !found {
+			return root, fmt.Errorf("%w: parent of internal %d not found", ErrCorruptTree, parentPID)
+		}
+		return t.removeInternalChild(gp, gidx, root)
 	}
+	// Non-root internal with ≥1 remaining child: keep it in place (even with 1 ptr / 0 keys).
+	// Splicing it into its grandparent (the previous behavior) would place one grandparent slot
+	// directly at a leaf while sibling slots still point to internal nodes, breaking the uniform
+	// "all leaves at the same depth" B+ invariant. Leaf rebalance then reads parent.ptrs[i+1]
+	// expecting a leaf and trips "not leaf" corruption (see TestIntegration_MVCC_sustainedPutCellSameKey).
+	// The cost is a thin internal node (1 ptr); subsequent inserts fill it naturally.
 	ipg, err := buildInternalPage(in.parent, newPtrs, newKeys)
 	if err != nil {
 		return root, err
@@ -150,24 +199,179 @@ func (t *BTree) removeInternalChild(parentPID uint64, childIdx int, root uint64)
 	return hdr.BTreeRoot, nil
 }
 
+// cascadeNewMinToAncestors updates on-disk separators on the path from a leaf to the root when
+// the first key in that leaf's subtree (under ptrs[ci] at each level) was removed and a new min
+// applies. Only ancestors where this subtree is a non-leftmost child (ci > 0) carry a key for it
+// (in.keys[ci-1] is the min of ptrs[ci]).
+func (t *BTree) cascadeNewMinToAncestors(parentPIDs []uint64, childIdxs []int, newMin []byte, root uint64) error {
+	for l := len(parentPIDs) - 1; l >= 0; l-- {
+		ci := childIdxs[l]
+		if ci > 0 {
+			_, err := t.updateSeparator(parentPIDs[l], ci-1, newMin, root)
+			if err != nil {
+				return fmt.Errorf("cascade parent %d at depth %d: %w", parentPIDs[l], l, err)
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
+// findParentOfPage returns the internal page that points to target among its child ptrs, and the
+// child index, when target is a direct child. Used when collapsing a non-root internal to one child.
+func (t *BTree) findParentOfPage(root, target uint64) (parentID uint64, childIdx int, found bool, err error) {
+	if root == target {
+		return 0, 0, false, fmt.Errorf("%w: root is target", ErrCorruptTree)
+	}
+	page, release, err := t.eng.readPagePooled(root)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	defer release()
+	if page[5] == btreeKindLeaf {
+		return 0, 0, false, nil
+	}
+	in, err := parseInternalPage(page)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	for i, p := range in.ptrs {
+		if p == target {
+			return root, i, true, nil
+		}
+	}
+	for _, p := range in.ptrs {
+		pp, ii, ok, err := t.findParentOfPage(p, target)
+		if err != nil {
+			return 0, 0, false, err
+		}
+		if ok {
+			return pp, ii, true, nil
+		}
+	}
+	return 0, 0, false, nil
+}
+
+// childPtrIndexInParent returns the index in parent.ptrs for childPtr (a direct child page id).
+func (t *BTree) childPtrIndexInParent(parentPID, childPtr uint64) (int, error) {
+	page, release, err := t.eng.readPagePooled(parentPID)
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+	if page[5] == btreeKindLeaf {
+		return 0, fmt.Errorf("%w: parent is leaf", ErrCorruptTree)
+	}
+	in, err := parseInternalPage(page)
+	if err != nil {
+		return 0, err
+	}
+	for i, p := range in.ptrs {
+		if p == childPtr {
+			return i, nil
+		}
+	}
+	return 0, fmt.Errorf("%w: ptr %d not a child of parent %d", ErrCorruptTree, childPtr, parentPID)
+}
+
+// rightLeafInParent is the B+ parent ordering (canonical) for the right neighbor leaf.
+// The on-disk next pointer in the page can diverge; rebalance/merge use this. If hasRight is
+// false, the leaf is the rightmost under parent (ok to fall back to a left-sibling path).
+func (t *BTree) rightLeafInParent(parentPID, leafPID uint64) (rightPID uint64, inLeft, rightIdx int, hasRight bool, err error) {
+	page, release, err := t.eng.readPagePooled(parentPID)
+	if err != nil {
+		return 0, 0, 0, false, err
+	}
+	defer release()
+	if page[5] == btreeKindLeaf {
+		return 0, 0, 0, false, fmt.Errorf("%w: parent is leaf", ErrCorruptTree)
+	}
+	in, err := parseInternalPage(page)
+	if err != nil {
+		return 0, 0, 0, false, err
+	}
+	li := -1
+	for i, p := range in.ptrs {
+		if p == leafPID {
+			li = i
+			break
+		}
+	}
+	if li < 0 {
+		return 0, 0, 0, false, fmt.Errorf("%w: leaf %d not a child of parent %d", ErrCorruptTree, leafPID, parentPID)
+	}
+	if li+1 >= len(in.ptrs) {
+		return 0, li, 0, false, nil
+	}
+	return in.ptrs[li+1], li, li + 1, true, nil
+}
+
+// pickLeafParentForSiblingWalk returns the internal page that directly owns leafPID: prefer the
+// parent at the end of the findLeaf path; if that does not list the leaf, use ld.parent. This
+// handles cases where on-disk parent was stale or paths diverged after internal splice.
+func (t *BTree) pickLeafParentForSiblingWalk(parentPIDs []uint64, leafPID uint64, ld *leafData) (uint64, error) {
+	if len(parentPIDs) > 0 {
+		pp := parentPIDs[len(parentPIDs)-1]
+		if _, err := t.childPtrIndexInParent(pp, leafPID); err == nil {
+			return pp, nil
+		}
+	}
+	if ld.parent == 0 {
+		return 0, fmt.Errorf("%w: no direct parent for leaf %d in rebalance", ErrCorruptTree, leafPID)
+	}
+	if _, err := t.childPtrIndexInParent(ld.parent, leafPID); err != nil {
+		return 0, fmt.Errorf("%w: on-disk parent %d of leaf %d: %w", ErrCorruptTree, ld.parent, leafPID, err)
+	}
+	return ld.parent, nil
+}
+
 func (t *BTree) rebalanceLeaf(parentPIDs []uint64, childIdxs []int, leafPID uint64, ld *leafData, root uint64) (uint64, error) {
-	if ld.next != 0 {
-		rp, err := t.eng.ReadPage(ld.next)
+	// Right neighbor: parent's ptr order is canonical. Prefer path parent, then on-disk parent.
+	if parentPID, perr := t.pickLeafParentForSiblingWalk(parentPIDs, leafPID, ld); perr == nil {
+		rightPID, _, _, hasRight, err := t.rightLeafInParent(parentPID, leafPID)
 		if err != nil {
-			return root, err
+			return root, fmt.Errorf("right sibling: %w", err)
 		}
-		rd, err := parseLeafPage(rp)
-		if err != nil {
-			return root, err
+		if hasRight {
+			rp, releaseRP, err := t.eng.readPagePooled(rightPID)
+			if err != nil {
+				return root, err
+			}
+			rightKind := rp[5]
+			rd, err := parseLeafPage(rp)
+			releaseRP()
+			// In rare cases the parent's i+1 pointer can disagree with the leaf's next link (e.g. after
+			// structural mutations); prefer a valid leaf for merge/borrow. See pickLeafParentForSiblingWalk.
+			if err != nil || rightKind != btreeKindLeaf {
+				if ld.next == 0 || ld.next == rightPID {
+					if err != nil {
+						return root, fmt.Errorf("parse right sibling at %d: %w", rightPID, err)
+					}
+					return root, fmt.Errorf("%w: right ptr %d in parent of %d is not a leaf (kind %d)", ErrCorruptTree, rightPID, leafPID, rightKind)
+				}
+				rp2, rel2, err := t.eng.readPagePooled(ld.next)
+				if err != nil {
+					return root, err
+				}
+				if rp2[5] != btreeKindLeaf {
+					rel2()
+					return root, fmt.Errorf("%w: right ptr %d and next %d are not leaves (parent of leaf %d)", ErrCorruptTree, rightPID, ld.next, leafPID)
+				}
+				rd, err = parseLeafPage(rp2)
+				rel2()
+				if err != nil {
+					return root, err
+				}
+				rightPID = ld.next
+			}
+			if len(ld.keys)+len(rd.keys) <= maxLeafEntries {
+				return t.mergeRightLeaf(parentPIDs, leafPID, ld, rd, rightPID, root)
+			}
+			if len(rd.keys) > minLeafKeys {
+				return t.borrowFromRight(parentPIDs, childIdxs, leafPID, ld, rightPID, rd, root)
+			}
+			return t.mergeRightLeaf(parentPIDs, leafPID, ld, rd, rightPID, root)
 		}
-		rightIdx := childIdxs[len(childIdxs)-1] + 1
-		if len(ld.keys)+len(rd.keys) <= maxLeafEntries {
-			return t.mergeRightLeaf(parentPIDs, leafPID, ld, ld.next, rd, rightIdx, root)
-		}
-		if len(rd.keys) > minLeafKeys {
-			return t.borrowFromRight(parentPIDs, childIdxs, leafPID, ld, ld.next, rd, root)
-		}
-		return t.mergeRightLeaf(parentPIDs, leafPID, ld, ld.next, rd, rightIdx, root)
 	}
 	if len(parentPIDs) == 0 {
 		return root, nil
@@ -177,20 +381,22 @@ func (t *BTree) rebalanceLeaf(parentPIDs []uint64, childIdxs []int, leafPID uint
 	if idx == 0 {
 		return root, nil
 	}
-	page, err := t.eng.ReadPage(parentPID)
+	page, releaseP, err := t.eng.readPagePooled(parentPID)
 	if err != nil {
 		return root, err
 	}
 	in, err := parseInternalPage(page)
+	releaseP()
 	if err != nil {
 		return root, err
 	}
 	leftPID := in.ptrs[idx-1]
-	leftPage, err := t.eng.ReadPage(leftPID)
+	leftPage, releaseLP, err := t.eng.readPagePooled(leftPID)
 	if err != nil {
 		return root, err
 	}
 	leftd, err := parseLeafPage(leftPage)
+	releaseLP()
 	if err != nil {
 		return root, err
 	}
@@ -198,15 +404,23 @@ func (t *BTree) rebalanceLeaf(parentPIDs []uint64, childIdxs []int, leafPID uint
 		return root, nil
 	}
 	if len(leftd.keys)+len(ld.keys) <= maxLeafEntries {
-		return t.mergeRightLeaf(parentPIDs, leftPID, leftd, leafPID, ld, idx, root)
+		return t.mergeRightLeaf(parentPIDs, leftPID, leftd, ld, leafPID, root)
 	}
 	if len(leftd.keys) > minLeafKeys {
 		return t.borrowFromLeft(parentPIDs, childIdxs, leftPID, leftd, leafPID, ld, root)
 	}
-	return t.mergeRightLeaf(parentPIDs, leftPID, leftd, leafPID, ld, idx, root)
+	return t.mergeRightLeaf(parentPIDs, leftPID, leftd, ld, leafPID, root)
 }
 
-func (t *BTree) mergeRightLeaf(parentPIDs []uint64, leftPID uint64, ld *leafData, _ uint64, rd *leafData, rightIdxInParent int, root uint64) (uint64, error) {
+// mergeRightLeaf concatenates the right leaf into the left, drops the right page, and removes
+// the right's pointer from the direct parent of the *right* leaf (which may differ from the
+// left's parent when the B+ next chain crosses internal boundaries at the same tree level).
+func (t *BTree) mergeRightLeaf(_ []uint64, leftPID uint64, ld, rd *leafData, rightPageID, root uint64) (uint64, error) {
+	remParent := rd.parent
+	ri, err := t.childPtrIndexInParent(remParent, rightPageID)
+	if err != nil {
+		return root, fmt.Errorf("mergeRightLeaf: right child %d under parent %d: %w", rightPageID, remParent, err)
+	}
 	ld.keys = append(ld.keys, rd.keys...)
 	ld.vals = append(ld.vals, rd.vals...)
 	ld.next = rd.next
@@ -217,11 +431,11 @@ func (t *BTree) mergeRightLeaf(parentPIDs []uint64, leftPID uint64, ld *leafData
 	if err := t.eng.WritePage(leftPID, pg); err != nil {
 		return root, err
 	}
-	if len(parentPIDs) == 0 {
-		return root, nil
+	newR, err := t.removeInternalChild(remParent, ri, root)
+	if err != nil {
+		return root, fmt.Errorf("mergeRightLeaf: %w", err)
 	}
-	parentPID := parentPIDs[len(parentPIDs)-1]
-	return t.removeInternalChild(parentPID, rightIdxInParent, root)
+	return newR, nil
 }
 
 func (t *BTree) borrowFromRight(parentPIDs []uint64, childIdxs []int, leftPID uint64, ld *leafData, rightPID uint64, rd *leafData, root uint64) (uint64, error) {
@@ -290,6 +504,10 @@ func removePtrAndKey(ptrs []uint64, keys [][]byte, i int) (newPtrs []uint64, new
 	newPtrs = make([]uint64, 0, len(ptrs)-1)
 	newPtrs = append(newPtrs, ptrs[:i]...)
 	newPtrs = append(newPtrs, ptrs[i+1:]...)
+	// Thin internals may hold a single ptr with zero keys; removing that ptr collapses both slices.
+	if len(newPtrs) == 0 {
+		return newPtrs, nil, nil
+	}
 	if i == 0 {
 		newKeys = append([][]byte(nil), keys[1:]...)
 	} else {
@@ -304,10 +522,11 @@ func (t *BTree) updateSeparator(parentPID uint64, keyIdx int, newSep []byte, roo
 	if keyIdx < 0 {
 		return root, nil
 	}
-	page, err := t.eng.ReadPage(parentPID)
+	page, release, err := t.eng.readPagePooled(parentPID)
 	if err != nil {
 		return root, err
 	}
+	defer release()
 	in, err := parseInternalPage(page)
 	if err != nil {
 		return root, err

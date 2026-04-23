@@ -26,4 +26,10 @@ var (
 
 	// ErrValueTooLarge means a value exceeds the B+ tree page format limit.
 	ErrValueTooLarge = errors.New("engine: value too large for B+ tree")
+
+	// ErrWriteTxnActive means [Engine.BeginWriteTxn] was called while a write transaction is open.
+	ErrWriteTxnActive = errors.New("engine: write transaction already active")
+
+	// ErrNoWriteTxn means [Engine.CommitWriteTxn] was called with no open write transaction.
+	ErrNoWriteTxn = errors.New("engine: no write transaction active")
 )

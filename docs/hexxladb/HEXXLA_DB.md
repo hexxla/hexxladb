@@ -48,7 +48,7 @@ Import **`hexxladb`** as the root package; keep the stable surface (`Open`, `DB`
 
 **Concurrency and temporal support:** MVCC-style snapshot isolation is native, enabling `as_of` queries and consistent lattice views.
 
-**Key design:** Morton-packed coordinates and the prefixes in **Storage Layout** make ring enumeration and locality-preserving scans first-class—**super-hex sharding** as an operational routing layer is **not** required for v1 (reserved high bits in `PackedCoord` support future partitioning ideas; see **[`ADOPTION.md`](./ADOPTION.md)** post–v1 note).
+**Key design:** Morton-packed coordinates and the prefixes in **Storage Layout** make ring enumeration and locality-preserving scans first-class—**super-hex sharding** as an operational routing layer is **not** required for v1 (reserved high bits in `PackedCoord` support future partitioning ideas; see [`docs/ROADMAP.md`](../ROADMAP.md)).
 
 **v1 minimal engine shape:** Fixed pages (**64 KiB** in the reference implementation—[`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md)); **one B+-tree** primary store + WAL for durability and crash recovery.
 
@@ -138,7 +138,7 @@ Morton ordering is chosen because space-filling curves of this family map spatia
 
 ### MVCC physical keys (`format_version` ≥ 2)
 
-Logical layout above describes **logical** families. When **[`Options.EnableMVCC`](../../options.go)** opens a **format v2** database, **version suffixes** are appended to physical btree keys for cells, facets, edges, seams, and secondaries (including **`source/`**, **`time/`**, **`tag/`**) so multiple committed versions coexist; visibility is **`commit_seq`**-scoped (**[`ViewAt`](../../tx.go)**, **`ViewAtTime`**). Normative behavior: **[`MVCC_DESIGN.md`](./MVCC_DESIGN.md)**; encoding helpers include **[`cell_version.go`](../../internal/index/cell_version.go)**, **[`facet_key.go`](../../internal/index/facet_key.go)** (`FacetKeyWithVersion`), **[`seam_version_key.go`](../../internal/index/seam_version_key.go)**, **[`tag_key.go`](../../internal/index/tag_key.go)**, and secondary key helpers with version suffixes in **`internal/index`**.
+Logical layout above describes **logical** families. When **[`Options.EnableMVCC`](../../options.go)** opens a **format v2** database, **version suffixes** are appended to physical btree keys for cells, facets, edges, seams, and secondaries (including **`source/`**, **`time/`**, **`tag/`**) so multiple committed versions coexist; visibility is **`commit_seq`**-scoped (**[`ViewAt`](../../tx.go)**, **`ViewAtTime`**). Snapshot semantics live in **[`TX.md`](./TX.md)**; encoding helpers include **[`cell_version.go`](../../internal/index/cell_version.go)**, **[`facet_key.go`](../../internal/index/facet_key.go)** (`FacetKeyWithVersion`), **[`seam_version_key.go`](../../internal/index/seam_version_key.go)**, **[`tag_key.go`](../../internal/index/tag_key.go)**, and secondary key helpers with version suffixes in **`internal/index`**.
 
 Timeline keys **`__meta/commit-time/<wall_nanos>/<commit_seq>`** map wall-clock **`as_of`** to snapshots (**[`TX.md`](./TX.md)**). They are **not** optional for **`ViewAtTime`** on format v2.
 
@@ -176,7 +176,7 @@ AND optional seam filters apply
 
 **Shipped in v1 (reference implementation):**
 
-- **MVCC** snapshots for consistent lattice views ([`MVCC_DESIGN.md`](./MVCC_DESIGN.md)).
+- **MVCC** snapshots for consistent lattice views (see [`TX.md`](./TX.md) § MVCC temporal semantics).
 - Optional **logical changefeed** (`{db}-changelog`) when configured ([`CHANGEFEED.md`](./CHANGEFEED.md)).
 
 **Future / product-tier (not required for embedded v1):**
@@ -185,6 +185,8 @@ AND optional seam filters apply
 - **Materialized views** for summary cells and cluster promotions (often fed by changefeed consumers).
 - **Hot/cold tiering**: active rings in memory, cold data on SSD or object storage.
 
+**Repository tracking** of out-of-scope items, near-term candidates, and **spec vs implementation** notes: **[`../ROADMAP.md`](../ROADMAP.md)**.
+
 ## Built-in Lattice Operations
 
 - Axial to cube coordinate conversion.
@@ -192,7 +194,7 @@ AND optional seam filters apply
 - Ring enumeration and spiral traversal.
 - Six-direction neighbor traversal.
 - **`ClusterHint`** on cells for product-level clustering hints; **super-hex aggregation** as a first-class engine algorithm is **not** shipped in v1 (orchestration / future milestone).
-- Facet rotation as a **client/view** concern (`ActiveFacet` is not a dedicated disk field—see **[`HEXXLA_LIBRARY_MAPPING.md`](./HEXXLA_LIBRARY_MAPPING.md)**).
+- Facet rotation as a **client/view** concern (`ActiveFacet` is not a dedicated disk field; the library exposes raw facet APIs via **`Tx.PutFacet`** / **`Tx.GetFacet`**).
 
 ## v1 Scope and Non-Goals
 

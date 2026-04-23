@@ -4,11 +4,9 @@
 
 ## Locking
 
-- **`View`** acquires a **read lock**: many concurrent **`View`** calls can run; they block only while an **`Update`** or **`Batch`** holds the exclusive lock.
-- **`Update`** acquires a **write lock**: exclusive access—no concurrent **`View`**, **`Update`**, or **`Batch`** until the callback returns.
-- **`Batch`** is **equivalent** to **`Update`** (same lock and semantics). It exists for alignment with the spec’s `Batch` name and ecosystem expectations; there is no separate internal batching or WAL coalescing in v1.
-
-This matches **single writer, multiple readers** — see **Locking** above.
+- **`View`** acquires a **read lock**: many concurrent **`View`** calls can run; they block only while an **`Update`** or **`Batch`** holds the **database** lock for the parts of the call that require it (see **Group WAL** below).
+- **`Update`** acquires the **database** lock at **start** and **end** of the call. While the callback runs, the lock is held (no concurrent **`View`**, **`Update`**, or **`Batch`**). For the **engine commit** step, **`hexxladb`** uses the **group WAL** path by default (see **[`DURABILITY.md`](./DURABILITY.md)**): after the callback succeeds, [`CommitWriteTxnBeginAsync`](../../internal/engine/writetxn.go) enqueues work and the implementation may **`Unlock`** `db.mu` while the caller **waits** on the flusher (same durability when `Update` returns). In that **wait** window, a concurrent **`View`** or another **`Update`** may run—another **`Update`** can enqueue a second flusher job that may **batch** with the first. The caller then **re-locks** `db.mu` and runs **changelog** + **[`UpdateHeader(CommitSeq)`](../../db.go)** for MVCC before returning, so new commits do not publish a higher `CommitSeq` until after the engine commit and re-lock.
+- **`Batch`** is **equivalent** to **`Update`** (same lock and semantics). It exists for alignment with the spec’s `Batch` name and ecosystem expectations. Each successful **`Update`** / **`Batch`** uses one engine **write transaction**; see **[`DURABILITY.md`](./DURABILITY.md)** for barriers and coalescing. Optional tuning: **[`Options.GroupWALMaxBatchWait`](../../options.go)**.
 
 ## Snapshot semantics (M5) and MVCC (E2+)
 
@@ -49,13 +47,22 @@ Mapping to [`HEXXLA_DB.md`](./HEXXLA_DB.md) Native Query Primitives:
 
 ## Validity filters and facet ring loads (Phase C)
 
-Single-version **read filters** on the current committed cell and seam (not MVCC; for **`ViewAt`** / **`ViewAtTime`** see **Snapshot semantics** above and [`MVCC_TEMPORAL.md`](./MVCC_TEMPORAL.md)):
+Single-version **read filters** on the current committed cell and seam (not MVCC; for **`ViewAt`** / **`ViewAtTime`** see **Snapshot semantics** and **MVCC temporal semantics** above):
 
 - **[`record.ValidAt`](../../internal/record/validity.go)** — half-open validity window **`[ValidFrom, ValidTo)`** in Unix nanoseconds UTC (`nil` bound = open on that side).
 - **[`Tx.WalkRingAt`](../../primitives.go)** — same ring order as **`WalkRing`**, but invokes the callback only for cells whose **`Validity`** contains **`asOf`** (missing or out-of-window cells are skipped).
 - **[`Tx.LoadContextAt`](../../primitives.go)** — same concentric order as **`LoadContext`**; **`maxCells`** applies **after** filtering by **`asOf`**.
 - **[`Tx.FindSeamsAt`](../../primitives.go)** — like **`FindSeams`**, but only includes seams whose **[`SeamRecord.Validity`](../../internal/record/types.go)** contains **`asOf`**. Seams stored without a validity suffix decode as an open window (always included when **`asOf`** is used).
 - **[`Tx.WalkRingFacets`](../../primitives.go)** — for each ring coordinate with an existing cell (and optional **`asOf`** filter on the cell’s validity), loads facet records for **`facet_id`** bits **`0..5`** set in the 6-bit **`facetMask`** (bits outside **`0x3f`** → **`ErrInvalidArgument`**). Typical cost **O(ring_cells × popcount(mask))** btree **`GetFacet`** operations; facets are returned in ascending **`facet_id`** order (missing keys omitted).
+
+## MVCC temporal semantics
+
+For format-v2 databases the authoritative visibility clock is **`CommitSeq`** in the engine header (see [`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md)). Each successful [`Update`](../../tx.go) / [`Batch`](../../tx.go) that performs MVCC writes advances `CommitSeq` after the transaction body and header update complete.
+
+- **[`DB.ViewAt(readSeq)`](../../tx.go)** pins `read_seq` for the callback. Primitive reads resolve the largest stored version with `commit_seq <= read_seq` per key family. [`ErrReadSeqFuture`](../../errors.go) is returned if `read_seq` exceeds the header's `CommitSeq`.
+- **[`DB.ViewAtTime(asOf)`](../../tx.go)** maps UTC wall time to a `read_seq` using the commit timeline: during each MVCC `Update`, an `__meta/commit-time/` btree key records `(wall_unix_nano, writeSeq)` (wall timestamp sampled at transaction start). The resolver scans commits at or before `asOf` and picks the maximum `commit_seq` in that window. Determinism requires stable UTC clock usage; the same `asOf` yields the same snapshot for a given database history.
+- **Secondary indexes (`source/`, `time/`, seam secondaries):** version-suffixed secondary keys coexist with MVCC primaries; [`AscendCellsBySource`](../../cell_secondary.go) (and seam variants) dedupe by logical ID and evaluate visibility via [`GetCell`](../../mvcc.go) / seam readers at the transaction `read_seq`.
+- **Validity vs snapshot:** [`WalkRingAt`](../../primitives.go), [`LoadContextAt`](../../primitives.go), and [`record.ValidAt`](../../internal/record/validity.go) filter by record validity windows — orthogonal to `read_seq` (snapshot time vs. domain validity interval).
 
 ## Secondary indexes — `source/` and `time/` (Phase D)
 
@@ -73,7 +80,7 @@ Per [HEXXLA_DB.md](./HEXXLA_DB.md) Storage Layout, **`PutCell`** dual-writes sec
 
 On v1 overwrite, stale secondaries are removed via **[`engine.BTree.Delete`](../../internal/engine/btree_delete.go)** before attaching new index keys.
 
-Read paths for **cells**: **[`Tx.AscendCellsBySource`](../../cell_secondary.go)** (prefix scan by **`source_id`**), **[`Tx.AscendCellsInTimeBucket`](../../cell_secondary.go)** (one UTC week bucket), **[`Tx.AscendCellsByTag`](../../cell_secondary.go)** (prefix scan by **`tag`**; secondaries maintained by **`PutCell`**).
+Read paths for **cells**: **[`Tx.AscendCellsBySource`](../../cell_secondary.go)** (prefix scan by **`source_id`**), **[`Tx.AscendCellsInTimeBucket`](../../cell_secondary.go)** (one UTC week bucket), **[`Tx.AscendCellsByTag`](../../cell_secondary.go)** (prefix scan by **`tag`**; secondaries maintained by **`PutCell`**), **[`Tx.AscendDistinctTags`](../../cell_secondary.go)** / **[`Tx.ListExistingTopics`](../../cell_secondary.go)** (distinct **`tag`** values visible at this snapshot).
 
 ## Logical changefeed (Phase G)
 

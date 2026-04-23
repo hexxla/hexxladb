@@ -40,7 +40,7 @@ bench:
 	@$(MAKE) bench-tmp
 	TMPDIR=$(or $(TMPDIR),$(CURDIR)/.tmp) go test -count=1 -bench=. -benchmem ./...
 
-# Longer runs: preload 512, 2k, 10k (default). Override: make bench-stress HEXXLA_BENCH_PRELOAD=extreme (adds 50k; needs huge TMPDIR). See BENCHMARKS.md.
+# Longer runs: preload 512, 2k, 10k (default). Override: make bench-stress HEXXLA_BENCH_PRELOAD=extreme (adds 50k; needs huge TMPDIR).
 bench-stress:
 	@$(MAKE) bench-tmp
 	TMPDIR=$(or $(TMPDIR),$(CURDIR)/.tmp) HEXXLA_BENCH_PRELOAD=$(or $(HEXXLA_BENCH_PRELOAD),all) go test -count=1 -bench='BenchmarkAPI_(GetCell|AscendCellsBySource|LoadContext|LoadContextAt|WalkRing|WalkRingAt)/' -benchmem -benchtime=500ms ./.

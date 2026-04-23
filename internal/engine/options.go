@@ -1,5 +1,16 @@
 package engine
 
+import "time"
+
+// GroupWAL configures optional batched WAL apply (group commit).
+type GroupWAL struct {
+	// Enabled starts the background flusher that coalesces logical commits before WAL sync.
+	Enabled bool
+	// MaxBatchWait is the window after the first queued commit to batch additional commits.
+	// Zero means a small default (2ms) in [Engine.startGroupWALFlusher].
+	MaxBatchWait time.Duration
+}
+
 // Options configures the engine shell (M3).
 type Options struct {
 	// Hooks optional page transforms (e.g. encryption).
@@ -20,4 +31,9 @@ type Options struct {
 	WALMACKey [32]byte
 	// EnableWALMAC enables keyed MAC verification for WAL records.
 	EnableWALMAC bool
+	// GroupWAL enables batched redo apply; see package writetxn and group_wal.go.
+	GroupWAL GroupWAL
+	// UsePrimaryFdatasync, when true, uses a data-only flush (e.g. fdatasync on Linux) on the
+	// primary file instead of fsync for durability barriers. Default false. See [Engine.syncPrimary].
+	UsePrimaryFdatasync bool
 }

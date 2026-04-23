@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Go** toolchain matching the **`go`** and **`toolchain`** lines in [`go.mod`](go.mod) (currently **Go 1.26.2**; the **`toolchain`** directive selects that release via [Go toolchains](https://go.dev/doc/toolchain)). See also [`docs/context/MODERN_GO.md`](docs/context/MODERN_GO.md).
+- **Go** toolchain matching the **`go`** and **`toolchain`** lines in [`go.mod`](go.mod) (currently **Go 1.26.2**; the **`toolchain`** directive selects that release via [Go toolchains](https://go.dev/doc/toolchain)).
 - Optional but recommended: **`golangci-lint`** v2 (same major as [`.golangci.yml`](.golangci.yml)) for `make lint` and full [`scripts/ci.sh`](scripts/ci.sh).
 - **`govulncheck`** is invoked via **`go run golang.org/x/vuln/cmd/govulncheck@latest`** inside [`scripts/ci.sh`](scripts/ci.sh) — no separate install; needs network on first run (module cache afterward).
 - Optional: **[pre-commit](https://pre-commit.com)** for Git hooks ([`.pre-commit-config.yaml`](.pre-commit-config.yaml)).
@@ -46,10 +46,10 @@ Shortcuts:
 | `make fmt`          | `gofmt -w` on module `.go` files                                                                                                                    |
 | `make clean`        | Remove `bin/` (from `make build`)                                                                                                                   |
 | `make help`         | List Makefile targets                                                                                                                               |
-| `make integration`  | Optional **`//go:build integration`** tests (`-race`); not part of default CI                                                                       |
+| `make integration`  | Optional **`//go:build integration`** tests (`-race`); not part of default CI. GitHub Actions runs the same on a [weekly + manual](.github/workflows/integration.yml) schedule.                                                                       |
 | `make stress`       | Optional **`//go:build stress`** tests (very large `PutCell` counts; **`TMPDIR`** defaults to repo `./.tmp`; **not** CI)                             |
 | `make bench`        | Benchmarks (`go test -bench=. -benchmem ./...`); **not** run in default CI                                                                          |
-| `make bench-stress` | Longer **`BenchmarkAPI_*`** (preload 512 / 2k / 10k per sub-bench; **not** 50k — see [`BENCHMARKS.md`](docs/hexxladb/BENCHMARKS.md)); **not** in CI |
+| `make bench-stress` | Longer **`BenchmarkAPI_*`** (preload 512 / 2k / 10k per sub-bench); **not** in CI |
 | `make fuzz`         | Short fuzz smoke on internal decoders (~2s per target); **not** in default CI                                                                       |
 
 ## Benchmarks and fuzzing
@@ -58,6 +58,10 @@ Shortcuts:
 - **`make fuzz`** runs a **short** smoke (`-fuzztime=2s` per target) on [`internal/record`](internal/record) and [`internal/engine`](internal/engine). For longer or corpus-updating runs, use e.g. `go test ./internal/record -fuzz=FuzzDecodeCell -fuzztime=30s` (see [Go fuzzing](https://go.dev/doc/security/fuzz/)).
 
 Compatibility expectations for releases and on-disk format: **[`VERSIONING.md`](VERSIONING.md)**.
+
+## Roadmap and out-of-scope boundaries
+
+Technical backlog, explicit non-goals, and **documented vs implemented** audit notes live in **[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Operator-facing retention/soak/incident guidance is in **[`docs/hexxladb/OPERATIONS.md`](docs/hexxladb/OPERATIONS.md)**.
 
 ## Where tests live
 

@@ -190,11 +190,25 @@ func (db *DB) PruneCellVersions(beforeSeq uint64, maxDelete int) (deleted int, e
 	}); err != nil {
 		return 0, err
 	}
+	if len(toDelete) == 0 {
+		return 0, nil
+	}
+	// Route deletes through the same engine write-transaction path as [DB.Update]. Otherwise
+	// [Engine.WritePage] uses immediate WAL/primary persistence while [Engine.readPagePooled] still
+	// honors group-WAL overlay — rebalance can see a mixed view and corrupt the B+ tree.
+	if err := db.eng.BeginWriteTxn(); err != nil {
+		return 0, err
+	}
 	for i := range toDelete {
 		if err := db.btree.Delete(toDelete[i]); err != nil {
+			db.eng.AbortWriteTxn()
 			return deleted, err
 		}
 		deleted++
+	}
+	if err := db.eng.CommitWriteTxn(); err != nil {
+		db.eng.AbortWriteTxn()
+		return deleted, err
 	}
 	return deleted, nil
 }

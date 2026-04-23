@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -14,6 +15,37 @@ import (
 
 var emptySecondaryVal = []byte{}
 
+// cellSourceSecondaryKey returns the source/ index key for rec at commitSeq, or (nil, nil) when no source row.
+func (tx *Tx) cellSourceSecondaryKey(rec record.CellRecord, commitSeq uint64) ([]byte, error) {
+	sid := strings.TrimSpace(rec.Provenance.SourceID)
+	if sid == "" {
+		return nil, nil
+	}
+	if tx.db.useMVCC {
+		return index.SourceKeyWithVersion(sid, rec.Key, commitSeq)
+	}
+	return index.SourceKey(sid, rec.Key)
+}
+
+// cellTimeSecondaryKey returns the time/ index key when validity maps to a week bucket.
+func (tx *Tx) cellTimeSecondaryKey(rec record.CellRecord, commitSeq uint64) ([]byte, bool) {
+	b, ok := index.WeekBucketFromValidity(rec.Validity)
+	if !ok {
+		return nil, false
+	}
+	if tx.db.useMVCC {
+		return index.TimeKeyWithVersion(b, rec.Key, commitSeq), true
+	}
+	return index.TimeKey(b, rec.Key), true
+}
+
+func (tx *Tx) cellTagSecondaryKey(tag string, key lattice.PackedCoord, commitSeq uint64) ([]byte, error) {
+	if tx.db.useMVCC {
+		return index.TagKeyWithVersion(tag, key, commitSeq)
+	}
+	return index.TagKey(tag, key)
+}
+
 func (tx *Tx) removeCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) error {
 	if tx == nil || tx.db == nil {
 		return ErrClosed
@@ -21,41 +53,22 @@ func (tx *Tx) removeCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) 
 	if tx.db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
-	sid := strings.TrimSpace(rec.Provenance.SourceID)
-	if sid != "" {
-		var k []byte
-		var err error
-		if tx.db.useMVCC {
-			k, err = index.SourceKeyWithVersion(sid, rec.Key, commitSeq)
-		} else {
-			k, err = index.SourceKey(sid, rec.Key)
-		}
-		if err != nil {
-			return err
-		}
+	k, err := tx.cellSourceSecondaryKey(rec, commitSeq)
+	if err != nil {
+		return err
+	}
+	if k != nil {
 		if err := tx.db.btree.Delete(k); err != nil {
 			return err
 		}
 	}
-	if b, ok := index.WeekBucketFromValidity(rec.Validity); ok {
-		var k []byte
-		if tx.db.useMVCC {
-			k = index.TimeKeyWithVersion(b, rec.Key, commitSeq)
-		} else {
-			k = index.TimeKey(b, rec.Key)
-		}
-		if err := tx.db.btree.Delete(k); err != nil {
+	if tk, ok := tx.cellTimeSecondaryKey(rec, commitSeq); ok {
+		if err := tx.db.btree.Delete(tk); err != nil {
 			return err
 		}
 	}
 	for _, tag := range uniqueSortedTags(rec.Tags) {
-		var k []byte
-		var err error
-		if tx.db.useMVCC {
-			k, err = index.TagKeyWithVersion(tag, rec.Key, commitSeq)
-		} else {
-			k, err = index.TagKey(tag, rec.Key)
-		}
+		k, err := tx.cellTagSecondaryKey(tag, rec.Key, commitSeq)
 		if err != nil {
 			return err
 		}
@@ -67,44 +80,25 @@ func (tx *Tx) removeCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) 
 }
 
 func (tx *Tx) putCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) error {
-	sid := strings.TrimSpace(rec.Provenance.SourceID)
-	if sid != "" {
-		var k []byte
-		var err error
-		if tx.db.useMVCC {
-			k, err = index.SourceKeyWithVersion(sid, rec.Key, commitSeq)
-		} else {
-			k, err = index.SourceKey(sid, rec.Key)
+	k, err := tx.cellSourceSecondaryKey(rec, commitSeq)
+	if err != nil {
+		if errors.Is(err, index.ErrSourceIDTooLong) {
+			return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 		}
-		if err != nil {
-			if errors.Is(err, index.ErrSourceIDTooLong) {
-				return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-			}
-			return err
-		}
+		return err
+	}
+	if k != nil {
 		if err := tx.Put(k, emptySecondaryVal); err != nil {
 			return err
 		}
 	}
-	if b, ok := index.WeekBucketFromValidity(rec.Validity); ok {
-		var k []byte
-		if tx.db.useMVCC {
-			k = index.TimeKeyWithVersion(b, rec.Key, commitSeq)
-		} else {
-			k = index.TimeKey(b, rec.Key)
-		}
-		if err := tx.Put(k, emptySecondaryVal); err != nil {
+	if tk, ok := tx.cellTimeSecondaryKey(rec, commitSeq); ok {
+		if err := tx.Put(tk, emptySecondaryVal); err != nil {
 			return err
 		}
 	}
 	for _, tag := range uniqueSortedTags(rec.Tags) {
-		var k []byte
-		var err error
-		if tx.db.useMVCC {
-			k, err = index.TagKeyWithVersion(tag, rec.Key, commitSeq)
-		} else {
-			k, err = index.TagKey(tag, rec.Key)
-		}
+		k, err := tx.cellTagSecondaryKey(tag, rec.Key, commitSeq)
 		if err != nil {
 			if errors.Is(err, index.ErrTagTooLong) {
 				return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
@@ -140,6 +134,27 @@ func uniqueSortedTags(tags []string) []string {
 	return tmp
 }
 
+func (tx *Tx) cellSourceScanBounds(sourceID string) (from, to []byte, err error) {
+	if tx.db.useMVCC {
+		return index.SourceRangePrefixAllVersions(sourceID)
+	}
+	return index.SourceRangePrefix(sourceID)
+}
+
+func (tx *Tx) cellTimeScanBounds(bucket int64) (from, to []byte) {
+	if tx.db.useMVCC {
+		return index.TimeRangePrefixAllVersions(bucket)
+	}
+	return index.TimeRangePrefix(bucket)
+}
+
+func (tx *Tx) cellTagScanBounds(tag string) (from, to []byte, err error) {
+	if tx.db.useMVCC {
+		return index.TagRangePrefixAllVersions(tag)
+	}
+	return index.TagRangePrefix(tag)
+}
+
 // AscendCellsBySource scans the source/ secondary index for sourceID and calls fn with each
 // decoded cell at that source (same PackedCoord as in the index key). ctx is checked between entries.
 func (tx *Tx) AscendCellsBySource(ctx context.Context, sourceID string, fn func(record.CellRecord) bool) error {
@@ -152,13 +167,7 @@ func (tx *Tx) AscendCellsBySource(ctx context.Context, sourceID string, fn func(
 	if tx.db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
-	var from, to []byte
-	var err error
-	if tx.db.useMVCC {
-		from, to, err = index.SourceRangePrefixAllVersions(sourceID)
-	} else {
-		from, to, err = index.SourceRangePrefix(sourceID)
-	}
+	from, to, err := tx.cellSourceScanBounds(sourceID)
 	if err != nil {
 		if errors.Is(err, index.ErrSourceIDTooLong) {
 			return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
@@ -208,12 +217,7 @@ func (tx *Tx) AscendCellsInTimeBucket(ctx context.Context, bucket int64, fn func
 	if tx.db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
-	var from, to []byte
-	if tx.db.useMVCC {
-		from, to = index.TimeRangePrefixAllVersions(bucket)
-	} else {
-		from, to = index.TimeRangePrefix(bucket)
-	}
+	from, to := tx.cellTimeScanBounds(bucket)
 	seen := make(map[lattice.PackedCoord]struct{})
 	var scanErr error
 	err := tx.AscendRange(from, to, func(k, _ []byte) bool {
@@ -257,13 +261,7 @@ func (tx *Tx) AscendCellsByTag(ctx context.Context, tag string, fn func(record.C
 	if tx.db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
-	var from, to []byte
-	var err error
-	if tx.db.useMVCC {
-		from, to, err = index.TagRangePrefixAllVersions(tag)
-	} else {
-		from, to, err = index.TagRangePrefix(tag)
-	}
+	from, to, err := tx.cellTagScanBounds(tag)
 	if err != nil {
 		if errors.Is(err, index.ErrTagTooLong) {
 			return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
@@ -299,4 +297,79 @@ func (tx *Tx) AscendCellsByTag(ctx context.Context, tag string, fn func(record.C
 		return err
 	}
 	return scanErr
+}
+
+// AscendDistinctTags scans the tag/ secondary index and invokes fn once per distinct tag string
+// that appears on the snapshot-visible cell for that index entry ([Tx.GetCell]).
+// Physical secondary rows may survive past edits or across MVCC versions until prune; entries whose
+// tag no longer appears on the visible cell are skipped. ctx is checked between calls to fn.
+func (tx *Tx) AscendDistinctTags(ctx context.Context, fn func(tag string) bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if tx == nil || tx.db == nil {
+		return ErrClosed
+	}
+	if tx.db.activeEng() == nil {
+		return ErrDatabaseClosed
+	}
+	if fn == nil {
+		return ErrNilCallback
+	}
+	from, to := index.TagFamilyScanBounds()
+	type tagCoord struct {
+		tag string
+		p   lattice.PackedCoord
+	}
+	processed := make(map[tagCoord]struct{})
+	emitted := make(map[string]struct{})
+	var scanErr error
+	err := tx.AscendRange(from, to, func(k, _ []byte) bool {
+		if err := ctx.Err(); err != nil {
+			scanErr = err
+			return false
+		}
+		tag, p, err := index.ParseTagKey(k)
+		if err != nil {
+			return true
+		}
+		tc := tagCoord{tag: tag, p: p}
+		if _, dup := processed[tc]; dup {
+			return true
+		}
+		processed[tc] = struct{}{}
+		rec, ok, err := tx.GetCell(p)
+		if err != nil {
+			scanErr = err
+			return false
+		}
+		if !ok || !slices.Contains(rec.Tags, tag) {
+			return true
+		}
+		if _, dup := emitted[tag]; dup {
+			return true
+		}
+		emitted[tag] = struct{}{}
+		return fn(tag)
+	})
+	if err != nil {
+		return err
+	}
+	return scanErr
+}
+
+// ListExistingTopics returns distinct tag strings from visible cells (sorted).
+// Topics are stored as [record.CellRecord.Tags]; implementation uses the tag/ index plus
+// [Tx.GetCell] to respect MVCC snapshots and stale secondaries.
+func (tx *Tx) ListExistingTopics(ctx context.Context) ([]string, error) {
+	var out []string
+	err := tx.AscendDistinctTags(ctx, func(tag string) bool {
+		out = append(out, tag)
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(out)
+	return out, nil
 }

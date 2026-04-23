@@ -1,6 +1,8 @@
 package index_test
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/hexxla/hexxladb/internal/index"
@@ -55,5 +57,20 @@ func TestTagRangePrefix_lexOrder(t *testing.T) {
 	}
 	if string(k1) < string(from) || string(k1) > string(to) {
 		t.Fatalf("key %s not in [%s,%s]", k1, from, to)
+	}
+}
+
+func TestTagFamilyScanBounds_coversPhysicalTagKeys(t *testing.T) {
+	t.Parallel()
+	from, to := index.TagFamilyScanBounds()
+	long := strings.Repeat("z", index.MaxTagBytes)
+	var maxP lattice.PackedCoord
+	maxP[0], maxP[1] = ^uint64(0), ^uint64(0)
+	k, err := index.TagKeyWithVersion(long, maxP, ^uint64(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Compare(k, from) < 0 || bytes.Compare(k, to) > 0 {
+		t.Fatalf("physical tag key out of [%q,%q]: len=%d cmp=%d", from, to, len(k), bytes.Compare(k, to))
 	}
 }

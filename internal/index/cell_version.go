@@ -8,7 +8,7 @@ import (
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
-// VersionSuffixLen is the length of the big-endian commit_seq suffix on MVCC physical keys (MVCC_DESIGN §3 Option A).
+// VersionSuffixLen is the length of the big-endian commit_seq suffix on MVCC physical keys.
 const VersionSuffixLen = 8
 
 // CellKeyWithVersion returns cell/<packed> || commit_seq (big-endian uint64).

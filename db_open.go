@@ -3,6 +3,7 @@ package hexxladb
 import (
 	"crypto/rand"
 	"os"
+	"time"
 
 	"github.com/hexxla/hexxladb/internal/engine"
 )
@@ -155,6 +156,31 @@ func buildEngineOptions(path string, opts *Options) (*engine.Options, error) {
 		WALMACKey:                deriveWALMACKey(xtsKey),
 		EnableWALMAC:             true,
 	}, opts), nil
+}
+
+// mergeEnginePrimaryFdatasync sets [engine.Options.UsePrimaryFdatasync] from public [Options].
+func mergeEnginePrimaryFdatasync(eo *engine.Options, o *Options) *engine.Options {
+	if o == nil || !o.UsePrimaryFdatasync {
+		return eo
+	}
+	if eo == nil {
+		return &engine.Options{UsePrimaryFdatasync: true}
+	}
+	eo.UsePrimaryFdatasync = true
+	return eo
+}
+
+func mergeEngineGroupWAL(eo *engine.Options, o *Options) *engine.Options {
+	mw := time.Duration(0)
+	if o != nil {
+		mw = max(time.Duration(0), o.GroupWALMaxBatchWait)
+	}
+	gw := engine.GroupWAL{Enabled: true, MaxBatchWait: mw}
+	if eo == nil {
+		return &engine.Options{GroupWAL: gw}
+	}
+	eo.GroupWAL = gw
+	return eo
 }
 
 func openValidateEncryption(opts *Options, hdr engine.Header) error {

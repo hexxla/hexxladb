@@ -275,6 +275,110 @@ func TestTx_AscendCellsByTag_mvccSnapshotIsolation(t *testing.T) {
 	}
 }
 
+func TestTx_ListExistingTopics_distinctSorted(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	db, err := hexxladb.Open(filepath.Join(dir, "topics.db"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	put := func(q, r int, tags ...string) {
+		t.Helper()
+		p, err := lattice.Pack(lattice.Coord{Q: q, R: r})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := record.CellRecord{
+			Key:        p,
+			RawContent: "x",
+			Provenance: record.ProvenanceWire{SourceID: "s"},
+			Tags:       tags,
+		}
+		if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(0, 0, "zebra", "alpha")
+	put(1, 0, "alpha", "beta")
+
+	ctx := context.Background()
+	var topics []string
+	err = db.View(func(tx *hexxladb.Tx) error {
+		var inner error
+		topics, inner = tx.ListExistingTopics(ctx)
+		return inner
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"alpha", "beta", "zebra"}
+	if len(topics) != len(want) {
+		t.Fatalf("topics %#v want %#v", topics, want)
+	}
+	for i := range want {
+		if topics[i] != want[i] {
+			t.Fatalf("topics %#v want %#v", topics, want)
+		}
+	}
+}
+
+func TestTx_ListExistingTopics_mvccViewAt(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	db, err := hexxladb.Open(filepath.Join(dir, "topics_mvcc.db"), &hexxladb.Options{EnableMVCC: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	c := lattice.Coord{Q: 1, R: -1}
+	p, err := lattice.Pack(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := record.CellRecord{
+		Key:        p,
+		RawContent: "v",
+		Provenance: record.ProvenanceWire{SourceID: "s"},
+		Tags:       []string{"alpha"},
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+		t.Fatal(err)
+	}
+	rec.Tags = []string{"beta"}
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	topicsAt1, err := listTopicsAt(db, ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(topicsAt1) != 1 || topicsAt1[0] != "alpha" {
+		t.Fatalf("seq=1 topics %#v want [alpha]", topicsAt1)
+	}
+	topicsAt2, err := listTopicsAt(db, ctx, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(topicsAt2) != 1 || topicsAt2[0] != "beta" {
+		t.Fatalf("seq=2 topics %#v want [beta]", topicsAt2)
+	}
+}
+
+func listTopicsAt(db *hexxladb.DB, ctx context.Context, seq uint64) ([]string, error) {
+	var out []string
+	err := db.ViewAt(seq, func(tx *hexxladb.Tx) error {
+		var inner error
+		out, inner = tx.ListExistingTopics(ctx)
+		return inner
+	})
+	return out, err
+}
+
 func TestAscendCellsBySource_contextCanceled(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

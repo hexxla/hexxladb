@@ -3,19 +3,32 @@ package record
 import (
 	"encoding/binary"
 	"fmt"
+	"sync"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
 const maxTags = 65536
 
+var cellPayloadScratch = sync.Pool{
+	New: func() any {
+		b := make([]byte, 0, 4096)
+		return &b
+	},
+}
+
 // EncodeCell encodes a cell record (envelope + v1 payload).
 func EncodeCell(r CellRecord) ([]byte, error) {
-	payload, err := encodeCellPayloadV1(r)
+	bp := cellPayloadScratch.Get().(*[]byte)
+	payload, err := encodeCellPayloadV1Into((*bp)[:0], r)
 	if err != nil {
+		cellPayloadScratch.Put(bp)
 		return nil, err
 	}
-	return AppendEnvelope(nil, MagicCell, FormatVersionV1, payload)
+	out, err := AppendEnvelope(nil, MagicCell, FormatVersionV1, payload)
+	*bp = payload[:cap(payload)]
+	cellPayloadScratch.Put(bp)
+	return out, err
 }
 
 // DecodeCell decodes a full cell record blob.
@@ -27,11 +40,11 @@ func DecodeCell(data []byte) (CellRecord, error) {
 	return decodeCellPayloadV1(payload)
 }
 
-func encodeCellPayloadV1(r CellRecord) ([]byte, error) {
+func encodeCellPayloadV1Into(base []byte, r CellRecord) ([]byte, error) {
 	if len(r.Tags) > maxTags {
 		return nil, fmt.Errorf("%w: too many tags", ErrInvalidRecord)
 	}
-	dst := appendPackedCoord(nil, r.Key)
+	dst := appendPackedCoord(base, r.Key)
 	var err error
 	dst, err = appendString32(dst, r.RawContent)
 	if err != nil {

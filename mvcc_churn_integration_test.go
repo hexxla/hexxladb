@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/hexxla/hexxladb"
 	"github.com/hexxla/hexxladb/internal/lattice"
@@ -16,7 +17,7 @@ import (
 // TestIntegration_MVCC_sustainedPutCellSameKey exercises many MVCC commits updating one logical cell,
 // then reclaims stale versions using several prune batches ([DB.PruneCellVersions] batch size 2048).
 // Heavy pruning mid-workload is covered by unit tests in mvcc_test.go; operators should run bounded prune
-// passes during maintenance windows (see docs/hexxladb/MVCC_RETENTION.md).
+// passes during maintenance windows (see docs/hexxladb/OPERATIONS.md § MVCC retention).
 func TestIntegration_MVCC_sustainedPutCellSameKey(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration churn in -short")
@@ -38,10 +39,26 @@ func TestIntegration_MVCC_sustainedPutCellSameKey(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	p := lattice.PackedCoord{3, 9}
 	ctx := context.Background()
+	vFrom := int64(1e12)
+	vTo := int64(2e12)
 	for i := range iterations {
-		raw := fmt.Sprintf("payload-%08d", i)
+		n := time.Now().UnixNano() + int64(i)
+		rec := record.CellRecord{
+			Key:        p,
+			RawContent: fmt.Sprintf("payload-%08d-churn=%06d", i, i%100000),
+			Provenance: record.ProvenanceWire{
+				SourceID: fmt.Sprintf("churn/source-%03d", i%200), Confidence: 1, CreatedAt: n, UpdatedAt: n,
+			},
+			Validity: record.ValidityWire{ValidFrom: &vFrom, ValidTo: &vTo},
+			Tags:     []string{"churn/tag-a", "churn/tag-b"},
+		}
+		if encoded, err := record.EncodeCell(rec); err != nil {
+			t.Fatalf("EncodeCell iter %d: %v", i, err)
+		} else if len(encoded) > 512 {
+			t.Fatalf("encoded cell iter %d is %d bytes (>512 engine limit)", i, len(encoded))
+		}
 		if err := db.Update(func(tx *hexxladb.Tx) error {
-			return tx.PutCell(ctx, record.CellRecord{Key: p, RawContent: raw})
+			return tx.PutCell(ctx, rec)
 		}); err != nil {
 			t.Fatal(err)
 		}

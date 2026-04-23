@@ -4,13 +4,15 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/hexxla/hexxladb/internal/changelog"
 	"github.com/hexxla/hexxladb/internal/engine"
 )
 
 // DB is a handle to an embedded HexxlaDB database. Construction is via [Open].
-// Concurrent [View] calls are serialized with readers; [Update] and [Batch] are exclusive.
+// Concurrent [View] calls are serialized with readers. [Update] and [Batch] hold the DB lock around
+// the callback; see [docs/hexxladb/TX.md] for group-WAL wait semantics during engine commit.
 type DB struct {
 	mu            sync.RWMutex
 	eng           *engine.Engine
@@ -18,6 +20,7 @@ type DB struct {
 	changelog     *changelog.Log
 	useMVCC       bool          // true when on-disk format is v2+ (MVCC physical keys; see [Options.EnableMVCC]).
 	mvccRetention MVCCRetention // copy of [Options.MVCCRetention] at [Open] for [SuggestedPruneBeforeSeq].
+	writeSeqNext  atomic.Uint64
 }
 
 // ErrCorruptDatabase means the database or WAL failed validation on open.
@@ -29,6 +32,8 @@ func Open(path string, opts *Options) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	eopts = mergeEnginePrimaryFdatasync(eopts, opts)
+	eopts = mergeEngineGroupWAL(eopts, opts)
 	eng, err := engine.Open(path, eopts)
 	if err != nil {
 		if errors.Is(err, engine.ErrCorruptHeader) || errors.Is(err, engine.ErrCorruptWAL) {
@@ -60,6 +65,7 @@ func Open(path string, opts *Options) (*DB, error) {
 	}
 	bt := engine.OpenBTree(eng)
 	db := &DB{eng: eng, btree: bt, useMVCC: hdr.FormatVersion >= 2}
+	db.writeSeqNext.Store(hdr.CommitSeq)
 	if opts != nil {
 		db.mvccRetention = opts.MVCCRetention
 	}
@@ -108,4 +114,20 @@ func (db *DB) activeEng() *engine.Engine {
 		return nil
 	}
 	return db.eng
+}
+
+// GroupWALStats returns group-WAL flusher counters when group commit is enabled: total
+// applyGroupBatch invocations, batches that combined two or more user commits, and WAL sync
+// operations. It is a thin forwarder over [engine.Engine.GroupWALStats] for operators who should
+// not import [internal/engine].
+func (db *DB) GroupWALStats() (applyBatches, batchesWith2PlusJobs, walSynces uint64) {
+	if db == nil {
+		return 0, 0, 0
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.eng == nil {
+		return 0, 0, 0
+	}
+	return db.eng.GroupWALStats()
 }

@@ -16,19 +16,13 @@ const MaxTagBytes = 220
 
 // TagKey returns tag/<u16be len><utf8 tag>/<packed_coord>.
 func TagKey(tag string, p lattice.PackedCoord) ([]byte, error) {
-	t := []byte(tag)
-	if len(t) > MaxTagBytes {
-		return nil, ErrTagTooLong
-	}
-	if len(t) > 0xffff {
-		return nil, ErrTagTooLong
-	}
-	buf := make([]byte, 0, len(TagPrefix)+2+len(t)+1+PackedCoordKeyLen)
+	buf := make([]byte, 0, len(TagPrefix)+2+len(tag)+1+PackedCoordKeyLen)
 	buf = append(buf, TagPrefix...)
-	var lenBE [2]byte
-	binary.BigEndian.PutUint16(lenBE[:], uint16(len(t))) //nolint:gosec // len ≤ MaxTagBytes.
-	buf = append(buf, lenBE[:]...)
-	buf = append(buf, t...)
+	var err error
+	buf, err = appendLenPrefixedUTF8(buf, tag, MaxTagBytes, ErrTagTooLong)
+	if err != nil {
+		return nil, err
+	}
 	buf = append(buf, '/')
 	return appendPackedCoordBE(buf, p), nil
 }
@@ -48,24 +42,16 @@ func TagKeyWithVersion(tag string, p lattice.PackedCoord, commitSeq uint64) ([]b
 
 // TagRangePrefix returns inclusive [from, to] for AscendRange over all cells with this tag (any PackedCoord).
 func TagRangePrefix(tag string) (from, to []byte, err error) {
-	t := []byte(tag)
-	if len(t) > MaxTagBytes {
-		return nil, nil, ErrTagTooLong
+	head, hErr := lenPrefixedIDPrefixAfterASCII(TagPrefix, []byte(tag), MaxTagBytes, ErrTagTooLong)
+	if hErr != nil {
+		return nil, nil, hErr
 	}
-	from = make([]byte, 0, len(TagPrefix)+2+len(t)+1+PackedCoordKeyLen)
-	from = append(from, TagPrefix...)
-	var lenBE [2]byte
-	binary.BigEndian.PutUint16(lenBE[:], uint16(len(t))) //nolint:gosec // len(t) ≤ MaxTagBytes (uint16 safe)
-	from = append(from, lenBE[:]...)
-	from = append(from, t...)
-	from = append(from, '/')
+	from = make([]byte, 0, len(head)+PackedCoordKeyLen)
+	from = append(from, head...)
 	var z lattice.PackedCoord
 	from = appendPackedCoordBE(from, z)
-	to = make([]byte, 0, len(TagPrefix)+2+len(t)+1+PackedCoordKeyLen)
-	to = append(to, TagPrefix...)
-	to = append(to, lenBE[:]...)
-	to = append(to, t...)
-	to = append(to, '/')
+	to = make([]byte, 0, len(head)+PackedCoordKeyLen)
+	to = append(to, head...)
 	var maxP lattice.PackedCoord
 	maxP[0] = ^uint64(0)
 	maxP[1] = ^uint64(0)
@@ -119,3 +105,12 @@ func ParseTagKey(key []byte) (tag string, p lattice.PackedCoord, err error) {
 
 // ErrTagTooLong means a tag exceeds [MaxTagBytes].
 var ErrTagTooLong = errors.New("index: tag too long for secondary key")
+
+// TagFamilyScanBounds returns inclusive [from, to] for AscendRange over every physical
+// tag secondary key (tag/<u16be len><utf8>/<packed_coord>[+MVCC suffix]).
+//
+// The upper bound is the ASCII string "tau": every valid tag index key begins with [TagPrefix],
+// and lexicographically "tag/..." < "tau" because at index 2, 'g' < 'u'.
+func TagFamilyScanBounds() (from, to []byte) {
+	return []byte(TagPrefix), []byte("tau")
+}
