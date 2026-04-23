@@ -1,6 +1,7 @@
 <div align="center">
 
 <!-- Banner image placeholder - replace with actual image when available -->
+
 <!-- <img src="docs/assets/banner.png" alt="HexxlaDB" width="800"> -->
 
 # HexxlaDB
@@ -179,11 +180,8 @@ HexxlaDB provides a focused API for spatial memory management. See [`docs/hexxla
 Run the interactive tour:
 
 ```bash
-# Full API demo with explanations
-go run ./examples/full_api_demo
-
-# Simple storage walkthrough
-go run ./examples/storage_walkthrough -path .tmp/walk.db
+# Conversational memory service demo
+go run ./examples/conversational_memory
 ```
 
 | Documentation                                        | What's inside               |
@@ -192,6 +190,37 @@ go run ./examples/storage_walkthrough -path .tmp/walk.db
 | [`HEXXLA.md`](docs/hexxladb/HEXXLA.md)               | Memory model and concepts   |
 | [`HEXXLA_DB.md`](docs/hexxladb/HEXXLA_DB.md)         | Storage layout and keys     |
 | [`OPERATIONS.md`](docs/hexxladb/OPERATIONS.md)       | Production operations guide |
+
+---
+
+## Benchmarks
+
+Run benchmarks with: `go test -bench=BenchmarkAPI_ -benchtime=1s`
+
+**Cell operations** (512 cells in database):
+
+| Operation          | Time      | Allocs |
+| ------------------ | --------- | ------ |
+| PutCell            | ~45 μs/op | 87     |
+| GetCell            | ~71 μs/op | 122    |
+| BatchPutCell (500) | ~12 ms/op | —      |
+
+**Context assembly** (512 cells in database, radius-3, 50 cell limit):
+
+| Operation           | Time      | Allocs |
+| ------------------- | --------- | ------ |
+| LoadContext         | ~47 μs/op | 2,944  |
+| LoadContextAt       | ~68 μs/op | 3,804  |
+| LoadContextPack 4KB | ~75 μs/op | 3,200  |
+
+**Spatial queries** (512 cells in database):
+
+| Operation         | Time      | Allocs |
+| ----------------- | --------- | ------ |
+| WalkRing (ring 2) | ~26 μs/op | 927    |
+| FindSeams         | ~55 μs/op | 1,200  |
+
+_Measured on AMD Ryzen 9 5950X, Go 1.24, Linux. Your results will vary by hardware and data shape._
 
 ---
 
