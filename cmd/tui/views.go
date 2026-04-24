@@ -3,26 +3,27 @@ package main
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
 	"github.com/hexxla/hexxladb"
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
 // View shows database overview and quick stats
 type dashboardView struct {
-	db     *hexxladb.DB
-	dbPath string
+	db *hexxladb.DB
 }
 
 func newDashboardView(db *hexxladb.DB) view {
 	return dashboardView{db: db}
 }
 
-func (v dashboardView) Update(msg tea.Msg) (view, tea.Cmd) {
+func (v dashboardView) Update(_ tea.Msg) (view, tea.Cmd) {
 	return v, nil
 }
 
@@ -35,9 +36,9 @@ func (v dashboardView) View() string {
 	// Cell count
 	var cellCount int
 	_ = v.db.View(func(tx *hexxladb.Tx) error {
-		return tx.AscendRange(nil, []byte("cell\xff"), func(k, v []byte) bool {
+		return tx.AscendRange(nil, []byte("cell\xff"), func(_, _ []byte) bool {
 			cellCount++
-			return cellCount < 10000
+			return cellCount < 1000
 		})
 	})
 
@@ -118,7 +119,7 @@ func (v dashboardView) View() string {
 	return content.String()
 }
 
-// hexGridView displays the hexagonal lattice
+// hexGridView shows a hex grid visualization
 type hexGridView struct {
 	db     *hexxladb.DB
 	center hexxladb.Coord
@@ -133,7 +134,7 @@ func newHexGridView(db *hexxladb.DB) view {
 	}
 }
 
-func (v hexGridView) Update(msg tea.Msg) (view, tea.Cmd) {
+func (v hexGridView) Update(_ tea.Msg) (view, tea.Cmd) {
 	return v, nil
 }
 
@@ -177,6 +178,60 @@ func newCellTableView(db *hexxladb.DB) view {
 }
 
 func (v cellTableView) Update(msg tea.Msg) (view, tea.Cmd) {
+	// Trigger loading if needed
+	if v.loading && len(v.cells) == 0 {
+		return v, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
+			var cellsWithSeq []cellWithSeq
+			_ = v.db.View(func(tx *hexxladb.Tx) error {
+				return tx.AscendRange(nil, []byte("cell\xff"), func(k, _ []byte) bool {
+					// Key format: "cell/" + packed_coord (16 bytes, big-endian) + commit_seq (8 bytes)
+					if len(k) < 5+16+8 {
+						return true
+					}
+					// Skip "cell/" prefix
+					packedBytes := k[5:21]
+					// Extract commit sequence (last 8 bytes, big-endian)
+					commitSeq := uint64(k[21])<<56 | uint64(k[22])<<48 | uint64(k[23])<<40 | uint64(k[24])<<32 | uint64(k[25])<<24 | uint64(k[26])<<16 | uint64(k[27])<<8 | uint64(k[28])
+
+					// Convert bytes to PackedCoord (big-endian: Hi first, then Lo)
+					hi := uint64(packedBytes[0])<<56 | uint64(packedBytes[1])<<48 | uint64(packedBytes[2])<<40 | uint64(packedBytes[3])<<32 | uint64(packedBytes[4])<<24 | uint64(packedBytes[5])<<16 | uint64(packedBytes[6])<<8 | uint64(packedBytes[7])
+					lo := uint64(packedBytes[8])<<56 | uint64(packedBytes[9])<<48 | uint64(packedBytes[10])<<40 | uint64(packedBytes[11])<<32 | uint64(packedBytes[12])<<24 | uint64(packedBytes[13])<<16 | uint64(packedBytes[14])<<8 | uint64(packedBytes[15])
+					pk := lattice.PackedCoord{lo, hi}
+					coord, err := lattice.Unpack(pk)
+					if err != nil {
+						return true
+					}
+					cell, ok, _ := tx.GetCell(pk)
+					if ok {
+						cellsWithSeq = append(cellsWithSeq, cellWithSeq{
+							cell: hexxladb.CellView{
+								Coord:      coord,
+								RawContent: cell.RawContent,
+								Tags:       cell.Tags,
+								Provenance: cell.Provenance,
+								Validity:   cell.Validity,
+							},
+							seq: commitSeq,
+						})
+					}
+					return len(cellsWithSeq) < 50
+				})
+			})
+			// Sort by commit sequence (chronological order)
+			sort.Slice(cellsWithSeq, func(i, j int) bool {
+				return cellsWithSeq[i].seq < cellsWithSeq[j].seq
+			})
+
+			// Extract just the cells
+			cells := make([]hexxladb.CellView, len(cellsWithSeq))
+			for i, cw := range cellsWithSeq {
+				cells[i] = cw.cell
+			}
+
+			return cellsLoadedMsg{cells: cells}
+		})
+	}
+
 	switch msg := msg.(type) {
 	case cellsLoadedMsg:
 		v.cells = msg.cells
@@ -195,7 +250,7 @@ func (v cellTableView) Update(msg tea.Msg) (view, tea.Cmd) {
 		case "enter":
 			// Drill down into selected cell
 			if v.cursor < len(v.cells) {
-				return v, tea.Tick(time.Millisecond, func(t time.Time) tea.Msg {
+				return v, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
 					return inspectCellMsg{coord: v.cells[v.cursor].Coord}
 				})
 			}
@@ -203,19 +258,18 @@ func (v cellTableView) Update(msg tea.Msg) (view, tea.Cmd) {
 			// Export selected cell
 			if v.cursor < len(v.cells) {
 				cell := v.cells[v.cursor]
-				exportData := fmt.Sprintf("Coord: (%d,%d)\nContent: %s\nTags: %s\nProvenance: %s",
+				exportData := fmt.Sprintf("Coord: (%d,%d)\nContent: %s\nTags: %s",
 					cell.Coord.Q, cell.Coord.R,
 					cell.RawContent,
 					strings.Join(cell.Tags, ", "),
-					cell.Provenance,
 				)
-				return v, tea.Tick(time.Millisecond, func(t time.Time) tea.Msg {
+				return v, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
 					return exportCellMsg{data: exportData}
 				})
 			}
 		case "i":
 			// Import cells - show import dialog
-			return v, tea.Tick(time.Millisecond, func(t time.Time) tea.Msg {
+			return v, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
 				return showImportMsg{}
 			})
 		}
@@ -326,10 +380,6 @@ type exportCellMsg struct {
 
 type showImportMsg struct{}
 
-type loadContextPackMsg struct {
-	coord hexxladb.Coord
-}
-
 type contextPackLoadedMsg struct {
 	coord hexxladb.Coord
 	pack  string
@@ -357,10 +407,9 @@ func (v cellInspectorView) Update(msg tea.Msg) (view, tea.Cmd) {
 		v.pack = msg.pack
 		return v, nil
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "c":
+		if msg.String() == "c" {
 			// Load context pack
-			return v, tea.Tick(time.Millisecond, func(t time.Time) tea.Msg {
+			return v, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
 				// TODO: Implement actual context pack loading from API
 				pack := fmt.Sprintf("Context pack for cell (%d,%d)\n[Context data would be loaded here]", v.cell.Q, v.cell.R)
 				return contextPackLoadedMsg{coord: v.cell, pack: pack}
@@ -419,13 +468,8 @@ func (v cellInspectorView) View() string {
 		tagsStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("43"))
 		content.WriteString(tagsStyle.Render(fmt.Sprintf("Tags: %s", strings.Join(v.data.Tags, ", "))) + "\n")
-
-		metaStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241"))
-		content.WriteString(metaStyle.Render(fmt.Sprintf("Provenance: %s", v.data.Provenance)) + "\n")
-		content.WriteString(metaStyle.Render(fmt.Sprintf("Validity: %s", v.data.Validity)) + "\n")
 	} else {
-		content.WriteString(fmt.Sprintf("No cell at (%d,%d)\n", v.cell.Q, v.cell.R))
+		fmt.Fprintf(&content, "No cell at (%d,%d)\n", v.cell.Q, v.cell.R)
 	}
 
 	// Display context pack if loaded
@@ -458,7 +502,7 @@ func newAnalyticsView(db *hexxladb.DB) view {
 	return analyticsView{db: db}
 }
 
-func (v analyticsView) Update(msg tea.Msg) (view, tea.Cmd) {
+func (v analyticsView) Update(_ tea.Msg) (view, tea.Cmd) {
 	return v, nil
 }
 
@@ -551,31 +595,30 @@ func newSearchView(db *hexxladb.DB) view {
 }
 
 func (v searchView) Update(msg tea.Msg) (view, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyEnter:
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		if keyMsg.Type == tea.KeyEnter {
 			// Perform search
-			return v, tea.Tick(time.Millisecond, func(t time.Time) tea.Msg {
+			return v, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
 				return performSearchMsg{query: v.query}
 			})
-		case tea.KeyEsc:
+		}
+		if keyMsg.Type == tea.KeyEsc {
 			// Clear search
 			v.query = ""
 			v.results = make([]hexxladb.CellView, 0)
 			return v, nil
-		case tea.KeyBackspace:
-			if len(v.query) > 0 {
+		}
+		if keyMsg.Type == tea.KeyBackspace {
+			if v.query != "" {
 				v.query = v.query[:len(v.query)-1]
 			}
 			return v, nil
-		default:
-			// Add character to query
-			if len(msg.String()) == 1 {
-				v.query += msg.String()
-			}
-			return v, nil
 		}
+		// Add character to query
+		if len(keyMsg.String()) == 1 {
+			v.query += keyMsg.String()
+		}
+		return v, nil
 	}
 	return v, nil
 }
@@ -667,9 +710,9 @@ func yesNo(b bool) string {
 	return "no"
 }
 
-func truncate(s string, max int) string {
-	if len(s) <= max {
+func truncate(s string, length int) string {
+	if len(s) <= length {
 		return s
 	}
-	return s[:max-3] + "..."
+	return s[:length]
 }

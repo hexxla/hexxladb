@@ -20,6 +20,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
 	"github.com/hexxla/hexxladb"
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
@@ -134,10 +135,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !cellTable.loading && len(cellTable.cells) == 0 {
 					cellTable.loading = true
 					m.views[1] = cellTable
-					return m, tea.Tick(time.Millisecond, func(t time.Time) tea.Msg {
+					return m, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
 						var cellsWithSeq []cellWithSeq
 						_ = m.db.View(func(tx *hexxladb.Tx) error {
-							return tx.AscendRange(nil, []byte("cell\xff"), func(k, v []byte) bool {
+							return tx.AscendRange(nil, []byte("cell\xff"), func(k, _ []byte) bool {
 								// Key format: "cell/" + packed_coord (16 bytes, big-endian) + commit_seq (8 bytes)
 								if len(k) < 5+16+8 {
 									return true
@@ -213,10 +214,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !cellTable.loading && len(cellTable.cells) == 0 {
 					cellTable.loading = true
 					m.views[1] = cellTable
-					return m, tea.Tick(time.Millisecond, func(t time.Time) tea.Msg {
+					return m, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
 						var cellsWithSeq []cellWithSeq
 						_ = m.db.View(func(tx *hexxladb.Tx) error {
-							return tx.AscendRange(nil, []byte("cell\xff"), func(k, v []byte) bool {
+							return tx.AscendRange(nil, []byte("cell\xff"), func(k, _ []byte) bool {
 								// Key format: "cell/" + packed_coord (16 bytes, big-endian) + commit_seq (8 bytes)
 								if len(k) < 5+16+8 {
 									return true
@@ -276,10 +277,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !cellTable.loading && len(cellTable.cells) == 0 {
 					cellTable.loading = true
 					m.views[1] = cellTable
-					return m, tea.Tick(time.Millisecond, func(t time.Time) tea.Msg {
+					return m, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
 						var cellsWithSeq []cellWithSeq
 						_ = m.db.View(func(tx *hexxladb.Tx) error {
-							return tx.AscendRange(nil, []byte("cell\xff"), func(k, v []byte) bool {
+							return tx.AscendRange(nil, []byte("cell\xff"), func(k, _ []byte) bool {
 								// Key format: "cell/" + packed_coord (16 bytes, big-endian) + commit_seq (8 bytes)
 								if len(k) < 5+16+8 {
 									return true
@@ -367,10 +368,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		search := m.views[5].(searchView)
 		search.loading = true
 		m.views[5] = search
-		return m, tea.Tick(time.Millisecond, func(t time.Time) tea.Msg {
+		return m, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
 			var results []hexxladb.CellView
 			_ = m.db.View(func(tx *hexxladb.Tx) error {
-				return tx.AscendRange(nil, []byte("cell\xff"), func(k, v []byte) bool {
+				return tx.AscendRange(nil, []byte("cell\xff"), func(_, _ []byte) bool {
 					if len(results) >= 50 {
 						return false
 					}
@@ -409,10 +410,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.views[1] = cellTable
 		return m, nil
 
-	case loadContextPackMsg:
-		// Load context pack for the selected cell (handled in views)
-		return m, nil
-
 	case contextPackLoadedMsg:
 		// Update inspector with loaded context pack
 		inspector := m.views[3].(cellInspectorView)
@@ -442,11 +439,11 @@ func (m model) View() string {
 
 	// Style components
 	tab := lipgloss.NewStyle().
-		Border(tabBorder, true).
+		Border(tabBorderStyle, true).
 		BorderForeground(highlight).
 		Padding(0, 1)
 
-	activeTab := tab.Border(activeTabBorder, true)
+	activeTab := tab.BorderForeground(lipgloss.Color("#874BFD"))
 
 	tabGap := tab.BorderTop(false).BorderLeft(false).BorderRight(false)
 
@@ -533,39 +530,24 @@ func (m model) renderStatusBar() string {
 var (
 	// Main colors
 	highlight = lipgloss.Color("#874BFD") // purple highlight
-	special   = lipgloss.Color("#43BF6D") // green accent
-	accent    = lipgloss.Color("#F25D94") // pink accent
 
 	// Backgrounds
-	activeBg   = lipgloss.Color("#2a2a2a") // dark gray
-	inactiveBg = lipgloss.Color("#1a1a1a") // darker gray
-	contentBg  = lipgloss.Color("#0f0f0f") // almost black
+	activeBg  = lipgloss.Color("#2a2a2a") // dark gray
+	contentBg = lipgloss.Color("#0f0f0f") // almost black
 
 	// Text
 	textPrimary   = lipgloss.Color("#FAFAFA") // white text
 	textSecondary = lipgloss.Color("#969B86") // gray text
-	textMuted     = lipgloss.Color("#696969") // muted gray
 
-	// Tab borders
-	activeTabBorder = lipgloss.Border{
-		Top:         "─",
-		Bottom:      " ",
-		Left:        "│",
-		Right:       "│",
-		TopLeft:     "╭",
-		TopRight:    "╮",
-		BottomLeft:  "┘",
-		BottomRight: "└",
-	}
-
-	tabBorder = lipgloss.Border{
+	// Tab border style
+	tabBorderStyle = lipgloss.Border{
 		Top:         "─",
 		Bottom:      "─",
 		Left:        "│",
 		Right:       "│",
 		TopLeft:     "╭",
 		TopRight:    "╮",
-		BottomLeft:  "┴",
-		BottomRight: "┴",
+		BottomLeft:  "╰",
+		BottomRight: "╯",
 	}
 )
