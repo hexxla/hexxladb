@@ -14,6 +14,7 @@ Immediate next steps. Update after each session.
 
 - [ ] Ready for v0.1.0 release push to remote
 - [ ] Per-database MaxValueBytes configuration — store limit in file header, expose in Options (default 8KB)
+- [ ] Vector search and embeddings storage — implement `embed/` keyspace for ANN/hybrid retrieval ([`HEXXLA_DB.md`](./docs/hexxladb/HEXXLA_DB.md))
 - [ ] First production use feedback collection
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
 

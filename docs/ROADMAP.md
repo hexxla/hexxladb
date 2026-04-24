@@ -32,7 +32,7 @@ Requires design + benchmarks before implementation.
 
 Spec exists; implementation deferred.
 
-- `embed/` keyspace for ANN/hybrid retrieval ([`HEXXLA_DB.md`](./hexxladb/HEXXLA_DB.md))
+- `embed/` keyspace for ANN/hybrid retrieval — vector storage and similarity search for semantic seed selection ([`HEXXLA_DB.md`](./hexxladb/HEXXLA_DB.md))
 - Materialized views / super-hex aggregation as engine algorithms
 - Materialized changefeed consumers with automated prune policy
 - Changelog Subscription (push mode) — real-time reactions via channels
