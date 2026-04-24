@@ -10,9 +10,6 @@ Immediate next steps. Update after each session.
   - [ ] Exclude superseded cells from pack (replace, don't add)
   - [ ] Preserve token budget predictability
   - [ ] Handle edge case: superseding cell outside budget
-- [x] **Rename `internal/mvccspike` → `internal/mvcc`** — v0.1.0 blocker; done
-- [x] **Extract prune profile helper** — v0.1.0 blocker; `profileToMaxDelete` deduplicates both switch blocks
-- [x] **Move MVCC key validation out of `Tx.Put`** — v0.1.0 blocker; added `putDirect` for internal use, guard stays on public `Tx.Put` only
 
 ## Pending (next sessions)
 
