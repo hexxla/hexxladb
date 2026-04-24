@@ -46,11 +46,28 @@ type CellView struct {
 	Seams       []SeamRef
 }
 
+// ContextPackStats records assembly statistics for debugging and observability.
+type ContextPackStats struct {
+	CandidatesScanned int // cells examined before eviction
+	CellsEvicted      int // cells dropped during budget trimming
+	MaxRingUsed       int // outermost ring that contributed at least one cell
+}
+
+// CellExplanation records why a cell was included or excluded during context assembly.
+type CellExplanation struct {
+	Coord  Coord
+	Ring   int
+	Reason string // "included", "evicted_low_confidence", "cap_exceeded"
+	Tokens int    // token count at time of decision
+}
+
 // ContextPack matches the neighborhood summary shape described in HEXXLA.md (Cells + TotalTokens + Seams).
 type ContextPack struct {
-	Cells       []CellView
-	TotalTokens int
-	Seams       []record.SeamRecord
+	Cells        []CellView
+	TotalTokens  int
+	Seams        []record.SeamRecord
+	Stats        ContextPackStats  // assembly statistics (zero when built outside LoadContextWithBudgeting)
+	Explanations []CellExplanation // per-cell decisions (only when LoadContextBudgetConfig.Explain is true)
 }
 
 // TokenBudgeter counts tokens for budgeting (e.g. approximate LLM tokens); inject domain-specific logic.
@@ -188,6 +205,7 @@ type LoadContextBudgetConfig struct {
 	IncludeFacetText  bool
 	IncludeSeams      bool
 	SeamRadius        int
+	Explain           bool // when true, populate ContextPack.Explanations
 }
 
 // scoredCandidate pairs a CellView with the ring it was found in, used during context budgeting eviction.
@@ -248,6 +266,9 @@ func (tx *Tx) LoadContextWithBudgeting(ctx context.Context, center Coord, maxR, 
 	if len(items) == 0 {
 		return ContextPack{}, nil
 	}
+	candidatesScanned := len(items)
+	evicted := 0
+	var explanations []CellExplanation
 	total := 0
 	for i := range items {
 		total += cellViewTokens(budgeter, items[i].view, cfg.IncludeFacetText)
@@ -274,17 +295,50 @@ func (tx *Tx) LoadContextWithBudgeting(ctx context.Context, center Coord, maxR, 
 		if drop < 0 {
 			break
 		}
+		if cfg.Explain {
+			explanations = append(explanations, CellExplanation{
+				Coord:  items[drop].view.Coord,
+				Ring:   items[drop].ring,
+				Reason: "evicted_low_confidence",
+				Tokens: cellViewTokens(budgeter, items[drop].view, cfg.IncludeFacetText),
+			})
+		}
 		items = append(items[:drop], items[drop+1:]...)
+		evicted++
 		total = 0
 		for i := range items {
 			total += cellViewTokens(budgeter, items[i].view, cfg.IncludeFacetText)
+		}
+	}
+	maxRingUsed := 0
+	for i := range items {
+		if items[i].ring > maxRingUsed {
+			maxRingUsed = items[i].ring
+		}
+	}
+	if cfg.Explain {
+		for i := range items {
+			explanations = append(explanations, CellExplanation{
+				Coord:  items[i].view.Coord,
+				Ring:   items[i].ring,
+				Reason: "included",
+				Tokens: cellViewTokens(budgeter, items[i].view, cfg.IncludeFacetText),
+			})
 		}
 	}
 	out := make([]CellView, len(items))
 	for i := range items {
 		out[i] = items[i].view
 	}
-	pack := ContextPack{Cells: out, TotalTokens: 0}
+	pack := ContextPack{
+		Cells: out,
+		Stats: ContextPackStats{
+			CandidatesScanned: candidatesScanned,
+			CellsEvicted:      evicted,
+			MaxRingUsed:       maxRingUsed,
+		},
+		Explanations: explanations,
+	}
 	for i := range out {
 		pack.TotalTokens += cellViewTokens(budgeter, out[i], cfg.IncludeFacetText)
 	}
