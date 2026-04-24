@@ -154,6 +154,57 @@ db.View(func(tx *hexxladb.Tx) error {
 
 ---
 
+## Why HexxlaDB is groundbreaking
+
+LLM memory is broken. Current solutions fail in predictable ways:
+
+| The problem                            | How others fail                                             | How HexxlaDB wins                                                                                            |
+| -------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| **Context windows are tiny band-aids** | RAG systems dump text into prompts with no coherence        | HexxlaDB's honeycomb grid loads _spatially relevant_ context—nearby cells are semantically related by design |
+| **Users contradict themselves**        | Vector DBs silently overwrite; chat history hides old turns | **Seams** track contradictions explicitly—"user said A, then said not-A" is visible to the LLM               |
+| **"What did they say 100 turns ago?"** | Most systems forget or require full-scan search             | Temporal queries + MVCC snapshots—ask what the DB knew at any point in time                                  |
+| **Where was that fact?**               | Pure vector search loses spatial/provenance context         | `PackedCoord` primary keys—every memory has a location; load neighbors and see relationships                 |
+| **Token budget chaos**                 | Naive truncation destroys narrative coherence               | `LoadContextPack` evicts outer _rings_ first—spatial locality preserves semantic flow                        |
+
+### Comparison with existing approaches
+
+**Vector databases** (Pinecone, Weaviate, Chroma)
+
+- Great at: Billion-scale similarity search
+- Fail at: Contradiction tracking, provenance, spatial coherence
+- Why HexxlaDB: We have _seams_—no vector DB tracks when users change their minds
+
+**Graph databases** (Neo4j)
+
+- Great at: Complex relationship analytics, Cypher queries
+- Fail at: Hex-native addressing, seam semantics, embedded deployment
+- Why HexxlaDB: Edges + hex coordinates as primary keys—no translation layer needed
+
+**Temporal databases** (Datomic)
+
+- Great at: Time-travel queries, immutable history
+- Fail at: Spatial indexing, contradiction visibility, LLM-specific context assembly
+- Why HexxlaDB: MVCC + _spatial_ rings + seams designed for token budgets
+
+**General-purpose stores** (Postgres, SQLite)
+
+- Great at: Ubiquity, extensions, reliability
+- Fail at: First-class hex coordinates, seam primitives, provenance/validity as core
+- Why HexxlaDB: The honeycomb isn't bolted-on—it's the foundational addressing scheme
+
+### What makes this category-defining
+
+**Nothing else combines:**
+
+1. **Hex-native Morton-ordered keys**—ring walks as prefix scans, not graph traversals
+2. **Seams as first-class citizens**—conflicts are visible, resolvable, auditable
+3. **Hybrid spatial + future semantic**—`embed/` keyspace coming for ANN seed selection
+4. **Embedded, no network**—in-process, deterministic, reproducible
+
+If you ship the roadmap—especially `embed/` for vector + hex hybrid retrieval—this becomes the **de facto standard** for LLM long-term memory.
+
+---
+
 ## API Overview
 
 HexxlaDB provides a focused API for spatial memory management. See [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.md) for the complete reference.
