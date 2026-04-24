@@ -248,16 +248,15 @@ Use **`errors.Is` / `errors.As`** for stable handling.
 
 ## Live demos and coverage
 
-- **Exhaustive public-API walk (ELI5 + real files):** [`examples/full_api_demo`](../../examples/full_api_demo/) — **`go run ./examples/full_api_demo`** seeds **`./.tmp/full_api_demo/`** (MVCC + changelog main file; optional encrypted file) and prints one section per major **`package hexxladb`** capability.
-- **Session-shaped teaching demo:** [`examples/live_session_demo`](../../examples/live_session_demo/) — scripted LLM-session cells; smaller output.
+- **Conversational memory service:** [`examples/conversational_memory`](../../examples/conversational_memory/) — **`go run ./examples/conversational_memory`** seeds **`./.tmp/conversational_memory/`** (MVCC + changelog) and walks through cell storage (templates + batch), context assembly (stats + explain), tag analytics, query patterns, MVCC time-travel, ASCII grid rendering, ring density, and filtered changelog.
 
-## What `examples/live_session_demo` does _not_ call (and why)
+## What `examples/conversational_memory` does _not_ call (and why)
 
-That demo is a **single-session smoke test** for Hexxla-shaped writes and reads; it stays readable. Omitted APIs fall into a few buckets: **low-level escape hatches**, **validity-specialized variants**, **seam lifecycle / conflict sugar**, **post-assembly helpers**, **operator features**, **encryption ops**. Use **`full_api_demo`** for breadth; keep **`live_session_demo`** for narrative density.
+The demo is a **session-shaped production walkthrough**; it stays readable. Omitted APIs fall into a few buckets: **low-level escape hatches**, **validity-specialized variants**, **seam lifecycle / conflict sugar**, **post-assembly helpers**, **operator features**, **encryption ops**.
 
 ### Raw btree: `Tx.Get`, `Tx.Put`, `Tx.AscendRange`
 
-- **Why omitted:** HEXXLA and **`live_session_demo`** target **logical** cells/seams/facets/edges. Raw keys bypass **`cell/`** layout and indexes unless you duplicate encodings by hand.
+- **Why omitted:** The demo targets **logical** cells/seams/facets/edges. Raw keys bypass **`cell/`** layout and indexes unless you duplicate encodings by hand.
 - **Use when:** Custom migrations, debugging the engine, experimental index families, or tooling that walks **`__meta/`** keys — **not** typical product paths.
 
 ### Ring primitives: `WalkRing`, `WalkRingAt`, `WalkRingFacets`
@@ -305,10 +304,10 @@ That demo is a **single-session smoke test** for Hexxla-shaped writes and reads;
 - **Why omitted:** Identical to **`Update`**; no extra behavior to demonstrate.
 - **Use when:** Call-site clarity only.
 
-### Changelog: `ReadChangelogSince`, op constants
+### Changelog: `ReadChangelogSince`
 
-- **Why omitted:** Requires **`Options.ChangelogEnabled`** and sidecar file; orthogonal to lattice semantics in a single-binary demo.
-- **Use when:** Downstream replication, audit, incremental indexers — **service** deployment concern.
+- **Why omitted:** **`ReadChangelogFiltered`** is shown in the demo; the unfiltered **`ReadChangelogSince`** variant is a simpler subset.
+- **Use when:** Bulk sequential replay without op-type filtering.
 
 ### MVCC: `StatsMVCC`, `GroupWALStats`, `SuggestedPruneBeforeSeq`, `MVCCPrunePlan`, `PruneCellVersions*`, `PruneScheduler`
 

@@ -6,6 +6,11 @@ import (
 	"strings"
 )
 
+// MaxRenderRadius is the largest maxR accepted by [RenderHexGrid] and [RenderHexGridFromDB].
+// At radius 10 the grid is 21 rows × ~21 columns (331 cells); beyond that the ASCII output
+// becomes impractical. For larger lattices use [RingDensityMap] for aggregate stats instead.
+const MaxRenderRadius = 10
+
 // HexGridCell holds the label for one cell position in [RenderHexGrid].
 type HexGridCell struct {
 	Coord Coord
@@ -13,11 +18,15 @@ type HexGridCell struct {
 }
 
 // RenderHexGrid returns an ASCII hex grid centered on center extending to maxR rings.
+// maxR is clamped to [MaxRenderRadius] (10); use [RingDensityMap] for larger areas.
 // labelFn is called for each coordinate; return a short string (≤5 chars) or "" for empty.
-// If labelFn is nil, occupied cells show "•" and empty cells show ".".
+// If labelFn is nil, all positions show ".".
 func RenderHexGrid(ctx context.Context, center Coord, maxR int, labelFn func(Coord) string) string {
 	if maxR < 0 {
 		return ""
+	}
+	if maxR > MaxRenderRadius {
+		maxR = MaxRenderRadius
 	}
 	const cellW = 7 // width per cell including spacing
 

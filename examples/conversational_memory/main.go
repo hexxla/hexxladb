@@ -169,30 +169,21 @@ func run() error {
 	var cells []lattice.Coord
 	sessionID := fmt.Sprintf("session-%d", time.Now().Unix())
 
+	// Build cells using template factories instead of manual record construction.
+	var recs []record.CellRecord
 	for i, msg := range conversation {
-		// Assign coordinates in a spiral pattern around center
 		coord := spiralCoord(i)
 		cells = append(cells, coord)
-
 		pk, _ := lattice.Pack(coord)
-		rec := record.CellRecord{
-			Key:        pk,
-			RawContent: msg.content,
-			Tags:       msg.tags,
-			Provenance: record.ProvenanceWire{
-				SourceID:   fmt.Sprintf("%s/%s", sessionID, msg.role),
-				Confidence: 1.0,
-				CreatedAt:  time.Now().Add(time.Duration(i) * time.Second).UnixNano(),
-				UpdatedAt:  time.Now().Add(time.Duration(i) * time.Second).UnixNano(),
-			},
-		}
 
-		err := db.Update(func(tx *hexxladb.Tx) error {
-			return tx.PutCell(ctx, rec)
-		})
-		if err != nil {
-			return fmt.Errorf("store message %d: %w", i, err)
+		var rec record.CellRecord
+		if msg.role == "user" {
+			rec = hexxladb.NewUserMessageCell(pk, msg.content, sessionID, 1.0)
+		} else {
+			rec = hexxladb.NewAssistantResponseCell(pk, msg.content, sessionID, 1.0)
 		}
+		rec.Tags = append(rec.Tags, msg.tags...) // merge template tags with per-message tags
+		recs = append(recs, rec)
 
 		var roleColor *color.Color
 		if msg.role == "user" {
@@ -206,8 +197,21 @@ func run() error {
 		_, _ = dataStyle.Printf(" %s\n", truncate(msg.content, 45))
 	}
 
+	// Batch-write all cells with progress tracking.
+	result, err := db.BatchPutCells(ctx, recs, &hexxladb.BatchPutCellOptions{
+		BatchSize: 64,
+		OnProgress: func(i int) {
+			if (i+1)%10 == 0 || i+1 == len(recs) {
+				_, _ = dimStyle.Printf("    ...committed %d/%d\n", i+1, len(recs))
+			}
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("batch put cells: %w", err)
+	}
+
 	fmt.Println()
-	printSuccess(fmt.Sprintf("Stored %d conversation turns", len(conversation)))
+	printSuccess(fmt.Sprintf("Stored %d conversation turns (BatchPutCells)", result.Written))
 	fmt.Println()
 
 	// ═══════════════════════════════════════════════════════════════
@@ -279,6 +283,7 @@ func run() error {
 		IncludeFacetText:  false,
 		IncludeSeams:      true,
 		SeamRadius:        2,
+		Explain:           true, // populate per-cell inclusion/eviction reasons
 	}
 
 	var pack hexxladb.ContextPack
@@ -306,6 +311,30 @@ func run() error {
 		for _, seam := range pack.Seams {
 			_, _ = dimStyle.Printf("    • %v ↔ %v: ", seam.CellA, seam.CellB)
 			_, _ = dataStyle.Println(seam.Reason)
+		}
+	}
+
+	// QueryStats: show assembly statistics
+	fmt.Println()
+	_, _ = infoStyle.Println("  Assembly Statistics (ContextPackStats):")
+	printMetric("Candidates scanned", pack.Stats.CandidatesScanned, "cells")
+	printMetric("Cells evicted", pack.Stats.CellsEvicted, "cells")
+	printMetric("Max ring used", pack.Stats.MaxRingUsed, "")
+
+	// Explain mode: show per-cell decisions
+	if len(pack.Explanations) > 0 {
+		fmt.Println()
+		_, _ = infoStyle.Println("  Cell Explanations (Explain mode):")
+		for _, ex := range pack.Explanations {
+			marker := "✓"
+			c := color.New(color.FgGreen)
+			if ex.Reason != "included" {
+				marker = "✗"
+				c = color.New(color.FgRed)
+			}
+			_, _ = c.Printf("    %s ", marker)
+			_, _ = dimStyle.Printf("(%d,%d) ring=%d tokens=%d ", ex.Coord.Q, ex.Coord.R, ex.Ring, ex.Tokens)
+			_, _ = dataStyle.Println(ex.Reason)
 		}
 	}
 
@@ -339,6 +368,43 @@ func run() error {
 	}
 	fmt.Println()
 	printSuccess(fmt.Sprintf("Discovered %d unique tags", len(allTags)))
+	fmt.Println()
+
+	// Tag analytics: counts and co-occurrences
+	_, _ = infoStyle.Println("  Tag Counts (top 10):")
+	err = db.View(func(tx *hexxladb.Tx) error {
+		counts, err := tx.TagCounts(ctx)
+		if err != nil {
+			return err
+		}
+		shown := min(len(counts), 10)
+		for _, tc := range counts[:shown] {
+			_, _ = dimStyle.Printf("    %-30s ", tc.Tag)
+			_, _ = accentStyle.Printf("%d cells\n", tc.Count)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("tag counts: %w", err)
+	}
+	fmt.Println()
+
+	_, _ = infoStyle.Println("  Tag Co-occurrences (top 5, min 3):")
+	err = db.View(func(tx *hexxladb.Tx) error {
+		pairs, err := tx.TagCooccurrences(ctx, 3)
+		if err != nil {
+			return err
+		}
+		shown := min(len(pairs), 5)
+		for _, tp := range pairs[:shown] {
+			_, _ = dimStyle.Printf("    %-20s + %-20s ", tp.A, tp.B)
+			_, _ = accentStyle.Printf("%d cells\n", tp.Count)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("tag cooccurrences: %w", err)
+	}
 	fmt.Println()
 
 	// ═══════════════════════════════════════════════════════════════
@@ -407,6 +473,68 @@ func run() error {
 		fmt.Println()
 		printSuccess("Time-travel query completed")
 	}
+	fmt.Println()
+
+	// ═══════════════════════════════════════════════════════════════
+	// PHASE 7: Lattice Visualization & Diagnostics
+	// ═══════════════════════════════════════════════════════════════
+	printHeader("Phase 7: Lattice Visualization & Diagnostics")
+
+	// ASCII hex grid — debug tool for small radii (clamped to MaxRenderRadius=10).
+	// For large lattices, use RingDensityMap for aggregate stats instead.
+	_, _ = infoStyle.Println("  ASCII Hex Grid (radius 3 around center):")
+	fmt.Println()
+	err = db.View(func(tx *hexxladb.Tx) error {
+		grid, err := tx.RenderHexGridFromDB(ctx, center, 3)
+		if err != nil {
+			return err
+		}
+		for line := range strings.SplitSeq(grid, "\n") {
+			_, _ = dimStyle.Println("    " + line)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("render hex grid: %w", err)
+	}
+	fmt.Println()
+
+	// Ring density — works for any radius, unlike ASCII renderer
+	_, _ = infoStyle.Println("  Ring Density Map (radius 5):")
+	err = db.View(func(tx *hexxladb.Tx) error {
+		density, err := tx.RingDensityMap(ctx, center, 5)
+		if err != nil {
+			return err
+		}
+		for _, rd := range density {
+			bar := strings.Repeat("█", rd.Occupied) + strings.Repeat("░", rd.Total-rd.Occupied)
+			_, _ = dimStyle.Printf("    ring %d: ", rd.Ring)
+			_, _ = accentStyle.Printf("%-20s ", bar)
+			_, _ = dataStyle.Printf("%d/%d\n", rd.Occupied, rd.Total)
+		}
+		occ, tot := hexxladb.TotalDensity(density)
+		printMetric("Total density", fmt.Sprintf("%d/%d (%.0f%%)", occ, tot, float64(occ)/float64(tot)*100), "")
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("ring density: %w", err)
+	}
+	fmt.Println()
+
+	// Filtered changelog — watch only cell writes
+	_, _ = infoStyle.Println("  Filtered Changelog (cell writes only, last 5):")
+	clRecords, err := db.ReadChangelogFiltered(0, 5, hexxladb.ChangelogFilter{
+		Ops: []byte{hexxladb.ChangelogOpPutCell},
+	})
+	if err != nil {
+		return fmt.Errorf("filtered changelog: %w", err)
+	}
+	for _, rec := range clRecords {
+		_, _ = dimStyle.Printf("    seq=%d op=PutCell key=%x\n", rec.Seq, rec.Key)
+	}
+	printMetric("Filtered changelog records", len(clRecords), "")
+	fmt.Println()
+	printSuccess("Visualization & diagnostics complete")
 	fmt.Println()
 
 	// ═══════════════════════════════════════════════════════════════
