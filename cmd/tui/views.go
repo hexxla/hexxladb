@@ -186,14 +186,22 @@ func (v cellTableView) Update(msg tea.Msg) (view, tea.Cmd) {
 					if len(cells) >= 50 {
 						return false
 					}
-					pk, err := lattice.Pack(hexxladb.Coord{Q: 0, R: 0})
+					// Convert []byte key to PackedCoord
+					if len(k) < 16 {
+						return true
+					}
+					pk := lattice.PackedCoord{
+						uint64(k[8])<<56 | uint64(k[9])<<48 | uint64(k[10])<<40 | uint64(k[11])<<32 | uint64(k[12])<<24 | uint64(k[13])<<16 | uint64(k[14])<<8 | uint64(k[15]),
+						uint64(k[0])<<56 | uint64(k[1])<<48 | uint64(k[2])<<40 | uint64(k[3])<<32 | uint64(k[4])<<24 | uint64(k[5])<<16 | uint64(k[6])<<8 | uint64(k[7]),
+					}
+					coord, err := lattice.Unpack(pk)
 					if err != nil {
 						return true
 					}
 					cell, ok, _ := tx.GetCell(pk)
 					if ok {
 						cells = append(cells, hexxladb.CellView{
-							Coord:      hexxladb.Coord{Q: 0, R: 0},
+							Coord:      coord,
 							RawContent: cell.RawContent,
 							Tags:       cell.Tags,
 							Provenance: cell.Provenance,
