@@ -15,11 +15,12 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-
 	"github.com/hexxla/hexxladb"
+	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
 func main() {
@@ -86,6 +87,7 @@ func newModel(db *hexxladb.DB, dbPath string) model {
 		current: 0,
 		views: []view{
 			newDashboardView(db),
+			newCellTableView(db),
 			newHexGridView(db),
 			newCellInspectorView(db),
 			newAnalyticsView(db),
@@ -108,29 +110,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		key := msg.String()
-		switch key {
-		case "q", "ctrl+c":
+		// Handle global keys first
+		switch msg.Type {
+		case tea.KeyCtrlC, tea.KeyEsc:
+			return m, tea.Quit
+		}
+
+		// Then handle specific key combinations
+		switch msg.String() {
+		case "q":
 			return m, tea.Quit
 
-		case "f1":
+		case "1":
 			m.current = 0
 			return m, nil
 
-		case "f2":
+		case "2":
 			m.current = 1
 			return m, nil
 
-		case "f3":
+		case "3":
 			m.current = 2
 			return m, nil
 
-		case "f4":
+		case "4":
 			m.current = 3
 			return m, nil
 
-		case "f5":
+		case "5":
 			m.current = 4
+			return m, nil
+
+		case "6":
+			m.current = 5
 			return m, nil
 
 		case "tab":
@@ -141,18 +153,76 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.current = (m.current - 1 + len(m.views)) % len(m.views)
 			return m, nil
 
-		case "up":
+		case "left", "h":
 			if m.current > 0 {
 				m.current--
 			}
 			return m, nil
 
-		case "down":
+		case "right", "l":
 			if m.current < len(m.views)-1 {
 				m.current++
 			}
 			return m, nil
 		}
+
+	case inspectCellMsg:
+		// Switch to cell inspector view with the selected cell
+		inspector := m.views[3].(cellInspectorView)
+		inspector.cell = msg.coord
+		inspector.found = false
+		m.views[3] = inspector
+		m.current = 3
+		return m, nil
+
+	case exportCellMsg:
+		// Show export dialog with cell data
+		fmt.Printf("Exported cell data:\n%s\n", msg.data)
+		return m, nil
+
+	case showImportMsg:
+		// Show import dialog (placeholder for now)
+		fmt.Println("Import dialog - not yet implemented")
+		return m, nil
+
+	case performSearchMsg:
+		// Perform search in the search view
+		search := m.views[5].(searchView)
+		search.loading = true
+		m.views[5] = search
+		return m, tea.Tick(time.Millisecond, func(t time.Time) tea.Msg {
+			var results []hexxladb.CellView
+			_ = m.db.View(func(tx *hexxladb.Tx) error {
+				return tx.AscendRange(nil, []byte("cell\xff"), func(k, v []byte) bool {
+					if len(results) >= 50 {
+						return false
+					}
+					// Simple search - in real implementation, this would be more sophisticated
+					pk, err := lattice.Pack(hexxladb.Coord{Q: 0, R: 0})
+					if err != nil {
+						return true
+					}
+					cell, ok, _ := tx.GetCell(pk)
+					if ok {
+						results = append(results, hexxladb.CellView{
+							Coord:      hexxladb.Coord{Q: 0, R: 0},
+							RawContent: cell.RawContent,
+							Tags:       cell.Tags,
+						})
+					}
+					return true
+				})
+			})
+			return searchResultsMsg{results: results}
+		})
+
+	case searchResultsMsg:
+		// Update search view with results
+		search := m.views[5].(searchView)
+		search.loading = false
+		search.results = msg.results
+		m.views[5] = search
+		return m, nil
 	}
 
 	// Delegate to current view
@@ -227,7 +297,7 @@ func (m model) View() string {
 
 // renderTabRow creates the tab navigation bar
 func (m model) renderTabRow(activeTab, tab, tabGap lipgloss.Style) string {
-	tabNames := []string{"Dashboard", "Hex Grid", "Inspector", "Analytics", "Search"}
+	tabNames := []string{"Dashboard", "Cells", "Hex Grid", "Inspector", "Analytics", "Search"}
 	var tabs []string
 
 	for i, name := range tabNames {
