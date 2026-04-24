@@ -58,6 +58,20 @@ func (db *DB) SuggestedPruneBeforeSeq() (beforeSeq uint64, ok bool, err error) {
 	return 0, true, nil
 }
 
+// profileToMaxDelete maps an [MVCCPruneProfile] to a batch-size limit.
+func profileToMaxDelete(profile MVCCPruneProfile) (int, error) {
+	switch profile {
+	case "", MVCCPruneBalanced:
+		return 2048, nil
+	case MVCCPruneLowLatency:
+		return 512, nil
+	case MVCCPruneLongHistory:
+		return 256, nil
+	default:
+		return 0, ErrInvalidArgument
+	}
+}
+
 // MVCCPrunePlan combines [SuggestedPruneBeforeSeq] with profile-driven batch sizing for one prune pass.
 func (db *DB) MVCCPrunePlan(profile MVCCPruneProfile) (beforeSeq uint64, maxDelete int, ok bool, err error) {
 	var bs uint64
@@ -65,15 +79,9 @@ func (db *DB) MVCCPrunePlan(profile MVCCPruneProfile) (beforeSeq uint64, maxDele
 	if err != nil || !ok {
 		return 0, 0, ok, err
 	}
-	switch profile {
-	case "", MVCCPruneBalanced:
-		maxDelete = 2048
-	case MVCCPruneLowLatency:
-		maxDelete = 512
-	case MVCCPruneLongHistory:
-		maxDelete = 256
-	default:
-		return 0, 0, false, ErrInvalidArgument
+	maxDelete, err = profileToMaxDelete(profile)
+	if err != nil {
+		return 0, 0, false, err
 	}
 	return bs, maxDelete, true, nil
 }
@@ -216,16 +224,9 @@ func (db *DB) PruneCellVersions(beforeSeq uint64, maxDelete int) (deleted int, e
 // PruneCellVersionsByProfile applies one prune pass using profile-driven defaults.
 // It returns the number of removed rows from this single pass.
 func (db *DB) PruneCellVersionsByProfile(beforeSeq uint64, profile MVCCPruneProfile) (int, error) {
-	var maxDelete int
-	switch profile {
-	case "", MVCCPruneBalanced:
-		maxDelete = 2048
-	case MVCCPruneLowLatency:
-		maxDelete = 512
-	case MVCCPruneLongHistory:
-		maxDelete = 256
-	default:
-		return 0, ErrInvalidArgument
+	maxDelete, err := profileToMaxDelete(profile)
+	if err != nil {
+		return 0, err
 	}
 	return db.PruneCellVersions(beforeSeq, maxDelete)
 }
