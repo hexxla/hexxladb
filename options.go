@@ -41,6 +41,11 @@ type Options struct {
 	// Mutually exclusive with [EncryptionKey] and custom page hooks.
 	Passphrase string
 
+	// CellValidator optional pre-write validation hook. When set, [Tx.PutCell] calls
+	// ValidateCell before encoding; a non-nil error aborts the write.
+	// Use for enforcing content limits, required tags, or custom business rules.
+	CellValidator CellValidator
+
 	// UsePrimaryFdatasync, when true, uses fdatasync(2) on the primary data file on supported
 	// platforms (e.g. Linux) instead of fsync(2) for engine durability barriers. Default false; see
 	// [docs/hexxladb/DURABILITY.md] before enabling in production.

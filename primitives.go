@@ -26,6 +26,11 @@ func (tx *Tx) PutCell(ctx context.Context, rec record.CellRecord) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}
+	if v := tx.db.cellValidator; v != nil {
+		if err := v.ValidateCell(rec); err != nil {
+			return err
+		}
+	}
 	data, err := record.EncodeCell(rec)
 	if err != nil {
 		return err
