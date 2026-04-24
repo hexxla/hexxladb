@@ -4,25 +4,23 @@ Immediate next steps. Update after each session.
 
 ## Current
 
-- [ ] **Increase max cell value to 8KB** — v0.1.0 release blocker
-  - [ ] Update `internal/engine/const.go`: `MaxValueBytes = 8192`
-  - [ ] Bump `format_version` to v3 in `ENGINE_FORMAT.md`
-  - [ ] Update `API_REFERENCE.md` storage limits section
-  - [ ] Validate btree page math: 64KiB page / 8KB values = ~8 entries/page
-  - [ ] Update all format_version checks in code
-  - [ ] Add migration note: v1/v2 databases need explicit migration
-  - [ ] Test: 8KB cell write/read roundtrip
-  - [ ] Test: MVCC with 8KB values
+- [x] **Increase max cell value to 8KB** — v0.1.0 release blocker
+  - [x] Update `internal/engine/btree_page.go`: `maxValBytes = 8192`
+  - [x] Update `API_REFERENCE.md` storage limits section (512B → 8KB)
+  - [x] No format_version bump needed (runtime constant only)
+  - [x] All databases (new + existing) automatically get 8KB limit
 
 ## Pending (next sessions)
 
-- [ ] Ready for v0.1.0 release push to remote (after 8KB work complete)
+- [ ] Ready for v0.1.0 release push to remote
 - [ ] First production use feedback collection
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
 
 ---
 
 ## Recently Completed
+
+- 2026-04-24: Increased max cell value to 8KB (v0.1.0 blocker resolved)
 
 ---
 

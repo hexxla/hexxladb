@@ -9,54 +9,54 @@ This document lists **every exported symbol** in the root package as of the curr
 
 ## Storage limits (engine B+ tree)
 
-Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored in the engine B+ tree. **Maximum key length: 256 bytes; maximum value length: 512 bytes** per page layout in [`internal/engine/btree_page.go`](../../internal/engine/btree_page.go). Rationale and format details: **[`ORDERED_STORE.md`](../../internal/engine/ORDERED_STORE.md)**. **Cell** (and other encoded) records must fit in that value budget; larger logical payloads require application-level chunking or external blob storage.
+Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored in the engine B+ tree. **Maximum key length: 256 bytes; maximum value length: 8192 bytes (8KB)** per page layout in [`internal/engine/btree_page.go`](../../internal/engine/btree_page.go). Rationale and format details: **[`ORDERED_STORE.md`](../../internal/engine/ORDERED_STORE.md)**. **Cell** (and other encoded) records must fit in that value budget; larger logical payloads require application-level chunking or external blob storage.
 
 ---
 
 ## Database lifecycle
 
-| Symbol | Notes |
-| --- | --- |
-| **[`Open`](../../db.go)** | Open or create a database file; applies WAL on startup. |
-| **[`(*DB).Close`](../../db.go)** | Waits for in-flight transactions; idempotent for nil receiver. |
-| **[`ErrCorruptDatabase`](../../db.go)** | Open-time corruption (header/WAL). |
-| **[`Options`](../../options.go)** | `EnableMVCC`, `MVCCRetention`, changelog, encryption, optional page hooks. |
-| **[`MVCCRetention`](../../options.go)** | Retention hint for prune suggestions. |
+| Symbol                                  | Notes                                                                      |
+| --------------------------------------- | -------------------------------------------------------------------------- |
+| **[`Open`](../../db.go)**               | Open or create a database file; applies WAL on startup.                    |
+| **[`(*DB).Close`](../../db.go)**        | Waits for in-flight transactions; idempotent for nil receiver.             |
+| **[`ErrCorruptDatabase`](../../db.go)** | Open-time corruption (header/WAL).                                         |
+| **[`Options`](../../options.go)**       | `EnableMVCC`, `MVCCRetention`, changelog, encryption, optional page hooks. |
+| **[`MVCCRetention`](../../options.go)** | Retention hint for prune suggestions.                                      |
 
 ---
 
 ## Transactions and MVCC snapshots
 
-| Symbol | Notes |
-| --- | --- |
-| **[`(*DB).View`](../../tx.go)** | Read-only; pins MVCC `read_seq` at start when format v2. |
-| **[`(*DB).Update`](../../tx.go)** | Exclusive write lock; logical writes via `*Tx`. |
-| **[`(*DB).Batch`](../../tx.go)** | Same as **`Update`** (alias for naming parity). |
-| **[`(*DB).ViewAt`](../../tx.go)** | Pin **`read_seq`** snapshot (MVCC); **`ErrReadSeqFuture`** if too new. |
-| **[`(*DB).ViewAtTime`](../../tx.go)** | Map wall-clock to latest commit ≤ `as_of`; pins that snapshot. |
-| **[`(*Tx).Writable`](../../tx.go)** | True inside **`Update`** / **`Batch`**. |
-| **[`(*Tx).Get`](../../tx.go)** | Raw btree **Get** by byte key. |
-| **[`(*Tx).Put`](../../tx.go)** | Raw btree **Put** (writes require **`Update`**). |
-| **[`(*Tx).AscendRange`](../../tx.go)** | Ordered scan **[from, to)** over byte keys. |
+| Symbol                                 | Notes                                                                  |
+| -------------------------------------- | ---------------------------------------------------------------------- |
+| **[`(*DB).View`](../../tx.go)**        | Read-only; pins MVCC `read_seq` at start when format v2.               |
+| **[`(*DB).Update`](../../tx.go)**      | Exclusive write lock; logical writes via `*Tx`.                        |
+| **[`(*DB).Batch`](../../tx.go)**       | Same as **`Update`** (alias for naming parity).                        |
+| **[`(*DB).ViewAt`](../../tx.go)**      | Pin **`read_seq`** snapshot (MVCC); **`ErrReadSeqFuture`** if too new. |
+| **[`(*DB).ViewAtTime`](../../tx.go)**  | Map wall-clock to latest commit ≤ `as_of`; pins that snapshot.         |
+| **[`(*Tx).Writable`](../../tx.go)**    | True inside **`Update`** / **`Batch`**.                                |
+| **[`(*Tx).Get`](../../tx.go)**         | Raw btree **Get** by byte key.                                         |
+| **[`(*Tx).Put`](../../tx.go)**         | Raw btree **Put** (writes require **`Update`**).                       |
+| **[`(*Tx).AscendRange`](../../tx.go)** | Ordered scan **[from, to)** over byte keys.                            |
 
 ---
 
 ## Cells, seams, rings, context (primitives)
 
-| Symbol | Notes |
-| --- | --- |
-| **[`(*Tx).PutCell`](../../primitives.go)** | Cell primary + secondaries (`source/`, `time/`, `tag/`). |
-| **[`(*Tx).GetCell`](../../primitives.go)** | Decode visible cell at packed coord. |
-| **[`(*Tx).WalkRing`](../../primitives.go)** | Visit one ring; raw bytes per coord. |
-| **[`(*Tx).WalkRingAt`](../../primitives.go)** | Same order; **`record.ValidAt`** filter at **`asOf`**. |
-| **[`(*Tx).LoadContext`](../../primitives.go)** | Concentric walk; **`maxR`**, **`maxCells`**. |
-| **[`(*Tx).LoadContextAt`](../../primitives.go)** | Same as **`LoadContext`** + validity filter. |
-| **[`(*Tx).WalkRingFacets`](../../primitives.go)** | Facet_mask ring walk; optional validity on cell. |
-| **[`(*Tx).PutSeam`](../../primitives.go)** | Seam primary + **`seam-by-cells/`** + seam secondaries. |
-| **[`(*Tx).FindSeams`](../../primitives.go)** | Query ball using seam index + primaries. |
-| **[`(*Tx).FindSeamsAt`](../../primitives.go)** | **`FindSeams`** + seam validity filter. |
-| **[`(*Tx).MarkConflict`](../../primitives.go)** | Spec sugar: ULID seam **`mark_conflict`**. |
-| **[`(*Tx).ResolveSeam`](../../primitives.go)** | Update resolution fields on **`seam/<ulid>`**. |
+| Symbol                                            | Notes                                                    |
+| ------------------------------------------------- | -------------------------------------------------------- |
+| **[`(*Tx).PutCell`](../../primitives.go)**        | Cell primary + secondaries (`source/`, `time/`, `tag/`). |
+| **[`(*Tx).GetCell`](../../primitives.go)**        | Decode visible cell at packed coord.                     |
+| **[`(*Tx).WalkRing`](../../primitives.go)**       | Visit one ring; raw bytes per coord.                     |
+| **[`(*Tx).WalkRingAt`](../../primitives.go)**     | Same order; **`record.ValidAt`** filter at **`asOf`**.   |
+| **[`(*Tx).LoadContext`](../../primitives.go)**    | Concentric walk; **`maxR`**, **`maxCells`**.             |
+| **[`(*Tx).LoadContextAt`](../../primitives.go)**  | Same as **`LoadContext`** + validity filter.             |
+| **[`(*Tx).WalkRingFacets`](../../primitives.go)** | Facet_mask ring walk; optional validity on cell.         |
+| **[`(*Tx).PutSeam`](../../primitives.go)**        | Seam primary + **`seam-by-cells/`** + seam secondaries.  |
+| **[`(*Tx).FindSeams`](../../primitives.go)**      | Query ball using seam index + primaries.                 |
+| **[`(*Tx).FindSeamsAt`](../../primitives.go)**    | **`FindSeams`** + seam validity filter.                  |
+| **[`(*Tx).MarkConflict`](../../primitives.go)**   | Spec sugar: ULID seam **`mark_conflict`**.               |
+| **[`(*Tx).ResolveSeam`](../../primitives.go)**    | Update resolution fields on **`seam/<ulid>`**.           |
 
 Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](../../internal/record/validity.go)); external code often reaches it via **`Tx`** helpers above rather than importing **`internal/record`** from outside this module.
 
@@ -64,56 +64,56 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 
 ## Facets and edges
 
-| Symbol | Notes |
-| --- | --- |
-| **[`(*Tx).PutFacet`](../../facets_edges.go)** | Upsert facet record (derivation discipline as per spec). |
-| **[`(*Tx).UpdateFacet`](../../facets_edges.go)** | Requires derivation hash match; else **`ErrFacetDerivationMismatch`**. |
-| **[`(*Tx).GetFacet`](../../facets_edges.go)** | Lookup by packed coord + facet id. |
-| **[`(*Tx).AscendFacetsForCell`](../../facets_edges.go)** | All facets at a cell key. |
-| **[`(*Tx).PutEdge`](../../facets_edges.go)** | Directed edge primary. |
-| **[`(*Tx).GetEdge`](../../facets_edges.go)** | Edge lookup by endpoints + relation type. |
-| **[`(*Tx).AscendEdgesFrom`](../../facets_edges.go)** | Out-edges from a packed coord. |
-| **[`(*Tx).LinkCells`](../../facets_edges.go)** | Sugar: pack coords + **`PutEdge`**. |
+| Symbol                                                   | Notes                                                                  |
+| -------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **[`(*Tx).PutFacet`](../../facets_edges.go)**            | Upsert facet record (derivation discipline as per spec).               |
+| **[`(*Tx).UpdateFacet`](../../facets_edges.go)**         | Requires derivation hash match; else **`ErrFacetDerivationMismatch`**. |
+| **[`(*Tx).GetFacet`](../../facets_edges.go)**            | Lookup by packed coord + facet id.                                     |
+| **[`(*Tx).AscendFacetsForCell`](../../facets_edges.go)** | All facets at a cell key.                                              |
+| **[`(*Tx).PutEdge`](../../facets_edges.go)**             | Directed edge primary.                                                 |
+| **[`(*Tx).GetEdge`](../../facets_edges.go)**             | Edge lookup by endpoints + relation type.                              |
+| **[`(*Tx).AscendEdgesFrom`](../../facets_edges.go)**     | Out-edges from a packed coord.                                         |
+| **[`(*Tx).LinkCells`](../../facets_edges.go)**           | Sugar: pack coords + **`PutEdge`**.                                    |
 
 ---
 
 ## Secondary indexes
 
-| Symbol | Notes |
-| --- | --- |
-| **[`(*Tx).AscendCellsBySource`](../../cell_secondary.go)** | Prefix on **`source/<source_id>/…`**. |
-| **[`(*Tx).AscendCellsInTimeBucket`](../../cell_secondary.go)** | One UTC week bucket from **`time/`**. |
-| **[`(*Tx).AscendCellsByTag`](../../cell_secondary.go)** | Prefix on **`tag/<tag>/…`**. |
-| **[`(*Tx).AscendDistinctTags`](../../cell_secondary.go)** | Distinct tag strings visible at this snapshot (streams via callback). |
-| **[`(*Tx).ListExistingTopics`](../../cell_secondary.go)** | Sorted distinct tags (topic names) for tools. |
-| **[`(*Tx).AscendSeamsBySource`](../../seam_secondary.go)** | **`seam-source/…`**. |
-| **[`(*Tx).AscendSeamsInTimeBucket`](../../seam_secondary.go)** | **`seam-time/…`**. |
+| Symbol                                                         | Notes                                                                 |
+| -------------------------------------------------------------- | --------------------------------------------------------------------- |
+| **[`(*Tx).AscendCellsBySource`](../../cell_secondary.go)**     | Prefix on **`source/<source_id>/…`**.                                 |
+| **[`(*Tx).AscendCellsInTimeBucket`](../../cell_secondary.go)** | One UTC week bucket from **`time/`**.                                 |
+| **[`(*Tx).AscendCellsByTag`](../../cell_secondary.go)**        | Prefix on **`tag/<tag>/…`**.                                          |
+| **[`(*Tx).AscendDistinctTags`](../../cell_secondary.go)**      | Distinct tag strings visible at this snapshot (streams via callback). |
+| **[`(*Tx).ListExistingTopics`](../../cell_secondary.go)**      | Sorted distinct tags (topic names) for tools.                         |
+| **[`(*Tx).AscendSeamsBySource`](../../seam_secondary.go)**     | **`seam-source/…`**.                                                  |
+| **[`(*Tx).AscendSeamsInTimeBucket`](../../seam_secondary.go)** | **`seam-time/…`**.                                                    |
 
 ---
 
 ## HEXXLA-shaped views and budgeting
 
-| Symbol | Notes |
-| --- | --- |
-| **[`(*Tx).AssembleCellView`](../../views.go)** | One coord → **`CellView`** with opts. |
-| **[`(*Tx).LoadContextWithBudgeting`](../../views.go)** | Token-budget **`ContextPack`**. |
-| **[`(*Tx).LoadContextPack`](../../views.go)** | Alias of **`LoadContextWithBudgeting`**. |
-| **[`CellView`](../../views.go)**, **[`ContextPack`](../../views.go)**, **[`FacetView`](../../views.go)**, **[`EdgeView`](../../views.go)**, **[`SeamRef`](../../views.go)** | View types. |
-| **[`LoadContextBudgetConfig`](../../views.go)**, **[`AssembleCellViewOpts`](../../views.go)**, **[`DefaultAssembleCellViewOpts`](../../views.go)** | Assembly + seam radius + caps. |
-| **[`TokenBudgeter`](../../views.go)**, **[`ByteLenBudgeter`](../../views.go)** | Budget counting. |
-| **[`CellViewPredicate`](../../views.go)**, **[`FilterCellViews`](../../views.go)**, **[`TruncateCellViewsToTokenBudget`](../../views.go)** | Post-process assembled views. |
+| Symbol                                                                                                                                                                      | Notes                                    |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| **[`(*Tx).AssembleCellView`](../../views.go)**                                                                                                                              | One coord → **`CellView`** with opts.    |
+| **[`(*Tx).LoadContextWithBudgeting`](../../views.go)**                                                                                                                      | Token-budget **`ContextPack`**.          |
+| **[`(*Tx).LoadContextPack`](../../views.go)**                                                                                                                               | Alias of **`LoadContextWithBudgeting`**. |
+| **[`CellView`](../../views.go)**, **[`ContextPack`](../../views.go)**, **[`FacetView`](../../views.go)**, **[`EdgeView`](../../views.go)**, **[`SeamRef`](../../views.go)** | View types.                              |
+| **[`LoadContextBudgetConfig`](../../views.go)**, **[`AssembleCellViewOpts`](../../views.go)**, **[`DefaultAssembleCellViewOpts`](../../views.go)**                          | Assembly + seam radius + caps.           |
+| **[`TokenBudgeter`](../../views.go)**, **[`ByteLenBudgeter`](../../views.go)**                                                                                              | Budget counting.                         |
+| **[`CellViewPredicate`](../../views.go)**, **[`FilterCellViews`](../../views.go)**, **[`TruncateCellViewsToTokenBudget`](../../views.go)**                                  | Post-process assembled views.            |
 
 ---
 
 ## Lattice exports
 
-| Symbol | Notes |
-| --- | --- |
-| **[`Coord`](../../coord_export.go)**, **[`Cube`](../../coord_export.go)**, **[`PackedCoord`](../../coord_export.go)** | Geometry types. |
-| **[`MaxAxialAbs`](../../coord_export.go)** | Packed range bound. |
-| **[`ErrCoordOutOfRange`](../../coord_export.go)** | **`Pack`** precondition. |
-| **[`Pack`](../../coord_export.go)**, **[`Unpack`](../../coord_export.go)** | Morton pack/unpack. |
-| **[`Ring`](../../coord_export.go)**, **[`WalkRings`](../../coord_export.go)** | Same order as **`LoadContext`**. |
+| Symbol                                                                                                                | Notes                            |
+| --------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| **[`Coord`](../../coord_export.go)**, **[`Cube`](../../coord_export.go)**, **[`PackedCoord`](../../coord_export.go)** | Geometry types.                  |
+| **[`MaxAxialAbs`](../../coord_export.go)**                                                                            | Packed range bound.              |
+| **[`ErrCoordOutOfRange`](../../coord_export.go)**                                                                     | **`Pack`** precondition.         |
+| **[`Pack`](../../coord_export.go)**, **[`Unpack`](../../coord_export.go)**                                            | Morton pack/unpack.              |
+| **[`Ring`](../../coord_export.go)**, **[`WalkRings`](../../coord_export.go)**                                         | Same order as **`LoadContext`**. |
 
 Methods on **`Coord`** / **`PackedCoord`** (e.g. **`Distance`**, **`Neighbors`**) live on re-exported types — see **`internal/lattice`**.
 
@@ -121,26 +121,26 @@ Methods on **`Coord`** / **`PackedCoord`** (e.g. **`Distance`**, **`Neighbors`**
 
 ## MVCC retention and pruning
 
-| Symbol | Notes |
-| --- | --- |
-| **[`(*DB).StatsMVCC`](../../mvcc_lifecycle.go)** | Counters for versioned rows. |
-| **[`(*DB).GroupWALStats`](../../db.go)** | Group-WAL flusher metrics (when group commit is configured). |
-| **[`(*DB).SuggestedPruneBeforeSeq`](../../mvcc_lifecycle.go)** | Policy from **`MVCCRetention`**. |
-| **[`(*DB).MVCCPrunePlan`](../../mvcc_lifecycle.go)** | Combine suggestion + batch size profile. |
-| **[`(*DB).PruneCellVersions`](../../mvcc_lifecycle.go)** | Delete stale cell versions before **`beforeSeq`**. |
-| **[`(*DB).PruneCellVersionsByProfile`](../../mvcc_lifecycle.go)** | Same with profile-driven **`maxDelete`**. |
+| Symbol                                                                                        | Notes                                                         |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| **[`(*DB).StatsMVCC`](../../mvcc_lifecycle.go)**                                              | Counters for versioned rows.                                  |
+| **[`(*DB).GroupWALStats`](../../db.go)**                                                      | Group-WAL flusher metrics (when group commit is configured).  |
+| **[`(*DB).SuggestedPruneBeforeSeq`](../../mvcc_lifecycle.go)**                                | Policy from **`MVCCRetention`**.                              |
+| **[`(*DB).MVCCPrunePlan`](../../mvcc_lifecycle.go)**                                          | Combine suggestion + batch size profile.                      |
+| **[`(*DB).PruneCellVersions`](../../mvcc_lifecycle.go)**                                      | Delete stale cell versions before **`beforeSeq`**.            |
+| **[`(*DB).PruneCellVersionsByProfile`](../../mvcc_lifecycle.go)**                             | Same with profile-driven **`maxDelete`**.                     |
 | **[`MVCCStats`](../../mvcc_lifecycle.go)**, **[`MVCCPruneProfile`](../../mvcc_lifecycle.go)** | **`MVCCPruneLowLatency`**, **`Balanced`**, **`LongHistory`**. |
-| **[`PruneScheduler`](../../mvcc_lifecycle.go)** | **`Tick`**: operator-driven periodic prune helper. |
+| **[`PruneScheduler`](../../mvcc_lifecycle.go)**                                               | **`Tick`**: operator-driven periodic prune helper.            |
 
 ---
 
 ## Logical changefeed
 
-| Symbol | Notes |
-| --- | --- |
-| **[`(*DB).ReadChangelogSince`](../../db_changelog.go)** | Requires **`Options.ChangelogEnabled`**. |
-| **[`ChangelogRecord`](../../db_changelog.go)** | Typed alias of internal record. |
-| **`ChangelogOpPutCell`**, **`ChangelogOpPutSeam`**, **`ChangelogOpResolveSeam`** (only **`ResolveSeam`**), **`ChangelogOpPutFacet`**, **`ChangelogOpPutEdge`** | Stable op codes. |
+| Symbol                                                                                                                                                         | Notes                                    |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| **[`(*DB).ReadChangelogSince`](../../db_changelog.go)**                                                                                                        | Requires **`Options.ChangelogEnabled`**. |
+| **[`ChangelogRecord`](../../db_changelog.go)**                                                                                                                 | Typed alias of internal record.          |
+| **`ChangelogOpPutCell`**, **`ChangelogOpPutSeam`**, **`ChangelogOpResolveSeam`** (only **`ResolveSeam`**), **`ChangelogOpPutFacet`**, **`ChangelogOpPutEdge`** | Stable op codes.                         |
 
 See **[CHANGEFEED.md](./CHANGEFEED.md)**.
 
@@ -148,12 +148,12 @@ See **[CHANGEFEED.md](./CHANGEFEED.md)**.
 
 ## Encryption
 
-| Symbol | Notes |
-| --- | --- |
-| **[`DeriveKeyFromPassphrase`](../../encryption.go)** | KDF helper for **`Options.Passphrase`**. |
-| **[`RotateEncryption`](../../rotation.go)** | Offline re-key / migration entry. |
-| **[`RotateEncryptionWithOptions`](../../rotation.go)** | Extended rotation + progress. |
-| **[`RotateOptions`](../../rotation.go)** | Batch size / **`OnProgress`** for long copies. |
+| Symbol                                                 | Notes                                          |
+| ------------------------------------------------------ | ---------------------------------------------- |
+| **[`DeriveKeyFromPassphrase`](../../encryption.go)**   | KDF helper for **`Options.Passphrase`**.       |
+| **[`RotateEncryption`](../../rotation.go)**            | Offline re-key / migration entry.              |
+| **[`RotateEncryptionWithOptions`](../../rotation.go)** | Extended rotation + progress.                  |
+| **[`RotateOptions`](../../rotation.go)**               | Batch size / **`OnProgress`** for long copies. |
 
 See **[ENCRYPTION.md](./ENCRYPTION.md)**.
 
@@ -161,23 +161,23 @@ See **[ENCRYPTION.md](./ENCRYPTION.md)**.
 
 ## Sentinel errors (complete)
 
-| Variable | When |
-| --- | --- |
-| **`ErrNotImplemented`** | Stub API. |
-| **`ErrSeamNotFound`** | Missing **`seam/<ulid>`**. |
-| **`ErrSeamEndpointMismatch`** | Immutable endpoints for ULID. |
-| **`ErrInvalidArgument`** | Bad parameter. |
-| **`ErrClosed`** | Closed handle. |
-| **`ErrDatabaseClosed`** | **`DB`** closed. |
-| **`ErrTxReadOnly`** | Write in **`View`**. |
-| **`ErrNilCallback`** | Nil **`View`/`Update`** fn. |
-| **`ErrEncryptionKeyRequired`**, **`ErrDatabaseNotEncrypted`**, **`ErrEncryptionOptions`**, **`ErrEncryptionKeyMismatch`** | Encryption options vs file. |
-| **`ErrCellNotFound`** | e.g. **`UpdateFacet`** without cell. |
-| **`ErrFacetDerivationMismatch`** | Facet hash vs raw. |
-| **`ErrChangelogDisabled`**, **`ErrChangelogCorrupt`** | Changefeed. |
-| **`ErrReadSeqFuture`** | **`ViewAt`** too new. |
-| **`ErrCommitFinalization`** | Post-callback failure. |
-| **`ErrCorruptDatabase`** | Open failure. |
+| Variable                                                                                                                  | When                                 |
+| ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| **`ErrNotImplemented`**                                                                                                   | Stub API.                            |
+| **`ErrSeamNotFound`**                                                                                                     | Missing **`seam/<ulid>`**.           |
+| **`ErrSeamEndpointMismatch`**                                                                                             | Immutable endpoints for ULID.        |
+| **`ErrInvalidArgument`**                                                                                                  | Bad parameter.                       |
+| **`ErrClosed`**                                                                                                           | Closed handle.                       |
+| **`ErrDatabaseClosed`**                                                                                                   | **`DB`** closed.                     |
+| **`ErrTxReadOnly`**                                                                                                       | Write in **`View`**.                 |
+| **`ErrNilCallback`**                                                                                                      | Nil **`View`/`Update`** fn.          |
+| **`ErrEncryptionKeyRequired`**, **`ErrDatabaseNotEncrypted`**, **`ErrEncryptionOptions`**, **`ErrEncryptionKeyMismatch`** | Encryption options vs file.          |
+| **`ErrCellNotFound`**                                                                                                     | e.g. **`UpdateFacet`** without cell. |
+| **`ErrFacetDerivationMismatch`**                                                                                          | Facet hash vs raw.                   |
+| **`ErrChangelogDisabled`**, **`ErrChangelogCorrupt`**                                                                     | Changefeed.                          |
+| **`ErrReadSeqFuture`**                                                                                                    | **`ViewAt`** too new.                |
+| **`ErrCommitFinalization`**                                                                                               | Post-callback failure.               |
+| **`ErrCorruptDatabase`**                                                                                                  | Open failure.                        |
 
 Use **`errors.Is` / `errors.As`** for stable handling.
 
@@ -188,7 +188,7 @@ Use **`errors.Is` / `errors.As`** for stable handling.
 - **Exhaustive public-API walk (ELI5 + real files):** [`examples/full_api_demo`](../../examples/full_api_demo/) — **`go run ./examples/full_api_demo`** seeds **`./.tmp/full_api_demo/`** (MVCC + changelog main file; optional encrypted file) and prints one section per major **`package hexxladb`** capability.
 - **Session-shaped teaching demo:** [`examples/live_session_demo`](../../examples/live_session_demo/) — scripted LLM-session cells; smaller output.
 
-## What `examples/live_session_demo` does *not* call (and why)
+## What `examples/live_session_demo` does _not_ call (and why)
 
 That demo is a **single-session smoke test** for Hexxla-shaped writes and reads; it stays readable. Omitted APIs fall into a few buckets: **low-level escape hatches**, **validity-specialized variants**, **seam lifecycle / conflict sugar**, **post-assembly helpers**, **operator features**, **encryption ops**. Use **`full_api_demo`** for breadth; keep **`live_session_demo`** for narrative density.
 
@@ -261,16 +261,16 @@ That demo is a **single-session smoke test** for Hexxla-shaped writes and reads;
 
 ## Related documents
 
-| Doc | Purpose |
-| --- | --- |
-| **[HEXXLA_DB.md](./HEXXLA_DB.md)** | Keyspace, record families, indexes. |
-| **[TX.md](./TX.md)** | Locking, MVCC snapshot + temporal semantics, validity filters. |
-| **[HEXXLA.md](./HEXXLA.md)** | Hexxla memory model + library mapping. |
-| **[OPERATIONS.md](./OPERATIONS.md)** | Embedding, backups, MVCC retention/prune, incident response. |
-| **[DURABILITY.md](./DURABILITY.md)** | WAL, group commit, durability barriers. |
-| **[ENCRYPTION.md](./ENCRYPTION.md)** | Threat model and key options. |
-| **[CHANGEFEED.md](./CHANGEFEED.md)** | Logical changelog semantics. |
-| **[../ROADMAP.md](../ROADMAP.md)** | Non-goals, spec-vs-code backlog. |
+| Doc                                  | Purpose                                                        |
+| ------------------------------------ | -------------------------------------------------------------- |
+| **[HEXXLA_DB.md](./HEXXLA_DB.md)**   | Keyspace, record families, indexes.                            |
+| **[TX.md](./TX.md)**                 | Locking, MVCC snapshot + temporal semantics, validity filters. |
+| **[HEXXLA.md](./HEXXLA.md)**         | Hexxla memory model + library mapping.                         |
+| **[OPERATIONS.md](./OPERATIONS.md)** | Embedding, backups, MVCC retention/prune, incident response.   |
+| **[DURABILITY.md](./DURABILITY.md)** | WAL, group commit, durability barriers.                        |
+| **[ENCRYPTION.md](./ENCRYPTION.md)** | Threat model and key options.                                  |
+| **[CHANGEFEED.md](./CHANGEFEED.md)** | Logical changelog semantics.                                   |
+| **[../ROADMAP.md](../ROADMAP.md)**   | Non-goals, spec-vs-code backlog.                               |
 
 ---
 

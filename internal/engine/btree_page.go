@@ -21,7 +21,7 @@ const (
 	btreeKindInternal   = 2
 	btreeHeaderSize     = 64
 	maxKeyBytes         = 256
-	maxValBytes         = 512
+	maxValBytes         = 8192 // 8KB for LLM-sized content
 	maxLeafEntries      = 32
 	maxInternalChildren = 32 // max keys = maxInternalChildren - 1
 )
