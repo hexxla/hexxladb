@@ -34,6 +34,11 @@
 | `doc.go`                         | Package-level documentation    |
 | `docs/context/MODERN_GO.md`      | Go 1.21–1.26 feature inventory |
 
+**Session tracking:** Update `TODOS.md` and `CHANGELOG.md` when working on related items:
+
+- **TODOS.md** — lightweight session state; move items to Completed as work finishes; add new discoveries to Pending
+- **CHANGELOG.md** — user-facing changes; add entries under `## [Unreleased]` for any user-visible feature, fix, or breaking change
+
 Do not duplicate `HEXAGONAL_ARCHITECTURE.md` — reference it.
 
 **Git hooks (optional):** `.pre-commit-config.yaml` + `make pre-commit-install` — still run `make ci` before pushing.
