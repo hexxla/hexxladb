@@ -15,6 +15,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -116,18 +117,51 @@ func run() error {
 	// ═══════════════════════════════════════════════════════════════
 	printHeader("Phase 2: Storing Conversation History")
 
-	// Simulate a conversation with user preferences that change (to demo seams)
+	// Rich conversation history with semantically-aligned tags
+	// Tags categorize content type (fact, opinion, preference) and domain (tech, workflow, api)
 	conversation := []struct {
 		role    string
 		content string
 		tags    []string
 	}{
-		{"user", "I prefer detailed technical explanations.", []string{"preferences", "user-123"}},
-		{"assistant", "Understood. I'll provide detailed technical responses.", []string{"acknowledgment", "user-123"}},
-		{"user", "Actually, keep it concise. I changed my mind.", []string{"preferences", "user-123", "contradiction"}},
-		{"assistant", "Noted. I'll be concise going forward.", []string{"acknowledgment", "user-123"}},
-		{"user", "What's the best database for LLM memory?", []string{"question", "user-123"}},
-		{"assistant", "HexxlaDB is designed for spatial LLM memory...", []string{"answer", "user-123", "hexxladb"}},
+		// User preferences and workflow
+		{"user", "I prefer detailed technical explanations with code examples.", []string{"preference", "communication-style", "user-123"}},
+		{"assistant", "Understood. I'll provide detailed technical responses with code examples.", []string{"acknowledgment", "commitment", "user-123"}},
+		{"user", "Actually, keep it concise. I changed my mind.", []string{"preference", "communication-style", "contradiction", "user-123"}},
+		{"assistant", "Noted. I'll be concise going forward.", []string{"acknowledgment", "commitment", "user-123"}},
+
+		// Technical facts about the system
+		{"user", "What's the best database for LLM memory systems?", []string{"question", "database", "recommendation", "user-123"}},
+		{"assistant", "HexxlaDB is designed specifically for spatial LLM memory with hexagonal coordinate addressing.", []string{"fact", "product", "hexagonal-addressing", "user-123"}},
+		{"user", "How does the hexagonal grid work?", []string{"question", "architecture", "explanation", "user-123"}},
+		{"assistant", "Each memory cell has axial coordinates (q, r). Six neighbors form a ring around any cell for context assembly.", []string{"fact", "technical", "coordinates", "ring-neighbors", "user-123"}},
+
+		// User opinions and experiences
+		{"user", "I think traditional vector databases are too complex for conversational memory.", []string{"opinion", "vector-databases", "criticism", "user-123"}},
+		{"assistant", "Many users find vector DBs require significant tuning for conversational retrieval.", []string{"fact", "industry-trend", "user-feedback", "user-123"}},
+		{"user", "I really like the idea of storing contradictions as seams.", []string{"opinion", "feature", "seams", "enthusiasm", "user-123"}},
+
+		// API and integration questions
+		{"user", "Can I query cells by tags?", []string{"question", "api", "tags", "query", "user-123"}},
+		{"assistant", "Yes. Use AscendCellsByTag to scan the tag secondary index. ListExistingTopics returns all distinct tags.", []string{"fact", "api", "example-code", "secondary-index", "user-123"}},
+		{"user", "What's the maximum cell content size?", []string{"question", "limits", "configuration", "user-123"}},
+		{"assistant", "Default is 8KB per cell, configurable per-database. Handles most prompts and conversation turns.", []string{"fact", "configuration", "8kb-limit", "user-123"}},
+
+		// Workflow and preferences
+		{"user", "I want to organize my project memories by topic.", []string{"goal", "workflow", "organization", "user-123"}},
+		{"assistant", "Use tags like 'frontend', 'backend', 'database' to categorize. Query by tag for focused context.", []string{"recommendation", "best-practice", "tag-strategy", "user-123"}},
+		{"user", "I work on multiple projects. Can I filter by project?", []string{"question", "multi-tenant", "filtering", "user-123"}},
+		{"assistant", "Yes. Use source_id for project isolation or project-specific tags like 'project-alpha', 'project-beta'.", []string{"fact", "multi-tenant", "source-id", "tag-pattern", "user-123"}},
+
+		// Contradiction demo (preference changed again)
+		{"user", "On second thought, I do want detailed explanations for complex topics.", []string{"preference", "communication-style", "contradiction", "conditional", "user-123"}},
+		{"assistant", "I'll adapt: concise for simple topics, detailed for complex ones.", []string{"acknowledgment", "conditional-logic", "adaptation", "user-123"}},
+
+		// More facts and features
+		{"user", "Does it support encryption?", []string{"question", "security", "encryption", "compliance", "user-123"}},
+		{"assistant", "Yes. AES-256-XTS at the page level. Optional passphrase with Argon2id key derivation.", []string{"fact", "security", "aes-xts", "argon2id", "user-123"}},
+		{"user", "Can I export my memory data?", []string{"question", "export", "portability", "user-123"}},
+		{"assistant", "The changefeed provides logical change stream. Secondary indexes support bulk export patterns.", []string{"fact", "export", "changefeed", "bulk-operations", "user-123"}},
 	}
 
 	_, _ = infoStyle.Printf("  Processing %d conversation turns...\n", len(conversation))
@@ -281,15 +315,78 @@ func run() error {
 	fmt.Println()
 
 	// ═══════════════════════════════════════════════════════════════
-	// PHASE 5: Query Patterns
+	// PHASE 5: Tag Discovery and Analytics
 	// ═══════════════════════════════════════════════════════════════
-	printHeader("Phase 5: Query Patterns")
+	printHeader("Phase 5: Tag Discovery and Analytics")
+
+	// Discover all unique tags in the database
+	_, _ = infoStyle.Println("  Discovering all tags in the database...")
+	var allTags []string
+	err = db.View(func(tx *hexxladb.Tx) error {
+		var err error
+		allTags, err = tx.ListExistingTopics(ctx)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("list existing topics: %w", err)
+	}
+
+	printMetric("Total unique tags", len(allTags), "tags")
+	fmt.Println()
+
+	// Categorize tags by semantic type
+	_, _ = infoStyle.Println("  Tag catalog by semantic category:")
+	fmt.Println()
+
+	// Tag categories based on the seed data we inserted
+	categories := map[string][]string{
+		"Content Type": {"fact", "opinion", "preference", "question", "acknowledgment", "recommendation", "goal"},
+		"Domain":       {"communication-style", "database", "api", "security", "configuration", "export"},
+		"Features":     {"hexagonal-addressing", "coordinates", "seams", "secondary-index", "changefeed"},
+		"Meta":         {"user-123", "contradiction", "commitment", "enthusiasm", "conditional"},
+	}
+
+	for category, expectedTags := range categories {
+		var found []string
+		for _, tag := range allTags {
+			if slices.Contains(expectedTags, tag) {
+				found = append(found, tag)
+			}
+		}
+		if len(found) > 0 {
+			_, _ = accentStyle.Printf("  %s:\n", category)
+			for _, tag := range found {
+				_, _ = dimStyle.Printf("    • %s\n", tag)
+			}
+			fmt.Println()
+		}
+	}
+
+	// Show service-useful tags (not user-specific)
+	_, _ = infoStyle.Println("  Service-reusable tags (excluding user IDs):")
+	var serviceTags []string
+	for _, tag := range allTags {
+		if !strings.HasPrefix(tag, "user-") {
+			serviceTags = append(serviceTags, tag)
+		}
+	}
+	for _, tag := range serviceTags {
+		_, _ = dimStyle.Printf("    • %s\n", tag)
+	}
+	fmt.Println()
+	printSuccess(fmt.Sprintf("Found %d reusable tags for service decisions", len(serviceTags)))
+	fmt.Println()
+
+	// ═══════════════════════════════════════════════════════════════
+	// PHASE 6: Query Patterns
+	// ═══════════════════════════════════════════════════════════════
+	printHeader("Phase 6: Query Patterns")
 
 	// Query by tag
-	_, _ = infoStyle.Println("  Query: All cells tagged 'preferences'...")
+	_, _ = infoStyle.Println("  Query: All cells tagged 'preference'...")
 	var prefCells int
 	err = db.View(func(tx *hexxladb.Tx) error {
-		return tx.AscendCellsByTag(ctx, "preferences", func(_ record.CellRecord) bool {
+		return tx.AscendCellsByTag(ctx, "preference", func(_ record.CellRecord) bool {
 			prefCells++
 			return true
 		})
@@ -297,7 +394,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("query by tag: %w", err)
 	}
-	printMetric("Preferences found", prefCells, "cells")
+	printMetric("Preference cells found", prefCells, "cells")
 	fmt.Println()
 
 	// Query by source
