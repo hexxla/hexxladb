@@ -27,8 +27,6 @@ Immediate next steps. Update after each session.
 - [ ] Relocate secondary index logic to `internal/` — `cell_secondary.go` and `seam_secondary.go` bypass Tx abstraction with direct btree.Delete calls
 - [ ] Extract `views.go` to `internal/views` or `internal/app` — `TokenBudgeter`, `ByteLenBudgeter`, budgeting logic are app-layer with no storage I/O
 - [ ] Move `rotation.go` to `internal/tooling/rotation` — offline re-encryption utility mixed with runtime API
-- [ ] Refactor `goto assembled` in `LoadContextWithBudgeting` — replace with named helper for cleaner control flow
-- [ ] Encapsulate commit-time meta-key in MVCC layer — `PutCell` inlines `__meta/commit-time/` bookkeeping that belongs in MVCC init
 - [ ] Complete `app.Service` use-case layer — only 4 of ~30 port methods implemented; `_ = svc` in cmd/main.go
 - [ ] First production use feedback collection
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
@@ -43,6 +41,8 @@ Immediate next steps. Update after each session.
 - 2026-04-24: Identified seam-aware context assembly as v0.1.0 blocker
 - 2026-04-24: SoC audit validated; mvccspike rename, prune dedup, MVCC key guard added as v0.1.0 blockers
 - 2026-04-24: Completed mvccspike→mvcc rename, prune profile dedup, MVCC key guard relocation
+- 2026-04-24: Refactored goto assembled into collectCandidates helper
+- 2026-04-24: Closed commit-time meta-key finding as false (already in correct location in DB.Update)
 
 ---
 

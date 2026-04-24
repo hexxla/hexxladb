@@ -14,6 +14,7 @@ Shipped with v0.1.0 release.
 - **Rename `internal/mvccspike` → `internal/mvcc`** — promoted production MVCC visibility algorithm to stable package name ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 - **Extract prune profile helper** — `profileToMaxDelete` deduplicates `MVCCPrunePlan` and `PruneCellVersionsByProfile` switch blocks ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 - **Move MVCC key validation out of `Tx.Put`** — added `putDirect` for internal primitives; MVCC cell key guard stays on public `Tx.Put` only ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+- **Refactor `goto assembled`** — extracted `collectCandidates` helper from `LoadContextWithBudgeting` for cleaner control flow and isolated testability ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 
 ## Quick Wins
 
@@ -33,8 +34,7 @@ Low effort, high value. No design required.
 - Relocate secondary index logic to `internal/` — `cell_secondary.go` and `seam_secondary.go` are unexported helpers that call `tx.db.btree.Delete` directly, bypassing Tx abstraction; move to `internal/txcore` or `internal/storage` to enforce boundary ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 - Extract `views.go` to `internal/views` or `internal/app` — `TokenBudgeter`, `ByteLenBudgeter`, `LoadContextWithBudgeting` are app-layer read projections with no storage I/O; re-export only types from module root ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 - Move `rotation.go` to `internal/tooling/rotation` — offline re-encryption utility is operational tooling mixed with runtime API; decouple from consumers who only need CRUD ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
-- Refactor `goto assembled` in `LoadContextWithBudgeting` — replace with a named helper function returning `([]scored, error)` for cleaner control flow and isolated testability ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
-- Encapsulate commit-time meta-key in MVCC layer — `PutCell` manually inserts `__meta/commit-time/` timeline key; this MVCC bookkeeping should be encapsulated rather than inlined in the primitive ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+- ~~Encapsulate commit-time meta-key~~ — **closed: false finding**; meta-key is written once per transaction in `DB.Update` (`tx.go`), not per-cell in `PutCell`; placement is correct
 
 ## Near-term
 
