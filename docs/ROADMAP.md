@@ -5,6 +5,9 @@
 Must complete before release. Core functionality gaps.
 
 - **Seam-aware context assembly** — when loading ContextPack, filter/supersede outdated cells via seam links; contradictions are useless without action; walk seam chains to current truth, exclude superseded data, preserve token budget ([discussion](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
+- **Rename `internal/mvccspike` → `internal/mvcc`** — production MVCC visibility algorithm (`SelectVisible`, `VersionKV`) lives in a package named "spike"; `internal/mvcc/` exists but is empty; rename removes maintenance confusion about what is stable vs exploratory ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+- **Extract prune profile helper** — `MVCCPrunePlan` and `PruneCellVersionsByProfile` contain identical profile→maxDelete switch blocks; extract `profileToMaxDelete(MVCCPruneProfile) (int, error)` to eliminate duplication ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+- **Move MVCC key validation out of `Tx.Put`** — `tx.go:231` embeds index-format-specific MVCC cell key guard in the generic byte-level Put method; push this check into the MVCC-aware primitives (`PutCell`, `PutSeam`) that call it ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 
 ## Completed (v0.1.0)
 
@@ -27,6 +30,11 @@ Low effort, high value. No design required.
 - Context Pack "Explain" Mode — per-cell inclusion reasons showing why each cell was included or evicted (budget_ok, low_confidence_evicted, ring_cutoff) for debugging token budget decisions ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
 - Batch PutCell with Progress — efficient ingestion of conversation history with progress callbacks and continue-on-error options; distinct from Import/Export for real-time streaming scenarios ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
 - Cell Validation Hooks — pre-write validation interface for enforcing content limits, required tags, and custom business rules; production-critical for data integrity ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
+- Relocate secondary index logic to `internal/` — `cell_secondary.go` and `seam_secondary.go` are unexported helpers that call `tx.db.btree.Delete` directly, bypassing Tx abstraction; move to `internal/txcore` or `internal/storage` to enforce boundary ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+- Extract `views.go` to `internal/views` or `internal/app` — `TokenBudgeter`, `ByteLenBudgeter`, `LoadContextWithBudgeting` are app-layer read projections with no storage I/O; re-export only types from module root ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+- Move `rotation.go` to `internal/tooling/rotation` — offline re-encryption utility is operational tooling mixed with runtime API; decouple from consumers who only need CRUD ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+- Refactor `goto assembled` in `LoadContextWithBudgeting` — replace with a named helper function returning `([]scored, error)` for cleaner control flow and isolated testability ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+- Encapsulate commit-time meta-key in MVCC layer — `PutCell` manually inserts `__meta/commit-time/` timeline key; this MVCC bookkeeping should be encapsulated rather than inlined in the primitive ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 
 ## Near-term
 
@@ -38,6 +46,7 @@ Requires design + benchmarks before implementation.
 - Content Search (substring/prefix) — brute-force search within `RawContent` for small-medium DBs (benchmark first)
 - Temporal Range Queries — "what changed this week?" time-series analysis vs point-in-time `ViewAtTime`; cells and seams in time buckets with timeline summaries ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
 - Snapshot Tags/Labels — human-friendly names ("v1.0 release", "pre-migration") for MVCC snapshots instead of raw sequence numbers; enables `ViewAtTag` for operational usability ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
+- Complete `app.Service` use-case layer — only 4 of ~30 `domain.Storage` methods implemented; `cmd/hexxladb/main.go` wires service then discards it (`_ = svc`); implement remaining delegations and move view assembly into service use-cases ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 
 ## Future
 
@@ -74,10 +83,11 @@ Intentional boundaries for embedded library v1.
 
 ## Audit Log
 
-| Date       | Scope                                                                                                              |
-| ---------- | ------------------------------------------------------------------------------------------------------------------ |
-| 2026-04-24 | v0.1.0 initial release                                                                                             |
-| 2026-04-24 | Roadmap consolidated to priority-based format                                                                      |
-| 2026-04-24 | Added HEXXLA service quick wins from audit (QueryStats, RingDensity, Templates, Bulk ops, Health check, Hooks)     |
-| 2026-04-24 | **v0.1.0 scope locked:** 8KB cell size increase as release blocker                                                 |
-| 2026-04-24 | **v0.1.0 scope updated:** seam-aware context assembly added as release blocker — contradictions must be actionable |
+| Date       | Scope                                                                                                                                                                                                                                                               |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-24 | v0.1.0 initial release                                                                                                                                                                                                                                              |
+| 2026-04-24 | Roadmap consolidated to priority-based format                                                                                                                                                                                                                       |
+| 2026-04-24 | Added HEXXLA service quick wins from audit (QueryStats, RingDensity, Templates, Bulk ops, Health check, Hooks)                                                                                                                                                      |
+| 2026-04-24 | **v0.1.0 scope locked:** 8KB cell size increase as release blocker                                                                                                                                                                                                  |
+| 2026-04-24 | **v0.1.0 scope updated:** seam-aware context assembly added as release blocker — contradictions must be actionable                                                                                                                                                  |
+| 2026-04-24 | **SoC audit validated:** mvccspike rename, prune profile dedup, MVCC key guard relocation added as v0.1.0 blockers; secondary index relocation, views.go extraction, app.Service completion added as Quick Wins ([audit](./context/audits/SOC_MODULARITY_AUDIT.md)) |
