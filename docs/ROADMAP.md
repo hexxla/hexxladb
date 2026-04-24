@@ -10,6 +10,7 @@ Shipped with v0.1.0 release.
 
 Low effort, high value. No design required.
 
+- Per-database MaxValueBytes — store limit in file header (default 8KB), expose in Options for 2KB/4KB/16KB use cases
 - QueryStats on ContextPack — visibility into why cells were included/excluded during context assembly ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
 - RingDensity API — count cells per ring for dashboard visualization and memory density maps
 - Cell Template Factory — standardized constructors for UserMessage, AssistantResponse, SystemPrompt, Fact cells

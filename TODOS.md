@@ -13,6 +13,7 @@ Immediate next steps. Update after each session.
 ## Pending (next sessions)
 
 - [ ] Ready for v0.1.0 release push to remote
+- [ ] Per-database MaxValueBytes configuration — store limit in file header, expose in Options (default 8KB)
 - [ ] First production use feedback collection
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
 
