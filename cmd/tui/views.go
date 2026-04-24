@@ -177,40 +177,6 @@ func newCellTableView(db *hexxladb.DB) view {
 }
 
 func (v cellTableView) Update(msg tea.Msg) (view, tea.Cmd) {
-	if v.loading {
-		// Load cells asynchronously
-		return v, tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
-			var cells []hexxladb.CellView
-			_ = v.db.View(func(tx *hexxladb.Tx) error {
-				// Iterate over a larger range of coordinates to find cells
-				for q := -20; q <= 20; q++ {
-					for r := -20; r <= 20; r++ {
-						if len(cells) >= 50 {
-							return nil
-						}
-						coord := hexxladb.Coord{Q: q, R: r}
-						pk, err := lattice.Pack(coord)
-						if err != nil {
-							continue
-						}
-						cell, ok, _ := tx.GetCell(pk)
-						if ok {
-							cells = append(cells, hexxladb.CellView{
-								Coord:      coord,
-								RawContent: cell.RawContent,
-								Tags:       cell.Tags,
-								Provenance: cell.Provenance,
-								Validity:   cell.Validity,
-							})
-						}
-					}
-				}
-				return nil
-			})
-			return cellsLoadedMsg{cells: cells}
-		})
-	}
-
 	switch msg := msg.(type) {
 	case cellsLoadedMsg:
 		v.cells = msg.cells
@@ -322,11 +288,12 @@ func (v cellTableView) View() string {
 			tagsStr = tagsStr[:18] + "..."
 		}
 
-		row := style.Render(fmt.Sprintf("%-10s %-35s %-20s",
+		row := fmt.Sprintf("%-10s %-35s %-20s",
 			fmt.Sprintf("(%d,%d)", cell.Coord.Q, cell.Coord.R),
 			contentStr,
-			tagsStr))
-		content.WriteString(row + "\n")
+			tagsStr,
+		)
+		content.WriteString(style.Render(row) + "\n")
 	}
 
 	// Controls with better styling
@@ -344,6 +311,11 @@ type cellsLoadedMsg struct {
 	cells []hexxladb.CellView
 }
 
+type cellWithSeq struct {
+	cell hexxladb.CellView
+	seq  uint64
+}
+
 type inspectCellMsg struct {
 	coord hexxladb.Coord
 }
@@ -354,12 +326,22 @@ type exportCellMsg struct {
 
 type showImportMsg struct{}
 
+type loadContextPackMsg struct {
+	coord hexxladb.Coord
+}
+
+type contextPackLoadedMsg struct {
+	coord hexxladb.Coord
+	pack  string
+}
+
 // cellInspectorView shows detailed cell information
 type cellInspectorView struct {
 	db    *hexxladb.DB
 	cell  hexxladb.Coord
 	found bool
 	data  hexxladb.CellView
+	pack  string
 }
 
 func newCellInspectorView(db *hexxladb.DB) view {
@@ -370,49 +352,101 @@ func newCellInspectorView(db *hexxladb.DB) view {
 }
 
 func (v cellInspectorView) Update(msg tea.Msg) (view, tea.Cmd) {
+	switch msg := msg.(type) {
+	case contextPackLoadedMsg:
+		v.pack = msg.pack
+		return v, nil
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "c":
+			// Load context pack
+			return v, tea.Tick(time.Millisecond, func(t time.Time) tea.Msg {
+				// TODO: Implement actual context pack loading from API
+				pack := fmt.Sprintf("Context pack for cell (%d,%d)\n[Context data would be loaded here]", v.cell.Q, v.cell.R)
+				return contextPackLoadedMsg{coord: v.cell, pack: pack}
+			})
+		}
+	}
 	return v, nil
 }
 
 func (v cellInspectorView) View() string {
-	content := "Cell Inspector\n"
-	content += "==============\n\n"
+	var content strings.Builder
+
+	// Color scheme
+	accentColor := lipgloss.Color("99")
+	secondaryColor := lipgloss.Color("245")
+
+	// Title
+	title := lipgloss.NewStyle().
+		Foreground(accentColor).
+		Bold(true).
+		Underline(true).
+		MarginBottom(1).
+		Render("Cell Inspector")
+
+	content.WriteString(title + "\n")
 
 	// Load cell data
 	if !v.found {
 		pk, err := lattice.Pack(v.cell)
 		if err == nil {
 			_ = v.db.View(func(tx *hexxladb.Tx) error {
-				cell, ok, err := tx.GetCell(pk)
-				if err == nil && ok {
-					v.data = hexxladb.CellView{
-						Coord:      v.cell,
-						RawContent: cell.RawContent,
-						Tags:       cell.Tags,
-						Provenance: cell.Provenance,
-						Validity:   cell.Validity,
-					}
-					v.found = true
+				c, o, _ := tx.GetCell(pk)
+				v.data = hexxladb.CellView{
+					Coord:      v.cell,
+					RawContent: c.RawContent,
+					Tags:       c.Tags,
+					Provenance: c.Provenance,
+					Validity:   c.Validity,
 				}
+				v.found = o
 				return nil
 			})
 		}
 	}
 
 	if v.found {
-		content += fmt.Sprintf("Coordinate: (%d,%d)\n", v.cell.Q, v.cell.R)
-		content += fmt.Sprintf("Content: %s\n", truncate(v.data.RawContent, 100))
-		content += fmt.Sprintf("Tags: %s\n", strings.Join(v.data.Tags, ", "))
-		content += fmt.Sprintf("Source: %s\n", v.data.Provenance.SourceID)
-		content += fmt.Sprintf("Confidence: %.2f\n", v.data.Provenance.Confidence)
+		coordStyle := lipgloss.NewStyle().
+			Foreground(secondaryColor).
+			Bold(true)
+		content.WriteString(coordStyle.Render(fmt.Sprintf("Coordinate: (%d,%d)", v.cell.Q, v.cell.R)) + "\n")
+
+		contentStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("255"))
+		content.WriteString(contentStyle.Render(fmt.Sprintf("Content: %s", v.data.RawContent)) + "\n")
+
+		tagsStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("43"))
+		content.WriteString(tagsStyle.Render(fmt.Sprintf("Tags: %s", strings.Join(v.data.Tags, ", "))) + "\n")
+
+		metaStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("241"))
+		content.WriteString(metaStyle.Render(fmt.Sprintf("Provenance: %s", v.data.Provenance)) + "\n")
+		content.WriteString(metaStyle.Render(fmt.Sprintf("Validity: %s", v.data.Validity)) + "\n")
 	} else {
-		content += fmt.Sprintf("No cell at (%d,%d)\n", v.cell.Q, v.cell.R)
+		content.WriteString(fmt.Sprintf("No cell at (%d,%d)\n", v.cell.Q, v.cell.R))
 	}
 
-	content += "\nControls:\n"
-	content += "Arrow/WASD - Navigate\n"
-	content += "g - Go to coordinates\n"
+	// Display context pack if loaded
+	if v.pack != "" {
+		packBox := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(accentColor).
+			Padding(1, 2).
+			MarginTop(1).
+			Render(v.pack)
+		content.WriteString(packBox + "\n")
+	}
 
-	return content
+	// Controls
+	controls := lipgloss.NewStyle().
+		Foreground(secondaryColor).
+		Italic(true).
+		Render("g - Go to coordinates | c - Load context pack")
+	content.WriteString(controls)
+
+	return content.String()
 }
 
 // analyticsView shows tag analytics and statistics

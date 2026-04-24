@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -126,7 +127,65 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "2":
-			m.current = 1
+			if m.current != 1 {
+				m.current = 1
+				// Trigger cell loading when navigating to cell table
+				cellTable := m.views[1].(cellTableView)
+				if !cellTable.loading && len(cellTable.cells) == 0 {
+					cellTable.loading = true
+					m.views[1] = cellTable
+					return m, tea.Tick(time.Millisecond, func(t time.Time) tea.Msg {
+						var cellsWithSeq []cellWithSeq
+						_ = m.db.View(func(tx *hexxladb.Tx) error {
+							return tx.AscendRange(nil, []byte("cell\xff"), func(k, v []byte) bool {
+								// Key format: "cell/" + packed_coord (16 bytes, big-endian) + commit_seq (8 bytes)
+								if len(k) < 5+16+8 {
+									return true
+								}
+								// Skip "cell/" prefix
+								packedBytes := k[5:21]
+								// Extract commit sequence (last 8 bytes, big-endian)
+								commitSeq := uint64(k[21])<<56 | uint64(k[22])<<48 | uint64(k[23])<<40 | uint64(k[24])<<32 | uint64(k[25])<<24 | uint64(k[26])<<16 | uint64(k[27])<<8 | uint64(k[28])
+
+								// Convert bytes to PackedCoord (big-endian: Hi first, then Lo)
+								hi := uint64(packedBytes[0])<<56 | uint64(packedBytes[1])<<48 | uint64(packedBytes[2])<<40 | uint64(packedBytes[3])<<32 | uint64(packedBytes[4])<<24 | uint64(packedBytes[5])<<16 | uint64(packedBytes[6])<<8 | uint64(packedBytes[7])
+								lo := uint64(packedBytes[8])<<56 | uint64(packedBytes[9])<<48 | uint64(packedBytes[10])<<40 | uint64(packedBytes[11])<<32 | uint64(packedBytes[12])<<24 | uint64(packedBytes[13])<<16 | uint64(packedBytes[14])<<8 | uint64(packedBytes[15])
+								pk := lattice.PackedCoord{lo, hi}
+								coord, err := lattice.Unpack(pk)
+								if err != nil {
+									return true
+								}
+								cell, ok, _ := tx.GetCell(pk)
+								if ok {
+									cellsWithSeq = append(cellsWithSeq, cellWithSeq{
+										cell: hexxladb.CellView{
+											Coord:      coord,
+											RawContent: cell.RawContent,
+											Tags:       cell.Tags,
+											Provenance: cell.Provenance,
+											Validity:   cell.Validity,
+										},
+										seq: commitSeq,
+									})
+								}
+								return len(cellsWithSeq) < 50
+							})
+						})
+						// Sort by commit sequence (chronological order)
+						sort.Slice(cellsWithSeq, func(i, j int) bool {
+							return cellsWithSeq[i].seq < cellsWithSeq[j].seq
+						})
+
+						// Extract just the cells
+						cells := make([]hexxladb.CellView, len(cellsWithSeq))
+						for i, cw := range cellsWithSeq {
+							cells[i] = cw.cell
+						}
+
+						return cellsLoadedMsg{cells: cells}
+					})
+				}
+			}
 			return m, nil
 
 		case "3":
@@ -146,11 +205,129 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "tab":
+			oldCurrent := m.current
 			m.current = (m.current + 1) % len(m.views)
+			// Trigger cell loading when navigating to cell table
+			if m.current == 1 && oldCurrent != 1 {
+				cellTable := m.views[1].(cellTableView)
+				if !cellTable.loading && len(cellTable.cells) == 0 {
+					cellTable.loading = true
+					m.views[1] = cellTable
+					return m, tea.Tick(time.Millisecond, func(t time.Time) tea.Msg {
+						var cellsWithSeq []cellWithSeq
+						_ = m.db.View(func(tx *hexxladb.Tx) error {
+							return tx.AscendRange(nil, []byte("cell\xff"), func(k, v []byte) bool {
+								// Key format: "cell/" + packed_coord (16 bytes, big-endian) + commit_seq (8 bytes)
+								if len(k) < 5+16+8 {
+									return true
+								}
+								// Skip "cell/" prefix
+								packedBytes := k[5:21]
+								// Extract commit sequence (last 8 bytes, big-endian)
+								commitSeq := uint64(k[21])<<56 | uint64(k[22])<<48 | uint64(k[23])<<40 | uint64(k[24])<<32 | uint64(k[25])<<24 | uint64(k[26])<<16 | uint64(k[27])<<8 | uint64(k[28])
+
+								// Convert bytes to PackedCoord (big-endian: Hi first, then Lo)
+								hi := uint64(packedBytes[0])<<56 | uint64(packedBytes[1])<<48 | uint64(packedBytes[2])<<40 | uint64(packedBytes[3])<<32 | uint64(packedBytes[4])<<24 | uint64(packedBytes[5])<<16 | uint64(packedBytes[6])<<8 | uint64(packedBytes[7])
+								lo := uint64(packedBytes[8])<<56 | uint64(packedBytes[9])<<48 | uint64(packedBytes[10])<<40 | uint64(packedBytes[11])<<32 | uint64(packedBytes[12])<<24 | uint64(packedBytes[13])<<16 | uint64(packedBytes[14])<<8 | uint64(packedBytes[15])
+								pk := lattice.PackedCoord{lo, hi}
+								coord, err := lattice.Unpack(pk)
+								if err != nil {
+									return true
+								}
+								cell, ok, _ := tx.GetCell(pk)
+								if ok {
+									cellsWithSeq = append(cellsWithSeq, cellWithSeq{
+										cell: hexxladb.CellView{
+											Coord:      coord,
+											RawContent: cell.RawContent,
+											Tags:       cell.Tags,
+											Provenance: cell.Provenance,
+											Validity:   cell.Validity,
+										},
+										seq: commitSeq,
+									})
+								}
+								return len(cellsWithSeq) < 50
+							})
+						})
+						// Sort by commit sequence (chronological order)
+						sort.Slice(cellsWithSeq, func(i, j int) bool {
+							return cellsWithSeq[i].seq < cellsWithSeq[j].seq
+						})
+
+						// Extract just the cells
+						cells := make([]hexxladb.CellView, len(cellsWithSeq))
+						for i, cw := range cellsWithSeq {
+							cells[i] = cw.cell
+						}
+
+						return cellsLoadedMsg{cells: cells}
+					})
+				}
+			}
 			return m, nil
 
 		case "shift+tab":
+			oldCurrent := m.current
 			m.current = (m.current - 1 + len(m.views)) % len(m.views)
+			// Trigger cell loading when navigating to cell table
+			if m.current == 1 && oldCurrent != 1 {
+				cellTable := m.views[1].(cellTableView)
+				if !cellTable.loading && len(cellTable.cells) == 0 {
+					cellTable.loading = true
+					m.views[1] = cellTable
+					return m, tea.Tick(time.Millisecond, func(t time.Time) tea.Msg {
+						var cellsWithSeq []cellWithSeq
+						_ = m.db.View(func(tx *hexxladb.Tx) error {
+							return tx.AscendRange(nil, []byte("cell\xff"), func(k, v []byte) bool {
+								// Key format: "cell/" + packed_coord (16 bytes, big-endian) + commit_seq (8 bytes)
+								if len(k) < 5+16+8 {
+									return true
+								}
+								// Skip "cell/" prefix
+								packedBytes := k[5:21]
+								// Extract commit sequence (last 8 bytes, big-endian)
+								commitSeq := uint64(k[21])<<56 | uint64(k[22])<<48 | uint64(k[23])<<40 | uint64(k[24])<<32 | uint64(k[25])<<24 | uint64(k[26])<<16 | uint64(k[27])<<8 | uint64(k[28])
+
+								// Convert bytes to PackedCoord (big-endian: Hi first, then Lo)
+								hi := uint64(packedBytes[0])<<56 | uint64(packedBytes[1])<<48 | uint64(packedBytes[2])<<40 | uint64(packedBytes[3])<<32 | uint64(packedBytes[4])<<24 | uint64(packedBytes[5])<<16 | uint64(packedBytes[6])<<8 | uint64(packedBytes[7])
+								lo := uint64(packedBytes[8])<<56 | uint64(packedBytes[9])<<48 | uint64(packedBytes[10])<<40 | uint64(packedBytes[11])<<32 | uint64(packedBytes[12])<<24 | uint64(packedBytes[13])<<16 | uint64(packedBytes[14])<<8 | uint64(packedBytes[15])
+								pk := lattice.PackedCoord{lo, hi}
+								coord, err := lattice.Unpack(pk)
+								if err != nil {
+									return true
+								}
+								cell, ok, _ := tx.GetCell(pk)
+								if ok {
+									cellsWithSeq = append(cellsWithSeq, cellWithSeq{
+										cell: hexxladb.CellView{
+											Coord:      coord,
+											RawContent: cell.RawContent,
+											Tags:       cell.Tags,
+											Provenance: cell.Provenance,
+											Validity:   cell.Validity,
+										},
+										seq: commitSeq,
+									})
+								}
+								return len(cellsWithSeq) < 50
+							})
+						})
+						// Sort by commit sequence (chronological order)
+						sort.Slice(cellsWithSeq, func(i, j int) bool {
+							return cellsWithSeq[i].seq < cellsWithSeq[j].seq
+						})
+
+						// Extract just the cells
+						cells := make([]hexxladb.CellView, len(cellsWithSeq))
+						for i, cw := range cellsWithSeq {
+							cells[i] = cw.cell
+						}
+
+						return cellsLoadedMsg{cells: cells}
+					})
+				}
+			}
 			return m, nil
 
 		case "left", "h":
@@ -230,6 +407,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cellTable.loading = false
 		cellTable.cells = msg.cells
 		m.views[1] = cellTable
+		return m, nil
+
+	case loadContextPackMsg:
+		// Load context pack for the selected cell (handled in views)
+		return m, nil
+
+	case contextPackLoadedMsg:
+		// Update inspector with loaded context pack
+		inspector := m.views[3].(cellInspectorView)
+		inspector.pack = msg.pack
+		m.views[3] = inspector
 		return m, nil
 	}
 
