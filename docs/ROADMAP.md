@@ -20,17 +20,17 @@ Shipped with v0.1.0 release.
 - **RingDensity API** — `RingDensityMap`, `TotalDensity` in `ring_density.go`
 - **Filtered Changelog Reading** — `ReadChangelogFiltered` with `ChangelogFilter` (op codes + key prefix) in `db_changelog.go`
 - **Cell Validation Hooks** — `CellValidator` interface + `CellValidatorFunc` adapter on `Options.CellValidator`, wired into `PutCell`
+- **ASCII Hex Grid Renderer** — `RenderHexGrid` + `RenderHexGridFromDB` in `hex_render.go`
+- **Batch PutCell with Progress** — `BatchPutCells` with `BatchPutCellOptions` (batch size, progress, continue-on-error) in `batch_put.go`
+- **QueryStats on ContextPack** — `ContextPackStats` (candidates, evicted, max ring) on `ContextPack.Stats`
+- **Context Pack Explain Mode** — `CellExplanation` per-cell reasons via `LoadContextBudgetConfig.Explain`
+- **Bulk Cell Import/Export (JSON)** — `ExportCellsJSON` + `ImportCellsJSON` in `bulk_io.go`
 
 ## Quick Wins
 
 Low effort, high value. No design required.
 
 - Per-database MaxValueBytes — store limit in file header (default 8KB), expose in Options for 2KB/4KB/16KB use cases
-- QueryStats on ContextPack — visibility into why cells were included/excluded during context assembly ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
-- Bulk Cell Import/Export (JSON/CSV) — migration, testing data seeding, backup/restore pipelines
-- ASCII Hex Grid Renderer — debug/logging visualization of the lattice
-- Context Pack "Explain" Mode — per-cell inclusion reasons showing why each cell was included or evicted (budget_ok, low_confidence_evicted, ring_cutoff) for debugging token budget decisions ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
-- Batch PutCell with Progress — efficient ingestion of conversation history with progress callbacks and continue-on-error options; distinct from Import/Export for real-time streaming scenarios ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
 - Relocate secondary index logic to `internal/` — `cell_secondary.go` and `seam_secondary.go` are unexported helpers that call `tx.db.btree.Delete` directly, bypassing Tx abstraction; move to `internal/txcore` or `internal/storage` to enforce boundary ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 - Extract `views.go` to `internal/views` or `internal/app` — `TokenBudgeter`, `ByteLenBudgeter`, `LoadContextWithBudgeting` are app-layer read projections with no storage I/O; re-export only types from module root ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 - ~~Move `rotation.go` to `internal/tooling/rotation`~~ — **deferred to Near-term**; rotation uses `DB.Open`, `Tx.putDirect`, error sentinels — moving to `internal/` creates an import cycle; needs interface extraction first ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
