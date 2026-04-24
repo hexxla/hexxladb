@@ -9,7 +9,7 @@
 - **Boundary:** **`internal/domain`** and **`internal/app`** must **not** import **`internal/engine`** or **`internal/index`**. Persistence and key encoding belong in **`package hexxladb`** (module root) and **`internal/record`** / **`internal/lattice`**; outbound adapters implement ports in **`internal/adapters/out/...`** by calling only the public **`hexxladb`** API.
 - **Business rules** live in domain/app; **`cmd/.../main.go`** only constructs, injects, and runs (composition root).
 
-**Module path:** `github.com/hexxla/hexxladb`
+**Module:** `github.com/hexxla/hexxladb`
 
 **Public API:** The stable import is `github.com/hexxla/hexxladb` (package at repo root). `internal/...` is module-private. Top-level files: `db.go`, `tx.go`, `errors.go`, `options.go`, `doc.go`, `coord_export.go`, etc.
 

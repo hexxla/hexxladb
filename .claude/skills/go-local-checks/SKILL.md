@@ -11,7 +11,7 @@ Use **`make ci`** or **`./scripts/ci.sh`** — same steps as GitHub Actions (for
 
 ## Tooling model (modern Go)
 
-- **Type checking:** Go does not use a separate “type checker” tool. The **compiler** type-checks when you run `go build`, `go test`, or `go vet`. **`staticcheck`** (via golangci-lint) adds deep static analysis beyond the compiler.
+- **Type checking:** Go does not use a separate "type checker" tool. The **compiler** type-checks when you run `go build`, `go test`, or `go vet`. **`staticcheck**` (via golangci-lint) adds deep static analysis beyond the compiler.
 - **Linting:** **[golangci-lint](https://golangci-lint.run/) v2** with `.golangci.yml` — **`linters.default: standard`** (govet, staticcheck, errcheck, ineffassign, unused) **plus** enabled linters such as **errorlint**, **gosec**, **gocritic**, **revive**, **bodyclose**, **misspell**, **modernize**, **nolintlint**, **copyloopvar**. See [linters](https://golangci-lint.run/docs/linters/) and the config file.
 - **Formatting:** CI uses **`gofmt -l`** in `scripts/ci.sh`. `.golangci.yml` enables **`gofmt`** (with **`simplify: true`**) and **`goimports`** with **`local-prefixes`** set to this module so **`golangci-lint fmt ./...`** sorts imports and groups `github.com/hexxla/...` after third-party code ([formatter settings](https://golangci-lint.run/docs/formatters/configuration/)). Run **`make fmt`** for plain `gofmt -w`, or **`golangci-lint fmt ./...`** for goimports + gofmt together.
 
@@ -19,7 +19,7 @@ Use **`make ci`** or **`./scripts/ci.sh`** — same steps as GitHub Actions (for
 
 IDE-specific hooks require **`jq`** on `PATH`. They run **`gofmt -w`** after Go writes, warn on stderr for common secret patterns in edited files, gate some shell commands, and block prompts that look like pasted tokens. This does **not** replace secret scanning in CI (**gitleaks**, etc.).
 
-Hooks are configured in `.windsurf/hooks.json`.
+Hooks are configured in `.claude/settings.json`.
 
 ## Shell: `golangci-lint` not found (Fish)
 

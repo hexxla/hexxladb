@@ -1,0 +1,16 @@
+# Internal Hexagonal Rules
+
+**Applies to:** `internal/**/*.go`
+**Always apply:** No
+
+---
+
+Applies when editing **`internal/**/*.go`**. Full rules: **`docs/context/HEXAGONAL_ARCHITECTURE.md`** (dependency table, folder meanings).
+
+**Quick checks:**
+
+- New **interfaces** (ports) belong in **`internal/domain`**, **`internal/app`**, or optional **`internal/port`**—not in **`internal/adapters/...`**.
+- **New packages** should follow **`internal/adapters/in/...`** (inbound) vs **`internal/adapters/out/...`** (outbound), not a flat mix without direction.
+- **Tests** in domain/app should use fakes or test doubles for ports so **`go test ./...`** stays fast unless a build tag says otherwise.
+
+**Anti-patterns:** DB/HTTP/framework imports inside **`internal/domain`** or **`internal/app`**; business logic inside adapter handlers or repos without going through domain/app.

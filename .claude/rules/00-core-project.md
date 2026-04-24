@@ -1,6 +1,8 @@
----
-name: core-project
-description: Project-wide module identity, hexagonal boundaries, and architecture guidance
+# Core Project Rules
+
+**Applies to:** All files
+**Always apply:** Yes
+
 ---
 
 ## Module
@@ -9,7 +11,7 @@ description: Project-wide module identity, hexagonal boundaries, and architectur
 
 ## Architecture (hexagonal)
 
-The full layout, dependency table, and workflows live in **`docs/context/HEXAGONAL_ARCHITECTURE.md`**. Follow that document when it conflicts with generic “standard Go project layout” advice.
+The full layout, dependency table, and workflows live in **`docs/context/HEXAGONAL_ARCHITECTURE.md`**. Follow that document when it conflicts with generic "standard Go project layout" advice.
 
 **Invariants (short):**
 
@@ -22,17 +24,14 @@ The full layout, dependency table, and workflows live in **`docs/context/HEXAGON
 ## Public API layout (module root)
 
 - The stable import **`github.com/hexxla/hexxladb`** is **`package hexxladb`** in the **repo root** (`.go` files next to `go.mod`). **`internal/...`** is module-private; external callers use only the root package and **`cmd/...`** for the binary.
+- Full rationale and file roles: see below in this CLAUDE.md (same content expanded).
 
 ## Modern Go
 
-- **Modern Go:** Honor the `go` directive in `go.mod` as minimum language version. Use deliberate features from current Go release notes.
-  - Prefer `errors.Is` / `errors.As` and `fmt.Errorf` with `%w` for public API error semantics.
-  - Use integer range loops (`for i := range n`) where they simplify code.
-  - New benchmarks should use `testing.B.Loop` (Go 1.24+) unless custom loop needed.
-  - Structured logging in `cmd/` and adapters should use `log/slog` (not printf).
+- Follow the _Modern Go_ section below for toolchain version (`go.mod`), **`errors.Is` / `errors.As`**, **`log/slog`** in cmd/adapters, **`testing.B.Loop`** for new benchmarks, and CI expectations.
 - Release inventory: **`docs/context/MODERN_GO.md`** — use as a **lookup**, not a checklist to apply every API.
 - Verify changes with **`make ci`**.
-- **Linting:** Address root causes (correctness, bounds, safer APIs, small refactors) instead of `//nolint` or blanket suppressions. Use `nolint` only sparingly, with a specific linter name and one-line justification, when the finding is a documented false positive or the fix would be clearly worse (e.g. generated code). If unsure, prefer a code change and re-run `make ci`.
+- Prefer **fixing** linter findings over **`//nolint`**; see _Linting_ section below.
 
 ## Optional later
 
