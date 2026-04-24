@@ -32,6 +32,7 @@
 | `docs/hexxladb/OPERATIONS.md`    | Production operations          |
 | `docs/ROADMAP.md`                | Roadmap and out-of-scope items |
 | `doc.go`                         | Package-level documentation    |
+| `docs/context/MODERN_GO.md`      | Go 1.21–1.26 feature inventory |
 
 Do not duplicate `HEXAGONAL_ARCHITECTURE.md` — reference it.
 

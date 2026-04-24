@@ -41,25 +41,25 @@ var (
 
 func printHeader(title string) {
 	fmt.Println()
-	separatorStyle.Println(strings.Repeat("═", 60))
-	headerStyle.Println("  ▶ " + title)
-	separatorStyle.Println(strings.Repeat("═", 60))
+	_, _ = separatorStyle.Println(strings.Repeat("═", 60))
+	_, _ = headerStyle.Println("  ▶ " + title)
+	_, _ = separatorStyle.Println(strings.Repeat("═", 60))
 }
 
 func printSuccess(msg string) {
-	successStyle.Println("  ✓ " + msg)
+	_, _ = successStyle.Println("  ✓ " + msg)
 }
 
 func printInfo(label, value string) {
-	infoStyle.Printf("  %-20s ", label+":")
-	dataStyle.Println(value)
+	_, _ = infoStyle.Printf("  %-20s ", label+":")
+	_, _ = dataStyle.Println(value)
 }
 
 func printMetric(name string, value any, unit string) {
-	metricStyle.Printf("  📊 %-25s ", name+":")
-	accentStyle.Printf("%v", value)
+	_, _ = metricStyle.Printf("  📊 %-25s ", name+":")
+	_, _ = accentStyle.Printf("%v", value)
 	if unit != "" {
-		dimStyle.Println(" " + unit)
+		_, _ = dimStyle.Println(" " + unit)
 	} else {
 		fmt.Println()
 	}
@@ -68,7 +68,7 @@ func printMetric(name string, value any, unit string) {
 func main() {
 	log.SetFlags(0)
 	if err := run(); err != nil {
-		errorStyle.Println("\n  ✗ Error: " + err.Error())
+		_, _ = errorStyle.Println("\n  ✗ Error: " + err.Error())
 		os.Exit(1)
 	}
 }
@@ -76,10 +76,10 @@ func main() {
 func run() error {
 	ctx := context.Background()
 	dir := filepath.Join(".tmp", "conversational_memory")
-	_ = os.MkdirAll(dir, 0750)
+	_ = os.MkdirAll(dir, 0o750)
 
 	printHeader("Conversational Memory Service")
-	infoStyle.Println("  Building a production LLM memory system with HexxlaDB")
+	_, _ = infoStyle.Println("  Building a production LLM memory system with HexxlaDB")
 	fmt.Println()
 
 	// ═══════════════════════════════════════════════════════════════
@@ -99,12 +99,12 @@ func run() error {
 		},
 	}
 
-	infoStyle.Println("  Opening database with MVCC enabled...")
+	_, _ = infoStyle.Println("  Opening database with MVCC enabled...")
 	db, err := hexxladb.Open(dbPath, opts)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	printSuccess("Database initialized")
 	printInfo("Path", dbPath)
@@ -130,7 +130,7 @@ func run() error {
 		{"assistant", "HexxlaDB is designed for spatial LLM memory...", []string{"answer", "user-123", "hexxladb"}},
 	}
 
-	infoStyle.Printf("  Processing %d conversation turns...\n", len(conversation))
+	_, _ = infoStyle.Printf("  Processing %d conversation turns...\n", len(conversation))
 	fmt.Println()
 
 	var cells []lattice.Coord
@@ -161,16 +161,16 @@ func run() error {
 			return fmt.Errorf("store message %d: %w", i, err)
 		}
 
-		roleColor := dimStyle
+		var roleColor *color.Color
 		if msg.role == "user" {
 			roleColor = color.New(color.FgGreen)
 		} else {
 			roleColor = color.New(color.FgBlue)
 		}
 
-		dimStyle.Printf("    [%d] ", i)
-		roleColor.Printf("%-10s", msg.role)
-		dataStyle.Printf(" %s\n", truncate(msg.content, 45))
+		_, _ = dimStyle.Printf("    [%d] ", i)
+		_, _ = roleColor.Printf("%-10s", msg.role)
+		_, _ = dataStyle.Printf(" %s\n", truncate(msg.content, 45))
 	}
 
 	fmt.Println()
@@ -182,7 +182,7 @@ func run() error {
 	// ═══════════════════════════════════════════════════════════════
 	printHeader("Phase 3: Contradiction Detection")
 
-	infoStyle.Println("  Checking for conflicting preferences...")
+	_, _ = infoStyle.Println("  Checking for conflicting preferences...")
 	fmt.Println()
 
 	// User changed their preference - mark as conflict
@@ -194,11 +194,11 @@ func run() error {
 			return fmt.Errorf("mark conflict: %w", err)
 		}
 
-		warningStyle.Println("  ⚠ Detected contradiction:")
-		infoStyle.Printf("    Between: ")
-		dataStyle.Println(fmt.Sprintf("cell[0] (%d,%d) and cell[2] (%d,%d)", cells[0].Q, cells[0].R, cells[2].Q, cells[2].R))
-		infoStyle.Printf("    Reason:  ")
-		dataStyle.Println("User preference changed: detailed vs concise")
+		_, _ = warningStyle.Println("  ⚠ Detected contradiction:")
+		_, _ = infoStyle.Printf("    Between: ")
+		_, _ = dataStyle.Println(fmt.Sprintf("cell[0] (%d,%d) and cell[2] (%d,%d)", cells[0].Q, cells[0].R, cells[2].Q, cells[2].R))
+		_, _ = infoStyle.Printf("    Reason:  ")
+		_, _ = dataStyle.Println("User preference changed: detailed vs concise")
 		fmt.Println()
 		printSuccess("Seam created to track contradiction")
 	}
@@ -211,7 +211,7 @@ func run() error {
 
 	center := cells[len(cells)-1] // Last message coordinate as context center
 
-	infoStyle.Printf("  Assembling context around coordinate (%d,%d)...\n", center.Q, center.R)
+	_, _ = infoStyle.Printf("  Assembling context around coordinate (%d,%d)...\n", center.Q, center.R)
 	fmt.Println()
 
 	// First, load without budget constraint to see total size
@@ -236,7 +236,7 @@ func run() error {
 
 	// Now load with byte budget (simulating token limit)
 	budget := 150 // bytes
-	infoStyle.Printf("  Applying byte budget of %d...\n", budget)
+	_, _ = infoStyle.Printf("  Applying byte budget of %d...\n", budget)
 	fmt.Println()
 
 	opts2 := hexxladb.DefaultAssembleCellViewOpts()
@@ -269,10 +269,10 @@ func run() error {
 
 	if len(pack.Seams) > 0 {
 		fmt.Println()
-		warningStyle.Printf("  ⚠ %d seam(s) present in context:\n", len(pack.Seams))
+		_, _ = warningStyle.Printf("  ⚠ %d seam(s) present in context:\n", len(pack.Seams))
 		for _, seam := range pack.Seams {
-			dimStyle.Printf("    • %v ↔ %v: ", seam.CellA, seam.CellB)
-			dataStyle.Println(seam.Reason)
+			_, _ = dimStyle.Printf("    • %v ↔ %v: ", seam.CellA, seam.CellB)
+			_, _ = dataStyle.Println(seam.Reason)
 		}
 	}
 
@@ -286,10 +286,10 @@ func run() error {
 	printHeader("Phase 5: Query Patterns")
 
 	// Query by tag
-	infoStyle.Println("  Query: All cells tagged 'preferences'...")
+	_, _ = infoStyle.Println("  Query: All cells tagged 'preferences'...")
 	var prefCells int
 	err = db.View(func(tx *hexxladb.Tx) error {
-		return tx.AscendCellsByTag(ctx, "preferences", func(rec record.CellRecord) bool {
+		return tx.AscendCellsByTag(ctx, "preferences", func(_ record.CellRecord) bool {
 			prefCells++
 			return true
 		})
@@ -301,10 +301,10 @@ func run() error {
 	fmt.Println()
 
 	// Query by source
-	infoStyle.Println("  Query: All cells from this session...")
+	_, _ = infoStyle.Println("  Query: All cells from this session...")
 	var sessionCells int
 	err = db.View(func(tx *hexxladb.Tx) error {
-		return tx.AscendCellsBySource(ctx, sessionID, func(rec record.CellRecord) bool {
+		return tx.AscendCellsBySource(ctx, sessionID, func(_ record.CellRecord) bool {
 			sessionCells++
 			return true
 		})
@@ -330,7 +330,7 @@ func run() error {
 	printMetric("Current commit seq", stats.CommitSeq, "")
 
 	if stats.CommitSeq > 1 {
-		infoStyle.Printf("  Querying at commit seq %d (after storing 3 messages)...\n", stats.CommitSeq-2)
+		_, _ = infoStyle.Printf("  Querying at commit seq %d (after storing 3 messages)...\n", stats.CommitSeq-2)
 
 		var historicalCount int
 		err = db.ViewAt(stats.CommitSeq-2, func(tx *hexxladb.Tx) error {
@@ -352,15 +352,15 @@ func run() error {
 	// COMPLETION
 	// ═══════════════════════════════════════════════════════════════
 	printHeader("Example Complete")
-	successStyle.Println("  ✓ Conversational memory service demonstration finished")
-	dimStyle.Printf("  Database: %s\n", dbPath)
-	dimStyle.Printf("  Size: ~%.1f KB (depends on content)\n", float64(totalBytes)/1024)
+	_, _ = successStyle.Println("  ✓ Conversational memory service demonstration finished")
+	_, _ = dimStyle.Printf("  Database: %s\n", dbPath)
+	_, _ = dimStyle.Printf("  Size: ~%.1f KB (depends on content)\n", float64(totalBytes)/1024)
 	fmt.Println()
-	infoStyle.Println("  Next steps:")
-	dimStyle.Println("    • Integrate with your LLM client")
-	dimStyle.Println("    • Implement your own TokenBudgeter (e.g., using tiktoken)")
-	dimStyle.Println("    • Add encryption for production deployments")
-	dimStyle.Println("    • See docs/hexxladb/API_REFERENCE.md for full API")
+	_, _ = infoStyle.Println("  Next steps:")
+	_, _ = dimStyle.Println("    • Integrate with your LLM client")
+	_, _ = dimStyle.Println("    • Implement your own TokenBudgeter (e.g., using tiktoken)")
+	_, _ = dimStyle.Println("    • Add encryption for production deployments")
+	_, _ = dimStyle.Println("    • See docs/hexxladb/API_REFERENCE.md for full API")
 	fmt.Println()
 
 	return nil
