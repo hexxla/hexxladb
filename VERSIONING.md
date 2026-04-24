@@ -1,16 +1,37 @@
 # Versioning and compatibility
 
-**Current version:** `v1.0.0` — Stable release.
+**Current version:** `v0.1.0` — Initial development release.
 
 This document describes how **module versions**, **Go API stability**, and **on-disk format** relate for [`github.com/hexxla/hexxladb`](https://github.com/hexxla/hexxladb).
 
 ## Go module (semver)
 
-The module follows [Go module version numbering](https://go.dev/ref/mod#semantic-versioning):
+The module follows [Semantic Versioning 2.0.0](https://semver.org/):
 
-- **`v1.x.y`** — Stable public API. Breaking changes to **exported** identifiers in `package hexxladb` require a **major version** bump (`v2`, …).
-- **Minor** bumps (`v1.1.0`, `v1.2.0`) add features backward-compatibly.
-- **Patch** bumps (`v1.0.1`, `v1.0.2`) are fixes only.
+### Version format
+
+Versions follow `MAJOR.MINOR.PATCH` (e.g., `v0.1.0`, `v1.2.3`).
+
+- **MAJOR** — Breaking changes to the public API
+- **MINOR** — New functionality, backward-compatible
+- **PATCH** — Bug fixes, backward-compatible
+
+### 0.y.z initial development phase
+
+- **`v0.x.y`** — API may evolve. Breaking changes are allowed while the project matures.
+  - Start at `v0.1.0` for first usable release
+  - Increment **minor** for each subsequent release with new features
+  - Increment **patch** for fixes
+- **`v1.0.0`** — First stable release when:
+  - Software is used in production
+  - Stable API on which users depend
+  - Backward compatibility becomes a primary concern
+
+### Post-1.0 stable phase
+
+- **`v1.x.y` and later** — Breaking changes require **major** version bump (`v2`, …)
+- **Minor** bumps (`v1.1.0`) add features backward-compatibly
+- **Patch** bumps (`v1.0.1`) are fixes only
 
 **Internal packages** (`internal/...`) are not a compatibility promise: they may change at any release. Embed HexxlaDB only through the root module API and documented behavior.
 
