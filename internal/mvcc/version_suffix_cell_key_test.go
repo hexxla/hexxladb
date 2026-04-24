@@ -1,4 +1,4 @@
-package mvccspike_test
+package mvcc_test
 
 import (
 	"path/filepath"
@@ -6,7 +6,7 @@ import (
 
 	"github.com/hexxla/hexxladb"
 	"github.com/hexxla/hexxladb/internal/lattice"
-	"github.com/hexxla/hexxladb/internal/mvccspike"
+	"github.com/hexxla/hexxladb/internal/mvcc"
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
@@ -17,8 +17,8 @@ func TestCellPhysicalKeyWithVersionSuffix_parseCommitSeqRoundTrip(t *testing.T) 
 		t.Fatal(err)
 	}
 	const want uint64 = 0xdeadbeefcafebabe
-	k := mvccspike.CellPhysicalKeyWithVersionSuffix(p, want)
-	got, ok := mvccspike.ParseCommitSeqFromPhysicalKey(k)
+	k := mvcc.CellPhysicalKeyWithVersionSuffix(p, want)
+	got, ok := mvcc.ParseCommitSeqFromPhysicalKey(k)
 	if !ok {
 		t.Fatal("ParseCommitSeqFromPhysicalKey")
 	}
@@ -54,8 +54,8 @@ func TestCellPhysicalKeyWithVersionSuffix_twoCommitsVisibleByReadSeq(t *testing.
 	}
 
 	const seq1, seq2 uint64 = 1, 2
-	k1 := mvccspike.CellPhysicalKeyWithVersionSuffix(p, seq1)
-	k2 := mvccspike.CellPhysicalKeyWithVersionSuffix(p, seq2)
+	k1 := mvcc.CellPhysicalKeyWithVersionSuffix(p, seq1)
+	k2 := mvcc.CellPhysicalKeyWithVersionSuffix(p, seq2)
 
 	if err = db.Update(func(tx *hexxladb.Tx) error {
 		if err := tx.Put(k1, wire1); err != nil {
@@ -66,16 +66,16 @@ func TestCellPhysicalKeyWithVersionSuffix_twoCommitsVisibleByReadSeq(t *testing.
 		t.Fatal(err)
 	}
 
-	from, to := mvccspike.CellVersionSuffixScanBounds(p)
-	var got []mvccspike.VersionKV
+	from, to := mvcc.CellVersionSuffixScanBounds(p)
+	var got []mvcc.VersionKV
 	err = db.View(func(tx *hexxladb.Tx) error {
 		return tx.AscendRange(from, to, func(k, v []byte) bool {
-			seq, ok := mvccspike.ParseCommitSeqFromPhysicalKey(k)
+			seq, ok := mvcc.ParseCommitSeqFromPhysicalKey(k)
 			if !ok {
 				t.Errorf("bad physical key %q", k)
 				return false
 			}
-			got = append(got, mvccspike.VersionKV{CommitSeq: seq, Value: append([]byte(nil), v...)})
+			got = append(got, mvcc.VersionKV{CommitSeq: seq, Value: append([]byte(nil), v...)})
 			return true
 		})
 	})
@@ -96,7 +96,7 @@ func TestCellPhysicalKeyWithVersionSuffix_twoCommitsVisibleByReadSeq(t *testing.
 		{99, "v-at-seq-2"},
 	}
 	for _, tc := range cases {
-		val, seq, ok := mvccspike.SelectVisible(got, tc.readSeq)
+		val, seq, ok := mvcc.SelectVisible(got, tc.readSeq)
 		if tc.want == "" {
 			if ok {
 				t.Fatalf("readSeq=%d: want missing, got seq=%d val=%q", tc.readSeq, seq, val)
@@ -132,8 +132,8 @@ func BenchmarkCellPhysicalKeyWithVersionSuffix_putTwoPhysicalRows(b *testing.B) 
 	if err != nil {
 		b.Fatal(err)
 	}
-	k1 := mvccspike.CellPhysicalKeyWithVersionSuffix(p, 1)
-	k2 := mvccspike.CellPhysicalKeyWithVersionSuffix(p, 2)
+	k1 := mvcc.CellPhysicalKeyWithVersionSuffix(p, 1)
+	k2 := mvcc.CellPhysicalKeyWithVersionSuffix(p, 2)
 	b.ResetTimer()
 	for b.Loop() {
 		err = db.Update(func(tx *hexxladb.Tx) error {
@@ -164,7 +164,7 @@ func BenchmarkCellPhysicalKeyWithVersionSuffix_putOnePhysicalRow(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	k := mvccspike.CellPhysicalKeyWithVersionSuffix(p, 1)
+	k := mvcc.CellPhysicalKeyWithVersionSuffix(p, 1)
 	b.ResetTimer()
 	for b.Loop() {
 		err = db.Update(func(tx *hexxladb.Tx) error {
