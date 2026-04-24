@@ -34,10 +34,16 @@
 | `doc.go`                         | Package-level documentation    |
 | `docs/context/MODERN_GO.md`      | Go 1.21–1.26 feature inventory |
 
-**Session tracking:** Update `TODOS.md` and `CHANGELOG.md` when working on related items:
+**Session tracking:** Update [`TODOS.md`](../TODOS.md) and [`CHANGELOG.md`](../CHANGELOG.md) when working on related items:
 
 - **TODOS.md** — lightweight session state; move items to Completed as work finishes; add new discoveries to Pending
 - **CHANGELOG.md** — user-facing changes; add entries under `## [Unreleased]` for any user-visible feature, fix, or breaking change
+
+**Versioning:** Follow [`VERSIONING.md`](../VERSIONING.md) (Semantic Versioning 2.0.0). Current: `v0.1.0`.
+
+- Propose version bumps based on work: **minor** for features, **patch** for fixes, document breaking changes
+- During v0.y.z phase: increment minor for releases with new features, patch for fixes only
+- Before v1.0.0: breaking changes allowed but must be documented in CHANGELOG
 
 Do not duplicate `HEXAGONAL_ARCHITECTURE.md` — reference it.
 
