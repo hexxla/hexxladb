@@ -1,0 +1,55 @@
+# Safe commands that Codex can run without prompting
+# Location: .codex/rules/safe-commands.rules
+
+# Standard read-only git operations
+readonly_git = [
+    ["git", "status"],
+    ["git", "log"],
+    ["git", "diff"],
+    ["git", "show"],
+    ["git", "branch"],
+    ["git", "remote", "-v"],
+]
+
+for cmd in readonly_git:
+    prefix_rule(
+        pattern = cmd,
+        decision = "allow",
+        justification = "Read-only git operation, safe to run.",
+    )
+
+# Standard Go tooling (read-only or local only)
+safe_go = [
+    ["go", "build"],
+    ["go", "test"],
+    ["go", "vet"],
+    ["go", "mod", "tidy"],
+    ["go", "fmt"],
+    ["gofmt", "-l"],
+    ["gofmt", "-w"],
+]
+
+for cmd in safe_go:
+    prefix_rule(
+        pattern = cmd,
+        decision = "allow",
+        justification = "Standard Go toolchain command, safe for local development.",
+    )
+
+# File reading and listing
+safe_files = [
+    ["ls"],
+    ["cat"],
+    ["head"],
+    ["tail"],
+    ["less"],
+    ["find"],
+    ["grep"],
+]
+
+for cmd in safe_files:
+    prefix_rule(
+        pattern = cmd,
+        decision = "allow",
+        justification = "Read-only file operation.",
+    )

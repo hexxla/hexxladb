@@ -37,20 +37,20 @@ That includes: **`gofmt -l`**, **`go vet ./...`**, **`go test -race ./...`**, **
 
 Shortcuts:
 
-| Command             | Purpose                                                                                                                                             |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `make test`         | Tests with `-race`                                                                                                                                  |
-| `make vet`          | `go vet` only                                                                                                                                       |
-| `make govulncheck`  | Vulnerability scan only (also part of `make ci`)                                                                                                    |
-| `make lint`         | golangci-lint (requires binary on `PATH`)                                                                                                           |
-| `make fmt`          | `gofmt -w` on module `.go` files                                                                                                                    |
-| `make clean`        | Remove `bin/` (from `make build`)                                                                                                                   |
-| `make help`         | List Makefile targets                                                                                                                               |
-| `make integration`  | Optional **`//go:build integration`** tests (`-race`); not part of default CI. GitHub Actions runs the same on a [weekly + manual](.github/workflows/integration.yml) schedule.                                                                       |
-| `make stress`       | Optional **`//go:build stress`** tests (very large `PutCell` counts; **`TMPDIR`** defaults to repo `./.tmp`; **not** CI)                             |
-| `make bench`        | Benchmarks (`go test -bench=. -benchmem ./...`); **not** run in default CI                                                                          |
-| `make bench-stress` | Longer **`BenchmarkAPI_*`** (preload 512 / 2k / 10k per sub-bench); **not** in CI |
-| `make fuzz`         | Short fuzz smoke on internal decoders (~2s per target); **not** in default CI                                                                       |
+| Command             | Purpose                                                                                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `make test`         | Tests with `-race`                                                                                                                                                              |
+| `make vet`          | `go vet` only                                                                                                                                                                   |
+| `make govulncheck`  | Vulnerability scan only (also part of `make ci`)                                                                                                                                |
+| `make lint`         | golangci-lint (requires binary on `PATH`)                                                                                                                                       |
+| `make fmt`          | `gofmt -w` on module `.go` files                                                                                                                                                |
+| `make clean`        | Remove `bin/` (from `make build`)                                                                                                                                               |
+| `make help`         | List Makefile targets                                                                                                                                                           |
+| `make integration`  | Optional **`//go:build integration`** tests (`-race`); not part of default CI. GitHub Actions runs the same on a [weekly + manual](.github/workflows/integration.yml) schedule. |
+| `make stress`       | Optional **`//go:build stress`** tests (very large `PutCell` counts; **`TMPDIR`** defaults to repo `./.tmp`; **not** CI)                                                        |
+| `make bench`        | Benchmarks (`go test -bench=. -benchmem ./...`); **not** run in default CI                                                                                                      |
+| `make bench-stress` | Longer **`BenchmarkAPI_*`** (preload 512 / 2k / 10k per sub-bench); **not** in CI                                                                                               |
+| `make fuzz`         | Short fuzz smoke on internal decoders (~2s per target); **not** in default CI                                                                                                   |
 
 ## Benchmarks and fuzzing
 
@@ -88,9 +88,11 @@ Follow **[`docs/context/HEXAGONAL_ARCHITECTURE.md`](docs/context/HEXAGONAL_ARCHI
 
 ## IDE / editor assets
 
-This repo **tracks** IDE-specific directories for both Cursor and Windsurf:
+This repo **tracks** IDE-specific directories for supported AI coding assistants:
 
-- **`.cursor/`** (rules, skills, optional hook scripts referenced by **`.cursor/hooks.json`**)
-- **`.windsurf/`** (rules, skills, optional hook scripts referenced by **`.windsurf/hooks.json`**)
+- **`.cursor/`** — Cursor IDE rules, skills, and hooks
+- **`.windsurf/`** — Windsurf IDE rules, skills, and hooks
+- **`.claude/`** — Claude Code rules, skills, and hooks
+- **`.codex/`** — OpenAI Codex rules, agents, and hooks
 
-These directories are **not** listed in **`.gitignore`** so they're available for forks and contributors using either IDE.
+These directories are **not** listed in **`.gitignore`** so they're available for forks and contributors using any supported IDE.

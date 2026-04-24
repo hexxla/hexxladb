@@ -1,0 +1,42 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/format-go.sh"
+          },
+          {
+            "type": "command",
+            "command": ".claude/hooks/scan-secrets-edited.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "if": "command =~ (curl|wget|sudo |^rm|kubectl delete|docker push)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/guard-shell.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/scan-prompt-secrets.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

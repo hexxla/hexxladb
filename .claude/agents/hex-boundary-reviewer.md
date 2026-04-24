@@ -5,9 +5,9 @@ model: inherit
 readonly: true
 ---
 
-_Placeholder._ Replace this prompt once domain, ports, and adapter packages are defined in `.cursor/rules` and `docs/`.
+_Placeholder._ Replace this prompt once domain, ports, and adapter packages are defined in `.claude/rules` and `docs/`.
 
-You will review changes for alignment with the project’s hexagonal boundaries.
+You will review changes for alignment with the project's hexagonal boundaries.
 
 When populated, you should:
 

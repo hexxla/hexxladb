@@ -68,12 +68,12 @@ Rename the module in `go.mod` when you fork; update imports everywhere.
 
 **Add a port + outbound adapter** when behavior is **not** pure in that sense: it crosses a **network**, **disk**, **vendor SDK**, **HSM/KMS**, or you **must** substitute real vs test doubles behind a stable **`interface`** shared by multiple implementations. **Add or extend an inbound adapter** when you introduce a **new way into** the application (new routes, transport, or CLI)—not for each internal step of a single use case.
 
-| Kind of work | Typical home |
-| --- | --- |
-| Deterministic rules; pure functions; domain errors | **`internal/domain`** |
-| Orchestration: call domain + ports in order | **`internal/app`** |
-| Decode/encode a **protocol**; HTTP status mapping; auth middleware glue | **`internal/adapters/in/...`** |
-| Implement **`interface`** with **I/O** or **external systems** | **`internal/adapters/out/...`** |
+| Kind of work                                                            | Typical home                    |
+| ----------------------------------------------------------------------- | ------------------------------- |
+| Deterministic rules; pure functions; domain errors                      | **`internal/domain`**           |
+| Orchestration: call domain + ports in order                             | **`internal/app`**              |
+| Decode/encode a **protocol**; HTTP status mapping; auth middleware glue | **`internal/adapters/in/...`**  |
+| Implement **`interface`** with **I/O** or **external systems**          | **`internal/adapters/out/...`** |
 
 **Anti-pattern:** Creating **`internal/adapters/out/foo`** (or extra inbound layers) only to wrap stdlib or domain code with no real boundary—adds indirection without a new **integration** or **substitution** point. Prefer **domain** until a port is justified.
 
@@ -134,11 +134,11 @@ This module can be **application-only** (deployable service, nothing to `import`
 
 ### Go import visibility
 
-| Location | Who may import it |
-| --- | --- |
-| **`internal/...`** | **Only this module** (enforced by the compiler). Default home for the full hexagon: **domain**, **app**, **adapters**, **config** used by your binaries. |
-| **`pkg/...`** | **Any module** that adds a `require` on yours ([Standard Go Project Layout](https://github.com/golang-standards/project-layout)). Use for **stable, intentional** public API. |
-| **Packages at the module root** (not `internal`) | Also importable by others—many teams prefer **`pkg/`** so “public surface” is obvious and **`internal/`** stays the default for private code. |
+| Location                                         | Who may import it                                                                                                                                                             |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`internal/...`**                               | **Only this module** (enforced by the compiler). Default home for the full hexagon: **domain**, **app**, **adapters**, **config** used by your binaries.                      |
+| **`pkg/...`**                                    | **Any module** that adds a `require` on yours ([Standard Go Project Layout](https://github.com/golang-standards/project-layout)). Use for **stable, intentional** public API. |
+| **Packages at the module root** (not `internal`) | Also importable by others—many teams prefer **`pkg/`** so “public surface” is obvious and **`internal/`** stays the default for private code.                                 |
 
 **Go’s `internal` rule (compiler):** Packages inside **`internal/...`** may only be imported from code **under the same parent directory** as **`internal`** (i.e. the rest of **this module**), which **includes** **`pkg/...`**. So **`pkg` is allowed to import `internal`**—the language does not forbid it.
 
@@ -146,11 +146,11 @@ This module can be **application-only** (deployable service, nothing to `import`
 
 ### What belongs in `pkg/` vs `internal/`
 
-| Put in **`pkg/<name>/...`** | Keep in **`internal/...`** |
-| --- | --- |
-| Types, interfaces, and **pure** functions you **semver** and document for external callers | Concrete **adapters** (HTTP, SQL, queues), **internal** app wiring, and anything tied to **one** deployment |
-| A **narrow facade** (e.g. `NewClient`, `Service` interface, shared DTOs) if you hide implementation behind an API | **`cmd/`**-specific glue except what you deliberately expose |
-| Reusable **domain concepts** you want consumers to embed (optional—only if they are part of your **contract**) | **Secrets**, env-only config, and **composition roots** |
+| Put in **`pkg/<name>/...`**                                                                                       | Keep in **`internal/...`**                                                                                  |
+| ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Types, interfaces, and **pure** functions you **semver** and document for external callers                        | Concrete **adapters** (HTTP, SQL, queues), **internal** app wiring, and anything tied to **one** deployment |
+| A **narrow facade** (e.g. `NewClient`, `Service` interface, shared DTOs) if you hide implementation behind an API | **`cmd/`**-specific glue except what you deliberately expose                                                |
+| Reusable **domain concepts** you want consumers to embed (optional—only if they are part of your **contract**)    | **Secrets**, env-only config, and **composition roots**                                                     |
 
 Keep **`pkg/`** **small**. Every exported symbol is a **compatibility** promise; adapters and churn stay **private** in **`internal/`**.
 
@@ -164,7 +164,7 @@ Keep **`pkg/`** **small**. Every exported symbol is a **compatibility** promise;
 ### Versioning and docs
 
 - Treat **`pkg/`** as **stable API**: follow [semantic versioning](https://semver.org/) for module tags; avoid breaking changes without a **major** bump.
-- Document exported packages in **`CONTRIBUTING.md`** or **package doc comments**; use **`.cursor/rules/pkg-public-api.mdc`** when **`pkg/`** exists.
+- Document exported packages in **`CONTRIBUTING.md`** or **package doc comments**; add IDE-specific rules (e.g., `.cursor/rules/pkg-public-api.mdc`) when **`pkg/`** exists.
 
 This template **does not** create **`pkg/`** by default. Add it when you have a **clear** public surface; until then, **`internal/`** + **`cmd/`** are enough for a service-only repo.
 
@@ -238,7 +238,7 @@ Network client
 
 - **Authoritative gate (same as GitHub Actions):** **`make ci`** (runs **`scripts/ci.sh`**) — `gofmt` check, **`go vet`**, **`go test -race`**, **`govulncheck`**, **`golangci-lint run`**, **`go mod tidy`** (+ git cleanliness for module files when **`CI=true`**).
 - **Optional Git pre-commit:** **`.pre-commit-config.yaml`** ([pre-commit.com](https://pre-commit.com)) runs on `git commit`: file hygiene, **`golangci-lint fmt`** / **`golangci-lint-full`** (pinned like CI), **`go test`** (without `-race` for speed). Install: `pip install pre-commit` and `make pre-commit-install`. This does **not** replace `make ci` before push.
-- **Cursor-only:** **`.cursor/hooks.json`** (format on save, secret-pattern warnings, shell guard)—for IDE sessions, not Git.
+- **IDE-specific hooks:** Each supported IDE (Cursor, Windsurf, Claude Code, Codex) has its own hook configuration for format-on-save, secret-pattern warnings, and shell guards. See the respective `.cursor/`, `.windsurf/`, `.claude/`, or `.codex/` directories.
 
 **Unit tests:** Prefer **fakes** and small **test doubles** for ports; keep the default test run **fast**.
 
@@ -283,14 +283,14 @@ This template does **not** require DDD aggregates, event sourcing, CQRS, or extr
 
 ## Where else to look
 
-| Location | Role |
-| --- | --- |
-| **`.cursor/rules/`** | Project and layering hints for editors/agents. |
-| **`.cursor/skills/`** | Short workflows (local checks, CI, hexagonal change). |
-| **`Makefile`**, **`scripts/ci.sh`** | Full local CI parity (`make ci`). |
-| **`CHANGELOG.md`** | How release notes relate to semver; Keep a Changelog–style **examples** (this template does not maintain a version history file). |
-| **`.pre-commit-config.yaml`** | Optional Git `pre-commit` hooks (`make pre-commit-install`). |
-| **`AGENTS.md`** | Short agent-facing invariants + pointer to this doc. |
-| **`.cursor/rules/pkg-public-api.mdc`** | When **`pkg/`** exists: stability and export rules for the public library surface. |
+| Location                                                                               | Role                                                                                                                              |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| **`.cursor/rules/`, `.windsurf/rules/`, `.claude/rules/`, `.codex/rules/`**            | Project and layering hints for editors/agents.                                                                                    |
+| **`.cursor/skills/`, `.windsurf/skills/`, `.claude/skills/`, `.codex/agents/skills/`** | Short workflows (local checks, CI, hexagonal change).                                                                             |
+| **`Makefile`**, **`scripts/ci.sh`**                                                    | Full local CI parity (`make ci`).                                                                                                 |
+| **`CHANGELOG.md`**                                                                     | How release notes relate to semver; Keep a Changelog–style **examples** (this template does not maintain a version history file). |
+| **`.pre-commit-config.yaml`**                                                          | Optional Git `pre-commit` hooks (`make pre-commit-install`).                                                                      |
+| **`AGENTS.md`**, **`CLAUDE.md`**                                                       | Short agent-facing invariants + pointer to this doc.                                                                              |
+| **IDE-specific rules** (e.g., `.cursor/rules/pkg-public-api.mdc`)                      | When **`pkg/`** exists: stability and export rules for the public library surface.                                                |
 
 When automating refactors, treat **`docs/context/HEXAGONAL_ARCHITECTURE.md`** as the **source of truth** for layout and dependency direction.

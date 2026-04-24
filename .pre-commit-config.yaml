@@ -3,7 +3,7 @@
 # Run on all files: pre-commit run --all-files
 # Update hook revisions: pre-commit autoupdate
 #
-# IDE-specific hooks live in .cursor/hooks.json for Cursor or .windsurf/hooks.json for Windsurf (format-on-save, secret scans).
+# IDE-specific hooks live in .cursor/hooks.json, .windsurf/hooks.json, .claude/settings.json, or .codex/hooks.json (format-on-save, secret scans).
 # CI gate: .github/workflows/ci.yml runs ./scripts/ci.sh (includes gofmt -l, go test -race, …).
 
 repos:
