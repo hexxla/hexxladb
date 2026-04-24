@@ -88,12 +88,12 @@ func (tx *Tx) putCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) err
 		return err
 	}
 	if k != nil {
-		if err := tx.Put(k, emptySecondaryVal); err != nil {
+		if err := tx.putDirect(k, emptySecondaryVal); err != nil {
 			return err
 		}
 	}
 	if tk, ok := tx.cellTimeSecondaryKey(rec, commitSeq); ok {
-		if err := tx.Put(tk, emptySecondaryVal); err != nil {
+		if err := tx.putDirect(tk, emptySecondaryVal); err != nil {
 			return err
 		}
 	}
@@ -105,7 +105,7 @@ func (tx *Tx) putCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) err
 			}
 			return err
 		}
-		if err := tx.Put(k, emptySecondaryVal); err != nil {
+		if err := tx.putDirect(k, emptySecondaryVal); err != nil {
 			return err
 		}
 	}

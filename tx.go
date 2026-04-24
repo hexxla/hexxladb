@@ -218,20 +218,24 @@ func (tx *Tx) Get(key []byte) (val []byte, ok bool, err error) {
 // Prefer [Tx.PutCell], [Tx.PutFacet], and other primitives over raw Put for application data.
 // MVCC invariant: write __meta/commit-time/ keys before cell/ keys to keep timeline consistent.
 func (tx *Tx) Put(key, val []byte) error {
-	if tx == nil || tx.db == nil {
-		return ErrClosed
-	}
-	if !tx.writable {
-		return ErrTxReadOnly
-	}
-	e := tx.db.activeEng()
-	if e == nil {
-		return ErrDatabaseClosed
+	if err := tx.requireWritable(); err != nil {
+		return err
 	}
 	if tx.db.useMVCC && bytes.HasPrefix(key, []byte(index.CellPrefix)) {
 		if _, _, err := index.ParseCellVersionKey(key); err != nil {
 			return fmt.Errorf("%w: MVCC databases require version-suffixed cell/ keys — use Tx.PutCell: %w", ErrInvalidArgument, err)
 		}
+	}
+	return tx.db.btree.Put(key, val)
+}
+
+// putDirect writes a key/value pair without MVCC format validation.
+// Internal primitives (PutCell, putSeamWithOp) use this because they already
+// construct correctly-formatted keys; the MVCC guard in [Tx.Put] is for
+// external callers only.
+func (tx *Tx) putDirect(key, val []byte) error {
+	if err := tx.requireWritable(); err != nil {
+		return err
 	}
 	return tx.db.btree.Put(key, val)
 }

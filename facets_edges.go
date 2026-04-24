@@ -29,7 +29,7 @@ func (tx *Tx) PutFacet(rec record.FacetRecord) error {
 	if err != nil {
 		return err
 	}
-	if err := tx.Put(key, data); err != nil {
+	if err := tx.putDirect(key, data); err != nil {
 		return err
 	}
 	tx.noteChangelog(changelog.OpPutFacet, key, data)
@@ -143,7 +143,7 @@ func (tx *Tx) PutEdge(rec record.EdgeRecord) error {
 		}
 		return err
 	}
-	if err := tx.Put(key, data); err != nil {
+	if err := tx.putDirect(key, data); err != nil {
 		return err
 	}
 	tx.noteChangelog(changelog.OpPutEdge, key, data)

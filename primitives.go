@@ -36,7 +36,7 @@ func (tx *Tx) PutCell(ctx context.Context, rec record.CellRecord) error {
 			return err
 		}
 		key := index.CellKey(rec.Key)
-		if err := tx.Put(key, data); err != nil {
+		if err := tx.putDirect(key, data); err != nil {
 			return err
 		}
 		if had {
@@ -55,7 +55,7 @@ func (tx *Tx) PutCell(ctx context.Context, rec record.CellRecord) error {
 		return err
 	}
 	key := index.CellKeyWithVersion(rec.Key, tx.writeSeq)
-	if err := tx.Put(key, data); err != nil {
+	if err := tx.putDirect(key, data); err != nil {
 		return err
 	}
 	// Non-MVCC: replace-in-place secondary keys. MVCC: keep prior commit's source/time
@@ -227,7 +227,7 @@ func (tx *Tx) putSeamWithOp(ctx context.Context, rec record.SeamRecord, clogOp b
 			return err
 		}
 	}
-	if err := tx.Put(writeKey, data); err != nil {
+	if err := tx.putDirect(writeKey, data); err != nil {
 		return err
 	}
 	lo, hi := record.CanonicalCellPair(rec.CellA, rec.CellB)
@@ -235,7 +235,7 @@ func (tx *Tx) putSeamWithOp(ctx context.Context, rec record.SeamRecord, clogOp b
 	if err != nil {
 		return err
 	}
-	if err := tx.Put(sk, nil); err != nil {
+	if err := tx.putDirect(sk, nil); err != nil {
 		return err
 	}
 	secSeq := uint64(0)
