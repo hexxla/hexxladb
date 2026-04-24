@@ -15,12 +15,6 @@ Immediate next steps. Update after each session.
 
 ## Recently Completed
 
-- 2026-04-24: LLM guardrails (.cursor, .windsurf, .claude, .codex)
-- 2026-04-24: MODERN_GO.md restored and linked
-- 2026-04-24: Example code 100% linter compliant
-- 2026-04-24: VERSIONING.md semver compliant (v0.1.0)
-- 2026-04-24: Full modern Go audit complete
-
 ---
 
 ## Usage Notes
