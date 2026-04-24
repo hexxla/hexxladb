@@ -1,15 +1,18 @@
 # Versioning and compatibility
 
+**Current version:** `v1.0.0` — Stable release.
+
 This document describes how **module versions**, **Go API stability**, and **on-disk format** relate for [`github.com/hexxla/hexxladb`](https://github.com/hexxla/hexxladb).
 
 ## Go module (semver)
 
 The module follows [Go module version numbering](https://go.dev/ref/mod#semantic-versioning):
 
-- **`v0.x.y`** — The public [`package hexxladb`](doc.go) API may still evolve. Breaking changes are allowed while the project is pre-1.0; bump the **minor** version when adding features and the **patch** version for fixes, following normal Go ecosystem practice.
-- **`v1.0.0` and later** — When the project commits to a stable public API, releases will use **major version** bumps (`v2`, …) for breaking changes to **exported** identifiers in `package hexxladb` and other **non-internal** packages (if any are added later).
+- **`v1.x.y`** — Stable public API. Breaking changes to **exported** identifiers in `package hexxladb` require a **major version** bump (`v2`, …).
+- **Minor** bumps (`v1.1.0`, `v1.2.0`) add features backward-compatibly.
+- **Patch** bumps (`v1.0.1`, `v1.0.2`) are fixes only.
 
-**Internal packages** (`internal/...`) are not a compatibility promise for external callers: they may change at any release. Embed HexxlaDB only through the root module API and documented behavior.
+**Internal packages** (`internal/...`) are not a compatibility promise: they may change at any release. Embed HexxlaDB only through the root module API and documented behavior.
 
 ## On-disk format
 
