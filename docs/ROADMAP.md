@@ -1,5 +1,11 @@
 # Roadmap
 
+## v0.1.0 Blockers (Active)
+
+Must complete before release. HexxlaDB is unusable for LLM use case at 512B cell limit.
+
+- **Increase max cell value to 8KB** — bump format_version to v3; 8192 bytes handles typical prompts/conversation turns; update `ENGINE_FORMAT.md`, `API_REFERENCE.md`, btree validation ([discussion](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
+
 ## Quick Wins
 
 Low effort, high value. No design required.
@@ -61,3 +67,4 @@ Intentional boundaries for embedded library v1.
 | 2026-04-24 | v0.1.0 initial release                                                                                         |
 | 2026-04-24 | Roadmap consolidated to priority-based format                                                                  |
 | 2026-04-24 | Added HEXXLA service quick wins from audit (QueryStats, RingDensity, Templates, Bulk ops, Health check, Hooks) |
+| 2026-04-24 | **v0.1.0 scope locked:** 8KB cell size increase as release blocker                                             |
