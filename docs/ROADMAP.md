@@ -5,15 +5,15 @@
 Must complete before release. Core functionality gaps.
 
 - **Seam-aware context assembly** — when loading ContextPack, filter/supersede outdated cells via seam links; contradictions are useless without action; walk seam chains to current truth, exclude superseded data, preserve token budget ([discussion](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
-- **Rename `internal/mvccspike` → `internal/mvcc`** — production MVCC visibility algorithm (`SelectVisible`, `VersionKV`) lives in a package named "spike"; `internal/mvcc/` exists but is empty; rename removes maintenance confusion about what is stable vs exploratory ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
-- **Extract prune profile helper** — `MVCCPrunePlan` and `PruneCellVersionsByProfile` contain identical profile→maxDelete switch blocks; extract `profileToMaxDelete(MVCCPruneProfile) (int, error)` to eliminate duplication ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
-- **Move MVCC key validation out of `Tx.Put`** — `tx.go:231` embeds index-format-specific MVCC cell key guard in the generic byte-level Put method; push this check into the MVCC-aware primitives (`PutCell`, `PutSeam`) that call it ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 
 ## Completed (v0.1.0)
 
 Shipped with v0.1.0 release.
 
 - **Increase max cell value to 8KB** — 8192 bytes handles typical prompts/conversation turns; updated `btree_page.go`, `API_REFERENCE.md` (no format_version bump needed - runtime validation only)
+- **Rename `internal/mvccspike` → `internal/mvcc`** — promoted production MVCC visibility algorithm to stable package name ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+- **Extract prune profile helper** — `profileToMaxDelete` deduplicates `MVCCPrunePlan` and `PruneCellVersionsByProfile` switch blocks ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+- **Move MVCC key validation out of `Tx.Put`** — added `putDirect` for internal primitives; MVCC cell key guard stays on public `Tx.Put` only ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 
 ## Quick Wins
 

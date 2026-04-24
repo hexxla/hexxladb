@@ -10,16 +10,9 @@ Immediate next steps. Update after each session.
   - [ ] Exclude superseded cells from pack (replace, don't add)
   - [ ] Preserve token budget predictability
   - [ ] Handle edge case: superseding cell outside budget
-- [ ] **Rename `internal/mvccspike` → `internal/mvcc`** — v0.1.0 blocker; production `SelectVisible`/`VersionKV` in a package named "spike"; `internal/mvcc/` exists but is empty
-  - [ ] Move `version_suffix_cell_key.go` and test to `internal/mvcc/`
-  - [ ] Update all imports (`mvcc.go`, `mvcc_lifecycle.go`, etc.)
-  - [ ] Remove empty `internal/mvccspike/` directory
-- [ ] **Extract prune profile helper** — v0.1.0 blocker; identical profile→maxDelete switch in `MVCCPrunePlan` (line 68) and `PruneCellVersionsByProfile` (line 220)
-  - [ ] Create `profileToMaxDelete(MVCCPruneProfile) (int, error)` in `mvcc_lifecycle.go`
-  - [ ] Replace both switch blocks with single helper call
-- [ ] **Move MVCC key validation out of `Tx.Put`** — v0.1.0 blocker; `tx.go:231` has index-format-specific guard in generic Put
-  - [ ] Push cell key format check into `PutCell` MVCC path in `primitives.go`
-  - [ ] Remove `bytes.HasPrefix(key, CellPrefix)` guard from `Tx.Put`
+- [x] **Rename `internal/mvccspike` → `internal/mvcc`** — v0.1.0 blocker; done
+- [x] **Extract prune profile helper** — v0.1.0 blocker; `profileToMaxDelete` deduplicates both switch blocks
+- [x] **Move MVCC key validation out of `Tx.Put`** — v0.1.0 blocker; added `putDirect` for internal use, guard stays on public `Tx.Put` only
 
 ## Pending (next sessions)
 
@@ -49,6 +42,7 @@ Immediate next steps. Update after each session.
 - 2026-04-24: Added comparison section to README (vs vector/graph/temporal DBs)
 - 2026-04-24: Identified seam-aware context assembly as v0.1.0 blocker
 - 2026-04-24: SoC audit validated; mvccspike rename, prune dedup, MVCC key guard added as v0.1.0 blockers
+- 2026-04-24: Completed mvccspike→mvcc rename, prune profile dedup, MVCC key guard relocation
 
 ---
 
