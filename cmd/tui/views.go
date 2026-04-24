@@ -182,34 +182,30 @@ func (v cellTableView) Update(msg tea.Msg) (view, tea.Cmd) {
 		return v, tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
 			var cells []hexxladb.CellView
 			_ = v.db.View(func(tx *hexxladb.Tx) error {
-				return tx.AscendRange(nil, []byte("cell\xff"), func(k, v []byte) bool {
-					if len(cells) >= 50 {
-						return false
+				// Iterate over a larger range of coordinates to find cells
+				for q := -20; q <= 20; q++ {
+					for r := -20; r <= 20; r++ {
+						if len(cells) >= 50 {
+							return nil
+						}
+						coord := hexxladb.Coord{Q: q, R: r}
+						pk, err := lattice.Pack(coord)
+						if err != nil {
+							continue
+						}
+						cell, ok, _ := tx.GetCell(pk)
+						if ok {
+							cells = append(cells, hexxladb.CellView{
+								Coord:      coord,
+								RawContent: cell.RawContent,
+								Tags:       cell.Tags,
+								Provenance: cell.Provenance,
+								Validity:   cell.Validity,
+							})
+						}
 					}
-					// Convert []byte key to PackedCoord
-					if len(k) < 16 {
-						return true
-					}
-					pk := lattice.PackedCoord{
-						uint64(k[8])<<56 | uint64(k[9])<<48 | uint64(k[10])<<40 | uint64(k[11])<<32 | uint64(k[12])<<24 | uint64(k[13])<<16 | uint64(k[14])<<8 | uint64(k[15]),
-						uint64(k[0])<<56 | uint64(k[1])<<48 | uint64(k[2])<<40 | uint64(k[3])<<32 | uint64(k[4])<<24 | uint64(k[5])<<16 | uint64(k[6])<<8 | uint64(k[7]),
-					}
-					coord, err := lattice.Unpack(pk)
-					if err != nil {
-						return true
-					}
-					cell, ok, _ := tx.GetCell(pk)
-					if ok {
-						cells = append(cells, hexxladb.CellView{
-							Coord:      coord,
-							RawContent: cell.RawContent,
-							Tags:       cell.Tags,
-							Provenance: cell.Provenance,
-							Validity:   cell.Validity,
-						})
-					}
-					return true
-				})
+				}
+				return nil
 			})
 			return cellsLoadedMsg{cells: cells}
 		})
