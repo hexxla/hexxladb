@@ -223,6 +223,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		search.results = msg.results
 		m.views[5] = search
 		return m, nil
+
+	case cellsLoadedMsg:
+		// Update cell table view with loaded cells
+		cellTable := m.views[1].(cellTableView)
+		cellTable.loading = false
+		cellTable.cells = msg.cells
+		m.views[1] = cellTable
+		return m, nil
 	}
 
 	// Delegate to current view
