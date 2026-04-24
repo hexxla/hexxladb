@@ -5,41 +5,42 @@
 Must complete before release. Core functionality gaps.
 
 - **Seam-aware context assembly** — when loading ContextPack, filter/supersede outdated cells via seam links; contradictions are useless without action; walk seam chains to current truth, exclude superseded data, preserve token budget ([discussion](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
-- **Rename `internal/mvccspike` → `internal/mvcc`** — production MVCC visibility algorithm (`SelectVisible`, `VersionKV`) lives in a package named "spike"; `internal/mvcc/` exists but is empty; rename removes maintenance confusion about what is stable vs exploratory ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
-- **Extract prune profile helper** — `MVCCPrunePlan` and `PruneCellVersionsByProfile` contain identical profile→maxDelete switch blocks; extract `profileToMaxDelete(MVCCPruneProfile) (int, error)` to eliminate duplication ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
-- **Move MVCC key validation out of `Tx.Put`** — `tx.go:231` embeds index-format-specific MVCC cell key guard in the generic byte-level Put method; push this check into the MVCC-aware primitives (`PutCell`, `PutSeam`) that call it ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 
 ## Completed (v0.1.0)
 
 Shipped with v0.1.0 release.
 
 - **Increase max cell value to 8KB** — 8192 bytes handles typical prompts/conversation turns; updated `btree_page.go`, `API_REFERENCE.md` (no format_version bump needed - runtime validation only)
+- **Rename `internal/mvccspike` → `internal/mvcc`** — promoted production MVCC visibility algorithm to stable package name ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+- **Extract prune profile helper** — `profileToMaxDelete` deduplicates `MVCCPrunePlan` and `PruneCellVersionsByProfile` switch blocks ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+- **Move MVCC key validation out of `Tx.Put`** — added `putDirect` for internal primitives; MVCC cell key guard stays on public `Tx.Put` only ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+- **Refactor `goto assembled`** — extracted `collectCandidates` helper from `LoadContextWithBudgeting` for cleaner control flow and isolated testability ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+- **Cell Template Factory** — `NewUserMessageCell`, `NewAssistantResponseCell`, `NewSystemPromptCell`, `NewFactCell` in `templates.go`
+- **Tag Analytics** — `TagCounts`, `TagCooccurrences`, `UntaggedCells` in `tag_analytics.go`
+- **RingDensity API** — `RingDensityMap`, `TotalDensity` in `ring_density.go`
+- **Filtered Changelog Reading** — `ReadChangelogFiltered` with `ChangelogFilter` (op codes + key prefix) in `db_changelog.go`
+- **Cell Validation Hooks** — `CellValidator` interface + `CellValidatorFunc` adapter on `Options.CellValidator`, wired into `PutCell`
+- **ASCII Hex Grid Renderer** — `RenderHexGrid` + `RenderHexGridFromDB` in `hex_render.go`
+- **Batch PutCell with Progress** — `BatchPutCells` with `BatchPutCellOptions` (batch size, progress, continue-on-error) in `batch_put.go`
+- **QueryStats on ContextPack** — `ContextPackStats` (candidates, evicted, max ring) on `ContextPack.Stats`
+- **Context Pack Explain Mode** — `CellExplanation` per-cell reasons via `LoadContextBudgetConfig.Explain`
+- **Bulk Cell Import/Export (JSON)** — `ExportCellsJSON` + `ImportCellsJSON` in `bulk_io.go`
+- **Secondary index btree coupling fix** — added `tx.deleteDirect` mirroring `tx.putDirect`; `cell_secondary.go` and `seam_secondary.go` no longer reach through to `tx.db.btree.Delete` directly
 
 ## Quick Wins
 
 Low effort, high value. No design required.
 
-- Per-database MaxValueBytes — store limit in file header (default 8KB), expose in Options for 2KB/4KB/16KB use cases
-- QueryStats on ContextPack — visibility into why cells were included/excluded during context assembly ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
-- RingDensity API — count cells per ring for dashboard visualization and memory density maps
-- Cell Template Factory — standardized constructors for UserMessage, AssistantResponse, SystemPrompt, Fact cells
-- Bulk Cell Import/Export (JSON/CSV) — migration, testing data seeding, backup/restore pipelines
-- ASCII Hex Grid Renderer — debug/logging visualization of the lattice
-- Filtered Changelog Reading — watch only cell writes, seams, or specific tags
-- Tag Analytics — tag counts, co-occurrences, untagged cell detection
-- Context Pack "Explain" Mode — per-cell inclusion reasons showing why each cell was included or evicted (budget_ok, low_confidence_evicted, ring_cutoff) for debugging token budget decisions ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
-- Batch PutCell with Progress — efficient ingestion of conversation history with progress callbacks and continue-on-error options; distinct from Import/Export for real-time streaming scenarios ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
-- Cell Validation Hooks — pre-write validation interface for enforcing content limits, required tags, and custom business rules; production-critical for data integrity ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
-- Relocate secondary index logic to `internal/` — `cell_secondary.go` and `seam_secondary.go` are unexported helpers that call `tx.db.btree.Delete` directly, bypassing Tx abstraction; move to `internal/txcore` or `internal/storage` to enforce boundary ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
-- Extract `views.go` to `internal/views` or `internal/app` — `TokenBudgeter`, `ByteLenBudgeter`, `LoadContextWithBudgeting` are app-layer read projections with no storage I/O; re-export only types from module root ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
-- Move `rotation.go` to `internal/tooling/rotation` — offline re-encryption utility is operational tooling mixed with runtime API; decouple from consumers who only need CRUD ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
-- Refactor `goto assembled` in `LoadContextWithBudgeting` — replace with a named helper function returning `([]scored, error)` for cleaner control flow and isolated testability ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
-- Encapsulate commit-time meta-key in MVCC layer — `PutCell` manually inserts `__meta/commit-time/` timeline key; this MVCC bookkeeping should be encapsulated rather than inlined in the primitive ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+_(Empty — all quick wins shipped or reclassified.)_
 
 ## Near-term
 
 Requires design + benchmarks before implementation.
 
+- Per-database MaxValueBytes — store limit in engine header (default 8KB), expose in Options for 2KB/4KB/16KB; requires header format change and migration path (reclassified from Quick Wins)
+- Relocate secondary index files to `internal/` — `cell_secondary.go` and `seam_secondary.go` are methods on `*Tx`; moving to `internal/` creates import cycle same as `rotation.go`; needs interface extraction first (reclassified from Quick Wins; btree coupling already fixed via `deleteDirect`)
+- Extract `views.go` to `internal/views` or `internal/app` — `LoadContextWithBudgeting` calls `tx.GetCell`/`tx.AscendRange`, so it's not pure app-layer; moving requires interface extraction to break import cycle (reclassified from Quick Wins)
+- Move `rotation.go` to `internal/tooling/rotation` — rotation uses `DB.Open`, `Tx.putDirect`, error sentinels; moving to `internal/` creates an import cycle; needs interface extraction first ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 - Batch MVCC prune (`PruneCellVersions`) — coalesce deletes under single engine write txn to reduce WAL pressure ([`DURABILITY.md`](./hexxladb/DURABILITY.md))
 - Database Health Check API — integrity verification, orphaned seam detection, index consistency ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
 - Event Hooks / Callbacks — react to cell writes, seam detection, facet rotation (needs architecture RFC)

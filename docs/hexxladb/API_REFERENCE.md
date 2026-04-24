@@ -15,13 +15,13 @@ Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored 
 
 ## Database lifecycle
 
-| Symbol                                  | Notes                                                                      |
-| --------------------------------------- | -------------------------------------------------------------------------- |
-| **[`Open`](../../db.go)**               | Open or create a database file; applies WAL on startup.                    |
-| **[`(*DB).Close`](../../db.go)**        | Waits for in-flight transactions; idempotent for nil receiver.             |
-| **[`ErrCorruptDatabase`](../../db.go)** | Open-time corruption (header/WAL).                                         |
-| **[`Options`](../../options.go)**       | `EnableMVCC`, `MVCCRetention`, changelog, encryption, optional page hooks. |
-| **[`MVCCRetention`](../../options.go)** | Retention hint for prune suggestions.                                      |
+| Symbol                                  | Notes                                                                                       |
+| --------------------------------------- | ------------------------------------------------------------------------------------------- |
+| **[`Open`](../../db.go)**               | Open or create a database file; applies WAL on startup.                                     |
+| **[`(*DB).Close`](../../db.go)**        | Waits for in-flight transactions; idempotent for nil receiver.                              |
+| **[`ErrCorruptDatabase`](../../db.go)** | Open-time corruption (header/WAL).                                                          |
+| **[`Options`](../../options.go)**       | `EnableMVCC`, `MVCCRetention`, changelog, encryption, `CellValidator`, optional page hooks. |
+| **[`MVCCRetention`](../../options.go)** | Retention hint for prune suggestions.                                                       |
 
 ---
 
@@ -91,17 +91,68 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 
 ---
 
+## ASCII hex grid rendering
+
+| Symbol                                                 | Notes                                                       |
+| ------------------------------------------------------ | ----------------------------------------------------------- |
+| **[`RenderHexGrid`](../../hex_render.go)**             | Pure ASCII hex grid from center to maxR with custom labels. |
+| **[`(*Tx).RenderHexGridFromDB`](../../hex_render.go)** | ASCII grid showing occupied (`*`) vs empty (`.`) cells.     |
+| **[`HexGridCell`](../../hex_render.go)**               | Coord + label pair for grid rendering.                      |
+
+---
+
+## Batch operations and bulk I/O
+
+| Symbol                                          | Notes                                                         |
+| ----------------------------------------------- | ------------------------------------------------------------- |
+| **[`(*DB).BatchPutCells`](../../batch_put.go)** | Batched multi-cell write with progress and continue-on-error. |
+| **[`BatchPutCellOptions`](../../batch_put.go)** | Batch size, progress callback, continue-on-error flag.        |
+| **[`BatchPutCellResult`](../../batch_put.go)**  | Written count + per-cell errors.                              |
+| **[`BatchPutCellError`](../../batch_put.go)**   | Index + error for failed cells.                               |
+| **[`(*Tx).ExportCellsJSON`](../../bulk_io.go)** | Stream visible cells as JSON array to writer.                 |
+| **[`(*DB).ImportCellsJSON`](../../bulk_io.go)** | Read JSON array of cells and batch-write via PutCell.         |
+
+---
+
+## Cell templates
+
+| Symbol                                               | Notes                                                    |
+| ---------------------------------------------------- | -------------------------------------------------------- |
+| **[`NewUserMessageCell`](../../templates.go)**       | Factory for user-message cells with standard tags.       |
+| **[`NewAssistantResponseCell`](../../templates.go)** | Factory for assistant-response cells with standard tags. |
+| **[`NewSystemPromptCell`](../../templates.go)**      | Factory for system-prompt cells (confidence 1.0).        |
+| **[`NewFactCell`](../../templates.go)**              | Factory for extracted-fact cells with category tag.      |
+
+---
+
+## Tag analytics and ring density
+
+| Symbol                                                 | Notes                                                         |
+| ------------------------------------------------------ | ------------------------------------------------------------- |
+| **[`(*Tx).TagCounts`](../../tag_analytics.go)**        | Per-tag cell counts, sorted by count descending.              |
+| **[`(*Tx).TagCooccurrences`](../../tag_analytics.go)** | Tag pairs appearing together on cells, with min-count filter. |
+| **[`(*Tx).UntaggedCells`](../../tag_analytics.go)**    | Coords of visible cells with no tags within a ring radius.    |
+| **[`TagCount`](../../tag_analytics.go)**               | Tag string + count pair.                                      |
+| **[`TagPair`](../../tag_analytics.go)**                | Co-occurring tag pair + count.                                |
+| **[`(*Tx).RingDensityMap`](../../ring_density.go)**    | Per-ring occupied vs total cell counts from center.           |
+| **[`TotalDensity`](../../ring_density.go)**            | Aggregate occupied/total across a `[]RingDensity`.            |
+| **[`RingDensity`](../../ring_density.go)**             | Ring distance + occupied + total counts.                      |
+
+---
+
 ## HEXXLA-shaped views and budgeting
 
-| Symbol                                                                                                                                                                      | Notes                                    |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| **[`(*Tx).AssembleCellView`](../../views.go)**                                                                                                                              | One coord → **`CellView`** with opts.    |
-| **[`(*Tx).LoadContextWithBudgeting`](../../views.go)**                                                                                                                      | Token-budget **`ContextPack`**.          |
-| **[`(*Tx).LoadContextPack`](../../views.go)**                                                                                                                               | Alias of **`LoadContextWithBudgeting`**. |
-| **[`CellView`](../../views.go)**, **[`ContextPack`](../../views.go)**, **[`FacetView`](../../views.go)**, **[`EdgeView`](../../views.go)**, **[`SeamRef`](../../views.go)** | View types.                              |
-| **[`LoadContextBudgetConfig`](../../views.go)**, **[`AssembleCellViewOpts`](../../views.go)**, **[`DefaultAssembleCellViewOpts`](../../views.go)**                          | Assembly + seam radius + caps.           |
-| **[`TokenBudgeter`](../../views.go)**, **[`ByteLenBudgeter`](../../views.go)**                                                                                              | Budget counting.                         |
-| **[`CellViewPredicate`](../../views.go)**, **[`FilterCellViews`](../../views.go)**, **[`TruncateCellViewsToTokenBudget`](../../views.go)**                                  | Post-process assembled views.            |
+| Symbol                                                                                                                                                                      | Notes                                              |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| **[`(*Tx).AssembleCellView`](../../views.go)**                                                                                                                              | One coord → **`CellView`** with opts.              |
+| **[`(*Tx).LoadContextWithBudgeting`](../../views.go)**                                                                                                                      | Token-budget **`ContextPack`**.                    |
+| **[`(*Tx).LoadContextPack`](../../views.go)**                                                                                                                               | Alias of **`LoadContextWithBudgeting`**.           |
+| **[`CellView`](../../views.go)**, **[`ContextPack`](../../views.go)**, **[`FacetView`](../../views.go)**, **[`EdgeView`](../../views.go)**, **[`SeamRef`](../../views.go)** | View types.                                        |
+| **[`LoadContextBudgetConfig`](../../views.go)**, **[`AssembleCellViewOpts`](../../views.go)**, **[`DefaultAssembleCellViewOpts`](../../views.go)**                          | Assembly + seam radius + caps.                     |
+| **[`TokenBudgeter`](../../views.go)**, **[`ByteLenBudgeter`](../../views.go)**                                                                                              | Budget counting.                                   |
+| **[`CellViewPredicate`](../../views.go)**, **[`FilterCellViews`](../../views.go)**, **[`TruncateCellViewsToTokenBudget`](../../views.go)**                                  | Post-process assembled views.                      |
+| **[`ContextPackStats`](../../views.go)**                                                                                                                                    | Assembly stats: candidates, evicted, max ring.     |
+| **[`CellExplanation`](../../views.go)**                                                                                                                                     | Per-cell inclusion/eviction reason (Explain mode). |
 
 ---
 
@@ -136,11 +187,13 @@ Methods on **`Coord`** / **`PackedCoord`** (e.g. **`Distance`**, **`Neighbors`**
 
 ## Logical changefeed
 
-| Symbol                                                                                                                                                         | Notes                                    |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| **[`(*DB).ReadChangelogSince`](../../db_changelog.go)**                                                                                                        | Requires **`Options.ChangelogEnabled`**. |
-| **[`ChangelogRecord`](../../db_changelog.go)**                                                                                                                 | Typed alias of internal record.          |
-| **`ChangelogOpPutCell`**, **`ChangelogOpPutSeam`**, **`ChangelogOpResolveSeam`** (only **`ResolveSeam`**), **`ChangelogOpPutFacet`**, **`ChangelogOpPutEdge`** | Stable op codes.                         |
+| Symbol                                                                                                                                                         | Notes                                                    |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| **[`(*DB).ReadChangelogSince`](../../db_changelog.go)**                                                                                                        | Requires **`Options.ChangelogEnabled`**.                 |
+| **[`(*DB).ReadChangelogFiltered`](../../db_changelog.go)**                                                                                                     | Filtered read by op codes and/or key prefix.             |
+| **[`ChangelogFilter`](../../db_changelog.go)**                                                                                                                 | Filter config: **`Ops []byte`**, **`KeyPrefix []byte`**. |
+| **[`ChangelogRecord`](../../db_changelog.go)**                                                                                                                 | Typed alias of internal record.                          |
+| **`ChangelogOpPutCell`**, **`ChangelogOpPutSeam`**, **`ChangelogOpResolveSeam`** (only **`ResolveSeam`**), **`ChangelogOpPutFacet`**, **`ChangelogOpPutEdge`** | Stable op codes.                                         |
 
 See **[CHANGEFEED.md](./CHANGEFEED.md)**.
 
@@ -156,6 +209,16 @@ See **[CHANGEFEED.md](./CHANGEFEED.md)**.
 | **[`RotateOptions`](../../rotation.go)**               | Batch size / **`OnProgress`** for long copies. |
 
 See **[ENCRYPTION.md](./ENCRYPTION.md)**.
+
+---
+
+## Cell validation
+
+| Symbol                                          | Notes                                                           |
+| ----------------------------------------------- | --------------------------------------------------------------- |
+| **[`CellValidator`](../../validation.go)**      | Interface: **`ValidateCell(CellRecord) error`** pre-write hook. |
+| **[`CellValidatorFunc`](../../validation.go)**  | Adapter: plain function → **`CellValidator`**.                  |
+| **[`Options.CellValidator`](../../options.go)** | Set on **`Open`** to enable pre-write validation in `PutCell`.  |
 
 ---
 
@@ -185,16 +248,15 @@ Use **`errors.Is` / `errors.As`** for stable handling.
 
 ## Live demos and coverage
 
-- **Exhaustive public-API walk (ELI5 + real files):** [`examples/full_api_demo`](../../examples/full_api_demo/) — **`go run ./examples/full_api_demo`** seeds **`./.tmp/full_api_demo/`** (MVCC + changelog main file; optional encrypted file) and prints one section per major **`package hexxladb`** capability.
-- **Session-shaped teaching demo:** [`examples/live_session_demo`](../../examples/live_session_demo/) — scripted LLM-session cells; smaller output.
+- **Conversational memory service:** [`examples/conversational_memory`](../../examples/conversational_memory/) — **`go run ./examples/conversational_memory`** seeds **`./.tmp/conversational_memory/`** (MVCC + changelog) and walks through cell storage (templates + batch), context assembly (stats + explain), tag analytics, query patterns, MVCC time-travel, ASCII grid rendering, ring density, and filtered changelog.
 
-## What `examples/live_session_demo` does _not_ call (and why)
+## What `examples/conversational_memory` does _not_ call (and why)
 
-That demo is a **single-session smoke test** for Hexxla-shaped writes and reads; it stays readable. Omitted APIs fall into a few buckets: **low-level escape hatches**, **validity-specialized variants**, **seam lifecycle / conflict sugar**, **post-assembly helpers**, **operator features**, **encryption ops**. Use **`full_api_demo`** for breadth; keep **`live_session_demo`** for narrative density.
+The demo is a **session-shaped production walkthrough**; it stays readable. Omitted APIs fall into a few buckets: **low-level escape hatches**, **validity-specialized variants**, **seam lifecycle / conflict sugar**, **post-assembly helpers**, **operator features**, **encryption ops**.
 
 ### Raw btree: `Tx.Get`, `Tx.Put`, `Tx.AscendRange`
 
-- **Why omitted:** HEXXLA and **`live_session_demo`** target **logical** cells/seams/facets/edges. Raw keys bypass **`cell/`** layout and indexes unless you duplicate encodings by hand.
+- **Why omitted:** The demo targets **logical** cells/seams/facets/edges. Raw keys bypass **`cell/`** layout and indexes unless you duplicate encodings by hand.
 - **Use when:** Custom migrations, debugging the engine, experimental index families, or tooling that walks **`__meta/`** keys — **not** typical product paths.
 
 ### Ring primitives: `WalkRing`, `WalkRingAt`, `WalkRingFacets`
@@ -242,10 +304,10 @@ That demo is a **single-session smoke test** for Hexxla-shaped writes and reads;
 - **Why omitted:** Identical to **`Update`**; no extra behavior to demonstrate.
 - **Use when:** Call-site clarity only.
 
-### Changelog: `ReadChangelogSince`, op constants
+### Changelog: `ReadChangelogSince`
 
-- **Why omitted:** Requires **`Options.ChangelogEnabled`** and sidecar file; orthogonal to lattice semantics in a single-binary demo.
-- **Use when:** Downstream replication, audit, incremental indexers — **service** deployment concern.
+- **Why omitted:** **`ReadChangelogFiltered`** is shown in the demo; the unfiltered **`ReadChangelogSince`** variant is a simpler subset.
+- **Use when:** Bulk sequential replay without op-type filtering.
 
 ### MVCC: `StatsMVCC`, `GroupWALStats`, `SuggestedPruneBeforeSeq`, `MVCCPrunePlan`, `PruneCellVersions*`, `PruneScheduler`
 

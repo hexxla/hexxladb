@@ -3,7 +3,7 @@ package hexxladb
 import (
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
-	"github.com/hexxla/hexxladb/internal/mvccspike"
+	"github.com/hexxla/hexxladb/internal/mvcc"
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
@@ -31,19 +31,19 @@ func (tx *Tx) getCellVisibleRaw(key lattice.PackedCoord) (raw []byte, commitSeq 
 		}
 	}
 	from, to := index.CellVersionScanBounds(key)
-	var versions []mvccspike.VersionKV
+	var versions []mvcc.VersionKV
 	err = tx.db.btree.AscendRange(from, to, func(k, v []byte) bool {
 		cs, ok := index.ParseCommitSeqFromCellKey(k)
 		if !ok {
 			return true
 		}
-		versions = append(versions, mvccspike.VersionKV{CommitSeq: cs, Value: append([]byte(nil), v...)})
+		versions = append(versions, mvcc.VersionKV{CommitSeq: cs, Value: append([]byte(nil), v...)})
 		return true
 	})
 	if err != nil {
 		return nil, 0, false, err
 	}
-	val, seq, ok := mvccspike.SelectVisible(versions, tx.readSeq)
+	val, seq, ok := mvcc.SelectVisible(versions, tx.readSeq)
 	if !ok {
 		return nil, 0, false, nil
 	}
@@ -80,19 +80,19 @@ func (tx *Tx) getFacetVisibleRaw(p lattice.PackedCoord, facetID byte) (raw []byt
 	if err != nil {
 		return nil, false, err
 	}
-	var versions []mvccspike.VersionKV
+	var versions []mvcc.VersionKV
 	err = tx.AscendRange(from, to, func(k, v []byte) bool {
 		cs, ok := index.ParseFacetCommitSeq(k)
 		if !ok {
 			return true
 		}
-		versions = append(versions, mvccspike.VersionKV{CommitSeq: cs, Value: append([]byte(nil), v...)})
+		versions = append(versions, mvcc.VersionKV{CommitSeq: cs, Value: append([]byte(nil), v...)})
 		return true
 	})
 	if err != nil {
 		return nil, false, err
 	}
-	val, _, ok := mvccspike.SelectVisible(versions, tx.readSeq)
+	val, _, ok := mvcc.SelectVisible(versions, tx.readSeq)
 	if !ok {
 		return nil, false, nil
 	}
@@ -121,19 +121,19 @@ func (tx *Tx) getSeamVisibleRaw(id string) (raw []byte, commitSeq uint64, ok boo
 	if err != nil {
 		return nil, 0, false, err
 	}
-	var versions []mvccspike.VersionKV
+	var versions []mvcc.VersionKV
 	err = tx.AscendRange(from, to, func(k, v []byte) bool {
 		cs, ok := index.ParseSeamCommitSeq(k)
 		if !ok {
 			return true
 		}
-		versions = append(versions, mvccspike.VersionKV{CommitSeq: cs, Value: append([]byte(nil), v...)})
+		versions = append(versions, mvcc.VersionKV{CommitSeq: cs, Value: append([]byte(nil), v...)})
 		return true
 	})
 	if err != nil {
 		return nil, 0, false, err
 	}
-	val, seq, ok := mvccspike.SelectVisible(versions, tx.readSeq)
+	val, seq, ok := mvcc.SelectVisible(versions, tx.readSeq)
 	if !ok {
 		return nil, 0, false, nil
 	}

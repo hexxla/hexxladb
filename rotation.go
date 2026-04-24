@@ -76,7 +76,7 @@ func RotateEncryptionWithOptions(path string, currentOpts, newOpts *Options, rop
 		}
 		if err := dst.Update(func(tx *Tx) error {
 			for i := range batch {
-				if err := tx.Put(batch[i].k, batch[i].v); err != nil {
+				if err := tx.putDirect(batch[i].k, batch[i].v); err != nil {
 					return err
 				}
 				copied++
