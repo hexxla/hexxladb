@@ -1,10 +1,10 @@
 # Roadmap
 
-## v0.1.0 Blockers (Active)
+## Completed (v0.1.0)
 
-Must complete before release. HexxlaDB is unusable for LLM use case at 512B cell limit.
+Shipped with v0.1.0 release.
 
-- **Increase max cell value to 8KB** — bump format_version to v3; 8192 bytes handles typical prompts/conversation turns; update `ENGINE_FORMAT.md`, `API_REFERENCE.md`, btree validation ([discussion](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
+- **Increase max cell value to 8KB** — 8192 bytes handles typical prompts/conversation turns; updated `btree_page.go`, `API_REFERENCE.md` (no format_version bump needed - runtime validation only) ([discussion](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
 
 ## Quick Wins
 
