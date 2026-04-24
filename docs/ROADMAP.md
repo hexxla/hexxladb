@@ -33,7 +33,7 @@ Low effort, high value. No design required.
 - Cell Validation Hooks — pre-write validation interface for enforcing content limits, required tags, and custom business rules; production-critical for data integrity ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
 - Relocate secondary index logic to `internal/` — `cell_secondary.go` and `seam_secondary.go` are unexported helpers that call `tx.db.btree.Delete` directly, bypassing Tx abstraction; move to `internal/txcore` or `internal/storage` to enforce boundary ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 - Extract `views.go` to `internal/views` or `internal/app` — `TokenBudgeter`, `ByteLenBudgeter`, `LoadContextWithBudgeting` are app-layer read projections with no storage I/O; re-export only types from module root ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
-- Move `rotation.go` to `internal/tooling/rotation` — offline re-encryption utility is operational tooling mixed with runtime API; decouple from consumers who only need CRUD ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+- ~~Move `rotation.go` to `internal/tooling/rotation`~~ — **deferred to Near-term**; rotation uses `DB.Open`, `Tx.putDirect`, error sentinels — moving to `internal/` creates an import cycle; needs interface extraction first ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 - ~~Encapsulate commit-time meta-key~~ — **closed: false finding**; meta-key is written once per transaction in `DB.Update` (`tx.go`), not per-cell in `PutCell`; placement is correct
 
 ## Near-term
