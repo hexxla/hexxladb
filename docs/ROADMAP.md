@@ -1,10 +1,16 @@
 # Roadmap
 
+## v0.1.0 Blockers (Active)
+
+Must complete before release. Core functionality gaps.
+
+- **Seam-aware context assembly** — when loading ContextPack, filter/supersede outdated cells via seam links; contradictions are useless without action; walk seam chains to current truth, exclude superseded data, preserve token budget ([discussion](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
+
 ## Completed (v0.1.0)
 
 Shipped with v0.1.0 release.
 
-- **Increase max cell value to 8KB** — 8192 bytes handles typical prompts/conversation turns; updated `btree_page.go`, `API_REFERENCE.md` (no format_version bump needed - runtime validation only) ([discussion](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
+- **Increase max cell value to 8KB** — 8192 bytes handles typical prompts/conversation turns; updated `btree_page.go`, `API_REFERENCE.md` (no format_version bump needed - runtime validation only)
 
 ## Quick Wins
 
@@ -63,9 +69,10 @@ Intentional boundaries for embedded library v1.
 
 ## Audit Log
 
-| Date       | Scope                                                                                                          |
-| ---------- | -------------------------------------------------------------------------------------------------------------- |
-| 2026-04-24 | v0.1.0 initial release                                                                                         |
-| 2026-04-24 | Roadmap consolidated to priority-based format                                                                  |
-| 2026-04-24 | Added HEXXLA service quick wins from audit (QueryStats, RingDensity, Templates, Bulk ops, Health check, Hooks) |
-| 2026-04-24 | **v0.1.0 scope locked:** 8KB cell size increase as release blocker                                             |
+| Date       | Scope                                                                                                              |
+| ---------- | ------------------------------------------------------------------------------------------------------------------ |
+| 2026-04-24 | v0.1.0 initial release                                                                                             |
+| 2026-04-24 | Roadmap consolidated to priority-based format                                                                      |
+| 2026-04-24 | Added HEXXLA service quick wins from audit (QueryStats, RingDensity, Templates, Bulk ops, Health check, Hooks)     |
+| 2026-04-24 | **v0.1.0 scope locked:** 8KB cell size increase as release blocker                                                 |
+| 2026-04-24 | **v0.1.0 scope updated:** seam-aware context assembly added as release blocker — contradictions must be actionable |

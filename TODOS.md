@@ -4,15 +4,16 @@ Immediate next steps. Update after each session.
 
 ## Current
 
-- [x] **Increase max cell value to 8KB** — v0.1.0 release blocker
-  - [x] Update `internal/engine/btree_page.go`: `maxValBytes = 8192`
-  - [x] Update `API_REFERENCE.md` storage limits section (512B → 8KB)
-  - [x] No format_version bump needed (runtime constant only)
-  - [x] All databases (new + existing) automatically get 8KB limit
+- [ ] **Seam-aware context assembly** — v0.1.0 blocker; filter/supersede outdated cells via seam links during LoadContextPack
+  - [ ] Detect "superseded by" seams in context assembly
+  - [ ] Walk seam chains to current truth
+  - [ ] Exclude superseded cells from pack (replace, don't add)
+  - [ ] Preserve token budget predictability
+  - [ ] Handle edge case: superseding cell outside budget
 
 ## Pending (next sessions)
 
-- [ ] Ready for v0.1.0 release push to remote
+- [ ] Ready for v0.1.0 release push to remote (after seam-aware assembly complete)
 - [ ] Per-database MaxValueBytes configuration — store limit in file header, expose in Options (default 8KB)
 - [ ] Vector search and embeddings storage — implement `embed/` keyspace for ANN/hybrid retrieval ([`HEXXLA_DB.md`](./docs/hexxladb/HEXXLA_DB.md))
 - [ ] First production use feedback collection
@@ -23,6 +24,9 @@ Immediate next steps. Update after each session.
 ## Recently Completed
 
 - 2026-04-24: Increased max cell value to 8KB (v0.1.0 blocker resolved)
+- 2026-04-24: Added tag discovery API to conversational example
+- 2026-04-24: Added comparison section to README (vs vector/graph/temporal DBs)
+- 2026-04-24: Identified seam-aware context assembly as v0.1.0 blocker
 
 ---
 
