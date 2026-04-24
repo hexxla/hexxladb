@@ -45,6 +45,8 @@
 - During v0.y.z phase: increment minor for releases with new features, patch for fixes only
 - Before v1.0.0: breaking changes allowed but must be documented in CHANGELOG
 
+**Git commits:** Keep messages short and simple. Avoid complex quoting, newlines, or special characters that confuse shells. One line preferred. Example: `git commit -m "Add feature X"` not `git commit -m "Add feature X\n\nDetails..."`
+
 Do not duplicate `HEXAGONAL_ARCHITECTURE.md` — reference it.
 
 **Git hooks (optional):** `.pre-commit-config.yaml` + `make pre-commit-install` — still run `make ci` before pushing.
