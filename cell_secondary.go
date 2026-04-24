@@ -58,12 +58,12 @@ func (tx *Tx) removeCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) 
 		return err
 	}
 	if k != nil {
-		if err := tx.db.btree.Delete(k); err != nil {
+		if err := tx.deleteDirect(k); err != nil {
 			return err
 		}
 	}
 	if tk, ok := tx.cellTimeSecondaryKey(rec, commitSeq); ok {
-		if err := tx.db.btree.Delete(tk); err != nil {
+		if err := tx.deleteDirect(tk); err != nil {
 			return err
 		}
 	}
@@ -72,7 +72,7 @@ func (tx *Tx) removeCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) 
 		if err != nil {
 			return err
 		}
-		if err := tx.db.btree.Delete(k); err != nil {
+		if err := tx.deleteDirect(k); err != nil {
 			return err
 		}
 	}

@@ -14,12 +14,9 @@ Immediate next steps. Update after each session.
 ## Pending (next sessions)
 
 - [ ] Ready for v0.1.0 release push to remote (after seam-aware assembly complete)
-- [ ] Per-database MaxValueBytes configuration — store limit in file header, expose in Options (default 8KB)
-- [ ] Vector search and embeddings storage — implement `embed/` keyspace for ANN/hybrid retrieval ([`HEXXLA_DB.md`](./docs/hexxladb/HEXXLA_DB.md))
-- [ ] Temporal Range Queries — time-series analysis ("what changed this week?") vs point-in-time queries
-- [ ] Snapshot Tags/Labels — human-friendly names for MVCC snapshots ("v1.0", "pre-migration") enabling ViewAtTag
-- [ ] Relocate secondary index logic to `internal/` — `cell_secondary.go` and `seam_secondary.go` bypass Tx abstraction with direct btree.Delete calls
-- [ ] Extract `views.go` to `internal/views` or `internal/app` — `TokenBudgeter`, `ByteLenBudgeter`, budgeting logic are app-layer with no storage I/O
+- [ ] Per-database MaxValueBytes — needs engine header format change + migration (reclassified to Near-term)
+- [ ] Relocate secondary index files to `internal/` — import cycle; needs interface extraction (btree coupling already fixed via `deleteDirect`)
+- [ ] Extract `views.go` to `internal/views` or `internal/app` — import cycle; needs interface extraction
 - [ ] Complete `app.Service` use-case layer — only 4 of ~30 port methods implemented; `_ = svc` in cmd/main.go
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
 
@@ -38,6 +35,8 @@ Immediate next steps. Update after each session.
 - 2026-04-24: Quick wins batch: Cell Template Factory, Tag Analytics, RingDensity API, Filtered Changelog, Cell Validation Hooks
 - 2026-04-24: Deferred rotation.go move (import cycle requires interface extraction first)
 - 2026-04-24: Quick wins batch 2: ASCII Hex Renderer, Batch PutCell, QueryStats, Explain Mode, Bulk JSON I/O, API docs update
+- 2026-04-24: Fixed secondary index btree coupling: added `tx.deleteDirect`, replaced direct `tx.db.btree.Delete` calls
+- 2026-04-24: Reclassified MaxValueBytes, secondary index relocation, views.go extraction to Near-term (all need design/interface extraction)
 
 ---
 

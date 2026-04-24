@@ -25,19 +25,21 @@ Shipped with v0.1.0 release.
 - **QueryStats on ContextPack** — `ContextPackStats` (candidates, evicted, max ring) on `ContextPack.Stats`
 - **Context Pack Explain Mode** — `CellExplanation` per-cell reasons via `LoadContextBudgetConfig.Explain`
 - **Bulk Cell Import/Export (JSON)** — `ExportCellsJSON` + `ImportCellsJSON` in `bulk_io.go`
+- **Secondary index btree coupling fix** — added `tx.deleteDirect` mirroring `tx.putDirect`; `cell_secondary.go` and `seam_secondary.go` no longer reach through to `tx.db.btree.Delete` directly
 
 ## Quick Wins
 
 Low effort, high value. No design required.
 
-- Per-database MaxValueBytes — store limit in file header (default 8KB), expose in Options for 2KB/4KB/16KB use cases
-- Relocate secondary index logic to `internal/` — `cell_secondary.go` and `seam_secondary.go` are unexported helpers that call `tx.db.btree.Delete` directly, bypassing Tx abstraction; move to `internal/txcore` or `internal/storage` to enforce boundary ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
-- Extract `views.go` to `internal/views` or `internal/app` — `TokenBudgeter`, `ByteLenBudgeter`, `LoadContextWithBudgeting` are app-layer read projections with no storage I/O; re-export only types from module root ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+_(Empty — all quick wins shipped or reclassified.)_
 
 ## Near-term
 
 Requires design + benchmarks before implementation.
 
+- Per-database MaxValueBytes — store limit in engine header (default 8KB), expose in Options for 2KB/4KB/16KB; requires header format change and migration path (reclassified from Quick Wins)
+- Relocate secondary index files to `internal/` — `cell_secondary.go` and `seam_secondary.go` are methods on `*Tx`; moving to `internal/` creates import cycle same as `rotation.go`; needs interface extraction first (reclassified from Quick Wins; btree coupling already fixed via `deleteDirect`)
+- Extract `views.go` to `internal/views` or `internal/app` — `LoadContextWithBudgeting` calls `tx.GetCell`/`tx.AscendRange`, so it's not pure app-layer; moving requires interface extraction to break import cycle (reclassified from Quick Wins)
 - Move `rotation.go` to `internal/tooling/rotation` — rotation uses `DB.Open`, `Tx.putDirect`, error sentinels; moving to `internal/` creates an import cycle; needs interface extraction first ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 - Batch MVCC prune (`PruneCellVersions`) — coalesce deletes under single engine write txn to reduce WAL pressure ([`DURABILITY.md`](./hexxladb/DURABILITY.md))
 - Database Health Check API — integrity verification, orphaned seam detection, index consistency ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))

@@ -240,6 +240,16 @@ func (tx *Tx) putDirect(key, val []byte) error {
 	return tx.db.btree.Put(key, val)
 }
 
+// deleteDirect removes a key without going through the public Tx API.
+// Internal secondary-index maintenance (cell_secondary, seam_secondary) uses this
+// instead of reaching directly into tx.db.btree.Delete.
+func (tx *Tx) deleteDirect(key []byte) error {
+	if err := tx.requireWritable(); err != nil {
+		return err
+	}
+	return tx.db.btree.Delete(key)
+}
+
 // AscendRange calls fn for keys in [from, to] inclusive (byte order). If from is nil, starts at the smallest key.
 func (tx *Tx) AscendRange(from, to []byte, fn func(k, v []byte) bool) error {
 	if tx == nil || tx.db == nil {

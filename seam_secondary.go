@@ -49,7 +49,7 @@ func (tx *Tx) removeSeamSecondaryIndex(rec record.SeamRecord, commitSeq uint64) 
 		return err
 	}
 	if k != nil {
-		if err := tx.db.btree.Delete(k); err != nil {
+		if err := tx.deleteDirect(k); err != nil {
 			return err
 		}
 	}
@@ -58,7 +58,7 @@ func (tx *Tx) removeSeamSecondaryIndex(rec record.SeamRecord, commitSeq uint64) 
 		return err
 	}
 	if tk != nil {
-		if err := tx.db.btree.Delete(tk); err != nil {
+		if err := tx.deleteDirect(tk); err != nil {
 			return err
 		}
 	}
