@@ -15,7 +15,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -331,50 +330,15 @@ func run() error {
 		return fmt.Errorf("list existing topics: %w", err)
 	}
 
-	printMetric("Total unique tags", len(allTags), "tags")
+	printMetric("Existing tags", len(allTags), "tags")
 	fmt.Println()
 
-	// Categorize tags by semantic type
-	_, _ = infoStyle.Println("  Tag catalog by semantic category:")
-	fmt.Println()
-
-	// Tag categories based on the seed data we inserted
-	categories := map[string][]string{
-		"Content Type": {"fact", "opinion", "preference", "question", "acknowledgment", "recommendation", "goal"},
-		"Domain":       {"communication-style", "database", "api", "security", "configuration", "export"},
-		"Features":     {"hexagonal-addressing", "coordinates", "seams", "secondary-index", "changefeed"},
-		"Meta":         {"user-123", "contradiction", "commitment", "enthusiasm", "conditional"},
-	}
-
-	for category, expectedTags := range categories {
-		var found []string
-		for _, tag := range allTags {
-			if slices.Contains(expectedTags, tag) {
-				found = append(found, tag)
-			}
-		}
-		if len(found) > 0 {
-			_, _ = accentStyle.Printf("  %s:\n", category)
-			for _, tag := range found {
-				_, _ = dimStyle.Printf("    • %s\n", tag)
-			}
-			fmt.Println()
-		}
-	}
-
-	// Show service-useful tags (not user-specific)
-	_, _ = infoStyle.Println("  Service-reusable tags (excluding user IDs):")
-	var serviceTags []string
+	_, _ = infoStyle.Println("  Tags in database:")
 	for _, tag := range allTags {
-		if !strings.HasPrefix(tag, "user-") {
-			serviceTags = append(serviceTags, tag)
-		}
-	}
-	for _, tag := range serviceTags {
 		_, _ = dimStyle.Printf("    • %s\n", tag)
 	}
 	fmt.Println()
-	printSuccess(fmt.Sprintf("Found %d reusable tags for service decisions", len(serviceTags)))
+	printSuccess(fmt.Sprintf("Discovered %d unique tags", len(allTags)))
 	fmt.Println()
 
 	// ═══════════════════════════════════════════════════════════════
