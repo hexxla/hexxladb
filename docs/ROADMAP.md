@@ -33,6 +33,16 @@ Spec exists; implementation deferred.
 - Cell Relationship Graph Export — nodes/edges/seams for external analysis
 - Confidence Decay Policy — time-based confidence reduction with audit trail
 
+## Future exploration
+
+Interesting but unvalidated. Needs user demand or benchmark data before committing.
+
+- Hot Cell Tracking — LRU-based access frequency tracking for cache warming (overhead concerns)
+- Content Compression — gzip/zstd compression for large cells >512B (benchmark first)
+- Edge Weight Decay — connections strengthen with traversal, weaken with disuse (speculative)
+- Facet Diff/Compare — see what changed between facet versions (audit utility)
+- Shortest Path Between Cells — graph traversal via edges (BFS implementation)
+
 ## Out of Scope
 
 Intentional boundaries for embedded library v1.
