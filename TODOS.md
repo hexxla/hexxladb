@@ -4,16 +4,10 @@ Immediate next steps. Update after each session.
 
 ## Current
 
-- [ ] **Seam-aware context assembly** — v0.1.0 blocker; filter/supersede outdated cells via seam links during LoadContextPack
-  - [ ] Detect "superseded by" seams in context assembly
-  - [ ] Walk seam chains to current truth
-  - [ ] Exclude superseded cells from pack (replace, don't add)
-  - [ ] Preserve token budget predictability
-  - [ ] Handle edge case: superseding cell outside budget
+- [ ] Ready for v0.1.0 release push to remote
 
 ## Pending (next sessions)
 
-- [ ] Ready for v0.1.0 release push to remote (after seam-aware assembly complete)
 - [ ] Per-database MaxValueBytes — needs engine header format change + migration (reclassified to Near-term)
 - [ ] Relocate secondary index files to `internal/` — import cycle; needs interface extraction (btree coupling already fixed via `deleteDirect`)
 - [ ] Extract `views.go` to `internal/views` or `internal/app` — import cycle; needs interface extraction
@@ -24,6 +18,7 @@ Immediate next steps. Update after each session.
 
 ## Recently Completed
 
+- 2026-04-25: Seam-aware context assembly (v0.1.0 blocker resolved) — `SeamTypeSupersedes`, `MarkSupersedes`, `resolveSupersession`, `LoadContextBudgetConfig.FilterSuperseded`; 4 regression tests
 - 2026-04-24: Increased max cell value to 8KB (v0.1.0 blocker resolved)
 - 2026-04-24: Added tag discovery API to conversational example
 - 2026-04-24: Added comparison section to README (vs vector/graph/temporal DBs)

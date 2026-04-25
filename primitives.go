@@ -254,6 +254,18 @@ func (tx *Tx) putSeamWithOp(ctx context.Context, rec record.SeamRecord, clogOp b
 	return nil
 }
 
+// SeamType constants for well-known seam relationships.
+// SeamType is a free string on [record.SeamRecord]; these constants define the
+// canonical values used by built-in helpers and context assembly.
+const (
+	// SeamTypeConflict is written by [Tx.MarkConflict].
+	SeamTypeConflict = "mark_conflict"
+	// SeamTypeSupersedes indicates that CellB is the current truth and CellA is stale.
+	// Written by [Tx.MarkSupersedes]. Context assembly (FilterSuperseded) walks these
+	// chains and excludes superseded cells from the ContextPack.
+	SeamTypeSupersedes = "supersedes"
+)
+
 // MarkConflict creates a manual seam between two cells (spec: mark_conflict): new ULID,
 // canonical endpoints via [record.CanonicalCellPair], SeamType "mark_conflict", and DetectedAt set to now.
 // Only allowed inside [DB.Update].
@@ -279,6 +291,41 @@ func (tx *Tx) MarkConflict(cellA, cellB lattice.Coord, reason string) error {
 		CellA:            lo,
 		CellB:            hi,
 		SeamType:         "mark_conflict",
+		Reason:           reason,
+		ConfidenceDelta:  0,
+		DetectedAt:       time.Now().UnixNano(),
+		ResolutionStatus: "",
+		ResolutionNote:   "",
+	}
+	return tx.PutSeam(context.Background(), rec)
+}
+
+// MarkSupersedes records that superseder is the current truth and superseded is stale.
+// The seam uses [SeamTypeSupersedes] with CellA=superseded, CellB=superseder (directional:
+// "superseded is superseded by superseder"). Context assembly with [LoadContextBudgetConfig.FilterSuperseded]
+// walks these chains and excludes stale cells from the [ContextPack].
+// Only allowed inside [DB.Update].
+func (tx *Tx) MarkSupersedes(superseder, superseded lattice.Coord, reason string) error {
+	if err := tx.requireWritable(); err != nil {
+		return err
+	}
+	pa, err := lattice.Pack(superseded)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	}
+	pb, err := lattice.Pack(superseder)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	}
+	id, err := ulid.New(ulid.Now(), rand.Reader)
+	if err != nil {
+		return err
+	}
+	rec := record.SeamRecord{
+		ID:               id.String(),
+		CellA:            pa,
+		CellB:            pb,
+		SeamType:         SeamTypeSupersedes,
 		Reason:           reason,
 		ConfidenceDelta:  0,
 		DetectedAt:       time.Now().UnixNano(),

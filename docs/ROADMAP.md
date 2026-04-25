@@ -4,12 +4,13 @@
 
 Must complete before release. Core functionality gaps.
 
-- **Seam-aware context assembly** — when loading ContextPack, filter/supersede outdated cells via seam links; contradictions are useless without action; walk seam chains to current truth, exclude superseded data, preserve token budget ([discussion](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
+_(All blockers resolved — ready to release v0.1.0.)_
 
 ## Completed (v0.1.0)
 
 Shipped with v0.1.0 release.
 
+- **Seam-aware context assembly** — `SeamTypeSupersedes`, `Tx.MarkSupersedes`, `LoadContextBudgetConfig.FilterSuperseded`; walks supersession chains, replaces stale cells with current truth, excludes cells with no live successor; cycle detection at 16 hops
 - **Increase max cell value to 8KB** — 8192 bytes handles typical prompts/conversation turns; updated `btree_page.go`, `API_REFERENCE.md` (no format_version bump needed - runtime validation only)
 - **Rename `internal/mvccspike` → `internal/mvcc`** — promoted production MVCC visibility algorithm to stable package name ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 - **Extract prune profile helper** — `profileToMaxDelete` deduplicates `MVCCPrunePlan` and `PruneCellVersionsByProfile` switch blocks ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
@@ -92,3 +93,4 @@ Intentional boundaries for embedded library v1.
 | 2026-04-24 | **v0.1.0 scope locked:** 8KB cell size increase as release blocker                                                                                                                                                                                                  |
 | 2026-04-24 | **v0.1.0 scope updated:** seam-aware context assembly added as release blocker — contradictions must be actionable                                                                                                                                                  |
 | 2026-04-24 | **SoC audit validated:** mvccspike rename, prune profile dedup, MVCC key guard relocation added as v0.1.0 blockers; secondary index relocation, views.go extraction, app.Service completion added as Quick Wins ([audit](./context/audits/SOC_MODULARITY_AUDIT.md)) |
+| 2026-04-25 | Seam-aware context assembly shipped: `SeamTypeSupersedes`, `MarkSupersedes`, `FilterSuperseded`; all v0.1.0 blockers resolved                                                                                                                                       |
