@@ -1,0 +1,553 @@
+// TUI for HexxlaDB - Interactive database explorer and visualization
+//
+// A terminal interface for browsing HexxlaDB databases with:
+// - Hex grid visualization
+// - Cell inspection and navigation
+// - Tag analytics and statistics
+// - Search and filtering
+//
+// Run: go run ./cmd/tui -path /path/to/database.db
+package main
+
+import (
+	"flag"
+	"fmt"
+	"log/slog"
+	"os"
+	"sort"
+	"strings"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/hexxla/hexxladb"
+	"github.com/hexxla/hexxladb/internal/lattice"
+)
+
+func main() {
+	os.Exit(run())
+}
+
+func run() int {
+	pathFlag := flag.String("path", "", "database file path (overrides HEXXLA_DB_PATH)")
+	flag.Parse()
+
+	dbPath := *pathFlag
+	if dbPath == "" {
+		dbPath = os.Getenv("HEXXLA_DB_PATH")
+	}
+	if dbPath == "" {
+		fmt.Fprintln(os.Stderr, "Error: database path required (use -path or HEXXLA_DB_PATH)")
+		return 1
+	}
+
+	// Open database
+	db, err := hexxladb.Open(dbPath, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+		return 1
+	}
+	defer func() { _ = db.Close() }()
+
+	// Initialize logger
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	slog.SetDefault(log)
+
+	// Create and start TUI
+	model := newModel(db, dbPath)
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
+		return 1
+	}
+
+	return 0
+}
+
+// model holds the application state
+type model struct {
+	db      *hexxladb.DB
+	dbPath  string
+	current int // index of current view
+	views   []view
+	width   int
+	height  int
+}
+
+// view represents different UI screens
+type view interface {
+	Update(msg tea.Msg) (view, tea.Cmd)
+	View() string
+}
+
+// newModel creates the initial application model
+func newModel(db *hexxladb.DB, dbPath string) model {
+	return model{
+		db:      db,
+		dbPath:  dbPath,
+		current: 0,
+		views: []view{
+			newDashboardView(db),
+			newCellTableView(db),
+			newHexGridView(db),
+			newCellInspectorView(db),
+			newAnalyticsView(db),
+			newSearchView(db),
+		},
+	}
+}
+
+// Init implements tea.Model
+func (m model) Init() tea.Cmd {
+	return nil
+}
+
+// Update implements tea.Model
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
+
+	case tea.KeyMsg:
+		// Handle global keys first
+		switch msg.Type {
+		case tea.KeyCtrlC, tea.KeyEsc:
+			return m, tea.Quit
+		}
+
+		// Then handle specific key combinations
+		switch msg.String() {
+		case "q":
+			return m, tea.Quit
+
+		case "1":
+			m.current = 0
+			return m, nil
+
+		case "2":
+			if m.current != 1 {
+				m.current = 1
+				// Trigger cell loading when navigating to cell table
+				cellTable := m.views[1].(cellTableView)
+				if !cellTable.loading && len(cellTable.cells) == 0 {
+					cellTable.loading = true
+					m.views[1] = cellTable
+					return m, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
+						var cellsWithSeq []cellWithSeq
+						_ = m.db.View(func(tx *hexxladb.Tx) error {
+							return tx.AscendRange(nil, []byte("cell\xff"), func(k, _ []byte) bool {
+								// Key format: "cell/" + packed_coord (16 bytes, big-endian) + commit_seq (8 bytes)
+								if len(k) < 5+16+8 {
+									return true
+								}
+								// Skip "cell/" prefix
+								packedBytes := k[5:21]
+								// Extract commit sequence (last 8 bytes, big-endian)
+								commitSeq := uint64(k[21])<<56 | uint64(k[22])<<48 | uint64(k[23])<<40 | uint64(k[24])<<32 | uint64(k[25])<<24 | uint64(k[26])<<16 | uint64(k[27])<<8 | uint64(k[28])
+
+								// Convert bytes to PackedCoord (big-endian: Hi first, then Lo)
+								hi := uint64(packedBytes[0])<<56 | uint64(packedBytes[1])<<48 | uint64(packedBytes[2])<<40 | uint64(packedBytes[3])<<32 | uint64(packedBytes[4])<<24 | uint64(packedBytes[5])<<16 | uint64(packedBytes[6])<<8 | uint64(packedBytes[7])
+								lo := uint64(packedBytes[8])<<56 | uint64(packedBytes[9])<<48 | uint64(packedBytes[10])<<40 | uint64(packedBytes[11])<<32 | uint64(packedBytes[12])<<24 | uint64(packedBytes[13])<<16 | uint64(packedBytes[14])<<8 | uint64(packedBytes[15])
+								pk := lattice.PackedCoord{lo, hi}
+								coord, err := lattice.Unpack(pk)
+								if err != nil {
+									return true
+								}
+								cell, ok, _ := tx.GetCell(pk)
+								if ok {
+									cellsWithSeq = append(cellsWithSeq, cellWithSeq{
+										cell: hexxladb.CellView{
+											Coord:      coord,
+											RawContent: cell.RawContent,
+											Tags:       cell.Tags,
+											Provenance: cell.Provenance,
+											Validity:   cell.Validity,
+										},
+										seq: commitSeq,
+									})
+								}
+								return len(cellsWithSeq) < 50
+							})
+						})
+						// Sort by commit sequence (chronological order)
+						sort.Slice(cellsWithSeq, func(i, j int) bool {
+							return cellsWithSeq[i].seq < cellsWithSeq[j].seq
+						})
+
+						// Extract just the cells
+						cells := make([]hexxladb.CellView, len(cellsWithSeq))
+						for i, cw := range cellsWithSeq {
+							cells[i] = cw.cell
+						}
+
+						return cellsLoadedMsg{cells: cells}
+					})
+				}
+			}
+			return m, nil
+
+		case "3":
+			m.current = 2
+			return m, nil
+
+		case "4":
+			m.current = 3
+			return m, nil
+
+		case "5":
+			m.current = 4
+			return m, nil
+
+		case "6":
+			m.current = 5
+			return m, nil
+
+		case "tab":
+			oldCurrent := m.current
+			m.current = (m.current + 1) % len(m.views)
+			// Trigger cell loading when navigating to cell table
+			if m.current == 1 && oldCurrent != 1 {
+				cellTable := m.views[1].(cellTableView)
+				if !cellTable.loading && len(cellTable.cells) == 0 {
+					cellTable.loading = true
+					m.views[1] = cellTable
+					return m, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
+						var cellsWithSeq []cellWithSeq
+						_ = m.db.View(func(tx *hexxladb.Tx) error {
+							return tx.AscendRange(nil, []byte("cell\xff"), func(k, _ []byte) bool {
+								// Key format: "cell/" + packed_coord (16 bytes, big-endian) + commit_seq (8 bytes)
+								if len(k) < 5+16+8 {
+									return true
+								}
+								// Skip "cell/" prefix
+								packedBytes := k[5:21]
+								// Extract commit sequence (last 8 bytes, big-endian)
+								commitSeq := uint64(k[21])<<56 | uint64(k[22])<<48 | uint64(k[23])<<40 | uint64(k[24])<<32 | uint64(k[25])<<24 | uint64(k[26])<<16 | uint64(k[27])<<8 | uint64(k[28])
+
+								// Convert bytes to PackedCoord (big-endian: Hi first, then Lo)
+								hi := uint64(packedBytes[0])<<56 | uint64(packedBytes[1])<<48 | uint64(packedBytes[2])<<40 | uint64(packedBytes[3])<<32 | uint64(packedBytes[4])<<24 | uint64(packedBytes[5])<<16 | uint64(packedBytes[6])<<8 | uint64(packedBytes[7])
+								lo := uint64(packedBytes[8])<<56 | uint64(packedBytes[9])<<48 | uint64(packedBytes[10])<<40 | uint64(packedBytes[11])<<32 | uint64(packedBytes[12])<<24 | uint64(packedBytes[13])<<16 | uint64(packedBytes[14])<<8 | uint64(packedBytes[15])
+								pk := lattice.PackedCoord{lo, hi}
+								coord, err := lattice.Unpack(pk)
+								if err != nil {
+									return true
+								}
+								cell, ok, _ := tx.GetCell(pk)
+								if ok {
+									cellsWithSeq = append(cellsWithSeq, cellWithSeq{
+										cell: hexxladb.CellView{
+											Coord:      coord,
+											RawContent: cell.RawContent,
+											Tags:       cell.Tags,
+											Provenance: cell.Provenance,
+											Validity:   cell.Validity,
+										},
+										seq: commitSeq,
+									})
+								}
+								return len(cellsWithSeq) < 50
+							})
+						})
+						// Sort by commit sequence (chronological order)
+						sort.Slice(cellsWithSeq, func(i, j int) bool {
+							return cellsWithSeq[i].seq < cellsWithSeq[j].seq
+						})
+
+						// Extract just the cells
+						cells := make([]hexxladb.CellView, len(cellsWithSeq))
+						for i, cw := range cellsWithSeq {
+							cells[i] = cw.cell
+						}
+
+						return cellsLoadedMsg{cells: cells}
+					})
+				}
+			}
+			return m, nil
+
+		case "shift+tab":
+			oldCurrent := m.current
+			m.current = (m.current - 1 + len(m.views)) % len(m.views)
+			// Trigger cell loading when navigating to cell table
+			if m.current == 1 && oldCurrent != 1 {
+				cellTable := m.views[1].(cellTableView)
+				if !cellTable.loading && len(cellTable.cells) == 0 {
+					cellTable.loading = true
+					m.views[1] = cellTable
+					return m, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
+						var cellsWithSeq []cellWithSeq
+						_ = m.db.View(func(tx *hexxladb.Tx) error {
+							return tx.AscendRange(nil, []byte("cell\xff"), func(k, _ []byte) bool {
+								// Key format: "cell/" + packed_coord (16 bytes, big-endian) + commit_seq (8 bytes)
+								if len(k) < 5+16+8 {
+									return true
+								}
+								// Skip "cell/" prefix
+								packedBytes := k[5:21]
+								// Extract commit sequence (last 8 bytes, big-endian)
+								commitSeq := uint64(k[21])<<56 | uint64(k[22])<<48 | uint64(k[23])<<40 | uint64(k[24])<<32 | uint64(k[25])<<24 | uint64(k[26])<<16 | uint64(k[27])<<8 | uint64(k[28])
+
+								// Convert bytes to PackedCoord (big-endian: Hi first, then Lo)
+								hi := uint64(packedBytes[0])<<56 | uint64(packedBytes[1])<<48 | uint64(packedBytes[2])<<40 | uint64(packedBytes[3])<<32 | uint64(packedBytes[4])<<24 | uint64(packedBytes[5])<<16 | uint64(packedBytes[6])<<8 | uint64(packedBytes[7])
+								lo := uint64(packedBytes[8])<<56 | uint64(packedBytes[9])<<48 | uint64(packedBytes[10])<<40 | uint64(packedBytes[11])<<32 | uint64(packedBytes[12])<<24 | uint64(packedBytes[13])<<16 | uint64(packedBytes[14])<<8 | uint64(packedBytes[15])
+								pk := lattice.PackedCoord{lo, hi}
+								coord, err := lattice.Unpack(pk)
+								if err != nil {
+									return true
+								}
+								cell, ok, _ := tx.GetCell(pk)
+								if ok {
+									cellsWithSeq = append(cellsWithSeq, cellWithSeq{
+										cell: hexxladb.CellView{
+											Coord:      coord,
+											RawContent: cell.RawContent,
+											Tags:       cell.Tags,
+											Provenance: cell.Provenance,
+											Validity:   cell.Validity,
+										},
+										seq: commitSeq,
+									})
+								}
+								return len(cellsWithSeq) < 50
+							})
+						})
+						// Sort by commit sequence (chronological order)
+						sort.Slice(cellsWithSeq, func(i, j int) bool {
+							return cellsWithSeq[i].seq < cellsWithSeq[j].seq
+						})
+
+						// Extract just the cells
+						cells := make([]hexxladb.CellView, len(cellsWithSeq))
+						for i, cw := range cellsWithSeq {
+							cells[i] = cw.cell
+						}
+
+						return cellsLoadedMsg{cells: cells}
+					})
+				}
+			}
+			return m, nil
+
+		case "left", "h":
+			if m.current > 0 {
+				m.current--
+			}
+			return m, nil
+
+		case "right", "l":
+			if m.current < len(m.views)-1 {
+				m.current++
+			}
+			return m, nil
+		}
+
+	case inspectCellMsg:
+		// Switch to cell inspector view with the selected cell
+		inspector := m.views[3].(cellInspectorView)
+		inspector.cell = msg.coord
+		inspector.found = false
+		m.views[3] = inspector
+		m.current = 3
+		return m, nil
+
+	case exportCellMsg:
+		// Show export dialog with cell data
+		fmt.Printf("Exported cell data:\n%s\n", msg.data)
+		return m, nil
+
+	case showImportMsg:
+		// Show import dialog (placeholder for now)
+		fmt.Println("Import dialog - not yet implemented")
+		return m, nil
+
+	case performSearchMsg:
+		// Perform search in the search view
+		search := m.views[5].(searchView)
+		search.loading = true
+		m.views[5] = search
+		return m, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
+			var results []hexxladb.CellView
+			_ = m.db.View(func(tx *hexxladb.Tx) error {
+				return tx.AscendRange(nil, []byte("cell\xff"), func(_, _ []byte) bool {
+					if len(results) >= 50 {
+						return false
+					}
+					// Simple search - in real implementation, this would be more sophisticated
+					pk, err := lattice.Pack(hexxladb.Coord{Q: 0, R: 0})
+					if err != nil {
+						return true
+					}
+					cell, ok, _ := tx.GetCell(pk)
+					if ok {
+						results = append(results, hexxladb.CellView{
+							Coord:      hexxladb.Coord{Q: 0, R: 0},
+							RawContent: cell.RawContent,
+							Tags:       cell.Tags,
+						})
+					}
+					return true
+				})
+			})
+			return searchResultsMsg{results: results}
+		})
+
+	case searchResultsMsg:
+		// Update search view with results
+		search := m.views[5].(searchView)
+		search.loading = false
+		search.results = msg.results
+		m.views[5] = search
+		return m, nil
+
+	case cellsLoadedMsg:
+		// Update cell table view with loaded cells
+		cellTable := m.views[1].(cellTableView)
+		cellTable.loading = false
+		cellTable.cells = msg.cells
+		m.views[1] = cellTable
+		return m, nil
+
+	case contextPackLoadedMsg:
+		// Update inspector with loaded context pack
+		inspector := m.views[3].(cellInspectorView)
+		inspector.pack = msg.pack
+		m.views[3] = inspector
+		return m, nil
+	}
+
+	// Delegate to current view
+	if m.current >= 0 && m.current < len(m.views) {
+		newView, cmd := m.views[m.current].Update(msg)
+		m.views[m.current] = newView
+		return m, cmd
+	}
+	return m, nil
+}
+
+// View implements tea.Model
+func (m model) View() string {
+	if m.width == 0 || m.height == 0 {
+		return "Loading..."
+	}
+
+	// Layout: tabs | title | content | status bar
+	content := m.renderCenterPanel()
+	status := m.renderStatusBar()
+
+	// Style components
+	tab := lipgloss.NewStyle().
+		Border(tabBorderStyle, true).
+		BorderForeground(highlight).
+		Padding(0, 1)
+
+	activeTab := tab.BorderForeground(lipgloss.Color("#874BFD"))
+
+	tabGap := tab.BorderTop(false).BorderLeft(false).BorderRight(false)
+
+	titleStyle := lipgloss.NewStyle().
+		MarginLeft(1).
+		MarginRight(5).
+		Padding(0, 1).
+		Italic(true).
+		Foreground(lipgloss.Color("#FFF7DB")).
+		Render("HexxlaDB TUI")
+
+	contentStyle := lipgloss.NewStyle().
+		Width(m.width-2).
+		Height(m.height-8).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(textSecondary).
+		Background(contentBg).
+		Foreground(textPrimary).
+		Padding(1, 2).
+		MarginTop(1)
+
+	statusStyle := lipgloss.NewStyle().
+		Width(m.width).
+		Height(1).
+		Background(activeBg).
+		Foreground(textSecondary)
+
+	// Render tabs
+	tabRow := m.renderTabRow(activeTab, tab, tabGap)
+
+	// Render title row
+	titleRow := lipgloss.JoinHorizontal(lipgloss.Top, titleStyle)
+
+	// Build layout
+	layout := lipgloss.JoinVertical(lipgloss.Left,
+		tabRow,
+		titleRow,
+		contentStyle.Render(content),
+		statusStyle.Render(status),
+	)
+
+	return layout
+}
+
+// renderTabRow creates the tab navigation bar
+func (m model) renderTabRow(activeTab, tab, tabGap lipgloss.Style) string {
+	tabNames := []string{"Dashboard", "Cells", "Hex Grid", "Inspector", "Analytics", "Search"}
+	var tabs []string
+
+	for i, name := range tabNames {
+		if i == m.current {
+			tabs = append(tabs, activeTab.Render(name))
+		} else {
+			tabs = append(tabs, tab.Render(name))
+		}
+	}
+
+	row := lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
+	gap := tabGap.Render(strings.Repeat(" ", max(0, m.width-lipgloss.Width(row)-2)))
+	return lipgloss.JoinHorizontal(lipgloss.Bottom, row, gap)
+}
+
+// renderCenterPanel shows the current view content
+func (m model) renderCenterPanel() string {
+	if m.current >= 0 && m.current < len(m.views) {
+		return m.views[m.current].View()
+	}
+	return "Invalid view"
+}
+
+// renderStatusBar shows database information
+func (m model) renderStatusBar() string {
+	mvccEnabled := "no"
+	stats, _ := m.db.StatsMVCC()
+	if stats.CommitSeq > 0 {
+		mvccEnabled = "yes"
+	}
+
+	return fmt.Sprintf(" %s | MVCC: %s | f1-f5: navigate | tab: cycle | q: quit",
+		m.dbPath, mvccEnabled)
+}
+
+// Color scheme - inspired by lipgloss example with neon accents
+var (
+	// Main colors
+	highlight = lipgloss.Color("#874BFD") // purple highlight
+
+	// Backgrounds
+	activeBg  = lipgloss.Color("#2a2a2a") // dark gray
+	contentBg = lipgloss.Color("#0f0f0f") // almost black
+
+	// Text
+	textPrimary   = lipgloss.Color("#FAFAFA") // white text
+	textSecondary = lipgloss.Color("#969B86") // gray text
+
+	// Tab border style
+	tabBorderStyle = lipgloss.Border{
+		Top:         "─",
+		Bottom:      "─",
+		Left:        "│",
+		Right:       "│",
+		TopLeft:     "╭",
+		TopRight:    "╮",
+		BottomLeft:  "╰",
+		BottomRight: "╯",
+	}
+)
