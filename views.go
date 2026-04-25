@@ -44,6 +44,10 @@ type CellView struct {
 	ActiveFacet int
 	Edges       []EdgeView
 	Seams       []SeamRef
+	// SupersededFrom is set when this cell was substituted for a superseded cell during
+	// context assembly with [LoadContextBudgetConfig.FilterSuperseded]. It holds the
+	// coordinate of the original (stale) cell that was replaced.
+	SupersededFrom *Coord
 }
 
 // ContextPackStats records assembly statistics for debugging and observability.
@@ -55,10 +59,14 @@ type ContextPackStats struct {
 
 // CellExplanation records why a cell was included or excluded during context assembly.
 type CellExplanation struct {
-	Coord  Coord
-	Ring   int
-	Reason string // "included", "evicted_low_confidence", "cap_exceeded"
-	Tokens int    // token count at time of decision
+	Coord Coord
+	Ring  int
+	// Reason is one of: "included", "evicted_low_confidence", "cap_exceeded", "superseded".
+	Reason string
+	Tokens int // token count at time of decision
+	// SupersededBy is set when Reason == "superseded": the coord of the successor cell that
+	// replaced this one in the pack (if a live successor exists), or nil if excluded entirely.
+	SupersededBy *Coord
 }
 
 // ContextPack matches the neighborhood summary shape described in HEXXLA.md (Cells + TotalTokens + Seams).
@@ -215,8 +223,9 @@ type LoadContextBudgetConfig struct {
 
 // scoredCandidate pairs a CellView with the ring it was found in, used during context budgeting eviction.
 type scoredCandidate struct {
-	ring int
-	view CellView
+	ring          int
+	view          CellView
+	originalCoord *Coord // set when this candidate replaced a superseded cell
 }
 
 const maxSupersessionDepth = 16
@@ -286,26 +295,38 @@ func (tx *Tx) resolveSupersession(ctx context.Context, coord Coord) (resolved Co
 
 // collectCandidates scans rings outward from center, assembling up to capCells CellView candidates.
 // If cfg.FilterSuperseded is set, superseded cells are replaced by their current-truth successor
-// (or excluded if no live successor exists).
-func (tx *Tx) collectCandidates(ctx context.Context, center Coord, maxR, capCells int, opts AssembleCellViewOpts, cfg LoadContextBudgetConfig) ([]scoredCandidate, error) {
+// (or excluded if no live successor exists). When cfg.Explain is also true, superseded exclusions
+// are appended to explanations.
+func (tx *Tx) collectCandidates(ctx context.Context, center Coord, maxR, capCells int, opts AssembleCellViewOpts, cfg LoadContextBudgetConfig) ([]scoredCandidate, []CellExplanation, error) {
 	var items []scoredCandidate
+	var explanations []CellExplanation
 	seen := make(map[Coord]struct{})
 	for ring := 0; ring <= maxR; ring++ {
 		for _, c := range lattice.Ring(center, ring) {
 			if len(items) >= capCells {
-				return items, nil
+				return items, explanations, nil
 			}
 			target := c
+			var originalCoord *Coord
 			if cfg.FilterSuperseded {
 				resolved, wasSuperseded, err := tx.resolveSupersession(ctx, c)
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				if wasSuperseded {
 					if resolved == (Coord{}) {
 						// Superseded with no live successor: exclude entirely.
+						if cfg.Explain {
+							explanations = append(explanations, CellExplanation{
+								Coord:  c,
+								Ring:   ring,
+								Reason: "superseded",
+							})
+						}
 						continue
 					}
+					origC := c
+					originalCoord = &origC
 					target = resolved
 				}
 			}
@@ -317,13 +338,24 @@ func (tx *Tx) collectCandidates(ctx context.Context, center Coord, maxR, capCell
 				if errors.Is(err, ErrCellNotFound) {
 					continue
 				}
-				return nil, err
+				return nil, nil, err
+			}
+			if originalCoord != nil {
+				v.SupersededFrom = originalCoord
+				if cfg.Explain {
+					explanations = append(explanations, CellExplanation{
+						Coord:        *originalCoord,
+						Ring:         ring,
+						Reason:       "superseded",
+						SupersededBy: &target,
+					})
+				}
 			}
 			seen[target] = struct{}{}
-			items = append(items, scoredCandidate{ring: ring, view: v})
+			items = append(items, scoredCandidate{ring: ring, view: v, originalCoord: originalCoord})
 		}
 	}
-	return items, nil
+	return items, explanations, nil
 }
 
 // LoadContextWithBudgeting walks rings like [Tx.LoadContext], builds [CellView] values, then applies
@@ -350,7 +382,7 @@ func (tx *Tx) LoadContextWithBudgeting(ctx context.Context, center Coord, maxR, 
 	if assembleOpts == (AssembleCellViewOpts{}) {
 		assembleOpts = DefaultAssembleCellViewOpts()
 	}
-	items, err := tx.collectCandidates(ctx, center, maxR, capCells, assembleOpts, cfg)
+	items, supersededExplanations, err := tx.collectCandidates(ctx, center, maxR, capCells, assembleOpts, cfg)
 	if err != nil {
 		return ContextPack{}, err
 	}
@@ -359,7 +391,8 @@ func (tx *Tx) LoadContextWithBudgeting(ctx context.Context, center Coord, maxR, 
 	}
 	candidatesScanned := len(items)
 	evicted := 0
-	var explanations []CellExplanation
+	// Start with supersession explanations from candidate collection; budget explanations appended below.
+	explanations := supersededExplanations
 	total := 0
 	for i := range items {
 		total += cellViewTokens(budgeter, items[i].view, cfg.IncludeFacetText)

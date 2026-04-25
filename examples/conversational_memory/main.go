@@ -241,12 +241,98 @@ func run() error {
 	}
 	fmt.Println()
 
-	// ═══════════════════════════════════════════════════════════════
-	// PHASE 4: Context Assembly for LLM Prompt
-	// ═══════════════════════════════════════════════════════════════
-	printHeader("Phase 4: Context Assembly (Token-Budgeted)")
-
 	center := cells[len(cells)-1] // Last message coordinate as context center
+
+	// ═══════════════════════════════════════════════════════════════
+	// PHASE 4: Supersession — mark stale cells as superseded
+	// ═══════════════════════════════════════════════════════════════
+	printHeader("Phase 4: Supersession (Seam-Aware Context Assembly)")
+
+	_, _ = infoStyle.Println("  Marking preference cell[0] as superseded by cell[2]...")
+	_, _ = dimStyle.Println("  (User changed from 'detailed' to 'concise' — old cell is stale)")
+	fmt.Println()
+
+	// cells[2] is the "keep it concise" message — the current truth supersedes cells[0]
+	if len(cells) >= 3 {
+		if err := db.Update(func(tx *hexxladb.Tx) error {
+			return tx.MarkSupersedes(cells[2], cells[0], "Preference updated: concise supersedes detailed")
+		}); err != nil {
+			return fmt.Errorf("mark supersedes: %w", err)
+		}
+		_, _ = successStyle.Println("  ✓ Supersession seam recorded")
+		_, _ = infoStyle.Printf("    Stale:   cell[0] (%d,%d) — 'I prefer detailed technical explanations'\n", cells[0].Q, cells[0].R)
+		_, _ = infoStyle.Printf("    Current: cell[2] (%d,%d) — 'Actually, keep it concise'\n", cells[2].Q, cells[2].R)
+	}
+	fmt.Println()
+
+	// Load context WITHOUT FilterSuperseded — stale cell appears
+	var packWithStale hexxladb.ContextPack
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		var err error
+		packWithStale, err = tx.LoadContextPack(ctx, center, 3, 10000, hexxladb.ByteLenBudgeter{}, hexxladb.LoadContextBudgetConfig{
+			Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
+			FilterSuperseded: false,
+			Explain:          true,
+		})
+		return err
+	}); err != nil {
+		return fmt.Errorf("load context (unfiltered): %w", err)
+	}
+
+	// Load context WITH FilterSuperseded — stale cell excluded, successor included
+	var packFiltered hexxladb.ContextPack
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		var err error
+		packFiltered, err = tx.LoadContextPack(ctx, center, 3, 10000, hexxladb.ByteLenBudgeter{}, hexxladb.LoadContextBudgetConfig{
+			Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
+			FilterSuperseded: true,
+			Explain:          true,
+		})
+		return err
+	}); err != nil {
+		return fmt.Errorf("load context (filtered): %w", err)
+	}
+
+	printMetric("Cells WITHOUT FilterSuperseded", len(packWithStale.Cells), "cells")
+	printMetric("Cells WITH FilterSuperseded", len(packFiltered.Cells), "cells")
+	fmt.Println()
+
+	// Show which cells are successors (SupersededFrom is set)
+	var substituted int
+	for _, cv := range packFiltered.Cells {
+		if cv.SupersededFrom != nil {
+			substituted++
+			_, _ = accentStyle.Printf("  ↺ Successor cell (%d,%d)", cv.Coord.Q, cv.Coord.R)
+			_, _ = dimStyle.Printf(" replaced stale cell (%d,%d)\n", cv.SupersededFrom.Q, cv.SupersededFrom.R)
+			_, _ = dimStyle.Printf("    Content: %s\n", truncate(cv.RawContent, 55))
+		}
+	}
+	if substituted == 0 {
+		_, _ = dimStyle.Println("  (no substitutions in this radius — stale cell excluded entirely)")
+	}
+	fmt.Println()
+
+	// Show superseded explanations from Explain mode
+	_, _ = infoStyle.Println("  Supersession decisions (Explain mode):")
+	for _, ex := range packFiltered.Explanations {
+		if ex.Reason == "superseded" {
+			if ex.SupersededBy != nil {
+				_, _ = warningStyle.Printf("  ✗ (%d,%d) ring=%-2d superseded → replaced by (%d,%d)\n",
+					ex.Coord.Q, ex.Coord.R, ex.Ring, ex.SupersededBy.Q, ex.SupersededBy.R)
+			} else {
+				_, _ = warningStyle.Printf("  ✗ (%d,%d) ring=%-2d superseded → excluded (no live successor)\n",
+					ex.Coord.Q, ex.Coord.R, ex.Ring)
+			}
+		}
+	}
+	fmt.Println()
+	printSuccess("Seam-aware filtering complete: stale cells removed from context")
+	fmt.Println()
+
+	// ═══════════════════════════════════════════════════════════════
+	// PHASE 5: Context Assembly for LLM Prompt
+	// ═══════════════════════════════════════════════════════════════
+	printHeader("Phase 5: Context Assembly (Token-Budgeted)")
 
 	_, _ = infoStyle.Printf("  Assembling context around coordinate (%d,%d)...\n", center.Q, center.R)
 	fmt.Println()
@@ -343,9 +429,9 @@ func run() error {
 	fmt.Println()
 
 	// ═══════════════════════════════════════════════════════════════
-	// PHASE 5: Tag Discovery and Analytics
+	// PHASE 6: Tag Discovery and Analytics
 	// ═══════════════════════════════════════════════════════════════
-	printHeader("Phase 5: Tag Discovery and Analytics")
+	printHeader("Phase 6: Tag Discovery and Analytics")
 
 	// Discover all unique tags in the database
 	_, _ = infoStyle.Println("  Discovering all tags in the database...")
@@ -408,9 +494,9 @@ func run() error {
 	fmt.Println()
 
 	// ═══════════════════════════════════════════════════════════════
-	// PHASE 6: Query Patterns
+	// PHASE 7: Query Patterns
 	// ═══════════════════════════════════════════════════════════════
-	printHeader("Phase 6: Query Patterns")
+	printHeader("Phase 7: Query Patterns")
 
 	// Query by tag
 	_, _ = infoStyle.Println("  Query: All cells tagged 'preference'...")
@@ -445,9 +531,9 @@ func run() error {
 	fmt.Println()
 
 	// ═══════════════════════════════════════════════════════════════
-	// PHASE 6: MVCC Snapshot
+	// PHASE 8: MVCC Snapshot
 	// ═══════════════════════════════════════════════════════════════
-	printHeader("Phase 6: MVCC Time-Travel Query")
+	printHeader("Phase 8: MVCC Time-Travel Query")
 
 	stats, err := db.StatsMVCC()
 	if err != nil {
@@ -476,9 +562,9 @@ func run() error {
 	fmt.Println()
 
 	// ═══════════════════════════════════════════════════════════════
-	// PHASE 7: Lattice Visualization & Diagnostics
+	// PHASE 9: Lattice Visualization & Diagnostics
 	// ═══════════════════════════════════════════════════════════════
-	printHeader("Phase 7: Lattice Visualization & Diagnostics")
+	printHeader("Phase 9: Lattice Visualization & Diagnostics")
 
 	// ASCII hex grid — debug tool for small radii (clamped to MaxRenderRadius=10).
 	// For large lattices, use RingDensityMap for aggregate stats instead.

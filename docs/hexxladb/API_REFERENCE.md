@@ -43,20 +43,22 @@ Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored 
 
 ## Cells, seams, rings, context (primitives)
 
-| Symbol                                            | Notes                                                    |
-| ------------------------------------------------- | -------------------------------------------------------- |
-| **[`(*Tx).PutCell`](../../primitives.go)**        | Cell primary + secondaries (`source/`, `time/`, `tag/`). |
-| **[`(*Tx).GetCell`](../../primitives.go)**        | Decode visible cell at packed coord.                     |
-| **[`(*Tx).WalkRing`](../../primitives.go)**       | Visit one ring; raw bytes per coord.                     |
-| **[`(*Tx).WalkRingAt`](../../primitives.go)**     | Same order; **`record.ValidAt`** filter at **`asOf`**.   |
-| **[`(*Tx).LoadContext`](../../primitives.go)**    | Concentric walk; **`maxR`**, **`maxCells`**.             |
-| **[`(*Tx).LoadContextAt`](../../primitives.go)**  | Same as **`LoadContext`** + validity filter.             |
-| **[`(*Tx).WalkRingFacets`](../../primitives.go)** | Facet_mask ring walk; optional validity on cell.         |
-| **[`(*Tx).PutSeam`](../../primitives.go)**        | Seam primary + **`seam-by-cells/`** + seam secondaries.  |
-| **[`(*Tx).FindSeams`](../../primitives.go)**      | Query ball using seam index + primaries.                 |
-| **[`(*Tx).FindSeamsAt`](../../primitives.go)**    | **`FindSeams`** + seam validity filter.                  |
-| **[`(*Tx).MarkConflict`](../../primitives.go)**   | Spec sugar: ULID seam **`mark_conflict`**.               |
-| **[`(*Tx).ResolveSeam`](../../primitives.go)**    | Update resolution fields on **`seam/<ulid>`**.           |
+| Symbol                                            | Notes                                                                                                             |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **[`(*Tx).PutCell`](../../primitives.go)**        | Cell primary + secondaries (`source/`, `time/`, `tag/`).                                                          |
+| **[`(*Tx).GetCell`](../../primitives.go)**        | Decode visible cell at packed coord.                                                                              |
+| **[`(*Tx).WalkRing`](../../primitives.go)**       | Visit one ring; raw bytes per coord.                                                                              |
+| **[`(*Tx).WalkRingAt`](../../primitives.go)**     | Same order; **`record.ValidAt`** filter at **`asOf`**.                                                            |
+| **[`(*Tx).LoadContext`](../../primitives.go)**    | Concentric walk; **`maxR`**, **`maxCells`**.                                                                      |
+| **[`(*Tx).LoadContextAt`](../../primitives.go)**  | Same as **`LoadContext`** + validity filter.                                                                      |
+| **[`(*Tx).WalkRingFacets`](../../primitives.go)** | Facet_mask ring walk; optional validity on cell.                                                                  |
+| **[`(*Tx).PutSeam`](../../primitives.go)**        | Seam primary + **`seam-by-cells/`** + seam secondaries.                                                           |
+| **[`(*Tx).FindSeams`](../../primitives.go)**      | Query ball using seam index + primaries.                                                                          |
+| **[`(*Tx).FindSeamsAt`](../../primitives.go)**    | **`FindSeams`** + seam validity filter.                                                                           |
+| **[`(*Tx).MarkConflict`](../../primitives.go)**   | Spec sugar: ULID seam **`mark_conflict`**.                                                                        |
+| **[`(*Tx).MarkSupersedes`](../../primitives.go)** | Record directional supersession: superseder replaces superseded; used by **`FilterSuperseded`** context assembly. |
+| **[`(*Tx).ResolveSeam`](../../primitives.go)**    | Update resolution fields on **`seam/<ulid>`**.                                                                    |
+| **`SeamTypeConflict`**, **`SeamTypeSupersedes`**  | Canonical seam type string constants (**`"mark_conflict"`**, **`"supersedes"`**).                                 |
 
 Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](../../internal/record/validity.go)); external code often reaches it via **`Tx`** helpers above rather than importing **`internal/record`** from outside this module.
 
@@ -142,17 +144,17 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 
 ## HEXXLA-shaped views and budgeting
 
-| Symbol                                                                                                                                                                      | Notes                                              |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| **[`(*Tx).AssembleCellView`](../../views.go)**                                                                                                                              | One coord → **`CellView`** with opts.              |
-| **[`(*Tx).LoadContextWithBudgeting`](../../views.go)**                                                                                                                      | Token-budget **`ContextPack`**.                    |
-| **[`(*Tx).LoadContextPack`](../../views.go)**                                                                                                                               | Alias of **`LoadContextWithBudgeting`**.           |
-| **[`CellView`](../../views.go)**, **[`ContextPack`](../../views.go)**, **[`FacetView`](../../views.go)**, **[`EdgeView`](../../views.go)**, **[`SeamRef`](../../views.go)** | View types.                                        |
-| **[`LoadContextBudgetConfig`](../../views.go)**, **[`AssembleCellViewOpts`](../../views.go)**, **[`DefaultAssembleCellViewOpts`](../../views.go)**                          | Assembly + seam radius + caps.                     |
-| **[`TokenBudgeter`](../../views.go)**, **[`ByteLenBudgeter`](../../views.go)**                                                                                              | Budget counting.                                   |
-| **[`CellViewPredicate`](../../views.go)**, **[`FilterCellViews`](../../views.go)**, **[`TruncateCellViewsToTokenBudget`](../../views.go)**                                  | Post-process assembled views.                      |
-| **[`ContextPackStats`](../../views.go)**                                                                                                                                    | Assembly stats: candidates, evicted, max ring.     |
-| **[`CellExplanation`](../../views.go)**                                                                                                                                     | Per-cell inclusion/eviction reason (Explain mode). |
+| Symbol                                                                                                                                                                      | Notes                                                                                                                                                                             |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*Tx).AssembleCellView`](../../views.go)**                                                                                                                              | One coord → **`CellView`** with opts.                                                                                                                                             |
+| **[`(*Tx).LoadContextWithBudgeting`](../../views.go)**                                                                                                                      | Token-budget **`ContextPack`**.                                                                                                                                                   |
+| **[`(*Tx).LoadContextPack`](../../views.go)**                                                                                                                               | Alias of **`LoadContextWithBudgeting`**.                                                                                                                                          |
+| **[`CellView`](../../views.go)**, **[`ContextPack`](../../views.go)**, **[`FacetView`](../../views.go)**, **[`EdgeView`](../../views.go)**, **[`SeamRef`](../../views.go)** | View types. **`CellView.SupersededFrom`** is set when a cell substituted a superseded cell during assembly.                                                                       |
+| **[`LoadContextBudgetConfig`](../../views.go)**, **[`AssembleCellViewOpts`](../../views.go)**, **[`DefaultAssembleCellViewOpts`](../../views.go)**                          | Assembly + seam radius + caps. **`FilterSuperseded`** enables seam-aware context assembly.                                                                                        |
+| **[`TokenBudgeter`](../../views.go)**, **[`ByteLenBudgeter`](../../views.go)**                                                                                              | Budget counting.                                                                                                                                                                  |
+| **[`CellViewPredicate`](../../views.go)**, **[`FilterCellViews`](../../views.go)**, **[`TruncateCellViewsToTokenBudget`](../../views.go)**                                  | Post-process assembled views.                                                                                                                                                     |
+| **[`ContextPackStats`](../../views.go)**                                                                                                                                    | Assembly stats: candidates, evicted, max ring.                                                                                                                                    |
+| **[`CellExplanation`](../../views.go)**                                                                                                                                     | Per-cell inclusion/eviction reason (Explain mode). **`Reason`**: `"included"`, `"evicted_low_confidence"`, `"superseded"`. **`SupersededBy`** coord set on superseded exclusions. |
 
 ---
 
@@ -279,10 +281,10 @@ The demo is a **session-shaped production walkthrough**; it stays readable. Omit
 - **Why omitted:** **`LinkCells`** is the spec-named sugar for **conversation_turn**-style edges; the demo does not need multiple relation types or edge reads.
 - **Use when:** Non-adjacent graphs, multiple **relation types**, answering “what points **from** this cell?” (**`AscendEdgesFrom`**), idempotent edge upserts (**`PutEdge`**).
 
-### `MarkConflict`, `ResolveSeam`, `FindSeamsAt`
+### `MarkConflict`, `MarkSupersedes`, `ResolveSeam`, `FindSeamsAt`
 
-- **Why omitted:** One seam is inserted with **`PutSeam`**; **`FindSeams`** is enough for geometry. **`MarkConflict`** duplicates policy **`PutSeam`** could express. **`ResolveSeam`** is a **follow-up workflow** step. **`FindSeamsAt`** adds **validity** filtering on seams — redundant when seam validity is open/default.
-- **Use when:** **HEXXLA** contradiction UX — quick conflict stub (**`MarkConflict`**), operator/LM resolution (**`ResolveSeam`**), replay “what contradictions existed **as of** time T?” (**`FindSeamsAt`**).
+- **Why omitted:** The demo adds a dedicated supersession phase (Phase 4) that calls **`MarkSupersedes`** and shows **`FilterSuperseded`** in action. **`MarkConflict`** duplicates policy **`PutSeam`** could express. **`ResolveSeam`** is a **follow-up workflow** step. **`FindSeamsAt`** adds **validity** filtering on seams — redundant when seam validity is open/default.
+- **Use when:** **HEXXLA** contradiction UX — quick conflict stub (**`MarkConflict`**), supersede a stale cell (**`MarkSupersedes`**), operator/LM resolution (**`ResolveSeam`**), replay "what contradictions existed **as of** time T?" (**`FindSeamsAt`**).
 
 ### `AscendSeamsBySource`, `AscendSeamsInTimeBucket`
 
