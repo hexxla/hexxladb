@@ -206,6 +206,11 @@ type LoadContextBudgetConfig struct {
 	IncludeSeams      bool
 	SeamRadius        int
 	Explain           bool // when true, populate ContextPack.Explanations
+	// FilterSuperseded walks [SeamTypeSupersedes] chains for each candidate cell and
+	// replaces superseded cells with their current-truth successor (if the successor
+	// exists in the DB). Cells with no live successor are excluded from the pack.
+	// Cycles are detected and broken after maxSupersessionDepth hops (default 16).
+	FilterSuperseded bool
 }
 
 // scoredCandidate pairs a CellView with the ring it was found in, used during context budgeting eviction.
@@ -214,21 +219,107 @@ type scoredCandidate struct {
 	view CellView
 }
 
+const maxSupersessionDepth = 16
+
+// resolveSupersession walks SeamTypeSupersedes chains from coord and returns the
+// current-truth coord. Returns (coord, false) if the cell is not superseded.
+// Returns (successor, true) if a live successor is found within maxSupersessionDepth hops.
+// Returns (Coord{}, true) if the cell is superseded but the chain terminus has no live cell
+// (caller should exclude the original cell). Cycles are detected and broken.
+func (tx *Tx) resolveSupersession(ctx context.Context, coord Coord) (resolved Coord, wasSuperseded bool, err error) {
+	visited := make(map[Coord]struct{})
+	current := coord
+	superseded := false
+	for range maxSupersessionDepth {
+		if err := ctx.Err(); err != nil {
+			return coord, false, err
+		}
+		visited[current] = struct{}{}
+		seams, err := tx.FindSeams(ctx, current, 0, false)
+		if err != nil {
+			return coord, false, err
+		}
+		var next *Coord
+		for _, s := range seams {
+			if s.SeamType != SeamTypeSupersedes {
+				continue
+			}
+			cellA, errA := lattice.Unpack(s.CellA)
+			if errA != nil {
+				continue
+			}
+			if cellA != current {
+				continue
+			}
+			cellB, errB := lattice.Unpack(s.CellB)
+			if errB != nil {
+				continue
+			}
+			if _, seen := visited[cellB]; seen {
+				// Cycle: treat original as superseded with no live successor.
+				return Coord{}, true, nil
+			}
+			next = &cellB
+			superseded = true
+			break
+		}
+		if next == nil {
+			if !superseded {
+				return coord, false, nil
+			}
+			// Chain terminus: check if current has a live cell.
+			pk, packErr := lattice.Pack(current)
+			if packErr != nil {
+				return Coord{}, true, nil
+			}
+			_, ok, getErr := tx.GetCell(pk)
+			if getErr != nil || !ok {
+				return Coord{}, true, nil
+			}
+			return current, true, nil
+		}
+		current = *next
+	}
+	// Depth exceeded: treat as superseded with no live successor.
+	return Coord{}, true, nil
+}
+
 // collectCandidates scans rings outward from center, assembling up to capCells CellView candidates.
-func (tx *Tx) collectCandidates(ctx context.Context, center Coord, maxR, capCells int, opts AssembleCellViewOpts) ([]scoredCandidate, error) {
+// If cfg.FilterSuperseded is set, superseded cells are replaced by their current-truth successor
+// (or excluded if no live successor exists).
+func (tx *Tx) collectCandidates(ctx context.Context, center Coord, maxR, capCells int, opts AssembleCellViewOpts, cfg LoadContextBudgetConfig) ([]scoredCandidate, error) {
 	var items []scoredCandidate
+	seen := make(map[Coord]struct{})
 	for ring := 0; ring <= maxR; ring++ {
 		for _, c := range lattice.Ring(center, ring) {
 			if len(items) >= capCells {
 				return items, nil
 			}
-			v, err := tx.AssembleCellView(ctx, c, nil, opts)
+			target := c
+			if cfg.FilterSuperseded {
+				resolved, wasSuperseded, err := tx.resolveSupersession(ctx, c)
+				if err != nil {
+					return nil, err
+				}
+				if wasSuperseded {
+					if resolved == (Coord{}) {
+						// Superseded with no live successor: exclude entirely.
+						continue
+					}
+					target = resolved
+				}
+			}
+			if _, already := seen[target]; already {
+				continue
+			}
+			v, err := tx.AssembleCellView(ctx, target, nil, opts)
 			if err != nil {
 				if errors.Is(err, ErrCellNotFound) {
 					continue
 				}
 				return nil, err
 			}
+			seen[target] = struct{}{}
 			items = append(items, scoredCandidate{ring: ring, view: v})
 		}
 	}
@@ -259,7 +350,7 @@ func (tx *Tx) LoadContextWithBudgeting(ctx context.Context, center Coord, maxR, 
 	if assembleOpts == (AssembleCellViewOpts{}) {
 		assembleOpts = DefaultAssembleCellViewOpts()
 	}
-	items, err := tx.collectCandidates(ctx, center, maxR, capCells, assembleOpts)
+	items, err := tx.collectCandidates(ctx, center, maxR, capCells, assembleOpts, cfg)
 	if err != nil {
 		return ContextPack{}, err
 	}

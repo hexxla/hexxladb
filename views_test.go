@@ -162,6 +162,233 @@ func TestTx_LoadContextPack_alias(t *testing.T) {
 	}
 }
 
+func mustPutCell(t *testing.T, db *hexxladb.DB, c lattice.Coord, content string) {
+	t.Helper()
+	p, err := lattice.Pack(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.PutCell(context.Background(), record.CellRecord{
+			Key:        p,
+			RawContent: content,
+			Provenance: record.ProvenanceWire{Confidence: 1.0},
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestFilterSuperseded_excludesStale checks that a superseded cell is excluded and
+// its successor is returned instead.
+func TestFilterSuperseded_excludesStale(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	db, err := hexxladb.Open(filepath.Join(dir, "sup.db"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	center := lattice.Coord{Q: 0, R: 0}
+	stale := lattice.Coord{Q: 1, R: 0}    // ring-1 cell, will be superseded
+	current := lattice.Coord{Q: -1, R: 0} // ring-1 cell, the current truth
+
+	mustPutCell(t, db, center, "center")
+	mustPutCell(t, db, stale, "stale content")
+	mustPutCell(t, db, current, "current content")
+
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.MarkSupersedes(current, stale, "updated")
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err = db.View(func(tx *hexxladb.Tx) error {
+		pack, err := tx.LoadContextWithBudgeting(ctx, center, 1, 10000, hexxladb.ByteLenBudgeter{}, hexxladb.LoadContextBudgetConfig{
+			Assemble:         hexxladb.AssembleCellViewOpts{IncludeFacets: false},
+			FilterSuperseded: true,
+		})
+		if err != nil {
+			return err
+		}
+		for _, cv := range pack.Cells {
+			if cv.Coord == stale {
+				t.Fatal("stale cell should have been excluded from context pack")
+			}
+		}
+		var found bool
+		for _, cv := range pack.Cells {
+			if cv.Coord == current {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("current-truth cell should be present in context pack")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestFilterSuperseded_chainWalk checks that a multi-hop supersession chain resolves to the final truth.
+func TestFilterSuperseded_chainWalk(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	db, err := hexxladb.Open(filepath.Join(dir, "chain.db"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	center := lattice.Coord{Q: 0, R: 0}
+	a := lattice.Coord{Q: 1, R: 0}  // stale
+	b := lattice.Coord{Q: 0, R: 1}  // intermediate (a→b→c)
+	c := lattice.Coord{Q: -1, R: 0} // final truth
+
+	mustPutCell(t, db, center, "center")
+	mustPutCell(t, db, a, "v1")
+	mustPutCell(t, db, b, "v2")
+	mustPutCell(t, db, c, "v3")
+
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		if err := tx.MarkSupersedes(b, a, "v2 supersedes v1"); err != nil {
+			return err
+		}
+		return tx.MarkSupersedes(c, b, "v3 supersedes v2")
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err = db.View(func(tx *hexxladb.Tx) error {
+		pack, err := tx.LoadContextWithBudgeting(ctx, center, 1, 10000, hexxladb.ByteLenBudgeter{}, hexxladb.LoadContextBudgetConfig{
+			Assemble:         hexxladb.AssembleCellViewOpts{IncludeFacets: false},
+			FilterSuperseded: true,
+		})
+		if err != nil {
+			return err
+		}
+		for _, cv := range pack.Cells {
+			if cv.Coord == a {
+				t.Error("stale cell a should not appear")
+			}
+		}
+		var foundC bool
+		for _, cv := range pack.Cells {
+			if cv.Coord == c {
+				foundC = true
+			}
+		}
+		if !foundC {
+			t.Fatal("final truth cell c should appear in pack")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestFilterSuperseded_noSuccessor checks that a superseded cell with no live successor is excluded.
+func TestFilterSuperseded_noSuccessor(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	db, err := hexxladb.Open(filepath.Join(dir, "nosuc.db"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	center := lattice.Coord{Q: 0, R: 0}
+	stale := lattice.Coord{Q: 1, R: 0}
+	ghost := lattice.Coord{Q: 0, R: 1} // successor coord — cell NOT stored in DB
+
+	mustPutCell(t, db, center, "center")
+	mustPutCell(t, db, stale, "stale")
+	// Record supersedes seam: stale→ghost, but ghost has no cell record
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.MarkSupersedes(ghost, stale, "replaced by ghost (no cell)")
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err = db.View(func(tx *hexxladb.Tx) error {
+		pack, err := tx.LoadContextWithBudgeting(ctx, center, 1, 10000, hexxladb.ByteLenBudgeter{}, hexxladb.LoadContextBudgetConfig{
+			Assemble:         hexxladb.AssembleCellViewOpts{IncludeFacets: false},
+			FilterSuperseded: true,
+		})
+		if err != nil {
+			return err
+		}
+		for _, cv := range pack.Cells {
+			if cv.Coord == stale {
+				t.Fatal("stale cell with no live successor should be excluded")
+			}
+			if cv.Coord == ghost {
+				t.Fatal("ghost cell (no stored cell) should not appear")
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestFilterSuperseded_offByDefault checks that without FilterSuperseded, superseded cells still appear.
+func TestFilterSuperseded_offByDefault(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	db, err := hexxladb.Open(filepath.Join(dir, "off.db"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	center := lattice.Coord{Q: 0, R: 0}
+	stale := lattice.Coord{Q: 1, R: 0}
+	current := lattice.Coord{Q: -1, R: 0}
+
+	mustPutCell(t, db, center, "center")
+	mustPutCell(t, db, stale, "stale")
+	mustPutCell(t, db, current, "current")
+
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.MarkSupersedes(current, stale, "updated")
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err = db.View(func(tx *hexxladb.Tx) error {
+		pack, err := tx.LoadContextWithBudgeting(ctx, center, 1, 10000, hexxladb.ByteLenBudgeter{}, hexxladb.LoadContextBudgetConfig{
+			Assemble:         hexxladb.AssembleCellViewOpts{IncludeFacets: false},
+			FilterSuperseded: false,
+		})
+		if err != nil {
+			return err
+		}
+		var foundStale bool
+		for _, cv := range pack.Cells {
+			if cv.Coord == stale {
+				foundStale = true
+			}
+		}
+		if !foundStale {
+			t.Fatal("without FilterSuperseded, stale cell should still appear")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFilterCellViews_and_TruncateCellViewsToTokenBudget(t *testing.T) {
 	t.Parallel()
 	a := lattice.Coord{Q: 1, R: 0}
