@@ -8,6 +8,9 @@
 - `Tx.MarkSupersedes(superseder, superseded Coord, reason string)` — records that a cell is the current truth and another is stale
 - `LoadContextBudgetConfig.FilterSuperseded bool` — when true, `LoadContextWithBudgeting` / `LoadContextPack` walk supersession chains and replace stale cells with their current-truth successors (or exclude them if no live successor exists)
 - Cycle detection and depth limit (16 hops) in supersession chain walks
+- `CellView.SupersededFrom *Coord` — set when context assembly substituted this cell for a stale one
+- `CellExplanation.SupersededBy *Coord` and `Reason: "superseded"` — Explain mode now records superseded exclusions and substitutions
+- `conversational_memory` example Phase 4 demonstrates seam-aware assembly visually
 
 ## [0.1.0] - 2026-04-24
 

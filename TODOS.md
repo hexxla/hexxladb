@@ -18,6 +18,7 @@ Immediate next steps. Update after each session.
 
 ## Recently Completed
 
+- 2026-04-25: Seam-aware API surface + demo — `CellView.SupersededFrom`, `CellExplanation.SupersededBy`, `Reason:"superseded"`, API_REFERENCE updated, conversational_memory demo Phase 4 added
 - 2026-04-25: Seam-aware context assembly (v0.1.0 blocker resolved) — `SeamTypeSupersedes`, `MarkSupersedes`, `resolveSupersession`, `LoadContextBudgetConfig.FilterSuperseded`; 4 regression tests
 - 2026-04-24: Increased max cell value to 8KB (v0.1.0 blocker resolved)
 - 2026-04-24: Added tag discovery API to conversational example
