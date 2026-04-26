@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -14,6 +13,7 @@ import (
 )
 
 type inspectorView struct {
+	noConsume
 	db          *hexxladb.DB
 	cell        hexxladb.Coord
 	data        *hexxladb.CellView
@@ -53,10 +53,10 @@ func (v *inspectorView) Update(msg tea.Msg) (view, tea.Cmd) {
 				v.packLoading = true
 				coord := v.cell
 				db := v.db
-				return v, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
+				return v, func() tea.Msg {
 					pack, err := loadContextPack(db, coord)
 					return contextPackLoadedMsg{pack: pack, err: err}
-				})
+				}
 			}
 		case "r":
 			v.data = nil

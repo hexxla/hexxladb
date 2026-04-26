@@ -13,6 +13,7 @@ import (
 )
 
 type dashboardView struct {
+	noConsume
 	db     *hexxladb.DB
 	width  int
 	height int

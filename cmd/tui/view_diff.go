@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -14,6 +13,7 @@ import (
 )
 
 type diffView struct {
+	noConsume
 	db     *hexxladb.DB
 	diff   *hexxladb.SnapshotDiff
 	err    error
@@ -70,7 +70,7 @@ func (v *diffView) Update(msg tea.Msg) (view, tea.Cmd) {
 
 func (v *diffView) loadCmd() tea.Cmd {
 	db := v.db
-	return tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
+	return func() tea.Msg {
 		stats, _ := db.StatsMVCC()
 		if stats.CommitSeq < 2 {
 			return snapshotDiffMsg{diff: &hexxladb.SnapshotDiff{}, err: nil}
@@ -81,7 +81,7 @@ func (v *diffView) loadCmd() tea.Cmd {
 		}
 		diff, err := db.SnapshotDiff(context.Background(), fromSeq, stats.CommitSeq, hexxladb.SnapshotDiffConfig{})
 		return snapshotDiffMsg{diff: &diff, err: err}
-	})
+	}
 }
 
 func (v *diffView) View() string {

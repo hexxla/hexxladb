@@ -12,6 +12,7 @@ import (
 )
 
 type hexGridView struct {
+	noConsume
 	db     *hexxladb.DB
 	center hexxladb.Coord
 	radius int

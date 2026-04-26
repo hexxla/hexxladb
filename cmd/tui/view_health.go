@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -13,6 +12,7 @@ import (
 )
 
 type healthView struct {
+	noConsume
 	db     *hexxladb.DB
 	report *hexxladb.HealthReport
 	err    error
@@ -58,11 +58,11 @@ func (v *healthView) Update(msg tea.Msg) (view, tea.Cmd) {
 
 func (v *healthView) loadCmd() tea.Cmd {
 	db := v.db
-	return tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
+	return func() tea.Msg {
 		cfg := hexxladb.DefaultHealthCheckConfig()
 		report, err := db.HealthCheck(context.Background(), cfg)
 		return healthLoadedMsg{report: &report, err: err}
-	})
+	}
 }
 
 func (v *healthView) View() string {

@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -29,6 +28,7 @@ func newCellsView(db *hexxladb.DB) view {
 }
 
 func (v *cellsView) SetSize(w, h int) { v.width = w; v.height = h }
+func (v *cellsView) Consuming() bool  { return v.searching }
 
 // searchHitsLoadedMsg carries the results of a lexical search.
 type searchHitsLoadedMsg struct{ hits []searchResult }
@@ -70,18 +70,15 @@ func (v *cellsView) Update(msg tea.Msg) (view, tea.Cmd) {
 				v.searchHits = nil
 				v.loading = true
 				v.cells = nil
-				return v, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
-					return cellsLoadedMsg{cells: loadCells(v.db, 200)}
-				})
+				db := v.db
+				return v, func() tea.Msg { return cellsLoadedMsg{cells: loadCells(db, 200)} }
 			case tea.KeyEnter:
 				v.searching = false
 				v.loading = true
 				v.searchHits = nil
 				q := v.query
 				db := v.db
-				return v, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
-					return searchHitsLoadedMsg{hits: searchCells(db, q, 200)}
-				})
+				return v, func() tea.Msg { return searchHitsLoadedMsg{hits: searchCells(db, q, 200)} }
 			case tea.KeyBackspace, tea.KeyDelete:
 				if v.query != "" {
 					v.query = v.query[:len(v.query)-1]
@@ -123,16 +120,14 @@ func (v *cellsView) Update(msg tea.Msg) (view, tea.Cmd) {
 			v.searchHits = nil
 			v.query = ""
 			v.searching = false
-			return v, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
-				return cellsLoadedMsg{cells: loadCells(v.db, 200)}
-			})
+			db := v.db
+			return v, func() tea.Msg { return cellsLoadedMsg{cells: loadCells(db, 200)} }
 		}
 	}
 
 	if v.loading && v.totalRows() == 0 {
-		return v, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
-			return cellsLoadedMsg{cells: loadCells(v.db, 200)}
-		})
+		db := v.db
+		return v, func() tea.Msg { return cellsLoadedMsg{cells: loadCells(db, 200)} }
 	}
 	return v, nil
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -14,6 +13,7 @@ import (
 )
 
 type analyticsView struct {
+	noConsume
 	db     *hexxladb.DB
 	data   *analyticsLoadedMsg
 	loaded bool
@@ -50,7 +50,7 @@ func (v *analyticsView) Update(msg tea.Msg) (view, tea.Cmd) {
 
 func (v *analyticsView) loadCmd() tea.Cmd {
 	db := v.db
-	return tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
+	return func() tea.Msg {
 		ctx := context.Background()
 		var d analyticsLoadedMsg
 		var err error
@@ -91,7 +91,7 @@ func (v *analyticsView) loadCmd() tea.Cmd {
 		})
 		d.mvccStats, _ = db.StatsMVCC()
 		return d
-	})
+	}
 }
 
 func (v *analyticsView) View() string {

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -15,6 +14,7 @@ import (
 )
 
 type seamsView struct {
+	noConsume
 	db     *hexxladb.DB
 	seams  []seamRow
 	cursor int
@@ -64,7 +64,7 @@ func (v *seamsView) Update(msg tea.Msg) (view, tea.Cmd) {
 
 func (v *seamsView) loadCmd() tea.Cmd {
 	db := v.db
-	return tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
+	return func() tea.Msg {
 		var rows []seamRow
 		err := db.View(func(tx *hexxladb.Tx) error {
 			return tx.AscendRange(
@@ -97,7 +97,7 @@ func (v *seamsView) loadCmd() tea.Cmd {
 			)
 		})
 		return seamsLoadedMsg{seams: rows, err: err}
-	})
+	}
 }
 
 func (v *seamsView) View() string {

@@ -104,18 +104,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
 		}
-		switch msg.String() {
-		case "q":
-			return m, tea.Quit
-		case "1", "2", "3", "4", "5", "6", "7", "8":
-			idx := int(msg.String()[0] - '1')
-			if idx >= 0 && idx < len(m.tabs) {
-				return m.switchTab(idx)
+		// Only handle global shortcuts when the current tab is not consuming
+		// keypresses (e.g. the Cells search bar is closed).
+		if !m.tabs[m.current].Consuming() {
+			switch msg.String() {
+			case "q":
+				return m, tea.Quit
+			case "1", "2", "3", "4", "5", "6", "7", "8":
+				idx := int(msg.String()[0] - '1')
+				if idx >= 0 && idx < len(m.tabs) {
+					return m.switchTab(idx)
+				}
+			case "tab":
+				return m.switchTab((m.current + 1) % len(m.tabs))
+			case "shift+tab":
+				return m.switchTab((m.current - 1 + len(m.tabs)) % len(m.tabs))
 			}
-		case "tab":
-			return m.switchTab((m.current + 1) % len(m.tabs))
-		case "shift+tab":
-			return m.switchTab((m.current - 1 + len(m.tabs)) % len(m.tabs))
 		}
 
 	case inspectCellMsg:
