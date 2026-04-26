@@ -20,3 +20,10 @@ const HeaderEncryptionKeyCheckOffset = 68
 
 // HeaderEncryptionKeyCheckLen is the verifier byte length.
 const HeaderEncryptionKeyCheckLen = 32
+
+// HeaderMaxValueBytesOffset is the byte offset of the per-database max value size (uint32, big-endian).
+// Zero on disk means the engine default (8192 bytes) is used.
+const HeaderMaxValueBytesOffset = 100
+
+// DefaultMaxValueBytes is the engine default maximum value size when Options.MaxValueBytes is zero.
+const DefaultMaxValueBytes = 8192

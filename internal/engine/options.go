@@ -36,4 +36,8 @@ type Options struct {
 	// UsePrimaryFdatasync, when true, uses a data-only flush (e.g. fdatasync on Linux) on the
 	// primary file instead of fsync for durability barriers. Default false. See [Engine.syncPrimary].
 	UsePrimaryFdatasync bool
+	// MaxValueBytes sets the per-database maximum B+ tree value size and is persisted in the file
+	// header. Zero means [DefaultMaxValueBytes] (8192). Accepted values: 512, 1024, 2048, 4096,
+	// 8192, 16384. Invalid values are rejected at [Open] time.
+	MaxValueBytes uint32
 }

@@ -4,6 +4,9 @@
 
 ### Added
 
+- `Options.MaxValueBytes uint32` — per-database maximum B+ tree value size; accepted values: 512, 1024, 2048, 4096, 8192, 16384 bytes; default 0 = 8192 (8 KB); persisted in the file header; enforced on every write via `BTree.Put`; readable via `DB.MaxValueBytes()`; `ErrInvalidArgument` on invalid value; 9 tests
+- `(*DB).MaxValueBytes() uint32` — returns the effective limit read from the file header at `Open`
+
 - `DB.SnapshotDiff(ctx, fromSeq, toSeq, SnapshotDiffConfig) (SnapshotDiff, error)` — MVCC change diff; returns all cell/seam writes in `(fromSeq, toSeq]`; `ErrMVCCRequired` on v1 databases; `ErrReadSeqFuture` if `toSeq` > head; `SnapshotDiff{Cells []CellDiff, Seams []SeamDiff}`; 9 tests
 - `ErrMVCCRequired` — new sentinel error
 

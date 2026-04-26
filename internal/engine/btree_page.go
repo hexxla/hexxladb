@@ -21,7 +21,6 @@ const (
 	btreeKindInternal   = 2
 	btreeHeaderSize     = 64
 	maxKeyBytes         = 256
-	maxValBytes         = 8192 // 8KB for LLM-sized content
 	maxLeafEntries      = 32
 	maxInternalChildren = 32 // max keys = maxInternalChildren - 1
 )
@@ -69,7 +68,7 @@ func parseLeafPage(page []byte) (*leafData, error) {
 		kl := binary.BigEndian.Uint16(page[off : off+2])
 		vl := binary.BigEndian.Uint16(page[off+2 : off+4])
 		off += 4
-		if kl > maxKeyBytes || vl > maxValBytes {
+		if kl > maxKeyBytes || vl > DefaultMaxValueBytes*2 {
 			return nil, fmt.Errorf("%w: leaf kv len", ErrCorruptTree)
 		}
 		if off+int(kl)+int(vl) > len(page) {
@@ -108,9 +107,6 @@ func buildLeafPage(parent, next uint64, keys, vals [][]byte) ([]byte, error) {
 		k, v := keys[i], vals[i]
 		if len(k) > maxKeyBytes {
 			return nil, ErrKeyTooLarge
-		}
-		if len(v) > maxValBytes {
-			return nil, ErrValueTooLarge
 		}
 		if off+4+len(k)+len(v) > len(page) {
 			return nil, fmt.Errorf("%w: leaf page full", ErrCorruptTree)

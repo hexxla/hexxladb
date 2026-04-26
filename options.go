@@ -55,6 +55,12 @@ type Options struct {
 	// A non-nil error is returned from the triggering write method.
 	AfterPutSeam AfterPutSeamHook
 
+	// MaxValueBytes sets the per-database maximum encoded value size stored in the B+ tree.
+	// The limit is persisted in the file header and enforced on every write.
+	// Zero means the default (8192 bytes = 8 KB). Accepted non-zero values: 512, 1024, 2048,
+	// 4096, 8192, 16384. Invalid values cause [Open] to return [ErrInvalidArgument].
+	MaxValueBytes uint32
+
 	// UsePrimaryFdatasync, when true, uses fdatasync(2) on the primary data file on supported
 	// platforms (e.g. Linux) instead of fsync(2) for engine durability barriers. Default false; see
 	// [docs/hexxladb/DURABILITY.md] before enabling in production.
