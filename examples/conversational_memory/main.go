@@ -566,6 +566,7 @@ func run(dbPath string) error {
 
 	printSubHeader("Query B — 'fact' cells from this session, confidence >= 0.8")
 	printNote("Combines RequireTags (tag/ index), SourceID (source/ index filter), MinConfidence.")
+	printNote("MaxScanRows=50 caps the source index walk — prevents O(n) full scans on large corpora.")
 	var factSessionCells []hexxladb.CellQueryResult
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
@@ -574,6 +575,7 @@ func run(dbPath string) error {
 			SourceID:      sessionID,
 			MinConfidence: 0.8,
 			MaxResults:    10,
+			MaxScanRows:   50,
 			SortBy:        hexxladb.SortByScore,
 		})
 		return err
