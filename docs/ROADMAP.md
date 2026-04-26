@@ -55,13 +55,13 @@ Shipped with v0.1.0 release.
 - **Context Pack Explain Mode** — `CellExplanation` per-cell reasons via `LoadContextBudgetConfig.Explain`
 - **Bulk Cell Import/Export (JSON)** — `ExportCellsJSON` + `ImportCellsJSON` in `bulk_io.go`
 - **Secondary index btree coupling fix** — added `tx.deleteDirect` mirroring `tx.putDirect`; `cell_secondary.go` and `seam_secondary.go` no longer reach through to `tx.db.btree.Delete` directly
+- **LEAN quick wins** — deleted orphaned `internal/config` package (zero callers); added `BenchmarkAPI_QueryCells` (4 predicate shapes), `BenchmarkAPI_LoadContextPack` (radii 1/3/5), `BenchmarkAPI_MVCCVersionResolution` (10/50/100/500 versions) as performance baselines
 
 ## Quick Wins
 
 Low effort, high value. No design required.
 
-- **Inline `internal/config` into `cmd/tui`** — `internal/config/config.go` is a 29-line single-file package used only by `cmd/tui`; inline `Load()` directly into `cmd/tui/main.go` to eliminate the unnecessary internal package boundary ([LEAN audit](./context/audits/LEAN_ARCHITECTURE_AUDIT.md))
-- **Benchmark additions** — add `QueryCells` benchmarks with varying predicate complexity, `LoadContextPack` with varying radii, and MVCC version resolution with high version counts; baselines needed before any performance work ([LEAN audit](./context/audits/LEAN_ARCHITECTURE_AUDIT.md))
+_(Empty — all quick wins shipped or reclassified.)_
 
 ## Near-term
 

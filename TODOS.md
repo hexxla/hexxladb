@@ -10,13 +10,13 @@ Immediate next steps. Update after each session.
 
 - [ ] `Tx.DeleteCell` — primary + secondaries + facets + edges; MVCC tombstone on v2; regression tests
 - [ ] `DB.Compact` — copy-compaction to shrink file; `AscendRange` walk → fresh BTree → atomic swap; no lattice reorg needed
-- [ ] Inline `internal/config` into `cmd/tui` — eliminate single-use 29-line internal package (LEAN quick win)
-- [ ] Add benchmark suite: `QueryCells` predicate complexity, `LoadContextPack` radii, MVCC high version counts (LEAN quick win)
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
 
 ---
 
 ## Recently Completed
+
+- 2026-04-26: LEAN quick wins — deleted orphaned `internal/config` package (zero callers); added `BenchmarkAPI_QueryCells` (4 predicate shapes × 2 sizes), `BenchmarkAPI_LoadContextPack` (radii 1/3/5 × 2 sizes), `BenchmarkAPI_MVCCVersionResolution` (10/50/100/500 versions) to `api_bench_test.go`
 
 - 2026-04-26: `views.go` extracted to `internal/views` — `TxReader` port (4-method interface); `AssembleCellView`, `LoadContextWithBudgeting`, `collectCandidates`, `resolveSupersession`, `LoadMultiContextPack` moved; root `views.go` is type aliases + thin `*Tx` wrappers; zero API break; `cell_secondary.go`/`seam_secondary.go`/`rotation.go` reclassified to Future
 - 2026-04-26: Demo expansion — `seed_data.go` (84 turns, 5 sessions); `-db` flag; `make demo` Makefile target; `printSubHeader`/`printNote` helpers; aesthetic + readability pass all 11 phases; DB defaults to `.tmp/demo/memory.db` (no root pollution); `spiralCoord` 11-column grid; API_REFERENCE "Live demos" updated
