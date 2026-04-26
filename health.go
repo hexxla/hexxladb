@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
 )
@@ -11,7 +12,7 @@ import (
 // HealthReport summarises the result of a [DB.HealthCheck] run.
 // All counts reflect the MVCC-visible snapshot at the moment of the check.
 type HealthReport struct {
-	// CellCount is the number of visible cells found by walking rings from origin.
+	// CellCount is the number of visible cells found by scanning the cell/ primary key range.
 	CellCount int
 	// SeamCount is the number of visible seams found.
 	SeamCount int
@@ -47,8 +48,11 @@ type HealthCheckConfig struct {
 	CheckSourceIndex bool
 	// MaxErrors stops counting secondary-index errors after this many (0 = unlimited).
 	MaxErrors int
-	// ScanRadius controls how far from origin to walk when counting cells (default 64).
-	// Increase for sparse or geographically wide databases.
+	// ScanRadius is retained for backward compatibility but is no longer used.
+	// HealthCheck now scans the cell/ primary key range directly, visiting only
+	// existing cells regardless of their coordinates.
+	//
+	// Deprecated: has no effect.
 	ScanRadius int
 }
 
@@ -88,25 +92,63 @@ func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthRep
 			return err
 		}
 
-		// ── cell count ───────────────────────────────────────────────────────
-		coords := WalkRings(nil, Coord{}, cfg.ScanRadius)
-		for _, c := range coords {
+		// ── cell count + source ID collection (single forward pass) ───────────
+		// Scan the cell/ primary key range directly: visits only existing cells
+		// in O(n) regardless of coordinate sparsity, with no radius limit.
+		var cellScanErr error
+		// liveCells holds every PackedCoord with a visible primary cell;
+		// used for O(1) presence checks in tag/source/orphan verification below.
+		liveCells := map[lattice.PackedCoord]struct{}{}
+		cellFrom := []byte(index.CellPrefix)
+		cellTo := []byte("cell0") // sorts after all cell/<16-byte packed> keys
+		if err := tx.AscendRange(cellFrom, cellTo, func(k, _ []byte) bool {
 			if err := ctx.Err(); err != nil {
-				return err
+				cellScanErr = err
+				return false
 			}
-			_, ok, err := tx.GetCell(mustPack(c))
+			// Skip MVCC version keys (cell/<16 bytes><8-byte seq>) — only count v1 logical keys.
+			if len(k) != len(index.CellPrefix)+index.PackedCoordKeyLen {
+				return true
+			}
+			p, err := index.ParseCellKey(k)
 			if err != nil {
-				return fmt.Errorf("hexxladb: health GetCell at (%d,%d): %w", c.Q, c.R, err)
+				return true
 			}
-			if ok {
-				report.CellCount++
-			}
+			report.CellCount++
+			liveCells[p] = struct{}{}
+			return true
+		}); err != nil {
+			return fmt.Errorf("hexxladb: health cell scan: %w", err)
+		}
+		if cellScanErr != nil {
+			return cellScanErr
 		}
 
-		// ── seam count + resolution summary ──────────────────────────────────
-		seams, err := tx.FindSeams(ctx, Coord{}, cfg.ScanRadius, false)
-		if err != nil {
-			return fmt.Errorf("hexxladb: health FindSeams: %w", err)
+		// ── seam count + resolution summary (single seam/ prefix scan) ────────
+		// Scan the seam/ primary key range directly — covers all seams in the DB
+		// regardless of coordinate, with no radius limit and no ring walks.
+		var seams []record.SeamRecord
+		var seamScanErr error
+		if err := tx.AscendRange(
+			[]byte(index.SeamPrefix),
+			index.SeamScanUpperBound(),
+			func(_, v []byte) bool {
+				if err := ctx.Err(); err != nil {
+					seamScanErr = err
+					return false
+				}
+				s, err := record.DecodeSeam(v)
+				if err != nil {
+					return true // corrupt entry — skip
+				}
+				seams = append(seams, s)
+				return true
+			},
+		); err != nil {
+			return fmt.Errorf("hexxladb: health seam scan: %w", err)
+		}
+		if seamScanErr != nil {
+			return seamScanErr
 		}
 		report.SeamCount = len(seams)
 		for _, s := range seams {
@@ -131,14 +173,8 @@ func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthRep
 						fmt.Sprintf("seam %s: cannot unpack endpoint coords", s.ID))
 					continue
 				}
-				_, aOk, err := tx.GetCell(s.CellA)
-				if err != nil {
-					return fmt.Errorf("hexxladb: health orphan check CellA: %w", err)
-				}
-				_, bOk, err := tx.GetCell(s.CellB)
-				if err != nil {
-					return fmt.Errorf("hexxladb: health orphan check CellB: %w", err)
-				}
+				_, aOk := liveCells[s.CellA]
+				_, bOk := liveCells[s.CellB]
 				if !aOk || !bOk {
 					report.OrphanedSeams = append(report.OrphanedSeams, s.ID)
 					report.Warnings = append(report.Warnings, fmt.Sprintf(
@@ -149,86 +185,74 @@ func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthRep
 			}
 		}
 
-		// ── tag index consistency ─────────────────────────────────────────────
+		// ── tag index consistency (single tag/ prefix scan) ──────────────────
 		if cfg.CheckTagIndex {
-			tags, err := tx.ListExistingTopics(ctx)
-			if err != nil {
-				return fmt.Errorf("hexxladb: health ListExistingTopics: %w", err)
-			}
 			errLimit := cfg.MaxErrors
-			tagDone := false
-			for _, tag := range tags {
-				if tagDone {
-					break
-				}
+			tagFrom, tagTo := index.TagFamilyScanBounds()
+			var tagScanErr error
+			if err := tx.AscendRange(tagFrom, tagTo, func(k, _ []byte) bool {
 				if err := ctx.Err(); err != nil {
-					return err
+					tagScanErr = err
+					return false
 				}
-				if err := tx.AscendCellsByTag(ctx, tag, func(rec record.CellRecord) bool {
-					_, ok, e := tx.GetCell(rec.Key)
-					if e != nil || !ok {
-						report.TagIndexErrors++
-						report.Warnings = append(report.Warnings, fmt.Sprintf(
-							"tag index: tag %q points to coord with no visible cell", tag,
-						))
-						if errLimit > 0 && report.TagIndexErrors >= errLimit {
-							return false
-						}
+				tag, p, err := index.ParseTagKey(k)
+				if err != nil {
+					return true // malformed key — skip
+				}
+				if _, ok := liveCells[p]; !ok {
+					report.TagIndexErrors++
+					report.Warnings = append(report.Warnings, fmt.Sprintf(
+						"tag index: tag %q points to coord with no visible cell", tag,
+					))
+					if errLimit > 0 && report.TagIndexErrors >= errLimit {
+						report.Warnings = append(report.Warnings,
+							fmt.Sprintf("tag index check stopped at MaxErrors=%d", errLimit))
+						return false
 					}
-					return true
-				}); err != nil {
-					return fmt.Errorf("hexxladb: health AscendCellsByTag %q: %w", tag, err)
 				}
-				if errLimit > 0 && report.TagIndexErrors >= errLimit {
-					report.Warnings = append(report.Warnings,
-						fmt.Sprintf("tag index check stopped at MaxErrors=%d", errLimit))
-					tagDone = true
-				}
+				return true
+			}); err != nil {
+				return fmt.Errorf("hexxladb: health tag index scan: %w", err)
+			}
+			if tagScanErr != nil {
+				return tagScanErr
 			}
 		}
 
-		// ── source index consistency ──────────────────────────────────────────
+		// ── source index consistency (single source/ prefix scan) ────────────
 		if cfg.CheckSourceIndex {
 			errLimit := cfg.MaxErrors
-			// Enumerate distinct source IDs from the cells already counted above.
-			sourceIDs := map[string]struct{}{}
-			for _, c := range coords {
-				rec, ok, err := tx.GetCell(mustPack(c))
-				if err != nil {
-					return err
-				}
-				if ok && rec.Provenance.SourceID != "" {
-					sourceIDs[rec.Provenance.SourceID] = struct{}{}
-				}
-			}
-			srcDone := false
-			for sid := range sourceIDs {
-				if srcDone {
-					break
-				}
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				if err := tx.AscendCellsBySource(ctx, sid, func(rec record.CellRecord) bool {
-					_, ok, e := tx.GetCell(rec.Key)
-					if e != nil || !ok {
+			var srcScanErr error
+			if err := tx.AscendRange(
+				[]byte(index.SourcePrefix),
+				[]byte("source0"), // sorts after all source/<len><id>/... keys
+				func(k, _ []byte) bool {
+					if err := ctx.Err(); err != nil {
+						srcScanErr = err
+						return false
+					}
+					sid, p, err := index.ParseSourceKey(k)
+					if err != nil {
+						return true // malformed key — skip
+					}
+					if _, ok := liveCells[p]; !ok {
 						report.SourceIndexErrors++
 						report.Warnings = append(report.Warnings, fmt.Sprintf(
 							"source index: source %q points to coord with no visible cell", sid,
 						))
 						if errLimit > 0 && report.SourceIndexErrors >= errLimit {
+							report.Warnings = append(report.Warnings,
+								fmt.Sprintf("source index check stopped at MaxErrors=%d", errLimit))
 							return false
 						}
 					}
 					return true
-				}); err != nil {
-					return fmt.Errorf("hexxladb: health AscendCellsBySource %q: %w", sid, err)
-				}
-				if errLimit > 0 && report.SourceIndexErrors >= errLimit {
-					report.Warnings = append(report.Warnings,
-						fmt.Sprintf("source index check stopped at MaxErrors=%d", errLimit))
-					srcDone = true
-				}
+				},
+			); err != nil {
+				return fmt.Errorf("hexxladb: health source index scan: %w", err)
+			}
+			if srcScanErr != nil {
+				return srcScanErr
 			}
 		}
 

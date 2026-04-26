@@ -353,6 +353,15 @@ _Linear growth confirmed: 50× more versions → ~5× latency. Sub-millisecond u
 
 _Matches plain `GetCell` latency — readers don't block each other under `sync.RWMutex`._
 
+**9. Integrity scan — `HealthCheck` (all checks enabled)**
+
+| DB size    | ns/op     | allocs/op |
+| ---------- | --------- | --------- |
+| 512 cells  | 444,772   | 2,510     |
+| 2000 cells | 1,628,041 | 9,203     |
+
+_Single forward pass over `cell/`, `seam/`, `tag/`, and `source/` primary/secondary key ranges. All `GetCell` presence checks replaced with O(1) map lookups built during the initial cell scan — complexity O(n) regardless of coordinate sparsity. `ScanRadius` is now a no-op field retained for backward compatibility._
+
 _Hardware: Intel Core i9-14900HX, 16 GB RAM, Go 1.26, Linux (CachyOS). `benchtime=3s -count=1`. Results vary by storage speed and data shape._
 
 ---

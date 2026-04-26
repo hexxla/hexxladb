@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added (health-check-rewrite)
+
+- `BenchmarkAPI_HealthCheck` — measures full integrity scan; O(n) forward-scan implementation; 512 cells → 445 µs, 2000 cells → 1.6 ms
+
+### Changed (health-check-rewrite)
+
+- `DB.HealthCheck` — replaced O(ScanRadius²) `WalkRings`+`GetCell` cell scan with a single `cell/` prefix `AscendRange`; replaced `FindSeams` spatial call with `seam/` primary-key scan (covers all seams, no radius limit); replaced `ListExistingTopics`+`AscendCellsByTag`-per-tag O(tags×cells) loop with single `tag/` family `AscendRange`; replaced `AscendCellsBySource`-per-source loop with single `source/` prefix scan; all `GetCell` presence checks replaced with O(1) `liveCells` map lookup built during the initial cell scan — overall complexity reduced from O(ScanRadius²+tags×n+sources×n) to O(n)
+- `HealthCheckConfig.ScanRadius` — deprecated; field retained for backward compatibility but has no effect; cell scan now covers all cells regardless of coordinate
+
 ### Added (bench-improvements)
 
 - `CellQuery.MaxScanRows` — additive field to bound the number of index rows examined by `scanByTag` and `scanBySource`; zero = unlimited (existing behaviour unchanged)

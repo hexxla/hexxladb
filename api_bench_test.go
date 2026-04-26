@@ -600,6 +600,28 @@ func BenchmarkAPI_FindSeams(b *testing.B) {
 	}
 }
 
+// BenchmarkAPI_HealthCheck measures [DB.HealthCheck] with all checks enabled.
+// The cell/ and seam/ primary-key forward scans mean cost is O(cells+seams),
+// not O(ScanRadius²) as in the previous WalkRings implementation.
+func BenchmarkAPI_HealthCheck(b *testing.B) {
+	ctx := context.Background()
+	cfg := hexxladb.DefaultHealthCheckConfig()
+	for _, n := range apiBenchPreloadSizes(b) {
+		b.Run(fmt.Sprintf("cells_%d", n), func(b *testing.B) {
+			db, _ := benchAPIPreloadCells(b, n)
+			b.Cleanup(func() { _ = db.Close() })
+			b.ReportMetric(float64(n), "cells")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				if _, err := db.HealthCheck(ctx, cfg); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 // BenchmarkAPI_BatchPutCells measures batch write throughput via [DB.BatchPutCells].
 // Sub-benchmarks vary batch size (10/100/500); each iteration commits one full batch.
 // cells/op shows how many cells are committed per iteration so throughput is readable directly.
