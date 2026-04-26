@@ -45,7 +45,8 @@ Requires design + benchmarks before implementation.
 - Batch MVCC prune (`PruneCellVersions`) — coalesce deletes under single engine write txn to reduce WAL pressure ([`DURABILITY.md`](./hexxladb/DURABILITY.md))
 - Database Health Check API — integrity verification, orphaned seam detection, index consistency ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
 - Event Hooks / Callbacks — react to cell writes, seam detection, facet rotation (needs architecture RFC)
-- Content Search (substring/prefix) — brute-force search within `RawContent` for small-medium DBs (benchmark first)
+- Content Search (substring/prefix) — brute-force search within `RawContent`, `Tags`, and `SourceID` for small-medium DBs; returns `[]CellSearchResult` with scored `Coord` values suitable for direct use as context-pack seeds (benchmark first). **`CellSearchConfig` is designed to be forward-compatible: `Query string` today, `Embedding []float32` addable later without breaking callers.**
+- Multi-seed context assembly (`LoadMultiContextPack`) — merge context packs from multiple seed coords (e.g. top-N search results) under a shared token budget with deduplication; companion to Content Search
 - Temporal Range Queries — "what changed this week?" time-series analysis vs point-in-time `ViewAtTime`; cells and seams in time buckets with timeline summaries ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
 - Snapshot Tags/Labels — human-friendly names ("v1.0 release", "pre-migration") for MVCC snapshots instead of raw sequence numbers; enables `ViewAtTag` for operational usability ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
 - Complete `app.Service` use-case layer — only 4 of ~30 `domain.Storage` methods implemented; `cmd/hexxladb/main.go` wires service then discards it (`_ = svc`); implement remaining delegations and move view assembly into service use-cases ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
@@ -54,7 +55,7 @@ Requires design + benchmarks before implementation.
 
 Spec exists; implementation deferred.
 
-- `embed/` keyspace for ANN/hybrid retrieval — vector storage and similarity search for semantic seed selection ([`HEXXLA_DB.md`](./hexxladb/HEXXLA_DB.md))
+- `embed/` keyspace for ANN/hybrid retrieval — vector storage and similarity search for semantic seed selection ([`HEXXLA_DB.md`](./hexxladb/HEXXLA_DB.md)). When implemented, `CellSearchConfig.Embedding []float32` field will be added to Content Search API — existing `Query string` callers unaffected.
 - Materialized views / super-hex aggregation as engine algorithms
 - Materialized changefeed consumers with automated prune policy
 - Changelog Subscription (push mode) — real-time reactions via channels
