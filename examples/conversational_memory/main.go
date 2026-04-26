@@ -624,38 +624,72 @@ func run() error {
 	fmt.Println()
 
 	// ═══════════════════════════════════════════════════════════════
-	// PHASE 10: Content Search + Multi-Seed Context Assembly
+	// PHASE 10: QueryCells + Multi-Seed Context Assembly
 	// ═══════════════════════════════════════════════════════════════
-	printHeader("Phase 10: Content Search + Multi-Seed Context Assembly")
+	printHeader("Phase 10: QueryCells + Multi-Seed Context Assembly")
 
-	_, _ = infoStyle.Println("  Searching for cells matching 'database'...")
-	_, _ = dimStyle.Println("  (Composite scoring: tag exact/prefix, content substring, confidence bonus)")
+	// ── 10a: lexical query with score ranking ─────────────────────
+	_, _ = infoStyle.Println("  Query 1 — keyword 'database', sorted by score:")
+	_, _ = dimStyle.Println("  (Uses full-scan planner path; scores: tag exact +1.0, prefix +0.8,")
+	_, _ = dimStyle.Println("   content verbatim +0.6, content icase +0.5, sourceID +0.3, confidence bonus)")
 	fmt.Println()
 
-	var searchResults []hexxladb.CellSearchResult
+	var queryResults []hexxladb.CellQueryResult
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		searchResults, err = tx.SearchCells(ctx, hexxladb.CellSearchConfig{
+		queryResults, err = tx.QueryCells(ctx, hexxladb.CellQuery{
 			Query:      "database",
 			MaxResults: 5,
+			SortBy:     hexxladb.SortByScore,
+			Explain:    true,
 		})
 		return err
 	}); err != nil {
-		return fmt.Errorf("search cells: %w", err)
+		return fmt.Errorf("query cells: %w", err)
 	}
 
-	printMetric("Search results for 'database'", len(searchResults), "cells")
+	printMetric("Results for 'database'", len(queryResults), "cells")
 	fmt.Println()
-	_, _ = infoStyle.Println("  Top results (sorted by relevance score):")
-	for i, r := range searchResults {
+	_, _ = infoStyle.Println("  Results (score desc):")
+	for i, r := range queryResults {
 		_, _ = dimStyle.Printf("    [%d] score=%.2f coord=(%d,%d) ", i+1, r.Score, r.Cell.Coord.Q, r.Cell.Coord.R)
-		_, _ = dataStyle.Printf("%s\n", truncate(r.Cell.RawContent, 50))
+		_, _ = dataStyle.Printf("%s\n", truncate(r.Cell.RawContent, 48))
+		if r.Explanation != "" {
+			_, _ = dimStyle.Printf("         explain: %s\n", r.Explanation)
+		}
 	}
 	fmt.Println()
 
-	// Use top-N result coords as seeds for multi-context pack.
-	seeds := make([]hexxladb.Coord, 0, len(searchResults))
-	for _, r := range searchResults {
+	// ── 10b: tag + ExcludeTags + SortByConfidence ─────────────────
+	_, _ = infoStyle.Println("  Query 2 — tag:'fact', exclude:'question', sort by confidence:")
+	_, _ = dimStyle.Println("  (Uses tag/ secondary index as primary scan; ExcludeTags applied in-memory)")
+	fmt.Println()
+
+	var factResults []hexxladb.CellQueryResult
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		var err error
+		factResults, err = tx.QueryCells(ctx, hexxladb.CellQuery{
+			RequireTags: []string{"fact"},
+			ExcludeTags: []string{"question"},
+			MaxResults:  5,
+			SortBy:      hexxladb.SortByConfidence,
+		})
+		return err
+	}); err != nil {
+		return fmt.Errorf("query cells (fact): %w", err)
+	}
+
+	printMetric("fact cells (excluding question)", len(factResults), "cells")
+	for i, r := range factResults {
+		_, _ = dimStyle.Printf("    [%d] conf=%.1f coord=(%d,%d) %s\n",
+			i+1, r.Cell.Provenance.Confidence, r.Cell.Coord.Q, r.Cell.Coord.R,
+			truncate(r.Cell.RawContent, 48))
+	}
+	fmt.Println()
+
+	// ── multi-seed assembly from query 1 results ──────────────────
+	seeds := make([]hexxladb.Coord, 0, len(queryResults))
+	for _, r := range queryResults {
 		seeds = append(seeds, r.Cell.Coord)
 	}
 

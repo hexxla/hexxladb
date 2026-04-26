@@ -14,6 +14,7 @@ Shipped after v0.1.0 release on branch `feat/tier1-search-health`.
 - **Content Search** — `Tx.SearchCells(ctx, CellSearchConfig) ([]CellSearchResult, error)`; composite scoring (tag exact +1.0, tag prefix +0.8, content verbatim +0.6, content case-insensitive +0.5, source ID +0.3, confidence bonus); filters: `RequireTags` (AND), `AnyTags` (OR), confidence range, spatial radius, `MaxResults`; forward-compatible (`Embedding []float32` addable without breaking callers); 9 tests
 - **Multi-seed context assembly** — `Tx.LoadMultiContextPack` + `MultiContextConfig`; expands N seed coords, merges under shared token budget, cross-seed confidence re-ranking, `DeduplicateCoords`; `Tx.LoadContextPackFrom` unified variadic entry point (dispatches single→`LoadContextPack`, multi→`LoadMultiContextPack` with zero overhead for 1-seed case); 5 tests
 - **conversational_memory demo Phase 10** — `SearchCells` → seeds → `LoadContextPackFrom` pipeline demonstrated end-to-end with budget breakdown
+- **Composable Query Engine** — `Tx.QueryCells(ctx, CellQuery) ([]CellQueryResult, error)`; index-aware planner (tag, source, time, spatial, full-scan fallback); predicates: lexical, `RequireTags`/`AnyTags`/`ExcludeTags`, `SourceID`, confidence range, `After`/`Before` (temporal via `time/` bucket index), spatial radius, `MaxResults`, `SortBy` (score/confidence/recency/coord), `Explain`; `SearchCells` refactored to thin wrapper; Temporal Range Queries delivered; 17 tests
 
 ## Completed (v0.1.0)
 
@@ -53,7 +54,6 @@ Requires design + benchmarks before implementation.
 - Move `rotation.go` to `internal/tooling/rotation` — rotation uses `DB.Open`, `Tx.putDirect`, error sentinels; moving to `internal/` creates an import cycle; needs interface extraction first ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 - Batch MVCC prune (`PruneCellVersions`) — coalesce deletes under single engine write txn to reduce WAL pressure ([`DURABILITY.md`](./hexxladb/DURABILITY.md))
 - Event Hooks / Callbacks — react to cell writes, seam detection, facet rotation (needs architecture RFC)
-- Temporal Range Queries — "what changed this week?" time-series analysis vs point-in-time `ViewAtTime`; cells and seams in time buckets with timeline summaries ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
 - Snapshot Tags/Labels — human-friendly names ("v1.0 release", "pre-migration") for MVCC snapshots instead of raw sequence numbers; enables `ViewAtTag` for operational usability ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
 - Complete `app.Service` use-case layer — only 4 of ~30 `domain.Storage` methods implemented; `cmd/hexxladb/main.go` wires service then discards it (`_ = svc`); implement remaining delegations and move view assembly into service use-cases ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 
@@ -103,3 +103,4 @@ Intentional boundaries for embedded library v1.
 | 2026-04-25 | Seam-aware context assembly shipped: `SeamTypeSupersedes`, `MarkSupersedes`, `FilterSuperseded`; all v0.1.0 blockers resolved                                                                                                                                       |
 | 2026-04-25 | Seam observability additions: `CellView.SupersededFrom`, `CellExplanation.SupersededBy`, `Reason:"superseded"`; API_REFERENCE and demo updated                                                                                                                      |
 | 2026-04-26 | Tier 1 features shipped: Health Check API, Content Search (`SearchCells`), Multi-seed assembly (`LoadMultiContextPack`, `LoadContextPackFrom`); 19 tests; API_REFERENCE, CHANGELOG, ROADMAP, TODOS updated                                                          |
+| 2026-04-26 | Composable Query Engine shipped: `Tx.QueryCells`, `CellQuery`, temporal/spatial/tag/confidence predicates, `SortOrder`, `Explain`; `SearchCells` wrapper; Temporal Range Queries closed; 17 tests                                                                   |
