@@ -49,6 +49,12 @@ func (v *cellsView) rowCell(i int) (cell hexxladb.CellView, score float64) {
 
 func (v *cellsView) Update(msg tea.Msg) (view, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tabActivatedMsg:
+		if v.loading && v.totalRows() == 0 {
+			db := v.db
+			return v, func() tea.Msg { return cellsLoadedMsg{cells: loadCells(db, 200)} }
+		}
+		return v, nil
 	case cellsLoadedMsg:
 		v.cells = msg.cells
 		v.searchHits = nil
@@ -125,10 +131,6 @@ func (v *cellsView) Update(msg tea.Msg) (view, tea.Cmd) {
 		}
 	}
 
-	if v.loading && v.totalRows() == 0 {
-		db := v.db
-		return v, func() tea.Msg { return cellsLoadedMsg{cells: loadCells(db, 200)} }
-	}
 	return v, nil
 }
 

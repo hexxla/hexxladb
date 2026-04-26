@@ -49,10 +49,6 @@ func (v *healthView) Update(msg tea.Msg) (view, tea.Cmd) {
 			return v, cmd
 		}
 	}
-	if !v.loaded {
-		cmd := v.loadCmd()
-		return v, cmd
-	}
 	return v, nil
 }
 

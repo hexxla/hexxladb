@@ -85,7 +85,15 @@ func newModel(db *hexxladb.DB, dbPath string) model {
 	}
 }
 
-func (m model) Init() tea.Cmd { return nil }
+func (m model) Init() tea.Cmd {
+	// Per bubbletea docs: Init fires the first command. Send tabActivatedMsg as
+	// a Cmd so it arrives in Update after the program is running (not discarded).
+	// Also request the current window size explicitly for the first render.
+	return tea.Batch(
+		tea.WindowSize(),
+		func() tea.Msg { return tabActivatedMsg{} },
+	)
+}
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {

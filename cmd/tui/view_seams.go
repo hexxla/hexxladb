@@ -37,6 +37,12 @@ func (v *seamsView) Update(msg tea.Msg) (view, tea.Cmd) {
 		}
 		v.loaded = true
 		return v, nil
+	case tabActivatedMsg:
+		if !v.loaded {
+			cmd := v.loadCmd()
+			return v, cmd
+		}
+		return v, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "up", "k":
@@ -54,10 +60,6 @@ func (v *seamsView) Update(msg tea.Msg) (view, tea.Cmd) {
 			cmd := v.loadCmd()
 			return v, cmd
 		}
-	}
-	if !v.loaded {
-		cmd := v.loadCmd()
-		return v, cmd
 	}
 	return v, nil
 }
