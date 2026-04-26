@@ -2,9 +2,8 @@ package hexxladb
 
 import (
 	"context"
-	"sort"
 
-	"github.com/hexxla/hexxladb/internal/record"
+	"github.com/hexxla/hexxladb/internal/views"
 )
 
 // MultiContextConfig controls how [Tx.LoadMultiContextPack] assembles a merged
@@ -48,86 +47,8 @@ type MultiContextConfig struct {
 // The returned ContextPack.Stats reflects totals across all seeds.
 // If cfg.AssemblyConfig.Explain is true, Explanations are merged from all seeds.
 func (tx *Tx) LoadMultiContextPack(ctx context.Context, cfg MultiContextConfig) (ContextPack, error) {
-	if err := ctx.Err(); err != nil {
-		return ContextPack{}, err
-	}
 	if tx == nil || tx.db == nil {
 		return ContextPack{}, ErrClosed
 	}
-	if len(cfg.Centers) == 0 {
-		return ContextPack{}, nil
-	}
-
-	budgeter := cfg.Budgeter
-	if budgeter == nil {
-		budgeter = ByteLenBudgeter{}
-	}
-	maxR := cfg.MaxR
-	if maxR <= 0 {
-		maxR = 3
-	}
-	maxTokens := cfg.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = 8192
-	}
-
-	seen := make(map[Coord]struct{})
-	var merged []CellView
-	var allExplanations []CellExplanation
-	totalStats := ContextPackStats{}
-
-	for _, center := range cfg.Centers {
-		if err := ctx.Err(); err != nil {
-			return ContextPack{}, err
-		}
-
-		// Use a generous per-seed budget; final truncation happens below.
-		pack, err := tx.LoadContextPack(ctx, center, maxR, maxTokens, budgeter, cfg.AssemblyConfig)
-		if err != nil {
-			return ContextPack{}, err
-		}
-
-		totalStats.CandidatesScanned += pack.Stats.CandidatesScanned
-		totalStats.CellsEvicted += pack.Stats.CellsEvicted
-		if pack.Stats.MaxRingUsed > totalStats.MaxRingUsed {
-			totalStats.MaxRingUsed = pack.Stats.MaxRingUsed
-		}
-
-		for _, cv := range pack.Cells {
-			if cfg.DeduplicateCoords {
-				if _, dup := seen[cv.Coord]; dup {
-					continue
-				}
-				seen[cv.Coord] = struct{}{}
-			}
-			merged = append(merged, cv)
-		}
-
-		allExplanations = append(allExplanations, pack.Explanations...)
-	}
-
-	// Re-rank by Confidence descending for fair budget eviction across seeds.
-	sort.Slice(merged, func(i, j int) bool {
-		return merged[i].Provenance.Confidence > merged[j].Provenance.Confidence
-	})
-
-	// Apply shared token budget: keep highest-confidence cells that fit.
-	used := 0
-	kept := merged[:0]
-	for _, cv := range merged {
-		tokens := budgeter.CountTokens(cv.RawContent)
-		if used+tokens > maxTokens {
-			totalStats.CellsEvicted++
-			continue
-		}
-		used += tokens
-		kept = append(kept, cv)
-	}
-
-	return ContextPack{
-		Cells:        kept,
-		Seams:        []record.SeamRecord{},
-		Explanations: allExplanations,
-		Stats:        totalStats,
-	}, nil
+	return views.LoadMultiContextPack(ctx, tx, cfg.Centers, cfg.MaxR, cfg.MaxTokens, cfg.Budgeter, cfg.AssemblyConfig, cfg.DeduplicateCoords)
 }
