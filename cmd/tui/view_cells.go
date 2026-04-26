@@ -13,12 +13,14 @@ import (
 )
 
 type cellsView struct {
-	db      *hexxladb.DB
-	cells   []hexxladb.CellView
-	cursor  int
-	loading bool
-	width   int
-	height  int
+	db        *hexxladb.DB
+	cells     []hexxladb.CellView
+	cursor    int
+	loading   bool
+	searching bool
+	query     string
+	width     int
+	height    int
 }
 
 func newCellsView(db *hexxladb.DB) view {
@@ -35,6 +37,36 @@ func (v *cellsView) Update(msg tea.Msg) (view, tea.Cmd) {
 		return v, nil
 
 	case tea.KeyMsg:
+		if v.searching {
+			switch msg.Type {
+			case tea.KeyEsc:
+				v.searching = false
+				v.query = ""
+				v.loading = true
+				v.cells = nil
+				return v, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
+					return cellsLoadedMsg{cells: loadCells(v.db, 200)}
+				})
+			case tea.KeyEnter:
+				v.searching = false
+				v.loading = true
+				v.cells = nil
+				q := v.query
+				db := v.db
+				return v, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
+					return cellsLoadedMsg{cells: searchCells(db, q, 200)}
+				})
+			case tea.KeyBackspace, tea.KeyDelete:
+				if v.query != "" {
+					v.query = v.query[:len(v.query)-1]
+				}
+			default:
+				if msg.Type == tea.KeyRunes {
+					v.query += string(msg.Runes)
+				}
+			}
+			return v, nil
+		}
 		switch msg.String() {
 		case "up", "k":
 			if v.cursor > 0 {
@@ -55,9 +87,15 @@ func (v *cellsView) Update(msg tea.Msg) (view, tea.Cmd) {
 				coord := v.cells[v.cursor].Coord
 				return v, func() tea.Msg { return inspectCellMsg{coord: coord} }
 			}
+		case "/":
+			v.searching = true
+			v.query = ""
+			return v, nil
 		case "r":
 			v.loading = true
 			v.cells = nil
+			v.query = ""
+			v.searching = false
 			return v, tea.Tick(time.Millisecond, func(_ time.Time) tea.Msg {
 				return cellsLoadedMsg{cells: loadCells(v.db, 200)}
 			})
@@ -158,17 +196,33 @@ func (v *cellsView) View() string {
 	}
 	scrollInfo := styleDim.Render(fmt.Sprintf("  %d/%d  (%d%%)", v.cursor+1, len(v.cells), pct))
 
+	var searchBar string
+	if v.searching {
+		searchBar = lipgloss.NewStyle().Foreground(colorCyan).Render("  ⌕  ") +
+			lipgloss.NewStyle().Foreground(colorText0).Bold(true).Render(v.query) +
+			lipgloss.NewStyle().Foreground(colorPurple).Render("█") +
+			"  " + styleDim.Render("Enter=search  Esc=clear")
+	} else if v.query != "" {
+		searchBar = styleDim.Render("  ⌕  ") +
+			lipgloss.NewStyle().Foreground(colorYellow).Render(v.query) +
+			"  " + styleDim.Render("(filtered)  /=new search  r=reset")
+	}
+
 	help := strings.Join([]string{
 		helpItem("↑↓/jk", "navigate"),
 		helpItem("g/G", "top/bottom"),
 		helpItem("Enter", "inspect"),
+		helpItem("/", "search"),
 		helpItem("r", "refresh"),
 	}, "  ")
 
-	return lipgloss.JoinVertical(lipgloss.Left,
+	parts := []string{
 		styleViewTitle.Render("◈ Cells"),
 		scrollInfo,
-		t.Render(),
-		styleHelp.Render("  "+help),
-	)
+	}
+	if searchBar != "" {
+		parts = append(parts, searchBar)
+	}
+	parts = append(parts, t.Render(), styleHelp.Render("  "+help))
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }

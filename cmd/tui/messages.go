@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/hexxla/hexxladb"
+	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
@@ -28,11 +29,22 @@ type seamsLoadedMsg struct {
 }
 
 type seamRow struct {
+	id     string
 	coordA hexxladb.Coord
 	coordB hexxladb.Coord
 	stype  string
 	reason string
 	status string
+}
+
+type healthLoadedMsg struct {
+	report *hexxladb.HealthReport
+	err    error
+}
+
+type snapshotDiffMsg struct {
+	diff *hexxladb.SnapshotDiff
+	err  error
 }
 
 type analyticsLoadedMsg struct {
@@ -46,21 +58,56 @@ type analyticsLoadedMsg struct {
 
 // ─── cell loading helper (shared by cells view and main.go tab switch) ───────
 
-// loadCells walks rings from origin outward, collecting up to limit cells.
-// Returns cells in ring order (outer rings last).
-func loadCells(db *hexxladb.DB, limit int) []hexxladb.CellView {
+// searchCells uses QueryCells to filter by query string (content/tag) returning up to limit results.
+func searchCells(db *hexxladb.DB, query string, limit int) []hexxladb.CellView {
 	var out []hexxladb.CellView
 	_ = db.View(func(tx *hexxladb.Tx) error {
-		for r := 0; len(out) < limit && r < 10; r++ {
-			err := tx.WalkRing(context.Background(), hexxladb.Coord{}, r, func(coord hexxladb.Coord, _ []byte, ok bool) bool {
-				if !ok || len(out) >= limit {
+		results, err := tx.QueryCells(context.Background(), hexxladb.CellQuery{
+			Query:      query,
+			MaxResults: limit,
+		})
+		if err != nil {
+			return err
+		}
+		for _, r := range results {
+			out = append(out, r.Cell)
+		}
+		return nil
+	})
+	return out
+}
+
+// loadCells scans the cell/ primary key range, collecting up to limit cells.
+// Works for both v1 and MVCC databases; covers all cells regardless of coordinate.
+func loadCells(db *hexxladb.DB, limit int) []hexxladb.CellView {
+	var out []hexxladb.CellView
+	seen := map[lattice.PackedCoord]struct{}{}
+	v1Len := len(index.CellPrefix) + index.PackedCoordKeyLen
+	mvccLen := v1Len + index.VersionSuffixLen
+	_ = db.View(func(tx *hexxladb.Tx) error {
+		return tx.AscendRange(
+			[]byte(index.CellPrefix),
+			[]byte("cell0"),
+			func(k, _ []byte) bool {
+				if len(out) >= limit {
 					return false
 				}
-				pk, err := lattice.Pack(coord)
+				if len(k) != v1Len && len(k) != mvccLen {
+					return true
+				}
+				p, err := index.ParseCellKey(k[:v1Len])
 				if err != nil {
 					return true
 				}
-				rec, ok, _ := tx.GetCell(pk)
+				if _, ok := seen[p]; ok {
+					return true // already added latest version
+				}
+				seen[p] = struct{}{}
+				coord, err := lattice.Unpack(p)
+				if err != nil {
+					return true
+				}
+				rec, ok, _ := tx.GetCell(p)
 				if ok {
 					out = append(out, hexxladb.CellView{
 						Coord:      coord,
@@ -71,12 +118,8 @@ func loadCells(db *hexxladb.DB, limit int) []hexxladb.CellView {
 					})
 				}
 				return len(out) < limit
-			})
-			if err != nil {
-				break
-			}
-		}
-		return nil
+			},
+		)
 	})
 	return out
 }

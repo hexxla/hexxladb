@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/hexxla/hexxladb"
+	"github.com/hexxla/hexxladb/internal/index"
 )
 
 type dashboardView struct {
@@ -30,16 +31,27 @@ func (v *dashboardView) View() string {
 
 	stats, _ := v.db.StatsMVCC()
 
+	v1Len := len(index.CellPrefix) + index.PackedCoordKeyLen
+	mvccLen := v1Len + index.VersionSuffixLen
+	seenCells := map[[16]byte]struct{}{}
 	var cellCount, seamCount int
 	var tags []hexxladb.TagCount
 	_ = v.db.View(func(tx *hexxladb.Tx) error {
-		_ = tx.AscendRange(nil, []byte("cell\xff"), func(_, _ []byte) bool {
-			cellCount++
-			return cellCount < 10000
+		_ = tx.AscendRange([]byte(index.CellPrefix), []byte("cell0"), func(k, _ []byte) bool {
+			if len(k) != v1Len && len(k) != mvccLen {
+				return true
+			}
+			var key [16]byte
+			copy(key[:], k[len(index.CellPrefix):len(index.CellPrefix)+16])
+			if _, ok := seenCells[key]; !ok {
+				seenCells[key] = struct{}{}
+				cellCount++
+			}
+			return cellCount < 100000
 		})
-		_ = tx.AscendRange(nil, []byte("seam\xff"), func(_, _ []byte) bool {
+		_ = tx.AscendRange([]byte(index.SeamPrefix), index.SeamScanUpperBound(), func(_, _ []byte) bool {
 			seamCount++
-			return seamCount < 10000
+			return seamCount < 100000
 		})
 		var err error
 		tags, err = tx.TagCounts(ctx)
@@ -117,13 +129,14 @@ func (v *dashboardView) View() string {
 
 	// ── keybindings card ────────────────────────────────────────────────────
 	bindings := []struct{ key, desc string }{
-		{"Tab / ←→", "cycle tabs"},
-		{"1-6", "jump to tab"},
-		{"↑↓", "navigate list"},
+		{"Tab / Shift+Tab", "cycle tabs"},
+		{"1-8", "jump to tab"},
+		{"↑↓/jk", "navigate list"},
 		{"Enter", "inspect cell"},
-		{"c", "load context pack (Inspector)"},
-		{"r", "refresh"},
-		{"q / Esc", "quit"},
+		{"/", "search cells (Cells tab)"},
+		{"c", "context pack (Inspector)"},
+		{"r", "refresh current tab"},
+		{"q / Ctrl+C", "quit"},
 	}
 	var kbLines strings.Builder
 	for _, b := range bindings {
