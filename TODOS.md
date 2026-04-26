@@ -19,7 +19,7 @@ Immediate next steps. Update after each session.
 
 ## Recently Completed
 
-- 2026-04-26: Tier 1 features — `DB.HealthCheck` + `HealthReport`/`HealthCheckConfig`; `Tx.SearchCells` + `CellSearchConfig`/`CellSearchResult` (composite scoring, tag/content/source/spatial filters, forward-compatible for embeddings); `Tx.LoadMultiContextPack` + `MultiContextConfig` (multi-seed, shared budget, deduplication); 19 tests; API_REFERENCE + CHANGELOG updated; branch feat/tier1-search-health
+- 2026-04-26: Tier 1 features — `DB.HealthCheck` + `HealthReport`/`HealthCheckConfig`; `Tx.SearchCells` + `CellSearchConfig`/`CellSearchResult` (composite scoring, tag/content/source/spatial filters, forward-compatible for embeddings); `Tx.LoadMultiContextPack` + `MultiContextConfig` (multi-seed, shared budget, deduplication); `Tx.LoadContextPackFrom` (unified variadic: 1 coord → LoadContextPack, N coords → LoadMultiContextPack, zero overhead); demo Phase 10; 19 tests; API_REFERENCE + CHANGELOG + ROADMAP updated; branch feat/tier1-search-health
 - 2026-04-25: Seam-aware API surface + demo — `CellView.SupersededFrom`, `CellExplanation.SupersededBy`, `Reason:"superseded"`, API_REFERENCE updated, conversational_memory demo Phase 4 added
 - 2026-04-25: Seam-aware context assembly (v0.1.0 blocker resolved) — `SeamTypeSupersedes`, `MarkSupersedes`, `resolveSupersession`, `LoadContextBudgetConfig.FilterSuperseded`; 4 regression tests
 - 2026-04-24: Increased max cell value to 8KB (v0.1.0 blocker resolved)

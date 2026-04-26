@@ -6,6 +6,15 @@ Must complete before release. Core functionality gaps.
 
 _(All blockers resolved — ready to release v0.1.0.)_
 
+## Completed (post-v0.1.0)
+
+Shipped after v0.1.0 release on branch `feat/tier1-search-health`.
+
+- **Database Health Check API** — `DB.HealthCheck(ctx, HealthCheckConfig) (HealthReport, error)`; cell count via ring walk, seam resolution summary, orphaned seam detection, tag/source index consistency, MVCC stats snapshot; `DefaultHealthCheckConfig`; 5 regression tests
+- **Content Search** — `Tx.SearchCells(ctx, CellSearchConfig) ([]CellSearchResult, error)`; composite scoring (tag exact +1.0, tag prefix +0.8, content verbatim +0.6, content case-insensitive +0.5, source ID +0.3, confidence bonus); filters: `RequireTags` (AND), `AnyTags` (OR), confidence range, spatial radius, `MaxResults`; forward-compatible (`Embedding []float32` addable without breaking callers); 9 tests
+- **Multi-seed context assembly** — `Tx.LoadMultiContextPack` + `MultiContextConfig`; expands N seed coords, merges under shared token budget, cross-seed confidence re-ranking, `DeduplicateCoords`; `Tx.LoadContextPackFrom` unified variadic entry point (dispatches single→`LoadContextPack`, multi→`LoadMultiContextPack` with zero overhead for 1-seed case); 5 tests
+- **conversational_memory demo Phase 10** — `SearchCells` → seeds → `LoadContextPackFrom` pipeline demonstrated end-to-end with budget breakdown
+
 ## Completed (v0.1.0)
 
 Shipped with v0.1.0 release.
@@ -43,10 +52,7 @@ Requires design + benchmarks before implementation.
 - Extract `views.go` to `internal/views` or `internal/app` — `LoadContextWithBudgeting` calls `tx.GetCell`/`tx.AscendRange`, so it's not pure app-layer; moving requires interface extraction to break import cycle (reclassified from Quick Wins)
 - Move `rotation.go` to `internal/tooling/rotation` — rotation uses `DB.Open`, `Tx.putDirect`, error sentinels; moving to `internal/` creates an import cycle; needs interface extraction first ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
 - Batch MVCC prune (`PruneCellVersions`) — coalesce deletes under single engine write txn to reduce WAL pressure ([`DURABILITY.md`](./hexxladb/DURABILITY.md))
-- Database Health Check API — integrity verification, orphaned seam detection, index consistency ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
 - Event Hooks / Callbacks — react to cell writes, seam detection, facet rotation (needs architecture RFC)
-- Content Search (substring/prefix) — brute-force search within `RawContent`, `Tags`, and `SourceID` for small-medium DBs; returns `[]CellSearchResult` with scored `Coord` values suitable for direct use as context-pack seeds (benchmark first). **`CellSearchConfig` is designed to be forward-compatible: `Query string` today, `Embedding []float32` addable later without breaking callers.**
-- Multi-seed context assembly (`LoadMultiContextPack`) — merge context packs from multiple seed coords (e.g. top-N search results) under a shared token budget with deduplication; companion to Content Search
 - Temporal Range Queries — "what changed this week?" time-series analysis vs point-in-time `ViewAtTime`; cells and seams in time buckets with timeline summaries ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
 - Snapshot Tags/Labels — human-friendly names ("v1.0 release", "pre-migration") for MVCC snapshots instead of raw sequence numbers; enables `ViewAtTag` for operational usability ([audit](./context/audits/HEXXLA_SERVICE_QUICK_WINS.md))
 - Complete `app.Service` use-case layer — only 4 of ~30 `domain.Storage` methods implemented; `cmd/hexxladb/main.go` wires service then discards it (`_ = svc`); implement remaining delegations and move view assembly into service use-cases ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
@@ -96,3 +102,4 @@ Intentional boundaries for embedded library v1.
 | 2026-04-24 | **SoC audit validated:** mvccspike rename, prune profile dedup, MVCC key guard relocation added as v0.1.0 blockers; secondary index relocation, views.go extraction, app.Service completion added as Quick Wins ([audit](./context/audits/SOC_MODULARITY_AUDIT.md)) |
 | 2026-04-25 | Seam-aware context assembly shipped: `SeamTypeSupersedes`, `MarkSupersedes`, `FilterSuperseded`; all v0.1.0 blockers resolved                                                                                                                                       |
 | 2026-04-25 | Seam observability additions: `CellView.SupersededFrom`, `CellExplanation.SupersededBy`, `Reason:"superseded"`; API_REFERENCE and demo updated                                                                                                                      |
+| 2026-04-26 | Tier 1 features shipped: Health Check API, Content Search (`SearchCells`), Multi-seed assembly (`LoadMultiContextPack`, `LoadContextPackFrom`); 19 tests; API_REFERENCE, CHANGELOG, ROADMAP, TODOS updated                                                          |
