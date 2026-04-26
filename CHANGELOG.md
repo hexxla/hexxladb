@@ -4,6 +4,12 @@
 
 ### Added
 
+- `DB.HealthCheck(ctx, HealthCheckConfig) (HealthReport, error)` — integrity scan: visible cell count, seam resolution summary (resolved/unresolved), orphaned seam detection, tag index consistency, source index consistency, MVCC stats snapshot; configurable `ScanRadius` and `MaxErrors`
+- `HealthReport`, `HealthCheckConfig`, `DefaultHealthCheckConfig` — types and constructor for health check
+- `Tx.SearchCells(ctx, CellSearchConfig) ([]CellSearchResult, error)` — scored full-scan search over visible cells; matches `RawContent` (substring), `Tags` (exact + prefix), `SourceID`; supports `RequireTags` (AND), `AnyTags` (OR), confidence range, spatial radius, and `MaxResults` cap; returns `[]CellSearchResult` sorted by composite score, each carrying a `Coord` for direct use as a context-pack seed
+- `CellSearchConfig`, `CellSearchResult` — forward-compatible search API; `Embedding []float32` can be added later without breaking callers
+- `Tx.LoadMultiContextPack(ctx, MultiContextConfig) (ContextPack, error)` — expand multiple seed coords, merge resulting cell views under a shared token budget, optionally deduplicate shared-neighbourhood cells; companion to `SearchCells` for multi-seed retrieval
+- `MultiContextConfig` — `Centers []Coord`, `MaxR`, `MaxTokens`, `Budgeter`, `AssemblyConfig`, `DeduplicateCoords`
 - `SeamTypeSupersedes` constant (`"supersedes"`) for directional supersession seams
 - `Tx.MarkSupersedes(superseder, superseded Coord, reason string)` — records that a cell is the current truth and another is stale
 - `LoadContextBudgetConfig.FilterSuperseded bool` — when true, `LoadContextWithBudgeting` / `LoadContextPack` walk supersession chains and replace stale cells with their current-truth successors (or exclude them if no live successor exists)

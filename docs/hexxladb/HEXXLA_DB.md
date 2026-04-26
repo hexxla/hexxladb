@@ -161,10 +161,12 @@ Optional append-only **changelog** for consumers lives in a **sidecar file** `{p
 
 **Seed selection is orthogonal to HexxlaDB’s core primitives:** the system only needs a starting **`Coord`** (or small set of candidates). Embeddings are **one** supported option for step 1; others include **explicit coordinates**, **lexical or tag-based lookup**, **`source_id`**, or **agent-driven navigation**. Everything **after** the seed is **deterministic** on the lattice—no embeddings required inside the DB.
 
-1. **Seed phase:** orchestration layer (not the storage engine) may use semantic similarity, lexical search, vector search, or explicit coordinates to choose candidate coordinates.
+**Content Search as seed selection:** `Tx.SearchCells` (Near-term) provides ranked `[]CellSearchResult` — each carries a scored `Coord` suitable for direct use as seeds in step 2. The `CellSearchConfig` API is designed to be forward-compatible: `Query string` for lexical/substring search today; `Embedding []float32` can be added as an optional field later for ANN-accelerated seed selection without breaking existing callers. Multiple seeds from search can be passed to `LoadMultiContextPack` for merged, deduplicated context assembly under a shared token budget.
+
+1. **Seed phase:** orchestration layer (not the storage engine) may use semantic similarity, lexical search (`SearchCells`), vector search, or explicit coordinates to choose candidate coordinates.
 2. **Spatial expansion phase:** `walk_ring` or bounded radius traversal from seeds.
 3. **Filtering and ranking phase:** apply provenance, validity, facet, seam, and tag filters.
-4. **Context packing phase:** `load_context` assembles token-aware neighborhood.
+4. **Context packing phase:** `load_context` or `LoadMultiContextPack` assembles a token-aware neighborhood from one or multiple seeds under a shared budget.
 
 ### Example Ring Walk
 

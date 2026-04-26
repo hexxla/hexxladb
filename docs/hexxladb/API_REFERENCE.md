@@ -201,6 +201,58 @@ See **[CHANGEFEED.md](./CHANGEFEED.md)**.
 
 ---
 
+## Database health check
+
+| Symbol                                            | Notes                                                                                                                                                       |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*DB).HealthCheck`](../../health.go)**        | Integrity scan: cell count, seam resolution summary, orphaned seam detection, index consistency, MVCC stats.                                                |
+| **[`HealthReport`](../../health.go)**             | Result type: `CellCount`, `SeamCount`, `SeamsResolved`, `SeamsUnresolved`, `OrphanedSeams`, `TagIndexErrors`, `SourceIndexErrors`, `MVCCStats`, `Warnings`. |
+| **[`HealthCheckConfig`](../../health.go)**        | `CheckOrphans`, `CheckTagIndex`, `CheckSourceIndex`, `MaxErrors`, `ScanRadius`.                                                                             |
+| **[`DefaultHealthCheckConfig`](../../health.go)** | Returns config with all checks enabled and `ScanRadius=64`.                                                                                                 |
+
+---
+
+## Content Search
+
+| Symbol                                     | Notes                                                                                                                                                                                                                                                                       |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*Tx).SearchCells`](../../search.go)** | Scored scan over visible cells. Returns `[]CellSearchResult` sorted by relevance; each result includes a `Coord` suitable for use as a context-pack seed.                                                                                                                   |
+| **[`CellSearchConfig`](../../search.go)**  | `Query` (substring/tag/source), `RequireTags` (AND), `AnyTags` (OR), `MinConfidence`, `MaxConfidence`, `SourceID`, `Center`+`Radius` (spatial), `MaxResults`, `MaxScanRadius`. Forward-compatible: `Embedding []float32` will be added here later without breaking callers. |
+| **[`CellSearchResult`](../../search.go)**  | `Cell CellView` (full assembled view with `Coord`) + `Score float64` (composite relevance).                                                                                                                                                                                 |
+
+### Content Search scoring
+
+| Condition                                      | Score contribution |
+| ---------------------------------------------- | ------------------ |
+| Query matches a tag exactly (case-insensitive) | +1.0               |
+| Query is a prefix of a tag                     | +0.8               |
+| Query found verbatim in `RawContent`           | +0.6               |
+| Query found case-insensitively in `RawContent` | +0.5               |
+| Query matches `SourceID` exactly               | +0.3               |
+| Confidence bonus                               | +0.1 × Confidence  |
+
+---
+
+## Multi-seed context assembly
+
+A **seed** is a `Coord` — the centre point of a ring-walk expansion. `SearchCells` returns `CellSearchResult` values each carrying a `Coord`; those coords are the seeds passed to the assembly APIs, which expand each matched location's neighbourhood into context. One natural-language or keyword query → N matched coords → N seeds → one merged `ContextPack`.
+
+| Symbol                                                     | Notes                                                                                                                                                                                                          |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*Tx).LoadContextPackFrom`](../../views.go)**          | **Recommended unified entry point.** Variadic: one coord → zero-overhead `LoadContextPack`; multiple coords → `LoadMultiContextPack` with `DeduplicateCoords`. Callers never switch API based on result count. |
+| **[`(*Tx).LoadMultiContextPack`](../../multi_context.go)** | Expand multiple seed coords (e.g. top-N from `SearchCells`), merge under a shared token budget, cross-seed confidence re-ranking, optional deduplication of shared neighbourhood cells.                        |
+| **[`MultiContextConfig`](../../multi_context.go)**         | `Centers []Coord`, `MaxR`, `MaxTokens`, `Budgeter`, `AssemblyConfig LoadContextBudgetConfig`, `DeduplicateCoords`.                                                                                             |
+
+### Typical pipeline
+
+```text
+SearchCells(query) → []CellSearchResult → extract .Cell.Coord → LoadContextPackFrom(coords...)
+```
+
+Token budget across seeds: each seed expands independently (ring walk, `FilterSuperseded`), cells merge into one pool, pool re-ranked by `Confidence` descending, greedy fill to `MaxTokens`.
+
+---
+
 ## Encryption
 
 | Symbol                                                 | Notes                                          |
