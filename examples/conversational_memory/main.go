@@ -624,6 +624,107 @@ func run() error {
 	fmt.Println()
 
 	// ═══════════════════════════════════════════════════════════════
+	// PHASE 10: Content Search + Multi-Seed Context Assembly
+	// ═══════════════════════════════════════════════════════════════
+	printHeader("Phase 10: Content Search + Multi-Seed Context Assembly")
+
+	_, _ = infoStyle.Println("  Searching for cells matching 'database'...")
+	_, _ = dimStyle.Println("  (Composite scoring: tag exact/prefix, content substring, confidence bonus)")
+	fmt.Println()
+
+	var searchResults []hexxladb.CellSearchResult
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		var err error
+		searchResults, err = tx.SearchCells(ctx, hexxladb.CellSearchConfig{
+			Query:      "database",
+			MaxResults: 5,
+		})
+		return err
+	}); err != nil {
+		return fmt.Errorf("search cells: %w", err)
+	}
+
+	printMetric("Search results for 'database'", len(searchResults), "cells")
+	fmt.Println()
+	_, _ = infoStyle.Println("  Top results (sorted by relevance score):")
+	for i, r := range searchResults {
+		_, _ = dimStyle.Printf("    [%d] score=%.2f coord=(%d,%d) ", i+1, r.Score, r.Cell.Coord.Q, r.Cell.Coord.R)
+		_, _ = dataStyle.Printf("%s\n", truncate(r.Cell.RawContent, 50))
+	}
+	fmt.Println()
+
+	// Use top-N result coords as seeds for multi-context pack.
+	seeds := make([]hexxladb.Coord, 0, len(searchResults))
+	for _, r := range searchResults {
+		seeds = append(seeds, r.Cell.Coord)
+	}
+
+	if len(seeds) == 0 {
+		_, _ = dimStyle.Println("  (no search results — skipping multi-seed assembly)")
+	} else {
+		_, _ = infoStyle.Printf("  Assembling merged context from %d seeds (shared budget: 400 bytes)...\n", len(seeds))
+		_, _ = dimStyle.Println("  Budget eviction: merged pool re-ranked by confidence; highest-confidence cells kept first.")
+		fmt.Println()
+
+		sharedBudget := 400
+		var multiPack hexxladb.ContextPack
+		if err := db.View(func(tx *hexxladb.Tx) error {
+			var err error
+			multiPack, err = tx.LoadMultiContextPack(ctx, hexxladb.MultiContextConfig{
+				Centers:           seeds,
+				MaxR:              1, // expand 1 ring around each seed
+				MaxTokens:         sharedBudget,
+				Budgeter:          hexxladb.ByteLenBudgeter{},
+				DeduplicateCoords: true,
+				AssemblyConfig: hexxladb.LoadContextBudgetConfig{
+					Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
+					FilterSuperseded: true,
+				},
+			})
+			return err
+		}); err != nil {
+			return fmt.Errorf("load multi context pack: %w", err)
+		}
+
+		usedBytes := 0
+		for _, cv := range multiPack.Cells {
+			usedBytes += hexxladb.ByteLenBudgeter{}.CountTokens(cv.RawContent)
+		}
+
+		printMetric("Seeds expanded", len(seeds), "coords")
+		printMetric("Candidates scanned (all seeds)", multiPack.Stats.CandidatesScanned, "cells")
+		printMetric("Cells evicted (budget)", multiPack.Stats.CellsEvicted, "cells")
+		printMetric("Cells in merged pack", len(multiPack.Cells), "cells")
+		printMetric("Budget used", usedBytes, fmt.Sprintf("/ %d bytes (%.0f%%)", sharedBudget, float64(usedBytes)/float64(sharedBudget)*100))
+		fmt.Println()
+
+		_, _ = infoStyle.Println("  Merged context (highest-confidence cells first):")
+		for i, cv := range multiPack.Cells {
+			conf := cv.Provenance.Confidence
+			_, _ = dimStyle.Printf("    [%d] conf=%.1f coord=(%d,%d) %s\n",
+				i+1, conf, cv.Coord.Q, cv.Coord.R, truncate(cv.RawContent, 45))
+		}
+		fmt.Println()
+
+		_, _ = infoStyle.Println("  Token budget breakdown:")
+		_, _ = dimStyle.Printf("    Shared budget:    %d bytes\n", sharedBudget)
+		_, _ = dimStyle.Printf("    Used by pack:     %d bytes\n", usedBytes)
+		_, _ = dimStyle.Printf("    Remaining:        %d bytes\n", sharedBudget-usedBytes)
+		_, _ = dimStyle.Println()
+		_, _ = dimStyle.Println("  How budget works across seeds:")
+		_, _ = dimStyle.Println("    1. Each seed expands independently (ring walk, FilterSuperseded)")
+		_, _ = dimStyle.Println("    2. All candidate cells merged into one pool")
+		_, _ = dimStyle.Println("    3. Pool re-ranked by Confidence descending (cross-seed fair ranking)")
+		_, _ = dimStyle.Println("    4. Greedy fill: keep cells from highest confidence until budget exhausted")
+		_, _ = dimStyle.Println("    5. DeduplicateCoords: shared neighbours counted only once (seed order priority)")
+		fmt.Println()
+
+		printSuccess(fmt.Sprintf("Multi-seed pack assembled: %d cells from %d search seeds within %d-byte budget",
+			len(multiPack.Cells), len(seeds), sharedBudget))
+	}
+	fmt.Println()
+
+	// ═══════════════════════════════════════════════════════════════
 	// COMPLETION
 	// ═══════════════════════════════════════════════════════════════
 	printHeader("Example Complete")
@@ -635,6 +736,7 @@ func run() error {
 	_, _ = dimStyle.Println("    • Integrate with your LLM client")
 	_, _ = dimStyle.Println("    • Implement your own TokenBudgeter (e.g., using tiktoken)")
 	_, _ = dimStyle.Println("    • Add encryption for production deployments")
+	_, _ = dimStyle.Println("    • Use SearchCells → LoadMultiContextPack for semantic seed selection")
 	_, _ = dimStyle.Println("    • See docs/hexxladb/API_REFERENCE.md for full API")
 	fmt.Println()
 
