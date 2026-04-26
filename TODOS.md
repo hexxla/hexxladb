@@ -4,12 +4,13 @@ Immediate next steps. Update after each session.
 
 ## Current
 
-- [ ] Ready for v0.2.0 release push to remote (all Unreleased items shipped)
+- [ ] `feat/arch-housekeeping` — Item 1: extract `views.go` to `internal/views` (TxReader interface; type aliases for API compat)
 
 ## Pending (next sessions)
 
-- [ ] Relocate secondary index files to `internal/` — import cycle; needs interface extraction (btree coupling already fixed via `deleteDirect`)
-- [ ] Extract `views.go` to `internal/views` or `internal/app` — import cycle; needs interface extraction
+- [ ] `feat/arch-housekeeping` — Item 2: secondary index relocation decision (reassess after Item 1; may reclassify to Future)
+- [ ] `feat/arch-housekeeping` — Item 3: reclassify `rotation.go` to Future in ROADMAP (no code change)
+- [ ] Ready for v0.2.0 release push to remote (all Unreleased items shipped)
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
 
 ---

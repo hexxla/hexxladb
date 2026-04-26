@@ -63,16 +63,16 @@ _(Empty — all quick wins shipped or reclassified.)_
 
 ## Near-term
 
-Requires design + benchmarks before implementation.
+Active on branch `feat/arch-housekeeping`. Ordered by execution priority.
 
-- Relocate secondary index files to `internal/` — `cell_secondary.go` and `seam_secondary.go` are methods on `*Tx`; moving to `internal/` creates import cycle same as `rotation.go`; needs interface extraction first (reclassified from Quick Wins; btree coupling already fixed via `deleteDirect`)
-- Extract `views.go` to `internal/views` or `internal/app` — `LoadContextWithBudgeting` calls `tx.GetCell`/`tx.AscendRange`, so it's not pure app-layer; moving requires interface extraction to break import cycle (reclassified from Quick Wins)
-- Move `rotation.go` to `internal/tooling/rotation` — rotation uses `DB.Open`, `Tx.putDirect`, error sentinels; moving to `internal/` creates an import cycle; needs interface extraction first ([audit](./context/audits/SOC_MODULARITY_AUDIT.md))
+- **Extract `views.go` → `internal/views`** — define narrow `TxReader` interface in `internal/views`; move all view types + assembly logic; root `views.go` becomes thin wrappers + type aliases (zero public API break). See `.windsurf/plans/arch-housekeeping.md`.
+- **Secondary index relocation decision** — `cell_secondary.go` and `seam_secondary.go` contain no exported symbols; they are private `*Tx` methods; btree coupling already fixed via `deleteDirect`; reassess after `views.go` extraction to determine if a `TxIndexWriter` interface makes the move worthwhile, or reclassify to Future.
 
 ## Future
 
 Spec exists; implementation deferred.
 
+- **Move `rotation.go` to `internal/tooling/rotation`** — uses `DB.Open`, `Tx.putDirect`, root error sentinels; cycle is hard to break without significant restructuring or exposing `UnsafePut`; in-root placement is not architecturally wrong; reclassified from Near-term ([audit](./context/audits/SOC_MODULARITY_AUDIT.md)).
 - `embed/` keyspace for ANN/hybrid retrieval — vector storage and similarity search for semantic seed selection ([`HEXXLA_DB.md`](./hexxladb/HEXXLA_DB.md)). When implemented, `CellSearchConfig.Embedding []float32` field will be added to Content Search API — existing `Query string` callers unaffected.
 - Materialized views / super-hex aggregation as engine algorithms
 - Materialized changefeed consumers with automated prune policy
