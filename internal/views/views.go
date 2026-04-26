@@ -199,7 +199,7 @@ func AssembleCellView(ctx context.Context, tx TxReader, coord lattice.Coord, asO
 		RawContent: rec.RawContent,
 		Provenance: rec.Provenance,
 		Validity:   rec.Validity,
-		Tags:       append([]string(nil), rec.Tags...),
+		Tags:       rec.Tags,
 	}
 	if rec.ClusterHint != nil {
 		ch, err := lattice.Unpack(*rec.ClusterHint)

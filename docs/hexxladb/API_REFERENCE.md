@@ -221,12 +221,12 @@ See **[CHANGEFEED.md](./CHANGEFEED.md)**.
 
 ## Database health check
 
-| Symbol                                            | Notes                                                                                                                                                       |
-| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*DB).HealthCheck`](../../health.go)**        | Integrity scan: cell count, seam resolution summary, orphaned seam detection, index consistency, MVCC stats.                                                |
-| **[`HealthReport`](../../health.go)**             | Result type: `CellCount`, `SeamCount`, `SeamsResolved`, `SeamsUnresolved`, `OrphanedSeams`, `TagIndexErrors`, `SourceIndexErrors`, `MVCCStats`, `Warnings`. |
-| **[`HealthCheckConfig`](../../health.go)**        | `CheckOrphans`, `CheckTagIndex`, `CheckSourceIndex`, `MaxErrors`, `ScanRadius`.                                                                             |
-| **[`DefaultHealthCheckConfig`](../../health.go)** | Returns config with all checks enabled and `ScanRadius=64`.                                                                                                 |
+| Symbol                                            | Notes                                                                                                                                                                       |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*DB).HealthCheck`](../../health.go)**        | Integrity scan: cell count, seam resolution summary, orphaned seam detection, index consistency, MVCC stats.                                                                |
+| **[`HealthReport`](../../health.go)**             | Result type: `CellCount`, `SeamCount`, `SeamsResolved`, `SeamsUnresolved`, `OrphanedSeams`, `TagIndexErrors`, `SourceIndexErrors`, `MVCCStats`, `Warnings`.                 |
+| **[`HealthCheckConfig`](../../health.go)**        | `CheckOrphans`, `CheckTagIndex`, `CheckSourceIndex`, `MaxErrors`. `ScanRadius` — deprecated, retained for backward compat, has no effect (cell scan now covers all coords). |
+| **[`DefaultHealthCheckConfig`](../../health.go)** | Returns config with all checks enabled.                                                                                                                                     |
 
 ---
 
@@ -234,12 +234,12 @@ See **[CHANGEFEED.md](./CHANGEFEED.md)**.
 
 `Tx.QueryCells` is the unified query entry point. All predicate fields are AND-combined; zero/empty values are ignored.
 
-| Symbol                                        | Notes                                                                                                                                                                                                                    |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **[`(*Tx).QueryCells`](../../query_exec.go)** | Execute a `CellQuery` against the snapshot. Planner picks cheapest index; remaining predicates applied in-memory.                                                                                                        |
-| **[`CellQuery`](../../query.go)**             | Predicate: `Query`, `RequireTags` (AND), `AnyTags` (OR), `ExcludeTags` (NOT), `SourceID`, `MinConfidence`, `MaxConfidence`, `After`/`Before` (temporal), `Center`+`Radius` (spatial), `MaxResults`, `SortBy`, `Explain`. |
-| **[`CellQueryResult`](../../query.go)**       | `Cell CellView`, `Score float64`, `Explanation string` (when `Explain=true`).                                                                                                                                            |
-| **[`SortOrder`](../../query.go)**             | `SortByScore` (default), `SortByConfidence`, `SortByRecency`, `SortByCoord`.                                                                                                                                             |
+| Symbol                                        | Notes                                                                                                                                                                                                                                   |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*Tx).QueryCells`](../../query_exec.go)** | Execute a `CellQuery` against the snapshot. Planner picks cheapest index; remaining predicates applied in-memory.                                                                                                                       |
+| **[`CellQuery`](../../query.go)**             | Predicate: `Query`, `RequireTags` (AND), `AnyTags` (OR), `ExcludeTags` (NOT), `SourceID`, `MinConfidence`, `MaxConfidence`, `After`/`Before` (temporal), `Center`+`Radius` (spatial), `MaxResults`, `MaxScanRows`, `SortBy`, `Explain`. |
+| **[`CellQueryResult`](../../query.go)**       | `Cell CellView`, `Score float64`, `Explanation string` (when `Explain=true`).                                                                                                                                                           |
+| **[`SortOrder`](../../query.go)**             | `SortByScore` (default), `SortByConfidence`, `SortByRecency`, `SortByCoord`.                                                                                                                                                            |
 
 ### Query planner index selection
 

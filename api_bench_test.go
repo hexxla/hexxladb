@@ -600,6 +600,76 @@ func BenchmarkAPI_FindSeams(b *testing.B) {
 	}
 }
 
+// BenchmarkAPI_HealthCheck measures [DB.HealthCheck] with all checks enabled.
+// The cell/ and seam/ primary-key forward scans mean cost is O(cells+seams),
+// not O(ScanRadius²) as in the previous WalkRings implementation.
+func BenchmarkAPI_HealthCheck(b *testing.B) {
+	ctx := context.Background()
+	cfg := hexxladb.DefaultHealthCheckConfig()
+	for _, n := range apiBenchPreloadSizes(b) {
+		b.Run(fmt.Sprintf("cells_%d", n), func(b *testing.B) {
+			db, _ := benchAPIPreloadCells(b, n)
+			b.Cleanup(func() { _ = db.Close() })
+			b.ReportMetric(float64(n), "cells")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				if _, err := db.HealthCheck(ctx, cfg); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkAPI_BatchPutCells measures batch write throughput via [DB.BatchPutCells].
+// Sub-benchmarks vary batch size (10/100/500); each iteration commits one full batch.
+// cells/op shows how many cells are committed per iteration so throughput is readable directly.
+func BenchmarkAPI_BatchPutCells(b *testing.B) {
+	ctx := context.Background()
+	nq := 200
+	for _, batchSize := range []int{10, 100, 500} {
+		b.Run(fmt.Sprintf("batch_%d", batchSize), func(b *testing.B) {
+			cells := make([]record.CellRecord, batchSize)
+			for i := range batchSize {
+				q := i % nq
+				r := i / nq
+				p, err := lattice.Pack(lattice.Coord{Q: q, R: r})
+				if err != nil {
+					b.Fatal(err)
+				}
+				cells[i] = record.CellRecord{
+					Key:        p,
+					RawContent: fmt.Sprintf("batch-cell-%d", i),
+					Provenance: record.ProvenanceWire{
+						SourceID:   "bench-batch",
+						Confidence: 0.9,
+						CreatedAt:  int64(i),
+						UpdatedAt:  int64(i),
+					},
+				}
+			}
+			opts := &hexxladb.BatchPutCellOptions{BatchSize: batchSize}
+			b.ReportMetric(float64(batchSize), "cells/op")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				path := filepath.Join(b.TempDir(), "batch_bench.db")
+				db, err := hexxladb.Open(path, nil)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if _, err := db.BatchPutCells(ctx, cells, opts); err != nil {
+					_ = db.Close()
+					b.Fatal(err)
+				}
+				_ = db.Close()
+				_ = os.RemoveAll(path)
+			}
+		})
+	}
+}
+
 // BenchmarkAPI_WalkRingAt visits one ring with validity filtering ([Tx.WalkRingAt]).
 func BenchmarkAPI_WalkRingAt(b *testing.B) {
 	asOf := benchValidAsOf()

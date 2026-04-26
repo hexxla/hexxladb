@@ -86,16 +86,36 @@ func (p PackedCoord) Less(q PackedCoord) bool {
 	return p.Compare(q) < 0
 }
 
+// mortonExpand7 is a 128-entry lookup table accelerating mortonPack63.
+// mortonExpand7[b] spreads the 7 bits of b across every 3rd bit position:
+// bit i of b → bit 3i of the output. Three passes of 7 bits cover all 21 axis bits.
+var mortonExpand7 [128]uint64
+
+func init() {
+	for b := range 128 {
+		var e uint64
+		for i := range 7 {
+			e |= uint64((b>>i)&1) << (3 * i)
+		}
+		mortonExpand7[b] = e
+	}
+}
+
+// mortonPack63 interleaves the low 21 bits of qp, rp, sp into a 63-bit Morton code.
+// Three passes of 7 bits each (7×3 = 21 bits per axis, 21×3 = 63 Morton bits).
 func mortonPack63(qp, rp, sp uint64) uint64 {
 	var m uint64
-	for i := range 21 {
-		m |= (qp >> i & 1) << (3 * i)
-		m |= (rp >> i & 1) << (3*i + 1)
-		m |= (sp >> i & 1) << (3*i + 2)
+	for pass := range 3 {
+		axisShift := uint(pass * 7)   // which 7 bits of each axis
+		mortonBase := uint(pass * 21) // where those bits land in the Morton output
+		m |= mortonExpand7[(qp>>axisShift)&0x7f] << mortonBase
+		m |= mortonExpand7[(rp>>axisShift)&0x7f] << (mortonBase + 1)
+		m |= mortonExpand7[(sp>>axisShift)&0x7f] << (mortonBase + 2)
 	}
 	return m
 }
 
+// mortonUnpack63 extracts the interleaved 21-bit components from a 63-bit Morton code.
 func mortonUnpack63(m uint64) (qp, rp, sp uint64) {
 	for i := range 21 {
 		qp |= (m >> (3 * i) & 1) << i

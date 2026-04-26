@@ -261,40 +261,50 @@ HexxlaDB benchmarks are organised around the operations that matter for an embed
 
 _Each iteration is one full `DB.Update` round-trip including fsync. MVCC adds ~22% overhead for version key writes._
 
+**1b. Batch write throughput — `BatchPutCells`**
+
+| Batch size | ns/op       | cells/op | ms/cell |
+| ---------- | ----------- | -------- | ------- |
+| 10         | 25,328,095  | 10       | 2.5     |
+| 100        | 54,932,839  | 100      | 0.55    |
+| 500        | 167,561,582 | 500      | 0.34    |
+
+_Amortises fsync cost across cells. Batch=100 is ~15× cheaper per cell than single `PutCell`. Each iteration opens a fresh DB, commits one batch, and closes._
+
 **2. Point read latency — `GetCell`**
 
-| Operation                  | DB size    | ns/op     | allocs/op |
-| -------------------------- | ---------- | --------- | --------- |
-| GetCell                    | 512 cells  | 52,023    | 88        |
-| GetCell                    | 2000 cells | 55,443    | 111       |
-| GetCell (encrypted)        | 512 cells  | 931,062   | 88        |
-| GetCell (encrypted)        | 2000 cells | 964,937   | 111       |
-| GetCell (MVCC + encrypted) | 512 cells  | 1,383,048 | 87        |
-| GetCell (MVCC + encrypted) | 2000 cells | 1,292,176 | 122       |
+| Operation                  | DB size    | ns/op   | allocs/op |
+| -------------------------- | ---------- | ------- | --------- |
+| GetCell                    | 512 cells  | 27,942  | 88        |
+| GetCell                    | 2000 cells | 29,249  | 111       |
+| GetCell (encrypted)        | 512 cells  | 537,138 | 88        |
+| GetCell (encrypted)        | 2000 cells | 560,101 | 111       |
+| GetCell (MVCC + encrypted) | 512 cells  | 764,150 | 87        |
+| GetCell (MVCC + encrypted) | 2000 cells | 762,257 | 122       |
 
-_Plain reads are stable across DB sizes — confirming O(log n) B+ tree traversal. Encryption adds ~18× overhead (AES-GCM page decryption)._
+_Plain reads are stable across DB sizes — confirming O(log n) B+ tree traversal. Encryption adds ~19× overhead (AES-GCM page decryption)._
 
 **3. Context assembly — LLM hot path**
 
 | Operation              | DB size    | radius | ns/op     | allocs/op |
 | ---------------------- | ---------- | ------ | --------- | --------- |
-| LoadContext            | 512 cells  | 3      | 793,257   | 2,944     |
-| LoadContext            | 2000 cells | 3      | 709,624   | 3,804     |
-| LoadContextPack (4 KB) | 512 cells  | 1      | 381,769   | 839       |
-| LoadContextPack (4 KB) | 512 cells  | 3      | 1,510,259 | 3,756     |
-| LoadContextPack (4 KB) | 512 cells  | 5      | 3,342,487 | 8,599     |
-| LoadContextPack (4 KB) | 2000 cells | 1      | 576,673   | 1,084     |
-| LoadContextPack (4 KB) | 2000 cells | 3      | 2,083,620 | 4,983     |
-| LoadContextPack (4 KB) | 2000 cells | 5      | 4,622,585 | 11,756    |
+| LoadContext            | 512 cells  | 3      | 449,411   | 2,944     |
+| LoadContext            | 2000 cells | 3      | 501,109   | 3,804     |
+| LoadContextPack (4 KB) | 512 cells  | 1      | 209,470   | 836       |
+| LoadContextPack (4 KB) | 512 cells  | 3      | 778,542   | 3,750     |
+| LoadContextPack (4 KB) | 512 cells  | 5      | 1,648,649 | 8,588     |
+| LoadContextPack (4 KB) | 2000 cells | 1      | 224,835   | 1,081     |
+| LoadContextPack (4 KB) | 2000 cells | 3      | 883,607   | 4,976     |
+| LoadContextPack (4 KB) | 2000 cells | 5      | 2,036,354 | 11,744    |
 
-_Cost scales with ring area (r=1: 7 cells, r=3: 37 cells, r=5: 91 cells), not DB size — spatial locality from Morton-ordered keys confirmed._
+_Cost scales with ring area (r=1: 7 cells, r=3: 37 cells, r=5: 91 cells), not DB size — spatial locality from Morton-ordered keys confirmed. Pre-sized candidate slices and ring-buffer reuse (`RingInto`) eliminated repeated growth doublings._
 
 **4. Spatial ring walk — Morton-order prefix scan**
 
 | Operation | DB size    | ring | ns/op   | allocs/op |
 | --------- | ---------- | ---- | ------- | --------- |
-| WalkRing  | 512 cells  | 2    | 279,450 | 927       |
-| WalkRing  | 2000 cells | 2    | 308,020 | 1,203     |
+| WalkRing  | 512 cells  | 2    | 156,488 | 927       |
+| WalkRing  | 2000 cells | 2    | 171,672 | 1,203     |
 
 _Near-constant across DB sizes — range scan on Morton-packed keys, not a graph traversal._
 
@@ -302,35 +312,36 @@ _Near-constant across DB sizes — range scan on Morton-packed keys, not a graph
 
 | Predicate              | DB size    | ns/op      | allocs/op |
 | ---------------------- | ---------- | ---------- | --------- |
-| Tag filter (miss)      | 512 cells  | 66,450     | 82        |
-| Tag filter (miss)      | 2000 cells | 105,706    | 103       |
-| Source index scan      | 512 cells  | 10,331,594 | 50,851    |
-| Source index scan      | 2000 cells | 53,730,561 | 210,350   |
-| Spatial radius (r=3)   | 512 cells  | 759,366    | 2,948     |
-| Spatial radius (r=3)   | 2000 cells | 944,028    | 3,808     |
-| Combined (src+spatial) | 512 cells  | 14,244,274 | 50,845    |
+| Tag filter (miss)      | 512 cells  | 47,380     | 82        |
+| Tag filter (miss)      | 2000 cells | 47,891     | 103       |
+| Source index scan      | 512 cells  | 7,381,741  | 50,851    |
+| Source index scan      | 2000 cells | 30,012,042 | 210,350   |
+| Spatial radius (r=3)   | 512 cells  | 469,566    | 2,948     |
+| Spatial radius (r=3)   | 2000 cells | 519,121    | 3,808     |
+| Combined (src+spatial) | 512 cells  | 7,333,957  | 50,845    |
+| Combined (src+spatial) | 2000 cells | 29,212,830 | 210,340   |
 
-_Tag miss exits early via index. Source scan cost is linear in matching rows. Spatial radius is bounded by ring area regardless of DB size._
+_Tag miss exits early via index. Source scan cost is linear in matching rows — use `CellQuery.MaxScanRows` to bound worst-case latency. Spatial radius is bounded by ring area regardless of DB size._
 
 **6. Seam resolution — `FindSeams`**
 
 | Operation | seams in radius 3 | ns/op     | allocs/op |
 | --------- | ----------------- | --------- | --------- |
-| FindSeams | 0                 | 2,275,497 | 302       |
-| FindSeams | 10                | 4,789,759 | 4,280     |
-| FindSeams | 50                | 5,289,436 | 5,075     |
-| FindSeams | 100               | 5,273,720 | 6,269     |
+| FindSeams | 0                 | 25,925    | 3         |
+| FindSeams | 10                | 2,140,732 | 4,326     |
+| FindSeams | 50                | 2,256,158 | 5,157     |
+| FindSeams | 100               | 2,343,751 | 6,383     |
 
-_Base cost (~2.3 ms) is the spatial ring scan. Seam lookup plateaus quickly — secondary index scan, not a full table walk._
+_Zero-seam base cost reduced from ~2.3 ms to ~26 µs (-98.9%) via a single pre-flight `AscendRange` check — if the seam index is empty, all 74–182 per-coord B+ tree traversals are skipped. When seams exist the ring scan runs as before; cost then scales with seam count, not ring size._
 
 **7. MVCC version resolution — `SelectVisible` scan**
 
 | Operation      | versions | ns/op   | allocs/op |
 | -------------- | -------- | ------- | --------- |
-| GetCell (MVCC) | 10       | 107,550 | 94        |
-| GetCell (MVCC) | 50       | 131,066 | 232       |
-| GetCell (MVCC) | 100      | 179,935 | 410       |
-| GetCell (MVCC) | 500      | 567,836 | 1,730     |
+| GetCell (MVCC) | 10       | 49,039  | 94        |
+| GetCell (MVCC) | 50       | 65,897  | 232       |
+| GetCell (MVCC) | 100      | 85,672  | 410       |
+| GetCell (MVCC) | 500      | 265,084 | 1,730     |
 
 _Linear growth confirmed: 50× more versions → ~5× latency. Sub-millisecond up to 100 versions. Optimisation only warranted for cells rewritten hundreds of times._
 
@@ -338,9 +349,18 @@ _Linear growth confirmed: 50× more versions → ~5× latency. Sub-millisecond u
 
 | Operation                         | ns/op  | allocs/op |
 | --------------------------------- | ------ | --------- |
-| View/Update contention (19:1 r/w) | 51,956 | 112       |
+| View/Update contention (19:1 r/w) | 46,333 | 112       |
 
 _Matches plain `GetCell` latency — readers don't block each other under `sync.RWMutex`._
+
+**9. Integrity scan — `HealthCheck` (all checks enabled)**
+
+| DB size    | ns/op     | allocs/op |
+| ---------- | --------- | --------- |
+| 512 cells  | 444,772   | 2,510     |
+| 2000 cells | 1,628,041 | 9,203     |
+
+_Single forward pass over `cell/`, `seam/`, `tag/`, and `source/` primary/secondary key ranges. All `GetCell` presence checks replaced with O(1) map lookups built during the initial cell scan — complexity O(n) regardless of coordinate sparsity. `ScanRadius` is now a no-op field retained for backward compatibility._
 
 _Hardware: Intel Core i9-14900HX, 16 GB RAM, Go 1.26, Linux (CachyOS). `benchtime=3s -count=1`. Results vary by storage speed and data shape._
 

@@ -52,6 +52,28 @@ func Ring(center Coord, k int) []Coord {
 	return out
 }
 
+// RingInto appends the cells at exactly hex distance k from center into dst and
+// returns the extended slice. Unlike [Ring], no new backing array is allocated when
+// dst has sufficient capacity. Callers that loop over multiple rings should
+// pre-allocate dst with capacity 3*maxR*maxR+3*maxR+1 and reuse it across iterations.
+func RingInto(dst []Coord, center Coord, k int) []Coord {
+	if k < 0 {
+		return dst
+	}
+	cb := center.Cube()
+	if k == 0 {
+		return append(dst, center)
+	}
+	cur := cubeAdd(cb, cubeScale(cubeDirections[0], k))
+	for i := range 6 {
+		for range k {
+			dst = append(dst, cubeToCoord(cur))
+			cur = cubeNeighbor(cur, (i+2)%6)
+		}
+	}
+	return dst
+}
+
 // WalkRings appends ring 0 (center), then rings 1..maxR, each ring in Ring order
 // (matches load_context: concentric rings outward, positive-q start within each ring).
 // If maxR < 0, dst is unchanged; if maxR == 0, only center is appended.

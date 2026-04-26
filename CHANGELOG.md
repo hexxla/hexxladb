@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Added (health-check-rewrite)
+
+- `BenchmarkAPI_HealthCheck` — measures full integrity scan; O(n) forward-scan implementation; 512 cells → 445 µs, 2000 cells → 1.6 ms
+
+### Changed (health-check-rewrite)
+
+- `DB.HealthCheck` — replaced O(ScanRadius²) `WalkRings`+`GetCell` cell scan with a single `cell/` prefix `AscendRange`; replaced `FindSeams` spatial call with `seam/` primary-key scan (covers all seams, no radius limit); replaced `ListExistingTopics`+`AscendCellsByTag`-per-tag O(tags×cells) loop with single `tag/` family `AscendRange`; replaced `AscendCellsBySource`-per-source loop with single `source/` prefix scan; all `GetCell` presence checks replaced with O(1) `liveCells` map lookup built during the initial cell scan — overall complexity reduced from O(ScanRadius²+tags×n+sources×n) to O(n)
+- `HealthCheckConfig.ScanRadius` — deprecated; field retained for backward compatibility but has no effect; cell scan now covers all cells regardless of coordinate
+
+### Added (bench-improvements)
+
+- `CellQuery.MaxScanRows` — additive field to bound the number of index rows examined by `scanByTag` and `scanBySource`; zero = unlimited (existing behaviour unchanged)
+- `lattice.RingInto(dst, center, k)` — buffer-reuse variant of `Ring`; eliminates per-ring heap allocation in tight loops; `Ring` unchanged for backward compatibility
+- `BenchmarkAPI_BatchPutCells` — batch write throughput benchmark; sizes 10/100/500; reports `cells/op` metric
+
+### Changed (bench-improvements)
+
+- `mortonPack63` — replaced 21-iteration scalar bit loop with 128-entry lookup table (`mortonExpand7`); 3 passes × 7 bits = 21 axis bits; `mortonUnpack63` unchanged (scalar); wire format identical
+- `collectCandidates` — pre-sizes `items` and `seen` with `min(3r²+3r+1, capCells)`; reuses a single `ringBuf` via `lattice.RingInto` across ring iterations; eliminates ~7 growth doublings at r=5
+- `LoadContextWithBudgeting` eviction loop — O(1) token subtraction instead of O(n) full recalculation after each dropped item
+- `AssembleCellView` — removed defensive `Tags` copy (`append([]string(nil), rec.Tags...)`); `CellView.Tags` is read-only post-assembly (all callers confirmed)
+- `findSeams` — replaced `lattice.WalkRings` materialisation with inline `for ring / for _, c := range lattice.Ring` two-level loop (lazy iteration); added pre-flight presence check using `SeamByCellsScanUpperBound()` — a single `AscendRange` confirms index is empty, saving 74–182 B+ tree traversals at r=3–5 in seam-free databases
+
 ### Changed
 
 - Deleted orphaned `internal/config` package — `config.Load()` had zero callers; `cmd/tui` already handles log level inline
