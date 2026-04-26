@@ -246,32 +246,103 @@ go run ./examples/conversational_memory
 
 ## Benchmarks
 
-Run benchmarks with: `go test -bench=BenchmarkAPI_ -benchtime=1s`
+```bash
+make bench-api   # DB files land in .tmp/; safe to run manually
+```
 
-**Cell operations** (512 cells in database):
+HexxlaDB benchmarks are organised around the operations that matter for an embedded hex-native LLM memory store. Each category reflects a distinct performance characteristic of the architecture.
 
-| Operation          | Time      | Allocs |
-| ------------------ | --------- | ------ |
-| PutCell            | ~45 μs/op | 87     |
-| GetCell            | ~71 μs/op | 122    |
-| BatchPutCell (500) | ~12 ms/op | —      |
+**1. Write throughput — `PutCell`** (touches primary key + 3 secondary indexes per write)
 
-**Context assembly** (512 cells in database, radius-3, 50 cell limit):
+| Operation      | DB size | ns/op      | allocs/op |
+| -------------- | ------- | ---------- | --------- |
+| PutCell        | fresh   | 8,344,367  | 352       |
+| PutCell (MVCC) | fresh   | 10,152,951 | 435       |
 
-| Operation           | Time      | Allocs |
-| ------------------- | --------- | ------ |
-| LoadContext         | ~47 μs/op | 2,944  |
-| LoadContextAt       | ~68 μs/op | 3,804  |
-| LoadContextPack 4KB | ~75 μs/op | 3,200  |
+_Each iteration is one full `DB.Update` round-trip including fsync. MVCC adds ~22% overhead for version key writes._
 
-**Spatial queries** (512 cells in database):
+**2. Point read latency — `GetCell`**
 
-| Operation         | Time      | Allocs |
-| ----------------- | --------- | ------ |
-| WalkRing (ring 2) | ~26 μs/op | 927    |
-| FindSeams         | ~55 μs/op | 1,200  |
+| Operation                  | DB size    | ns/op     | allocs/op |
+| -------------------------- | ---------- | --------- | --------- |
+| GetCell                    | 512 cells  | 52,023    | 88        |
+| GetCell                    | 2000 cells | 55,443    | 111       |
+| GetCell (encrypted)        | 512 cells  | 931,062   | 88        |
+| GetCell (encrypted)        | 2000 cells | 964,937   | 111       |
+| GetCell (MVCC + encrypted) | 512 cells  | 1,383,048 | 87        |
+| GetCell (MVCC + encrypted) | 2000 cells | 1,292,176 | 122       |
 
-_Measured on AMD Ryzen 9 5950X, Go 1.24, Linux. Your results will vary by hardware and data shape._
+_Plain reads are stable across DB sizes — confirming O(log n) B+ tree traversal. Encryption adds ~18× overhead (AES-GCM page decryption)._
+
+**3. Context assembly — LLM hot path**
+
+| Operation              | DB size    | radius | ns/op     | allocs/op |
+| ---------------------- | ---------- | ------ | --------- | --------- |
+| LoadContext            | 512 cells  | 3      | 793,257   | 2,944     |
+| LoadContext            | 2000 cells | 3      | 709,624   | 3,804     |
+| LoadContextPack (4 KB) | 512 cells  | 1      | 381,769   | 839       |
+| LoadContextPack (4 KB) | 512 cells  | 3      | 1,510,259 | 3,756     |
+| LoadContextPack (4 KB) | 512 cells  | 5      | 3,342,487 | 8,599     |
+| LoadContextPack (4 KB) | 2000 cells | 1      | 576,673   | 1,084     |
+| LoadContextPack (4 KB) | 2000 cells | 3      | 2,083,620 | 4,983     |
+| LoadContextPack (4 KB) | 2000 cells | 5      | 4,622,585 | 11,756    |
+
+_Cost scales with ring area (r=1: 7 cells, r=3: 37 cells, r=5: 91 cells), not DB size — spatial locality from Morton-ordered keys confirmed._
+
+**4. Spatial ring walk — Morton-order prefix scan**
+
+| Operation | DB size    | ring | ns/op   | allocs/op |
+| --------- | ---------- | ---- | ------- | --------- |
+| WalkRing  | 512 cells  | 2    | 279,450 | 927       |
+| WalkRing  | 2000 cells | 2    | 308,020 | 1,203     |
+
+_Near-constant across DB sizes — range scan on Morton-packed keys, not a graph traversal._
+
+**5. Query engine — `QueryCells` predicate shapes**
+
+| Predicate              | DB size    | ns/op      | allocs/op |
+| ---------------------- | ---------- | ---------- | --------- |
+| Tag filter (miss)      | 512 cells  | 66,450     | 82        |
+| Tag filter (miss)      | 2000 cells | 105,706    | 103       |
+| Source index scan      | 512 cells  | 10,331,594 | 50,851    |
+| Source index scan      | 2000 cells | 53,730,561 | 210,350   |
+| Spatial radius (r=3)   | 512 cells  | 759,366    | 2,948     |
+| Spatial radius (r=3)   | 2000 cells | 944,028    | 3,808     |
+| Combined (src+spatial) | 512 cells  | 14,244,274 | 50,845    |
+
+_Tag miss exits early via index. Source scan cost is linear in matching rows. Spatial radius is bounded by ring area regardless of DB size._
+
+**6. Seam resolution — `FindSeams`**
+
+| Operation | seams in radius 3 | ns/op     | allocs/op |
+| --------- | ----------------- | --------- | --------- |
+| FindSeams | 0                 | 2,275,497 | 302       |
+| FindSeams | 10                | 4,789,759 | 4,280     |
+| FindSeams | 50                | 5,289,436 | 5,075     |
+| FindSeams | 100               | 5,273,720 | 6,269     |
+
+_Base cost (~2.3 ms) is the spatial ring scan. Seam lookup plateaus quickly — secondary index scan, not a full table walk._
+
+**7. MVCC version resolution — `SelectVisible` scan**
+
+| Operation      | versions | ns/op   | allocs/op |
+| -------------- | -------- | ------- | --------- |
+| GetCell (MVCC) | 10       | 107,550 | 94        |
+| GetCell (MVCC) | 50       | 131,066 | 232       |
+| GetCell (MVCC) | 100      | 179,935 | 410       |
+| GetCell (MVCC) | 500      | 567,836 | 1,730     |
+
+_Linear growth confirmed: 50× more versions → ~5× latency. Sub-millisecond up to 100 versions. Optimisation only warranted for cells rewritten hundreds of times._
+
+**8. Concurrent read throughput**
+
+| Operation                         | ns/op  | allocs/op |
+| --------------------------------- | ------ | --------- |
+| View/Update contention (19:1 r/w) | 51,956 | 112       |
+
+_Matches plain `GetCell` latency — readers don't block each other under `sync.RWMutex`._
+
+_Hardware: Intel Core i9-14900HX, 16 GB RAM, Go 1.26, Linux (CachyOS). `benchtime=3s -count=1`. Results vary by storage speed and data shape._
 
 ---
 

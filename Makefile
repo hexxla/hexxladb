@@ -1,4 +1,4 @@
-.PHONY: help ci integration stress bench bench-stress fuzz test vet fmt lint mod-tidy govulncheck clean bench-tmp \
+.PHONY: help ci integration stress bench bench-api bench-stress fuzz test vet fmt lint mod-tidy govulncheck clean bench-tmp \
 	pre-commit-install pre-commit-run pre-commit-update run build demo
 
 # Bare `make` runs the full CI pipeline (same as `make ci`). Use `make help` to list targets.
@@ -8,7 +8,8 @@ help:
 	@echo "make ci              Full pipeline (same as GitHub Actions: ./scripts/ci.sh)"
 	@echo "make integration     Optional slower tests (go test -tags=integration -race ./...)"
 	@echo "make stress          Optional very large cell-count tests (TMPDIR defaults to ./.tmp; not CI)"
-	@echo "make bench           Run benchmarks (go test -bench=. -benchmem ./...; not in CI)"
+	@echo "make bench           Run all benchmarks across all packages (not in CI)"
+	@echo "make bench-api       Run API-level benchmarks only — the ones shown in README (faster; not in CI)"
 	@echo "make bench-stress    Longer API benches (default preload=all: 512..10k; HEXXLA_BENCH_PRELOAD=extreme for 50k; not CI)"
 	@echo "make fuzz            Short fuzz smoke (internal/record + internal/engine; not in CI)"
 	@echo "make test|vet|fmt    Tests (-race), vet, gofmt -w"
@@ -41,6 +42,14 @@ stress:
 bench:
 	@$(MAKE) bench-tmp
 	TMPDIR=$(or $(TMPDIR),$(CURDIR)/.tmp) go test -count=1 -bench=. -benchmem ./...
+
+# Focused API benchmarks — only the operations shown in the README benchmark table.
+# DB files land in .tmp/. Output is printed live and saved to .tmp/bench-api.txt.
+bench-api:
+	@$(MAKE) bench-tmp
+	@echo "==> HexxlaDB API benchmarks (Intel Core i9-14900HX, Go $(shell go env GOVERSION), $(shell uname -s))"
+	@echo "==> Output saved to .tmp/bench-api.txt"
+	TMPDIR=$(or $(TMPDIR),$(CURDIR)/.tmp) go test -count=1 -bench='BenchmarkAPI_' -benchmem -benchtime=3s -v -run=^$ . 2>&1 | tee .tmp/bench-api.txt
 
 # Longer runs: preload 512, 2k, 10k (default). Override: make bench-stress HEXXLA_BENCH_PRELOAD=extreme (adds 50k; needs huge TMPDIR).
 bench-stress:

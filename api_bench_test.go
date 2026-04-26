@@ -538,6 +538,68 @@ func BenchmarkAPI_MVCCVersionResolution(b *testing.B) {
 	}
 }
 
+// BenchmarkAPI_FindSeams measures [Tx.FindSeams] latency with varying numbers of seams stored near center.
+// Sub-benchmarks: 0, 10, 50, 100 seams within radius 3 of origin.
+func BenchmarkAPI_FindSeams(b *testing.B) {
+	ctx := context.Background()
+	center := lattice.Coord{Q: 0, R: 0}
+
+	for _, nSeams := range []int{0, 10, 50, 100} {
+		b.Run(fmt.Sprintf("seams_%d", nSeams), func(b *testing.B) {
+			path := filepath.Join(b.TempDir(), "findseams.db")
+			db, err := hexxladb.Open(path, nil)
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(func() { _ = db.Close() })
+
+			vf := int64(2) * index.WeekNanos
+			err = db.Update(func(tx *hexxladb.Tx) error {
+				for i := range nSeams {
+					qa, ra := i%10, i/10
+					qb, rb := (i+1)%10, (i+1)/10
+					pa, err := lattice.Pack(lattice.Coord{Q: qa, R: ra})
+					if err != nil {
+						return err
+					}
+					pb, err := lattice.Pack(lattice.Coord{Q: qb, R: rb})
+					if err != nil {
+						return err
+					}
+					cellA := record.CellRecord{Key: pa, RawContent: fmt.Sprintf("a%d", i), Provenance: record.ProvenanceWire{SourceID: "bench", Confidence: 1, CreatedAt: int64(i), UpdatedAt: int64(i)}, Validity: record.ValidityWire{ValidFrom: &vf}}
+					cellB := record.CellRecord{Key: pb, RawContent: fmt.Sprintf("b%d", i), Provenance: record.ProvenanceWire{SourceID: "bench", Confidence: 1, CreatedAt: int64(i), UpdatedAt: int64(i)}, Validity: record.ValidityWire{ValidFrom: &vf}}
+					if err := tx.PutCell(ctx, cellA); err != nil {
+						return err
+					}
+					if err := tx.PutCell(ctx, cellB); err != nil {
+						return err
+					}
+					if err := tx.MarkConflict(hexxladb.Coord{Q: qa, R: ra}, hexxladb.Coord{Q: qb, R: rb}, fmt.Sprintf("conflict-%d", i)); err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			b.ReportMetric(float64(nSeams), "seams")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				err := db.View(func(tx *hexxladb.Tx) error {
+					_, err := tx.FindSeams(ctx, center, 3, false)
+					return err
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 // BenchmarkAPI_WalkRingAt visits one ring with validity filtering ([Tx.WalkRingAt]).
 func BenchmarkAPI_WalkRingAt(b *testing.B) {
 	asOf := benchValidAsOf()
