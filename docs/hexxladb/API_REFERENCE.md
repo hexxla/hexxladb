@@ -383,11 +383,13 @@ Use **`errors.Is` / `errors.As`** for stable handling.
 
 ## Live demos and coverage
 
-- **Conversational memory service:** [`examples/conversational_memory`](../../examples/conversational_memory/) — **`go run ./examples/conversational_memory`** seeds **`./.tmp/conversational_memory/`** (MVCC + changelog) and walks through cell storage (templates + batch), context assembly (stats + explain), tag analytics, query patterns, MVCC time-travel, ASCII grid rendering, ring density, and filtered changelog.
+- **Conversational memory service:** [`examples/conversational_memory`](../../examples/conversational_memory/) — **`go run ./examples/conversational_memory`** seeds **`./.tmp/conversational_memory/`** (MVCC + changelog + `AfterPutCell` hook) and walks through: cell storage (templates + batch), supersession, tag analytics + co-occurrences, query patterns (`QueryCells` + `SearchCells`), MVCC time-travel, ASCII grid + ring density, filtered changelog, multi-seed context assembly, **database health check** (`HealthCheck`), **event hook telemetry** (`AfterPutCell`), **MaxValueBytes** (per-database limit printed at startup), and **MVCC Snapshot Diff** (`SnapshotDiff` full range + narrow diff). Phases 1–11.
 
 ## What `examples/conversational_memory` does _not_ call (and why)
 
 The demo is a **session-shaped production walkthrough**; it stays readable. Omitted APIs fall into a few buckets: **low-level escape hatches**, **validity-specialized variants**, **seam lifecycle / conflict sugar**, **post-assembly helpers**, **operator features**, **encryption ops**.
+
+> **Demonstrated in Phase 11 (added):** `DB.HealthCheck` + `HealthReport`, `DB.SnapshotDiff` + `SnapshotDiff`/`CellDiff`/`SeamDiff`/`SnapshotDiffConfig`, `AfterPutCellHook`/`AfterPutCellHookFunc` (wired in `Options.AfterPutCell`), `DB.MaxValueBytes()` (printed at startup). These were previously in this omissions list.
 
 ### Raw btree: `Tx.Get`, `Tx.Put`, `Tx.AscendRange`
 
@@ -414,10 +416,10 @@ The demo is a **session-shaped production walkthrough**; it stays readable. Omit
 - **Why omitted:** **`LinkCells`** is the spec-named sugar for **conversation_turn**-style edges; the demo does not need multiple relation types or edge reads.
 - **Use when:** Non-adjacent graphs, multiple **relation types**, answering “what points **from** this cell?” (**`AscendEdgesFrom`**), idempotent edge upserts (**`PutEdge`**).
 
-### `MarkConflict`, `MarkSupersedes`, `ResolveSeam`, `FindSeamsAt`
+### `MarkConflict`, `ResolveSeam`, `FindSeamsAt`
 
-- **Why omitted:** The demo adds a dedicated supersession phase (Phase 4) that calls **`MarkSupersedes`** and shows **`FilterSuperseded`** in action. **`MarkConflict`** duplicates policy **`PutSeam`** could express. **`ResolveSeam`** is a **follow-up workflow** step. **`FindSeamsAt`** adds **validity** filtering on seams — redundant when seam validity is open/default.
-- **Use when:** **HEXXLA** contradiction UX — quick conflict stub (**`MarkConflict`**), supersede a stale cell (**`MarkSupersedes`**), operator/LM resolution (**`ResolveSeam`**), replay "what contradictions existed **as of** time T?" (**`FindSeamsAt`**).
+- **Why omitted:** `MarkSupersedes` and `MarkConflict` are both demonstrated (Phase 3+4). **`ResolveSeam`** is a **follow-up workflow** step. **`FindSeamsAt`** adds **validity** filtering on seams — redundant when seam validity is open/default.
+- **Use when:** Operator/LM resolution (**`ResolveSeam`**); replay "what contradictions existed **as of** time T?" (**`FindSeamsAt`**).
 
 ### `AscendSeamsBySource`, `AscendSeamsInTimeBucket`
 
@@ -444,9 +446,13 @@ The demo is a **session-shaped production walkthrough**; it stays readable. Omit
 - **Why omitted:** **`ReadChangelogFiltered`** is shown in the demo; the unfiltered **`ReadChangelogSince`** variant is a simpler subset.
 - **Use when:** Bulk sequential replay without op-type filtering.
 
+### `DB.HealthCheck` / `AfterPutCellHook` / `AfterPutSeamHook` / `DB.MaxValueBytes` / `DB.SnapshotDiff`
+
+Now demonstrated in **Phase 11**. See above.
+
 ### MVCC: `StatsMVCC`, `GroupWALStats`, `SuggestedPruneBeforeSeq`, `MVCCPrunePlan`, `PruneCellVersions*`, `PruneScheduler`
 
-- **Why omitted:** Long-running disk retention; demo uses default file or optional **`-mvcc`** without filling history so far that pruning matters.
+- **Why omitted:** Long-running disk retention; demo uses default file without filling history so far that pruning matters.
 - **Use when:** Production **disk** and **latency** governance — **not** prompt assembly.
 
 ### Encryption: `DeriveKeyFromPassphrase`, `RotateEncryption*`

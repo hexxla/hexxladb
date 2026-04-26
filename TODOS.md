@@ -4,18 +4,18 @@ Immediate next steps. Update after each session.
 
 ## Current
 
-- [ ] Ready for v0.1.0 release push to remote
+- [ ] Ready for v0.2.0 / v0.3.0 release push to remote
 
 ## Pending (next sessions)
 
-- [ ] Relocate secondary index files to `internal/` — import cycle; needs interface extraction (btree coupling already fixed via `deleteDirect`)
-- [ ] Extract `views.go` to `internal/views` or `internal/app` — import cycle; needs interface extraction
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
 
 ---
 
 ## Recently Completed
 
+- 2026-04-26: `views.go` extracted to `internal/views` — `TxReader` port (4-method interface); `AssembleCellView`, `LoadContextWithBudgeting`, `collectCandidates`, `resolveSupersession`, `LoadMultiContextPack` moved; root `views.go` is type aliases + thin `*Tx` wrappers; zero API break; `cell_secondary.go`/`seam_secondary.go`/`rotation.go` reclassified to Future
+- 2026-04-26: Demo expansion — `seed_data.go` (84 turns, 5 sessions); `-db` flag; `make demo` Makefile target; `printSubHeader`/`printNote` helpers; aesthetic + readability pass all 11 phases; DB defaults to `.tmp/demo/memory.db` (no root pollution); `spiralCoord` 11-column grid; API_REFERENCE "Live demos" updated
 - 2026-04-26: Per-database MaxValueBytes — `Options.MaxValueBytes` (512/1024/2048/4096/8192/16384); persisted in header at offset 100; `DB.MaxValueBytes()`; `ErrInvalidArgument` on invalid value; 9 tests; API_REFERENCE + CHANGELOG + ROADMAP updated
 - 2026-04-26: MVCC Snapshot Diff — `DB.SnapshotDiff`; `SnapshotDiff`/`CellDiff`/`SeamDiff`/`DiffOp`/`SnapshotDiffConfig`; `ErrMVCCRequired`; scans MVCC version keys for (fromSeq, toSeq]; 9 tests; API_REFERENCE + CHANGELOG + ROADMAP updated
 - 2026-04-26: Event Hooks — `AfterPutCellHook`/`AfterPutCellHookFunc` + `AfterPutSeamHook`/`AfterPutSeamHookFunc`; `Options.AfterPutCell`/`AfterPutSeam`; fires after `PutCell`, `PutSeam`, `MarkConflict`, `MarkSupersedes`; error propagates; 9 tests; API_REFERENCE + CHANGELOG + ROADMAP updated

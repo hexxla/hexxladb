@@ -1,5 +1,5 @@
 .PHONY: help ci integration stress bench bench-stress fuzz test vet fmt lint mod-tidy govulncheck clean bench-tmp \
-	pre-commit-install pre-commit-run pre-commit-update run build
+	pre-commit-install pre-commit-run pre-commit-update run build demo
 
 # Bare `make` runs the full CI pipeline (same as `make ci`). Use `make help` to list targets.
 .DEFAULT_GOAL := ci
@@ -16,6 +16,8 @@ help:
 	@echo "make govulncheck     Vulnerability scan only (also runs inside make ci)"
 	@echo "make mod-tidy        go mod tidy"
 	@echo "make run|build|clean Run cmd/hexxladb, build bin/hexxladb, remove bin/"
+	@echo "make demo            Run conversational_memory example (DB defaults to .tmp/demo/memory.db)"
+	@echo "                     Override DB path: make demo DEMO_DB=/path/to/my.db"
 	@echo "make pre-commit-*    Optional Git hooks (see CONTRIBUTING.md)"
 
 # Benchmark temp directory (defaults to repo-local ./.tmp; override with TMPDIR=/path).
@@ -62,6 +64,13 @@ build:
 
 clean:
 	rm -rf bin
+
+# Run the conversational_memory example demo.
+# Database defaults to .tmp/demo/memory.db (created on first run, reused on subsequent runs).
+# Override: make demo DEMO_DB=/absolute/or/relative/path/to/my.db
+demo:
+	@mkdir -p .tmp/demo
+	go run ./examples/conversational_memory $(if $(DEMO_DB),-db $(DEMO_DB),)
 
 # Same invocation as scripts/ci.sh (handy to debug one step).
 govulncheck:
