@@ -4,6 +4,8 @@
 
 ### Added
 
+- `app.Service` use-case layer completed — all 23 `domain.Storage` port methods now delegated; compile-time interface satisfaction check (`var _ domain.Storage = (*Service)(nil)`) added to catch future drift; `ErrNoStorage` returned by every method when storage port not wired; 2 tests
+
 - `DB.TagSnapshot(label string) error` — pin the current head `CommitSeq` under a human-friendly label; stored in B+ tree under `__meta/snap-tag/<label>`; overwrites existing tag with same name; label max 200 bytes
 - `DB.ViewAtTag(label string, fn func(*Tx) error) error` — open a read-only snapshot pinned to the commit recorded by `TagSnapshot`; returns `ErrSnapshotTagNotFound` if label absent
 - `DB.ListSnapshotTags() ([]SnapshotTag, error)` — enumerate all tags sorted by label

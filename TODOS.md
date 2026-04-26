@@ -11,13 +11,13 @@ Immediate next steps. Update after each session.
 - [ ] Per-database MaxValueBytes — needs engine header format change + migration (reclassified to Near-term)
 - [ ] Relocate secondary index files to `internal/` — import cycle; needs interface extraction (btree coupling already fixed via `deleteDirect`)
 - [ ] Extract `views.go` to `internal/views` or `internal/app` — import cycle; needs interface extraction
-- [ ] Complete `app.Service` use-case layer — only 4 of ~30 port methods implemented; `_ = svc` in cmd/main.go
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
 
 ---
 
 ## Recently Completed
 
+- 2026-04-26: `app.Service` use-case layer completed — all 23 `domain.Storage` port methods delegated; compile-time interface check; 2 tests
 - 2026-04-26: Snapshot Tags/Labels — `DB.TagSnapshot`/`ViewAtTag`/`ListSnapshotTags`/`DeleteSnapshotTag`; `SnapshotTag` type; `ErrSnapshotTagNotFound`/`ErrSnapshotTagLabelTooLong`; stored under `__meta/snap-tag/<label>` in B+ tree; persists across reopen; 11 tests; API_REFERENCE + CHANGELOG + ROADMAP updated
 - 2026-04-26: Composable Query Engine (`feat/cell-query`) — `Tx.QueryCells` + `CellQuery`/`CellQueryResult`/`SortOrder`; predicates: lexical, RequireTags/AnyTags/ExcludeTags, SourceID, confidence range, temporal After/Before (time/ index, no full scan), spatial radius, MaxResults, SortBy (score/confidence/recency/coord), Explain; `SearchCells` refactored to thin wrapper; Temporal Range Queries delivered; 17 tests; API_REFERENCE + CHANGELOG updated
 - 2026-04-26: Tier 1 features — `DB.HealthCheck` + `HealthReport`/`HealthCheckConfig`; `Tx.SearchCells` + `CellSearchConfig`/`CellSearchResult` (composite scoring, tag/content/source/spatial filters, forward-compatible for embeddings); `Tx.LoadMultiContextPack` + `MultiContextConfig` (multi-seed, shared budget, deduplication); `Tx.LoadContextPackFrom` (unified variadic: 1 coord → LoadContextPack, N coords → LoadMultiContextPack, zero overhead); demo Phase 10; 19 tests; API_REFERENCE + CHANGELOG + ROADMAP updated; branch feat/tier1-search-health
