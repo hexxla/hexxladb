@@ -365,6 +365,179 @@ func BenchmarkAPI_WalkRing(b *testing.B) {
 	}
 }
 
+// BenchmarkAPI_QueryCells measures [Tx.QueryCells] with varying predicate complexity.
+// Sub-benchmarks: tag-only, source-only, spatial, and combined predicates.
+func BenchmarkAPI_QueryCells(b *testing.B) {
+	for _, n := range apiBenchPreloadSizes(b) {
+		db, _ := benchAPIPreloadCells(b, n)
+		b.Cleanup(func() { _ = db.Close() })
+		ctx := context.Background()
+		center := lattice.Coord{Q: 0, R: 0}
+
+		b.Run(fmt.Sprintf("tag_only/cells_%d", n), func(b *testing.B) {
+			b.ReportMetric(float64(n), "cells")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				err := db.View(func(tx *hexxladb.Tx) error {
+					_, err := tx.QueryCells(ctx, hexxladb.CellQuery{
+						RequireTags: []string{"nonexistent"},
+						MaxResults:  50,
+					})
+					return err
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+
+		b.Run(fmt.Sprintf("source_only/cells_%d", n), func(b *testing.B) {
+			b.ReportMetric(float64(n), "cells")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				err := db.View(func(tx *hexxladb.Tx) error {
+					_, err := tx.QueryCells(ctx, hexxladb.CellQuery{
+						SourceID:   "bench-preload",
+						MaxResults: 50,
+					})
+					return err
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+
+		b.Run(fmt.Sprintf("spatial/cells_%d", n), func(b *testing.B) {
+			b.ReportMetric(float64(n), "cells")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				err := db.View(func(tx *hexxladb.Tx) error {
+					_, err := tx.QueryCells(ctx, hexxladb.CellQuery{
+						Center:     center,
+						Radius:     3,
+						MaxResults: 50,
+					})
+					return err
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+
+		b.Run(fmt.Sprintf("combined/cells_%d", n), func(b *testing.B) {
+			b.ReportMetric(float64(n), "cells")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				err := db.View(func(tx *hexxladb.Tx) error {
+					_, err := tx.QueryCells(ctx, hexxladb.CellQuery{
+						SourceID:      "bench-preload",
+						Center:        center,
+						Radius:        5,
+						MinConfidence: 0.5,
+						MaxResults:    50,
+						SortBy:        hexxladb.SortByConfidence,
+					})
+					return err
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkAPI_LoadContextPack measures [Tx.LoadContextPack] with varying radii.
+func BenchmarkAPI_LoadContextPack(b *testing.B) {
+	for _, n := range apiBenchPreloadSizes(b) {
+		db, _ := benchAPIPreloadCells(b, n)
+		b.Cleanup(func() { _ = db.Close() })
+		ctx := context.Background()
+		center := lattice.Coord{Q: 0, R: 0}
+		budgeter := hexxladb.ByteLenBudgeter{}
+		cfg := hexxladb.LoadContextBudgetConfig{
+			Assemble: hexxladb.DefaultAssembleCellViewOpts(),
+		}
+
+		for _, radius := range []int{1, 3, 5} {
+			b.Run(fmt.Sprintf("r%d/cells_%d", radius, n), func(b *testing.B) {
+				b.ReportMetric(float64(n), "cells")
+				b.ReportMetric(float64(radius), "radius")
+				b.ReportAllocs()
+				b.ResetTimer()
+				for b.Loop() {
+					err := db.View(func(tx *hexxladb.Tx) error {
+						_, err := tx.LoadContextPack(ctx, center, radius, 4096, budgeter, cfg)
+						return err
+					})
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
+// BenchmarkAPI_MVCCVersionResolution measures MVCC [Tx.GetCell] with high version counts.
+// Each sub-benchmark writes the same coord N times then benchmarks the GetCell read path,
+// which drives [internal/mvcc.SelectVisible] — the O(n) version scan.
+func BenchmarkAPI_MVCCVersionResolution(b *testing.B) {
+	for _, versions := range []int{10, 50, 100, 500} {
+		b.Run(fmt.Sprintf("versions_%d", versions), func(b *testing.B) {
+			path := filepath.Join(b.TempDir(), "mvcc_versions.db")
+			db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(func() { _ = db.Close() })
+
+			p, err := lattice.Pack(lattice.Coord{Q: 0, R: 0})
+			if err != nil {
+				b.Fatal(err)
+			}
+			vf := int64(2) * index.WeekNanos
+			for i := range versions {
+				err := db.Update(func(tx *hexxladb.Tx) error {
+					return tx.PutCell(context.Background(), record.CellRecord{
+						Key:        p,
+						RawContent: fmt.Sprintf("version-%d", i),
+						Provenance: record.ProvenanceWire{
+							SourceID:   "bench",
+							Confidence: 1,
+							CreatedAt:  int64(i),
+							UpdatedAt:  int64(i),
+						},
+						Validity: record.ValidityWire{ValidFrom: &vf},
+					})
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+
+			b.ReportMetric(float64(versions), "versions")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				err := db.View(func(tx *hexxladb.Tx) error {
+					_, _, err := tx.GetCell(p)
+					return err
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 // BenchmarkAPI_WalkRingAt visits one ring with validity filtering ([Tx.WalkRingAt]).
 func BenchmarkAPI_WalkRingAt(b *testing.B) {
 	asOf := benchValidAsOf()

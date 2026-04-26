@@ -4,10 +4,14 @@
 
 ### Changed
 
+- Deleted orphaned `internal/config` package — `config.Load()` had zero callers; `cmd/tui` already handles log level inline
 - `views.go` view-assembly logic extracted to `internal/views` — `TxReader` port interface (`GetCell`, `AscendFacetsForCell`, `AscendEdgesFrom`, `FindSeams`) breaks the import cycle; all types (`CellView`, `ContextPack`, `FacetView`, `EdgeView`, `SeamRef`, `CellExplanation`, `ContextPackStats`, `TokenBudgeter`, `ByteLenBudgeter`, `AssembleCellViewOpts`, `LoadContextBudgetConfig`, `CellViewPredicate`) re-exported as type aliases — **zero public API change**; `*Tx` methods are thin wrappers delegating to `internal/views`; `cell_secondary.go`, `seam_secondary.go`, `rotation.go` remain at repo root (reclassified to Future)
 
 ### Added
 
+- `BenchmarkAPI_QueryCells` — 4 predicate shapes (tag-only, source-only, spatial, combined) × 2 preload sizes; performance baseline for query engine work
+- `BenchmarkAPI_LoadContextPack` — radii 1/3/5 × 2 preload sizes; performance baseline for budgeting work
+- `BenchmarkAPI_MVCCVersionResolution` — 10/50/100/500 versions of same coord; isolates `SelectVisible` O(n) scan under realistic MVCC load
 - `make demo` Makefile target — runs `examples/conversational_memory` with DB defaulting to `.tmp/demo/memory.db`; override via `make demo DEMO_DB=/path/to/my.db`; DB reused across runs (seed skipped if file exists)
 - `conversational_memory` demo expanded — corpus moved to `seed_data.go` (84 turns, 5 thematic sessions: preferences/workflow, HexxlaDB internals, Go patterns, LLM systems, security/ops); `-db` CLI flag for custom DB path; DB defaults to `.tmp/demo/memory.db` (no root pollution); `printSubHeader`/`printNote` helpers; all phase descriptions, metrics, and explain outputs improved for readability; `spiralCoord` widened to 11-column grid for 84-cell corpus; budgets increased to 600/800 bytes; Phase 11 demonstrates `DB.HealthCheck`, `AfterPutCell` telemetry, and `DB.SnapshotDiff` end-to-end
 
