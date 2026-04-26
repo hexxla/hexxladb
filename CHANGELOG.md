@@ -4,6 +4,9 @@
 
 ### Added
 
+- `DB.SnapshotDiff(ctx, fromSeq, toSeq, SnapshotDiffConfig) (SnapshotDiff, error)` — MVCC change diff; returns all cell/seam writes in `(fromSeq, toSeq]`; `ErrMVCCRequired` on v1 databases; `ErrReadSeqFuture` if `toSeq` > head; `SnapshotDiff{Cells []CellDiff, Seams []SeamDiff}`; 9 tests
+- `ErrMVCCRequired` — new sentinel error
+
 - `AfterPutCellHook` / `AfterPutCellHookFunc` — post-write callback fired after each successful `Tx.PutCell`; error propagates to caller; set via `Options.AfterPutCell`
 - `AfterPutSeamHook` / `AfterPutSeamHookFunc` — post-write callback fired after `Tx.PutSeam`, `Tx.MarkConflict`, `Tx.MarkSupersedes`; set via `Options.AfterPutSeam`; 9 tests
 

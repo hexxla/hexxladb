@@ -60,6 +60,9 @@ var (
 	// ErrCommitFinalization means callback writes may have reached storage but post-callback finalization failed.
 	ErrCommitFinalization = errors.New("hexxladb: commit finalization failed")
 
+	// ErrMVCCRequired is returned when an MVCC-only operation is called on a format-v1 database.
+	ErrMVCCRequired = errors.New("hexxladb: operation requires MVCC (EnableMVCC on open)")
+
 	// ErrSnapshotTagNotFound means [DB.ViewAtTag] or [DB.DeleteSnapshotTag] was called with a
 	// label that has no corresponding entry created by [DB.TagSnapshot].
 	ErrSnapshotTagNotFound = errors.New("hexxladb: snapshot tag not found")
