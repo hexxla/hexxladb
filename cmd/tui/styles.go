@@ -105,16 +105,6 @@ var (
 				Background(colorBg1).
 				Bold(true)
 
-	// Labels / keys
-	styleKey = lipgloss.NewStyle().
-			Foreground(colorPurple).
-			Background(colorBg1).
-			Bold(true)
-
-	styleValue = lipgloss.NewStyle().
-			Foreground(colorText0).
-			Background(colorBg1)
-
 	styleDim = lipgloss.NewStyle().
 			Foreground(colorText2).
 			Background(colorBg1)
@@ -134,10 +124,6 @@ var (
 
 	styleBad = lipgloss.NewStyle().
 			Foreground(colorRed).
-			Background(colorBg1)
-
-	stylePink = lipgloss.NewStyle().
-			Foreground(colorPink).
 			Background(colorBg1)
 
 	// Help bar at bottom of content

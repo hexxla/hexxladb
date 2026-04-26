@@ -129,14 +129,14 @@ func (v *inspectorView) View() string {
 	// ── cell detail card ─────────────────────────────────────────────────────
 	kv := func(label, value string) string {
 		return lipgloss.JoinHorizontal(lipgloss.Left,
-			styleKey.Width(14).Render(label+":"),
-			styleValue.Render(value),
+			styleCardKey.Width(14).Render(label+":"),
+			styleCardValue.Render(value),
 		)
 	}
 
 	tagsStr := strings.Join(v.data.Tags, "  ")
 	if tagsStr == "" {
-		tagsStr = styleDim.Render("(none)")
+		tagsStr = styleCardDim.Render("(none)")
 	} else {
 		var parts []string
 		for _, t := range v.data.Tags {
@@ -152,29 +152,29 @@ func (v *inspectorView) View() string {
 		Padding(0, 2).
 		Width(halfW).
 		Render(
-			styleSectionHeader.Render("Cell") + "\n" +
+			styleCardHeader.Render("Cell") + "\n" +
 				kv("Coord", fmt.Sprintf("(%d,%d)", v.data.Coord.Q, v.data.Coord.R)) + "\n" +
 				kv("Confidence", fmt.Sprintf("%.3f", v.data.Provenance.Confidence)) + "\n" +
 				kv("Source", truncStr(v.data.Provenance.SourceID, halfW-18)) + "\n" +
-				"" + "\n" +
-				styleDim.Render("Tags") + "\n" +
+				"\n" +
+				styleCardDim.Render("Tags") + "\n" +
 				tagsStr + "\n\n" +
-				styleDim.Render("Content") + "\n" +
-				styleValue.Render(v.data.RawContent),
+				styleCardDim.Render("Content") + "\n" +
+				styleCardValue.Render(v.data.RawContent),
 		)
 
 	// ── context pack ─────────────────────────────────────────────────────────
 	var packPanel string
 	switch {
 	case v.packLoading:
-		packPanel = styleBorderSubtle.Width(halfW).Padding(0, 2).Render(
-			styleLoading.Render("⟳  Loading context pack…"),
+		packPanel = styleBorderSubtle.Background(colorBg2).Width(halfW).Padding(0, 2).Render(
+			lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg2).Bold(true).Italic(true).Render("⟳  Loading context pack…"),
 		)
 	case v.pack == nil:
-		packPanel = styleBorderSubtle.Width(halfW).Padding(0, 2).Render(
-			styleSectionHeader.Render("Context Pack") + "\n" +
-				styleDim.Render("Press ") + styleHelpKey.Render("c") + styleDim.Render(" to assemble context pack\n") +
-				styleDim.Render("(radius 3, 8KB budget, seam-aware)"),
+		packPanel = styleBorderSubtle.Background(colorBg2).Width(halfW).Padding(0, 2).Render(
+			styleCardHeader.Render("Context Pack") + "\n" +
+				styleCardDim.Render("Press ") + lipgloss.NewStyle().Foreground(colorCyan).Background(colorBg2).Bold(true).Render("c") + styleCardDim.Render(" to assemble context pack\n") +
+				styleCardDim.Render("(radius 3, 8KB budget, seam-aware)"),
 		)
 	default:
 		packPanel = v.renderPack(halfW)
@@ -206,15 +206,15 @@ func (v *inspectorView) renderPack(w int) string {
 	p := v.pack
 	var sb strings.Builder
 
-	sb.WriteString(styleSectionHeader.Render("Context Pack") + "\n")
+	sb.WriteString(styleCardHeader.Render("Context Pack") + "\n")
 	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Left,
-		styleDim.Render("cells: "), styleGood.Render(fmt.Sprintf("%d", len(p.Cells))),
-		styleDim.Render("  tokens: "), styleValue.Render(fmt.Sprintf("%d", p.TotalTokens)),
-		styleDim.Render("  seams: "), styleWarn.Render(fmt.Sprintf("%d", len(p.Seams))),
+		styleCardDim.Render("cells: "), lipgloss.NewStyle().Foreground(colorGreen).Background(colorBg2).Render(fmt.Sprintf("%d", len(p.Cells))),
+		styleCardDim.Render("  tokens: "), styleCardValue.Render(fmt.Sprintf("%d", p.TotalTokens)),
+		styleCardDim.Render("  seams: "), lipgloss.NewStyle().Foreground(colorOrange).Background(colorBg2).Render(fmt.Sprintf("%d", len(p.Seams))),
 	) + "\n")
 
 	if p.Stats.CandidatesScanned > 0 {
-		sb.WriteString(styleDim.Render(fmt.Sprintf(
+		sb.WriteString(styleCardDim.Render(fmt.Sprintf(
 			"scanned %d, evicted %d, max ring %d",
 			p.Stats.CandidatesScanned, p.Stats.CellsEvicted, p.Stats.MaxRingUsed,
 		)) + "\n")
@@ -232,24 +232,24 @@ func (v *inspectorView) renderPack(w int) string {
 	}
 
 	for _, c := range p.Cells {
-		prefix := "  "
+		prefix := styleCardDim.Render("  ")
 		clr := colorText0
 		if c.SupersededFrom != nil {
 			prefix = lipgloss.NewStyle().Foreground(colorPink).Background(colorBg2).Render(" ↺")
 			clr = colorCyan
 		}
-		bar := barGraph(int(c.Provenance.Confidence*100), int(maxConf*100), 8, colorGreen)
+		bar := barGraphBg(int(c.Provenance.Confidence*100), int(maxConf*100), 8, colorGreen, colorBg2)
 		line := lipgloss.JoinHorizontal(lipgloss.Left,
 			prefix,
 			lipgloss.NewStyle().Foreground(colorText2).Background(colorBg2).Width(10).Render(
 				fmt.Sprintf("(%d,%d)", c.Coord.Q, c.Coord.R),
 			),
 			bar,
-			"  ",
+			styleCardDim.Render("  "),
 			lipgloss.NewStyle().Foreground(clr).Background(colorBg2).Render(truncStr(c.RawContent, w-32)),
 		)
 		if c.SupersededFrom != nil {
-			line += "\n" + stylePink.Render(
+			line += "\n" + lipgloss.NewStyle().Foreground(colorPink).Background(colorBg2).Render(
 				fmt.Sprintf("    ↳ superseded (%d,%d)", c.SupersededFrom.Q, c.SupersededFrom.R),
 			)
 		}
@@ -257,10 +257,11 @@ func (v *inspectorView) renderPack(w int) string {
 	}
 
 	if len(p.Seams) > 0 {
-		sb.WriteString("\n" + styleSectionHeader.Render("Seams in Pack") + "\n")
+		sb.WriteString("\n" + styleCardHeader.Render("Seams in Pack") + "\n")
 		for _, s := range p.Seams {
-			sb.WriteString(styleWarn.Render(fmt.Sprintf("  ⋈ %s", s.SeamType)) +
-				styleDim.Render(fmt.Sprintf("  %s", truncStr(s.Reason, w-24))) + "\n")
+			sb.WriteString(
+				lipgloss.NewStyle().Foreground(colorOrange).Background(colorBg2).Render(fmt.Sprintf("  ⋈ %s", s.SeamType)) +
+					styleCardDim.Render(fmt.Sprintf("  %s", truncStr(s.Reason, w-24))) + "\n")
 		}
 	}
 
@@ -275,20 +276,18 @@ func (v *inspectorView) renderPack(w int) string {
 
 func (v *inspectorView) renderExplain(w int) string {
 	var sb strings.Builder
-	sb.WriteString(styleSectionHeader.Render("Assembly Decisions") + "\n")
+	sb.WriteString(styleCardHeader.Render("Assembly Decisions") + "\n")
 	for _, ex := range v.pack.Explanations {
-		var marker, clr string
+		var marker string
 		switch ex.Reason {
 		case "included":
-			marker = styleGood.Render("✓")
-			clr = ""
+			marker = lipgloss.NewStyle().Foreground(colorGreen).Background(colorBg2).Render("✓")
 		case "superseded":
-			marker = stylePink.Render("↺")
-			clr = ""
+			marker = lipgloss.NewStyle().Foreground(colorPink).Background(colorBg2).Render("↺")
 		default:
-			marker = styleBad.Render("✗")
+			marker = lipgloss.NewStyle().Foreground(colorRed).Background(colorBg2).Render("✗")
 		}
-		detail := styleDim.Render(fmt.Sprintf("ring=%-2d tok=%-4d", ex.Ring, ex.Tokens))
+		detail := styleCardDim.Render(fmt.Sprintf("ring=%-2d tok=%-4d", ex.Ring, ex.Tokens))
 		reason := lipgloss.NewStyle().Foreground(func() lipgloss.Color {
 			switch ex.Reason {
 			case "included":
@@ -298,11 +297,10 @@ func (v *inspectorView) renderExplain(w int) string {
 			default:
 				return colorRed
 			}
-		}()).Background(colorBg1).Render(ex.Reason)
-		_ = clr
+		}()).Background(colorBg2).Render(ex.Reason)
 		extra := ""
 		if ex.SupersededBy != nil {
-			extra = styleDim.Render(fmt.Sprintf(" → (%d,%d)", ex.SupersededBy.Q, ex.SupersededBy.R))
+			extra = styleCardDim.Render(fmt.Sprintf(" → (%d,%d)", ex.SupersededBy.Q, ex.SupersededBy.R))
 		}
 		fmt.Fprintf(&sb, "  %s  (%d,%d) %s  %s%s\n",
 			marker,
@@ -312,5 +310,5 @@ func (v *inspectorView) renderExplain(w int) string {
 			extra,
 		)
 	}
-	return styleBorderSubtle.Background(colorBg1).Width(w).Padding(0, 1).Render(sb.String())
+	return styleBorderSubtle.Background(colorBg2).Width(w).Padding(0, 1).Render(sb.String())
 }

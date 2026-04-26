@@ -92,6 +92,8 @@ func (v *cellsView) Update(msg tea.Msg) (view, tea.Cmd) {
 			default:
 				if msg.Type == tea.KeyRunes {
 					v.query += string(msg.Runes)
+				} else if s := msg.String(); len(s) == 1 && s[0] >= 32 {
+					v.query += s
 				}
 			}
 			return v, nil
@@ -221,9 +223,9 @@ func (v *cellsView) View() string {
 
 	for i := start; i < end; i++ {
 		c, score := v.rowCell(i)
-		marker := "  "
+		marker := styleDim.Render("  ")
 		if i == v.cursor {
-			marker = lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Render(" ▶")
+			marker = lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg3).Render(" ▶")
 		}
 		coord := fmt.Sprintf("(%d,%d)", c.Coord.Q, c.Coord.R)
 		content := truncStr(c.RawContent, contentW)
@@ -266,12 +268,12 @@ func (v *cellsView) renderSearchBar() string {
 		return lipgloss.NewStyle().Foreground(colorCyan).Background(colorBg1).Render("  ⌕  ") +
 			lipgloss.NewStyle().Foreground(colorText0).Background(colorBg1).Bold(true).Render(v.query) +
 			lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Render("█") +
-			"  " + styleDim.Render("Enter=search  Esc=clear")
+			styleDim.Render("  Enter=search  Esc=clear")
 	}
 	if v.query != "" && v.searchHits != nil {
-		return styleDim.Render("  ⌕  ") +
+		return styleDim.Render("  ⎔  ") +
 			lipgloss.NewStyle().Foreground(colorYellow).Background(colorBg1).Render(v.query) +
-			"  " + styleDim.Render("/=new search  r=browse all")
+			styleDim.Render("  /=new search  r=browse all")
 	}
 	return ""
 }

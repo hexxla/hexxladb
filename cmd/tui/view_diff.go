@@ -124,7 +124,7 @@ func (v *diffView) View() string {
 			Background(colorBg2).
 			Padding(0, 2).
 			Width(colW).
-			Render(styleDim.Render(label) + "\n" +
+			Render(styleCardDim.Render(label) + "\n" +
 				lipgloss.NewStyle().Foreground(clr).Background(colorBg2).Bold(true).Render(val))
 	}
 
@@ -166,9 +166,9 @@ func (v *diffView) View() string {
 
 	for i := start; i < end; i++ {
 		c := d.Cells[i]
-		marker := "  "
+		marker := styleDim.Render("  ")
 		if i == v.cursor {
-			marker = lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Render(" ▶")
+			marker = lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg3).Render(" ▶")
 		}
 		coord := c.Coord
 		opStr := string(c.Op)

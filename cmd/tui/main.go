@@ -101,7 +101,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		contentH := m.height - 5 // tabs(3) + statusbar(1) + 1 for gap line
+		tabH := lipgloss.Height(m.renderTabBar())
+		statusH := 1
+		contentH := max(1, m.height-tabH-statusH)
 		contentW := m.width
 		for _, t := range m.tabs {
 			t.SetSize(contentW, contentH)
@@ -192,25 +194,24 @@ func (m model) renderTabBar() string {
 }
 
 func (m model) renderContent() string {
-	contentH := m.height - 5
+	tabH := lipgloss.Height(m.renderTabBar())
+	statusH := 1
+	contentH := max(1, m.height-tabH-statusH)
 	contentW := m.width
-	if contentH < 1 {
-		contentH = 1
-	}
 
 	inner := ""
 	if m.current >= 0 && m.current < len(m.tabs) {
 		inner = m.tabs[m.current].View()
 	}
 
-	// Place fills the exact terminal-width × contentH canvas with colorBg1,
-	// overlaying the inner view at top-left. Width() on the outer style ensures
-	// the right edge is always filled regardless of inner content width.
+	// MaxHeight hard-clips so content can never push tabs off screen.
+	// Place fills the full terminal-width × contentH canvas with colorBg1.
+	clipped := lipgloss.NewStyle().MaxHeight(contentH).Render(inner)
 	return lipgloss.NewStyle().Width(contentW).Background(colorBg1).Render(
 		lipgloss.Place(
 			contentW, contentH,
 			lipgloss.Left, lipgloss.Top,
-			inner,
+			clipped,
 			lipgloss.WithWhitespaceBackground(colorBg1),
 		),
 	)
