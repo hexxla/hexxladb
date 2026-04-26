@@ -50,9 +50,9 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
 
 	switch {
 	case len(q.RequireTags) > 0:
-		candidates, err = tx.scanByTag(ctx, q.RequireTags[0])
+		candidates, err = tx.scanByTag(ctx, q.RequireTags[0], q.MaxScanRows)
 	case q.SourceID != "":
-		candidates, err = tx.scanBySource(ctx, q.SourceID)
+		candidates, err = tx.scanBySource(ctx, q.SourceID, q.MaxScanRows)
 	case !q.After.IsZero() || !q.Before.IsZero():
 		candidates, err = tx.scanByTimeRange(ctx, q.After, q.Before)
 	case q.Radius > 0:
@@ -118,22 +118,22 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
 
 // ── scanners ─────────────────────────────────────────────────────────────────
 
-func (tx *Tx) scanByTag(ctx context.Context, tag string) ([]record.CellRecord, error) {
+func (tx *Tx) scanByTag(ctx context.Context, tag string, maxScanRows int) ([]record.CellRecord, error) {
 	var recs []record.CellRecord
 	if err := tx.AscendCellsByTag(ctx, tag, func(r record.CellRecord) bool {
 		recs = append(recs, r)
-		return true
+		return maxScanRows <= 0 || len(recs) < maxScanRows
 	}); err != nil {
 		return nil, fmt.Errorf("hexxladb: QueryCells tag scan %q: %w", tag, err)
 	}
 	return recs, nil
 }
 
-func (tx *Tx) scanBySource(ctx context.Context, sourceID string) ([]record.CellRecord, error) {
+func (tx *Tx) scanBySource(ctx context.Context, sourceID string, maxScanRows int) ([]record.CellRecord, error) {
 	var recs []record.CellRecord
 	if err := tx.AscendCellsBySource(ctx, sourceID, func(r record.CellRecord) bool {
 		recs = append(recs, r)
-		return true
+		return maxScanRows <= 0 || len(recs) < maxScanRows
 	}); err != nil {
 		return nil, fmt.Errorf("hexxladb: QueryCells source scan %q: %w", sourceID, err)
 	}

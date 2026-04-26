@@ -5,6 +5,7 @@ Immediate next steps. Update after each session.
 ## Current
 
 - [ ] Ready for v0.2.0 / v0.3.0 release push to remote
+- [x] `feat/bench-improvements` — all 9 work items shipped
 
 ## Pending (next sessions)
 
@@ -12,17 +13,18 @@ Immediate next steps. Update after each session.
 - [ ] `DB.Compact` — copy-compaction to shrink file; `AscendRange` walk → fresh BTree → atomic swap; no lattice reorg needed
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
 
-### Benchmark-identified concerns (added 2026-04-26)
+### Benchmark-identified concerns — all shipped in `feat/bench-improvements`
 
-- [ ] **`FindSeams` empty-neighbourhood cost** — 2.3 ms with zero seams (full ring scan runs regardless); profile to find exact hot spot before designing fix (bloom filter / presence flag are candidates)
-- [ ] **`LoadContextPack` allocations at large radii** — r=5/2000 cells: 2.28 MB / 11,756 allocs per call; pre-size candidate slice with `lattice.RingArea(r)` and evaluate `sync.Pool` for decode buffers
-- [ ] **`QueryCells` source scan is O(n) unbounded** — 10 ms/512 cells → 54 ms/2000 cells (5.2× for 4× data); consider `MaxScanRows` field on `CellQuery` to bound worst-case latency
-- [ ] **`BenchmarkAPI_BatchPutCells` missing** — `PutCell` at 8.3 ms/op is single-fsync cost; `BatchPutCells` amortises but has no bench; add sizes 10/100/500
+- [x] **`FindSeams` empty-neighbourhood cost** — pre-flight presence check + lazy ring iteration (no `WalkRings` materialisation)
+- [x] **`LoadContextPack` allocations at large radii** — `collectCandidates` pre-sized; `RingInto` buffer reuse; `AssembleCellView` tags copy removed
+- [x] **`QueryCells` source scan is O(n) unbounded** — `CellQuery.MaxScanRows` added
+- [x] **`BenchmarkAPI_BatchPutCells` missing** — added; sizes 10/100/500
 
 ---
 
 ## Recently Completed
 
+- 2026-04-26: `feat/bench-improvements` — 9 perf changes: `mortonPack63` lookup table; `RingInto` buffer reuse in `collectCandidates`; pre-sized `items`+`seen` slices; O(1) eviction total; `AssembleCellView` tags copy removed; `findSeams` lazy iteration + pre-flight check; `CellQuery.MaxScanRows`; `BenchmarkAPI_BatchPutCells`; `make ci` clean
 - 2026-04-26: LEAN quick wins — deleted orphaned `internal/config` package (zero callers); added `BenchmarkAPI_QueryCells` (4 predicate shapes × 2 sizes), `BenchmarkAPI_LoadContextPack` (radii 1/3/5 × 2 sizes), `BenchmarkAPI_MVCCVersionResolution` (10/50/100/500 versions) to `api_bench_test.go`
 
 - 2026-04-26: `views.go` extracted to `internal/views` — `TxReader` port (4-method interface); `AssembleCellView`, `LoadContextWithBudgeting`, `collectCandidates`, `resolveSupersession`, `LoadMultiContextPack` moved; root `views.go` is type aliases + thin `*Tx` wrappers; zero API break; `cell_secondary.go`/`seam_secondary.go`/`rotation.go` reclassified to Future

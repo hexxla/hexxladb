@@ -106,11 +106,16 @@ func resolveSupersession(ctx context.Context, tx TxReader, coord lattice.Coord) 
 // CellView candidates. If cfg.FilterSuperseded is set, superseded cells are
 // replaced by their current-truth successor (or excluded if none exists).
 func collectCandidates(ctx context.Context, tx TxReader, center lattice.Coord, maxR, capCells int, opts AssembleCellViewOpts, cfg LoadContextBudgetConfig) ([]scoredCandidate, []CellExplanation, error) {
-	var items []scoredCandidate
+	// Ring area = 3r²+3r+1 (exact cell count for radius r). Pre-size items, seen,
+	// and the per-ring coordinate buffer to avoid repeated heap allocations.
+	ringArea := min(3*maxR*maxR+3*maxR+1, capCells)
+	items := make([]scoredCandidate, 0, ringArea)
 	var explanations []CellExplanation
-	seen := make(map[lattice.Coord]struct{})
+	seen := make(map[lattice.Coord]struct{}, ringArea)
+	ringBuf := make([]lattice.Coord, 0, 6*maxR+1) // max ring perimeter
 	for ring := range maxR + 1 {
-		for _, c := range lattice.Ring(center, ring) {
+		ringBuf = lattice.RingInto(ringBuf[:0], center, ring)
+		for _, c := range ringBuf {
 			if len(items) >= capCells {
 				return items, explanations, nil
 			}
@@ -227,20 +232,18 @@ func LoadContextWithBudgeting(ctx context.Context, tx TxReader, center lattice.C
 		if drop < 0 {
 			break
 		}
+		droppedTokens := CellViewTokens(budgeter, items[drop].view, cfg.IncludeFacetText)
 		if cfg.Explain {
 			explanations = append(explanations, CellExplanation{
 				Coord:  items[drop].view.Coord,
 				Ring:   items[drop].ring,
 				Reason: "evicted_low_confidence",
-				Tokens: CellViewTokens(budgeter, items[drop].view, cfg.IncludeFacetText),
+				Tokens: droppedTokens,
 			})
 		}
+		total -= droppedTokens
 		items = append(items[:drop], items[drop+1:]...)
 		evicted++
-		total = 0
-		for i := range items {
-			total += CellViewTokens(budgeter, items[i].view, cfg.IncludeFacetText)
-		}
 	}
 
 	maxRingUsed := 0

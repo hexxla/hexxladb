@@ -56,12 +56,13 @@ Shipped with v0.1.0 release.
 - **Bulk Cell Import/Export (JSON)** — `ExportCellsJSON` + `ImportCellsJSON` in `bulk_io.go`
 - **Secondary index btree coupling fix** — added `tx.deleteDirect` mirroring `tx.putDirect`; `cell_secondary.go` and `seam_secondary.go` no longer reach through to `tx.db.btree.Delete` directly
 - **LEAN quick wins** — deleted orphaned `internal/config` package (zero callers); added `BenchmarkAPI_QueryCells` (4 predicate shapes), `BenchmarkAPI_LoadContextPack` (radii 1/3/5), `BenchmarkAPI_MVCCVersionResolution` (10/50/100/500 versions) as performance baselines
+- **Benchmark-driven performance improvements** (`feat/bench-improvements`) — 9 targeted changes from `make bench-api` baseline: `mortonPack63` lookup table (3 passes × 7 bits, scalar unpack preserved); `RingInto` buffer-reuse variant; `collectCandidates` pre-sized with `min(3r²+3r+1, cap)`; O(1) eviction total; `AssembleCellView` tags copy removed (callers read-only); `findSeams` lazy iteration + single pre-flight `AscendRange` (saves 74–182 tree calls in seam-free DBs); `CellQuery.MaxScanRows`; `BenchmarkAPI_BatchPutCells` (10/100/500)
 
 ## Quick Wins
 
 Low effort, high value. No design required.
 
-_(Empty — all quick wins shipped or reclassified.)_
+_(Empty — all current quick wins shipped.)_
 
 ## Near-term
 

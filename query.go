@@ -92,6 +92,15 @@ type CellQuery struct {
 	// description of why each cell was included and its score breakdown.
 	Explain bool
 
+	// --- Scan safety ---
+
+	// MaxScanRows caps the number of index rows examined during the primary scan.
+	// Zero means unlimited (current behaviour). Set this to protect against
+	// accidentally unbounded full-index walks when SourceID is set but MaxResults
+	// is not. When the limit is hit, results collected so far are returned;
+	// no error is raised and no truncation flag is set (conservative).
+	MaxScanRows int
+
 	// --- Forward compatibility ---
 
 	// Embedding is reserved for future ANN/vector similarity search.
