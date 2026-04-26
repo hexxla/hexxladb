@@ -332,54 +332,68 @@ func run() error {
 	// ═══════════════════════════════════════════════════════════════
 	// PHASE 5: Context Assembly for LLM Prompt
 	// ═══════════════════════════════════════════════════════════════
-	printHeader("Phase 5: Context Assembly (Token-Budgeted)")
+	printHeader("Phase 5: Context Assembly (Search → Seeds → Token-Budgeted Pack)")
 
-	_, _ = infoStyle.Printf("  Assembling context around coordinate (%d,%d)...\n", center.Q, center.R)
+	// Step 1: find relevant cells via QueryCells — these become seeds.
+	_, _ = infoStyle.Println("  Step 1: QueryCells — find seeds for 'preference' topic, sorted by confidence")
+	_, _ = dimStyle.Println("  (Uses tag/ secondary index; RequireTags picks most selective scan path)")
 	fmt.Println()
 
-	// First, load without budget constraint to see total size
-	var allCells []record.CellRecord
-	err = db.View(func(tx *hexxladb.Tx) error {
+	var seedResults []hexxladb.CellQueryResult
+	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		allCells, err = tx.LoadContext(ctx, center, 3, 100)
+		seedResults, err = tx.QueryCells(ctx, hexxladb.CellQuery{
+			RequireTags: []string{"preference"},
+			ExcludeTags: []string{"acknowledgment"},
+			MaxResults:  5,
+			SortBy:      hexxladb.SortByConfidence,
+		})
 		return err
-	})
-	if err != nil {
-		return fmt.Errorf("load context: %w", err)
+	}); err != nil {
+		return fmt.Errorf("query cells for seeds: %w", err)
 	}
 
-	totalBytes := 0
-	for _, c := range allCells {
-		totalBytes += len(c.RawContent)
+	printMetric("Preference seeds found", len(seedResults), "cells")
+	fmt.Println()
+	_, _ = infoStyle.Println("  Seeds (all will be expanded by ring walk):")
+	for i, r := range seedResults {
+		_, _ = dimStyle.Printf("    [%d] conf=%.1f coord=(%d,%d) ", i+1, r.Cell.Provenance.Confidence, r.Cell.Coord.Q, r.Cell.Coord.R)
+		_, _ = dataStyle.Printf("%s\n", truncate(r.Cell.RawContent, 52))
+	}
+	fmt.Println()
+
+	// Step 2: collect seed coords and expand into a combined context pack.
+	assemblySeeds := make([]hexxladb.Coord, 0, len(seedResults))
+	for _, r := range seedResults {
+		assemblySeeds = append(assemblySeeds, r.Cell.Coord)
 	}
 
-	printMetric("Cells in radius-3", len(allCells), "cells")
-	printMetric("Total content size", totalBytes, "bytes")
+	if len(assemblySeeds) == 0 {
+		// Fallback: use last cell coord if no query results.
+		assemblySeeds = []hexxladb.Coord{center}
+	}
+
+	budget := 300 // bytes
+	_, _ = infoStyle.Printf("  Step 2: LoadContextPackFrom — expand %d seed(s), shared budget %d bytes\n", len(assemblySeeds), budget)
+	_, _ = dimStyle.Println("  (Ring walk r=3 around each seed; merged pool re-ranked by confidence; greedy fill)")
 	fmt.Println()
 
-	// Now load with byte budget (simulating token limit)
-	budget := 150 // bytes
-	_, _ = infoStyle.Printf("  Applying byte budget of %d...\n", budget)
-	fmt.Println()
-
-	opts2 := hexxladb.DefaultAssembleCellViewOpts()
-	cfg := hexxladb.LoadContextBudgetConfig{
-		Assemble:          opts2,
+	assemblyCfg := hexxladb.LoadContextBudgetConfig{
+		Assemble:          hexxladb.DefaultAssembleCellViewOpts(),
 		MaxCandidateCells: 64,
-		IncludeFacetText:  false,
 		IncludeSeams:      true,
 		SeamRadius:        2,
-		Explain:           true, // populate per-cell inclusion/eviction reasons
+		FilterSuperseded:  true,
+		Explain:           true,
 	}
 
 	var pack hexxladb.ContextPack
-	err = db.View(func(tx *hexxladb.Tx) error {
+	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		pack, err = tx.LoadContextPack(ctx, center, 3, budget, hexxladb.ByteLenBudgeter{}, cfg)
+		pack, err = tx.LoadContextPackFrom(ctx, 3, budget, hexxladb.ByteLenBudgeter{}, assemblyCfg, assemblySeeds...)
 		return err
-	})
-	if err != nil {
-		return fmt.Errorf("load context pack: %w", err)
+	}); err != nil {
+		return fmt.Errorf("load context pack from: %w", err)
 	}
 
 	includedBytes := 0
@@ -387,45 +401,56 @@ func run() error {
 		includedBytes += len(cv.RawContent)
 	}
 
-	printMetric("Cells in context pack", len(pack.Cells), "cells")
-	printMetric("Included content", includedBytes, "bytes")
-	printMetric("Budget utilization", fmt.Sprintf("%.1f%%", float64(includedBytes)/float64(budget)*100), "")
+	printMetric("Seeds expanded", len(assemblySeeds), "coords")
+	printMetric("Candidates scanned", pack.Stats.CandidatesScanned, "cells")
+	printMetric("Cells in combined pack", len(pack.Cells), "cells")
+	printMetric("Cells evicted (budget)", pack.Stats.CellsEvicted, "cells")
+	printMetric("Budget used", fmt.Sprintf("%d / %d bytes (%.0f%%)", includedBytes, budget, float64(includedBytes)/float64(budget)*100), "")
 
 	if len(pack.Seams) > 0 {
 		fmt.Println()
-		_, _ = warningStyle.Printf("  ⚠ %d seam(s) present in context:\n", len(pack.Seams))
+		_, _ = warningStyle.Printf("  ⚠ %d seam(s) present in combined context:\n", len(pack.Seams))
 		for _, seam := range pack.Seams {
 			_, _ = dimStyle.Printf("    • %v ↔ %v: ", seam.CellA, seam.CellB)
 			_, _ = dataStyle.Println(seam.Reason)
 		}
 	}
 
-	// QueryStats: show assembly statistics
+	// Combined context: show all cells in the final pack.
 	fmt.Println()
-	_, _ = infoStyle.Println("  Assembly Statistics (ContextPackStats):")
-	printMetric("Candidates scanned", pack.Stats.CandidatesScanned, "cells")
-	printMetric("Cells evicted", pack.Stats.CellsEvicted, "cells")
-	printMetric("Max ring used", pack.Stats.MaxRingUsed, "")
+	_, _ = infoStyle.Println("  Combined context pack (highest-confidence first):")
+	for i, cv := range pack.Cells {
+		_, _ = dimStyle.Printf("    [%d] conf=%.1f coord=(%d,%d) ", i+1, cv.Provenance.Confidence, cv.Coord.Q, cv.Coord.R)
+		_, _ = dataStyle.Printf("%s\n", truncate(cv.RawContent, 52))
+	}
 
-	// Explain mode: show per-cell decisions
+	// Explain mode: show interesting decisions (included + superseded); summarise evictions.
 	if len(pack.Explanations) > 0 {
 		fmt.Println()
-		_, _ = infoStyle.Println("  Cell Explanations (Explain mode):")
+		_, _ = infoStyle.Println("  Cell decisions (Explain mode, notable only):")
+		var evicted int
 		for _, ex := range pack.Explanations {
-			marker := "✓"
-			c := color.New(color.FgGreen)
-			if ex.Reason != "included" {
-				marker = "✗"
-				c = color.New(color.FgRed)
+			switch ex.Reason {
+			case "included":
+				_, _ = color.New(color.FgGreen).Printf("    ✓ ")
+				_, _ = dimStyle.Printf("(%d,%d) ring=%d tokens=%d ", ex.Coord.Q, ex.Coord.R, ex.Ring, ex.Tokens)
+				_, _ = dataStyle.Println("included")
+			case "superseded":
+				_, _ = color.New(color.FgYellow).Printf("    ↺ ")
+				_, _ = dimStyle.Printf("(%d,%d) ring=%d ", ex.Coord.Q, ex.Coord.R, ex.Ring)
+				_, _ = dataStyle.Println("superseded (excluded — stale)")
+			default:
+				evicted++
 			}
-			_, _ = c.Printf("    %s ", marker)
-			_, _ = dimStyle.Printf("(%d,%d) ring=%d tokens=%d ", ex.Coord.Q, ex.Coord.R, ex.Ring, ex.Tokens)
-			_, _ = dataStyle.Println(ex.Reason)
+		}
+		if evicted > 0 {
+			_, _ = dimStyle.Printf("    … %d cell(s) evicted by budget or confidence\n", evicted)
 		}
 	}
 
 	fmt.Println()
-	printSuccess("Context assembled within budget")
+	printSuccess(fmt.Sprintf("Combined context assembled: %d cells from %d seeds within %d-byte budget",
+		len(pack.Cells), len(assemblySeeds), budget))
 	fmt.Println()
 
 	// ═══════════════════════════════════════════════════════════════
@@ -498,34 +523,68 @@ func run() error {
 	// ═══════════════════════════════════════════════════════════════
 	printHeader("Phase 7: Query Patterns")
 
-	// Query by tag
-	_, _ = infoStyle.Println("  Query: All cells tagged 'preference'...")
+	// QueryCells: composable predicate query (primary API)
+	_, _ = infoStyle.Println("  QueryCells — 'opinion' cells, sort by recency:")
+	var opinionCells []hexxladb.CellQueryResult
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		var err error
+		opinionCells, err = tx.QueryCells(ctx, hexxladb.CellQuery{
+			RequireTags: []string{"opinion"},
+			MaxResults:  10,
+			SortBy:      hexxladb.SortByRecency,
+		})
+		return err
+	}); err != nil {
+		return fmt.Errorf("query opinion cells: %w", err)
+	}
+	printMetric("Opinion cells", len(opinionCells), "cells")
+	for _, r := range opinionCells {
+		_, _ = dimStyle.Printf("    coord=(%d,%d) %s\n", r.Cell.Coord.Q, r.Cell.Coord.R, truncate(r.Cell.RawContent, 50))
+	}
+	fmt.Println()
+
+	// QueryCells: combined tag + source filter
+	_, _ = infoStyle.Println("  QueryCells — 'fact' cells from this session, confidence >= 0.8:")
+	var factSessionCells []hexxladb.CellQueryResult
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		var err error
+		factSessionCells, err = tx.QueryCells(ctx, hexxladb.CellQuery{
+			RequireTags:   []string{"fact"},
+			SourceID:      sessionID,
+			MinConfidence: 0.8,
+			MaxResults:    10,
+			SortBy:        hexxladb.SortByScore,
+		})
+		return err
+	}); err != nil {
+		return fmt.Errorf("query fact session cells: %w", err)
+	}
+	printMetric("Fact+session+conf>=0.8 cells", len(factSessionCells), "cells")
+	fmt.Println()
+
+	// Raw index scans (lower-level, used internally by the query planner)
+	_, _ = dimStyle.Println("  (Raw index scans — used by query planner internally:)")
 	var prefCells int
-	err = db.View(func(tx *hexxladb.Tx) error {
+	if err := db.View(func(tx *hexxladb.Tx) error {
 		return tx.AscendCellsByTag(ctx, "preference", func(_ record.CellRecord) bool {
 			prefCells++
 			return true
 		})
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Errorf("query by tag: %w", err)
 	}
-	printMetric("Preference cells found", prefCells, "cells")
-	fmt.Println()
+	_, _ = dimStyle.Printf("    AscendCellsByTag('preference'): %d cells\n", prefCells)
 
-	// Query by source
-	_, _ = infoStyle.Println("  Query: All cells from this session...")
 	var sessionCells int
-	err = db.View(func(tx *hexxladb.Tx) error {
+	if err := db.View(func(tx *hexxladb.Tx) error {
 		return tx.AscendCellsBySource(ctx, sessionID, func(_ record.CellRecord) bool {
 			sessionCells++
 			return true
 		})
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Errorf("query by source: %w", err)
 	}
-	printMetric("Session cells found", sessionCells, "cells")
+	_, _ = dimStyle.Printf("    AscendCellsBySource(sessionID): %d cells\n", sessionCells)
 	fmt.Println()
 	printSuccess("Queries completed")
 	fmt.Println()
@@ -761,13 +820,13 @@ func run() error {
 	printHeader("Example Complete")
 	_, _ = successStyle.Println("  ✓ Conversational memory service demonstration finished")
 	_, _ = dimStyle.Printf("  Database: %s\n", dbPath)
-	_, _ = dimStyle.Printf("  Size: ~%.1f KB (depends on content)\n", float64(totalBytes)/1024)
+	_, _ = dimStyle.Printf("  Cells stored: %d conversation turns\n", len(recs))
 	fmt.Println()
 	_, _ = infoStyle.Println("  Next steps:")
 	_, _ = dimStyle.Println("    • Integrate with your LLM client")
 	_, _ = dimStyle.Println("    • Implement your own TokenBudgeter (e.g., using tiktoken)")
 	_, _ = dimStyle.Println("    • Add encryption for production deployments")
-	_, _ = dimStyle.Println("    • Use SearchCells → LoadMultiContextPack for semantic seed selection")
+	_, _ = dimStyle.Println("    • Use QueryCells → LoadContextPackFrom for search-driven multi-seed context assembly")
 	_, _ = dimStyle.Println("    • See docs/hexxladb/API_REFERENCE.md for full API")
 	fmt.Println()
 
