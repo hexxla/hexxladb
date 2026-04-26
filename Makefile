@@ -1,5 +1,5 @@
 .PHONY: help ci integration stress bench bench-api bench-stress fuzz test vet fmt lint mod-tidy govulncheck clean bench-tmp \
-	pre-commit-install pre-commit-run pre-commit-update run build demo
+	pre-commit-install pre-commit-run pre-commit-update run build demo seed tui
 
 # Bare `make` runs the full CI pipeline (same as `make ci`). Use `make help` to list targets.
 .DEFAULT_GOAL := ci
@@ -19,6 +19,9 @@ help:
 	@echo "make run|build|clean Run cmd/hexxladb, build bin/hexxladb, remove bin/"
 	@echo "make demo            Run conversational_memory example (DB defaults to .tmp/demo/memory.db)"
 	@echo "                     Override DB path: make demo DEMO_DB=/path/to/my.db"
+	@echo "make seed            Seed demo DB if absent (.tmp/demo/memory.db) — idempotent"
+	@echo "make tui             Launch TUI explorer (seeds DB first if absent)"
+	@echo "                     Override DB path: make tui TUI_DB=/path/to/my.db"
 	@echo "make pre-commit-*    Optional Git hooks (see CONTRIBUTING.md)"
 
 # Benchmark temp directory (defaults to repo-local ./.tmp; override with TMPDIR=/path).
@@ -80,6 +83,23 @@ clean:
 demo:
 	@mkdir -p .tmp/demo
 	go run ./examples/conversational_memory $(if $(DEMO_DB),-db $(DEMO_DB),)
+
+# Seed the demo database if it does not already exist (idempotent).
+# The conversational_memory example handles reuse: if the DB is present it skips re-seeding.
+seed:
+	@mkdir -p .tmp/demo
+	@if [ ! -f .tmp/demo/memory.db ]; then \
+		echo "==> Seeding demo database (.tmp/demo/memory.db)..."; \
+		go run ./examples/conversational_memory; \
+	else \
+		echo "==> Demo database already exists (.tmp/demo/memory.db) — skipping seed."; \
+	fi
+
+# Launch the TUI database explorer.
+# Depends on seed so the demo DB is always present before the TUI opens.
+# Override: make tui TUI_DB=/path/to/my.db
+tui: seed
+	go run ./cmd/tui -path $(or $(TUI_DB),.tmp/demo/memory.db)
 
 # Same invocation as scripts/ci.sh (handy to debug one step).
 govulncheck:
