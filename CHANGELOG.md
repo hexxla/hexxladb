@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added (tui-audit)
+
+- `cmd/tui` interactive database explorer — tabs: Dashboard, Cells, Hex Grid, Inspector, Analytics, Seams, Health, Diff; lexical search in Cells tab (`/` to open, `Enter` to execute, `Esc` to clear); Inspector with context pack assembly and explain panel; neon-on-dark colour scheme
+- `Consuming() bool` method on `view` interface — tabs signal text-input mode so global shortcuts (`q`, `1-8`, `Tab`) don't intercept keystrokes during search
+- `noConsume` embedded struct — zero-overhead default `Consuming() false` for all non-input views
+
+### Changed (tui-audit)
+
+- `Init()` now batches `tea.WindowSize()` + `tabActivatedMsg` — ensures window dimensions and initial tab load fire correctly on startup
+- Replaced all `tea.Tick(time.Millisecond, ...)` one-shot load patterns with plain `tea.Cmd` closures — eliminates spurious 1 ms delays and scheduler round-trips
+- All view `Update` methods handle `tabActivatedMsg` explicitly for lazy loads; removed fallthrough `!v.loaded` guards that could fire duplicate load goroutines on every message
+- Content area uses `MaxHeight` hard-clip — tab bar and status bar can never be pushed off screen by overflowing view content
+- Tab bar height derived from `lipgloss.Height(renderTabBar())` — no hardcoded row count
+- `renderContent` passes full terminal width to `lipgloss.Place` with `WithWhitespaceBackground` — right edge always filled regardless of inner content width
+- Card-interior text styles (`styleCardDim`, `styleCardHeader`, `styleCardKey`, `styleCardValue`) added — eliminates `colorBg1` leaking into `colorBg2` stat/info cards across all views
+- `barGraphBg` helper added — bar characters inside cards rendered with correct card background
+- Removed unused `styleKey`, `styleValue`, `stylePink` variables
+
+### Changed (docs)
+
+- README rewritten — sharper introduction framing the spatial-locality-as-physical-property thesis; condensed to ~180 lines; benchmark section summarised with key bullet points; full tables remain in `OPERATIONS.md`
+- `FUNDING.yml` added under `.github/` — enables GitHub Sponsors button on repo page
+- Badges added to README header: CI, Integration, Go Reference, Go Report Card, Go version, License
+
 ### Added (health-check-rewrite)
 
 - `BenchmarkAPI_HealthCheck` — measures full integrity scan; O(n) forward-scan implementation; 512 cells → 445 µs, 2000 cells → 1.6 ms

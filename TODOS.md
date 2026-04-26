@@ -4,13 +4,17 @@ Immediate next steps. Update after each session.
 
 ## Current
 
-- [ ] Ready for v0.2.0 / v0.3.0 release push to remote
+- [ ] Push 11-commit batch to origin/main (git push)
 
 ## Pending (next sessions)
 
 - [ ] `Tx.DeleteCell` — primary + secondaries + facets + edges; MVCC tombstone on v2; regression tests
 - [ ] `DB.Compact` — copy-compaction to shrink file; `AscendRange` walk → fresh BTree → atomic swap; no lattice reorg needed
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
+
+- 2026-04-26: TUI audit — Bubbletea pattern fixes (`Init`, `tea.Cmd` one-shot loads, `tabActivatedMsg` lazy load, `Consuming` interface, duplicate-load guards); Lipgloss layout fixes (hard-clip `MaxHeight`, terminal-width fill, `colorBg1`→`colorBg2` card-interior styles, `barGraphBg`); lexical search input fix; tab bar height from measurement not hardcode
+- 2026-04-26: README rewrite + badges (CI, Integration, Go Reference, Go Report Card, Go version, License) + `FUNDING.yml`
+- 2026-04-26: Deleted completed plan files (`lean-quick-wins.md`, `bench-improvements.md`)
 
 ### Benchmark-identified concerns — all shipped in `feat/bench-improvements`
 
