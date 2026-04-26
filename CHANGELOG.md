@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `views.go` view-assembly logic extracted to `internal/views` — `TxReader` port interface (`GetCell`, `AscendFacetsForCell`, `AscendEdgesFrom`, `FindSeams`) breaks the import cycle; all types (`CellView`, `ContextPack`, `FacetView`, `EdgeView`, `SeamRef`, `CellExplanation`, `ContextPackStats`, `TokenBudgeter`, `ByteLenBudgeter`, `AssembleCellViewOpts`, `LoadContextBudgetConfig`, `CellViewPredicate`) re-exported as type aliases — **zero public API change**; `*Tx` methods are thin wrappers delegating to `internal/views`; `cell_secondary.go`, `seam_secondary.go`, `rotation.go` remain at repo root (reclassified to Future)
+
 ### Added
 
 - `make demo` Makefile target — runs `examples/conversational_memory` with DB defaulting to `.tmp/demo/memory.db`; override via `make demo DEMO_DB=/path/to/my.db`; DB reused across runs (seed skipped if file exists)

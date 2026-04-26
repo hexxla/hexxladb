@@ -26,6 +26,7 @@ Shipped after v0.1.0 release on branch `feat/tier1-search-health`.
 - **Content Search** — `Tx.SearchCells(ctx, CellSearchConfig) ([]CellSearchResult, error)`; composite scoring (tag exact +1.0, tag prefix +0.8, content verbatim +0.6, content case-insensitive +0.5, source ID +0.3, confidence bonus); filters: `RequireTags` (AND), `AnyTags` (OR), confidence range, spatial radius, `MaxResults`; forward-compatible (`Embedding []float32` addable without breaking callers); 9 tests
 - **Multi-seed context assembly** — `Tx.LoadMultiContextPack` + `MultiContextConfig`; expands N seed coords, merges under shared token budget, cross-seed confidence re-ranking, `DeduplicateCoords`; `Tx.LoadContextPackFrom` unified variadic entry point (dispatches single→`LoadContextPack`, multi→`LoadMultiContextPack` with zero overhead for 1-seed case); 5 tests
 - **conversational_memory demo Phase 10** — `SearchCells` → seeds → `LoadContextPackFrom` pipeline demonstrated end-to-end with budget breakdown
+- **`views.go` extraction to `internal/views`** — narrow `TxReader` port interface; `AssembleCellView`, `LoadContextWithBudgeting`, `collectCandidates`, `resolveSupersession`, `LoadMultiContextPack` moved to `internal/views`; root `views.go` reduced to type aliases + thin `*Tx` wrappers; zero public API break; CI + hex boundary checks pass
 - **Per-database MaxValueBytes** — `Options.MaxValueBytes uint32`; accepted values 512/1024/2048/4096/8192/16384; default 8192 (8 KB); persisted in file header at offset 100 (unconditional, all format versions); enforced in `BTree.Put` via `Engine.maxValueBytes`; readable via `DB.MaxValueBytes()`; `ErrInvalidArgument` on invalid value; 9 tests
 - **MVCC Snapshot Diff** — `DB.SnapshotDiff(ctx, fromSeq, toSeq, SnapshotDiffConfig) (SnapshotDiff, error)`; scans MVCC version keys for `(fromSeq, toSeq]`; `CellDiff`/`SeamDiff`/`DiffOp`; `ErrMVCCRequired` on v1 databases; `SnapshotDiffConfig{IncludeCells, IncludeSeams *bool}`; `ErrMVCCRequired` sentinel; 9 tests
 - **Event Hooks** — `AfterPutCellHook`/`AfterPutCellHookFunc` (`Options.AfterPutCell`) fires after `Tx.PutCell`; `AfterPutSeamHook`/`AfterPutSeamHookFunc` (`Options.AfterPutSeam`) fires after `Tx.PutSeam`, `Tx.MarkConflict`, `Tx.MarkSupersedes`; error propagates; nil hook is zero-cost; 9 tests
@@ -63,15 +64,13 @@ _(Empty — all quick wins shipped or reclassified.)_
 
 ## Near-term
 
-Active on branch `feat/arch-housekeeping`. Ordered by execution priority.
-
-- **Extract `views.go` → `internal/views`** — define narrow `TxReader` interface in `internal/views`; move all view types + assembly logic; root `views.go` becomes thin wrappers + type aliases (zero public API break). See `.windsurf/plans/arch-housekeeping.md`.
-- **Secondary index relocation decision** — `cell_secondary.go` and `seam_secondary.go` contain no exported symbols; they are private `*Tx` methods; btree coupling already fixed via `deleteDirect`; reassess after `views.go` extraction to determine if a `TxIndexWriter` interface makes the move worthwhile, or reclassify to Future.
+_(Empty — all near-term items shipped or reclassified.)_
 
 ## Future
 
 Spec exists; implementation deferred.
 
+- **Relocate `cell_secondary.go` / `seam_secondary.go` to `internal/`** — both files contain no exported symbols and only unexported `*Tx` methods; btree coupling is already cleanly abstracted via `putDirect`/`deleteDirect`; a `TxIndexWriter` interface would add indirection with no architectural gain at this point; reclassified from Near-term.
 - **Move `rotation.go` to `internal/tooling/rotation`** — uses `DB.Open`, `Tx.putDirect`, root error sentinels; cycle is hard to break without significant restructuring or exposing `UnsafePut`; in-root placement is not architecturally wrong; reclassified from Near-term ([audit](./context/audits/SOC_MODULARITY_AUDIT.md)).
 - `embed/` keyspace for ANN/hybrid retrieval — vector storage and similarity search for semantic seed selection ([`HEXXLA_DB.md`](./hexxladb/HEXXLA_DB.md)). When implemented, `CellSearchConfig.Embedding []float32` field will be added to Content Search API — existing `Query string` callers unaffected.
 - Materialized views / super-hex aggregation as engine algorithms
@@ -122,3 +121,4 @@ Intentional boundaries for embedded library v1.
 | 2026-04-26 | Composable Query Engine shipped: `Tx.QueryCells`, `CellQuery`, temporal/spatial/tag/confidence predicates, `SortOrder`, `Explain`; `SearchCells` wrapper; Temporal Range Queries closed; 17 tests                                                                   |
 | 2026-04-26 | Demo expansion: `seed_data.go` 84-turn corpus, 5 sessions; `-db` flag; `make demo` target; `printSubHeader`/`printNote`; 11-column `spiralCoord`; readability pass all phases; API_REFERENCE updated                                                                |
 | 2026-04-26 | v0.2.0 candidate locked: all Unreleased items shipped; ready to tag                                                                                                                                                                                                 |
+| 2026-04-26 | `views.go` extracted to `internal/views`: `TxReader` port breaks import cycle; type aliases preserve public API; `cell_secondary.go`/`seam_secondary.go`/`rotation.go` reclassified to Future                                                                       |
