@@ -53,6 +53,9 @@ func (tx *Tx) PutCell(ctx context.Context, rec record.CellRecord) error {
 			return err
 		}
 		tx.noteChangelog(changelog.OpPutCell, key, data)
+		if h := tx.db.afterPutCell; h != nil {
+			return h.AfterPutCell(ctx, rec)
+		}
 		return nil
 	}
 	old, oldSeq, had, err := tx.visibleCellAndSeq(rec.Key)
@@ -75,6 +78,9 @@ func (tx *Tx) PutCell(ctx context.Context, rec record.CellRecord) error {
 	}
 	tx.cellOverlay[rec.Key] = rec
 	tx.noteChangelog(changelog.OpPutCell, index.CellKey(rec.Key), data)
+	if h := tx.db.afterPutCell; h != nil {
+		return h.AfterPutCell(ctx, rec)
+	}
 	return nil
 }
 
@@ -251,6 +257,9 @@ func (tx *Tx) putSeamWithOp(ctx context.Context, rec record.SeamRecord, clogOp b
 		return err
 	}
 	tx.noteChangelog(clogOp, pk, data)
+	if h := tx.db.afterPutSeam; h != nil {
+		return h.AfterPutSeam(ctx, rec)
+	}
 	return nil
 }
 

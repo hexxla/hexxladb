@@ -4,6 +4,9 @@
 
 ### Added
 
+- `AfterPutCellHook` / `AfterPutCellHookFunc` — post-write callback fired after each successful `Tx.PutCell`; error propagates to caller; set via `Options.AfterPutCell`
+- `AfterPutSeamHook` / `AfterPutSeamHookFunc` — post-write callback fired after `Tx.PutSeam`, `Tx.MarkConflict`, `Tx.MarkSupersedes`; set via `Options.AfterPutSeam`; 9 tests
+
 - `app.Service` use-case layer completed — all 23 `domain.Storage` port methods now delegated; compile-time interface satisfaction check (`var _ domain.Storage = (*Service)(nil)`) added to catch future drift; `ErrNoStorage` returned by every method when storage port not wired; 2 tests
 
 - `DB.TagSnapshot(label string) error` — pin the current head `CommitSeq` under a human-friendly label; stored in B+ tree under `__meta/snap-tag/<label>`; overwrites existing tag with same name; label max 200 bytes

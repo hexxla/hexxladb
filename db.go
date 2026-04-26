@@ -18,9 +18,11 @@ type DB struct {
 	eng           *engine.Engine
 	btree         *engine.BTree
 	changelog     *changelog.Log
-	useMVCC       bool          // true when on-disk format is v2+ (MVCC physical keys; see [Options.EnableMVCC]).
-	mvccRetention MVCCRetention // copy of [Options.MVCCRetention] at [Open] for [SuggestedPruneBeforeSeq].
-	cellValidator CellValidator // optional pre-write hook from [Options.CellValidator].
+	useMVCC       bool             // true when on-disk format is v2+ (MVCC physical keys; see [Options.EnableMVCC]).
+	mvccRetention MVCCRetention    // copy of [Options.MVCCRetention] at [Open] for [SuggestedPruneBeforeSeq].
+	cellValidator CellValidator    // optional pre-write hook from [Options.CellValidator].
+	afterPutCell  AfterPutCellHook // optional post-write hook from [Options.AfterPutCell].
+	afterPutSeam  AfterPutSeamHook // optional post-write hook from [Options.AfterPutSeam].
 	writeSeqNext  atomic.Uint64
 }
 
@@ -70,6 +72,8 @@ func Open(path string, opts *Options) (*DB, error) {
 	if opts != nil {
 		db.mvccRetention = opts.MVCCRetention
 		db.cellValidator = opts.CellValidator
+		db.afterPutCell = opts.AfterPutCell
+		db.afterPutSeam = opts.AfterPutSeam
 	}
 	if opts != nil && opts.ChangelogEnabled {
 		clPath := opts.ChangelogPath
