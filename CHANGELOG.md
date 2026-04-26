@@ -4,6 +4,13 @@
 
 ### Added
 
+- `DB.TagSnapshot(label string) error` — pin the current head `CommitSeq` under a human-friendly label; stored in B+ tree under `__meta/snap-tag/<label>`; overwrites existing tag with same name; label max 200 bytes
+- `DB.ViewAtTag(label string, fn func(*Tx) error) error` — open a read-only snapshot pinned to the commit recorded by `TagSnapshot`; returns `ErrSnapshotTagNotFound` if label absent
+- `DB.ListSnapshotTags() ([]SnapshotTag, error)` — enumerate all tags sorted by label
+- `DB.DeleteSnapshotTag(label string) error` — remove a tag entry without affecting underlying data
+- `SnapshotTag` — `Label string`, `CommitSeq uint64`
+- `ErrSnapshotTagNotFound`, `ErrSnapshotTagLabelTooLong` — new sentinel errors; 11 tests
+
 - `Tx.QueryCells(ctx, CellQuery) ([]CellQueryResult, error)` — composable query engine with index-aware planner; predicates: `Query` (lexical), `RequireTags` (AND), `AnyTags` (OR), `ExcludeTags` (NOT), `SourceID`, `MinConfidence`/`MaxConfidence`, `After`/`Before` (temporal via `time/` week-bucket index), `Center`+`Radius` (spatial), `MaxResults`, `SortBy`, `Explain`; 17 tests
 - `CellQuery`, `CellQueryResult`, `SortOrder` — query predicate types; `SortByScore`, `SortByConfidence`, `SortByRecency`, `SortByCoord`
 - `SearchCells` refactored to thin wrapper over `QueryCells` — no breaking change
