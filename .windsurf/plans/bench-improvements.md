@@ -37,6 +37,7 @@ There is no guard that skips the loop early when the seam index prefix is empty.
 ### Ideas for improvement
 
 #### Idea A — Pre-flight presence check (low risk)
+
 Add a single `AscendRange` over the entire `seam-by-cells/` prefix to check whether _any_
 seams exist in the DB before entering the per-coord loop. Cost is one range scan with a
 stop-after-first callback. If the DB has no seams at all, return early in O(1).
@@ -57,6 +58,7 @@ if !hasAny {
 **Risk**: low — purely additive early-exit path.
 
 #### Idea B — Lazy coord iteration (medium risk)
+
 Replace the `WalkRings` materialisation with an inline ring-by-ring iteration that issues
 `AscendRange` calls without building the full coord slice upfront. The allocation of 37–91
 `lattice.Coord` structs (each 8 bytes) is small, but the per-coord allocation pattern
@@ -77,6 +79,7 @@ for ring := range radius + 1 {
 but avoids the aggregating `WalkRings` slice.
 
 #### Idea C — Seam presence counter in header (speculative, high risk)
+
 Store a seam count in the DB header (or a `__meta/seam-count` key) and skip all per-coord
 scanning if count == 0. Would make the zero-seam case truly O(1).
 **Risk**: requires atomic increment/decrement on every `PutSeam`/`DeleteSeam`, adds write
@@ -84,6 +87,7 @@ overhead, and counter can diverge on crash without WAL replay. Defer unless A+B 
 insufficient.
 
 ### Recommended order
+
 1. Implement Idea B (lazy iteration, no extra I/O, removes slice alloc)
 2. Benchmark — if zero-seam cost drops below 500 µs, stop
 3. If still high, add Idea A pre-flight check on top
@@ -168,6 +172,7 @@ large buffers. **Benchmark first to confirm decode is the dominant alloc source*
 `go test -bench=BenchmarkAPI_LoadContextPack -memprofile=mem.out` + `go tool pprof`).
 
 ### Recommended order
+
 1. Idea A (pre-size) — 5 lines, zero risk, immediate win
 2. Idea B (O(1) total) — 3 lines, remove inner loop
 3. Profile before considering Idea C
@@ -229,6 +234,7 @@ estimate scan cost before committing. Adds write overhead on every `PutCell`.
 hot path in production.
 
 ### Recommended order
+
 1. Idea A (MaxScanRows field) — additive, safe, immediate protection
 2. Idea B (auto-cap) — only after confirming no caller relies on unlimited scan
 3. Idea C — defer to post-profiling evidence
@@ -269,16 +275,118 @@ probably 20–50× faster per cell than single `PutCell`.
 
 ---
 
+## Indirect bottlenecks with knock-on effects
+
+These are not directly in the four concern areas but are shared primitives called by all hot paths.
+Fixing them amplifies the gains from Areas 1–4.
+
+### B1 — `mortonPack63` / `mortonUnpack63`: 21-iteration bit loop (53 ns/op)
+
+**Measured**: `BenchmarkPack = 53 ns/op`, `BenchmarkUnpack = 53 ns/op` (zero allocs — good).
+
+**Where it's called across all hot paths:**
+
+- `findSeams`: `Pack(c)` per coord — 37× at r=3, 91× at r=5 = 37×53 ns = ~2 µs just in Pack
+- `collectSeamFind`: `Unpack(CellA)` + `Unpack(CellB)` per seam found — 100 seams = 200×53 ns = ~10.6 µs
+- `collectCandidates` → `AssembleCellView` → `Pack(coord)` per candidate cell
+- `QueryCells` spatial path: `Pack` per result coord
+
+**Root cause**: `mortonPack63` runs a 21-iteration scalar bit loop. Standard portable
+implementation but well-known to be replaceable with lookup tables.
+
+**Proposed fix — lookup table interleaving:**
+Replace the 21-iteration loop with two 256-entry tables (one for odd bits, one for even),
+processing 8 bits at a time in 3 passes. Estimated result: **5–10 ns/op** (5–10× speedup).
+Wire format is unchanged — `PackedCoord` bytes are identical.
+
+```go
+// sketch — expand each byte to interleaved bits via table lookup
+var mortonTable256 [256]uint64 // precomputed: bit i of input → bit 3i of output
+func mortonExpand8(b uint8) uint64 { return mortonTable256[b] }
+func mortonPack63(qp, rp, sp uint64) uint64 {
+    var m uint64
+    for shift := range 3 { // 3 passes of 21 bits = 63 bits total, 8+8+5 per axis
+        m |= mortonExpand8(uint8(qp>>uint(shift*8))) << uint(shift*24)
+        m |= mortonExpand8(uint8(rp>>uint(shift*8))) << uint(shift*24+1)
+        m |= mortonExpand8(uint8(sp>>uint(shift*8))) << uint(shift*24+2)
+    }
+    return m
+}
+```
+
+**Risk**: low — internal to `internal/lattice`, no API change, existing round-trip tests
+validate correctness. Add a fuzz test comparing old vs new output before removing old impl.
+
+---
+
+### B2 — `Ring()` allocates a new slice per call
+
+**Where it's called**: every `collectCandidates` ring iteration (r=5 → 5 allocations),
+every `findSeams` lazy iteration after Area 1 Idea B is applied.
+
+**Root cause**: `make([]Coord, 0, 6*k)` on every `Ring(center, k)` call. When the caller
+loops over rings 0..maxR, this produces `maxR` separate heap allocations.
+
+**Proposed fix — `RingInto(dst []Coord, center Coord, k int) []Coord`:**
+Add a variant that appends into a caller-supplied slice. Callers pre-allocate once:
+
+```go
+buf := make([]Coord, 0, 3*maxR*maxR+3*maxR+1) // exact ring area
+for k := range maxR+1 {
+    buf = RingInto(buf[:0], center, k) // reuse buffer, reset length
+    for _, c := range buf { ... }
+}
+```
+
+The existing `Ring` function is kept for backward compatibility; `RingInto` is additive.
+**Risk**: very low — purely additive, existing callers unchanged.
+
+---
+
+### B3 — `AssembleCellView` double-copies `Tags` slice
+
+**Location**: `internal/views/views.go:202`:
+
+```go
+Tags: append([]string(nil), rec.Tags...),
+```
+
+This copies the tags slice returned by `DecodeCell`. Since `DecodeCell` already allocates
+`r.Tags = make([]string, 0, nt)` (cell.go:108), `AssembleCellView` creates a second copy.
+For a 91-candidate `LoadContextPack/r5` call, this doubles the tags allocation cost.
+
+**Proposed fix**: If `CellView.Tags` is treated as read-only after assembly (no callers
+mutate it), remove the copy and share the underlying array from `DecodeCell`.
+**Risk**: low if `CellView` is documented as immutable. Must audit all callers of
+`CellView.Tags` to confirm none append/assign to the slice.
+
+---
+
+### B4 — `BTreeAscendRange` called 74× in `FindSeams` at r=3 (even for empty ranges)
+
+**Measured**: `BenchmarkBTreeAscendRange = 44,693 ns/op`.
+
+`findSeams` at r=3 issues 2 `AscendRange` calls per coord × 37 coords = **74 calls**.
+For empty ranges (no seams at that coord), the call still traverses the B+ tree to the
+leaf level. Even if each empty-range scan costs 10 µs (faster than the 44 µs full scan),
+74 × 10 µs = 740 µs — a large fraction of the 2.3 ms base cost.
+
+**This directly validates Area 1, Idea A** (pre-flight check): a single AscendRange
+confirming the seam index is empty saves all 74 subsequent calls. This is the highest
+ROI single-line change in the entire plan.
+
+---
+
 ## Work order
 
-| # | Area | Effort | Risk | Expected gain |
-|---|------|--------|------|---------------|
-| 1 | `collectCandidates` pre-size (Area 2, Idea A) | 5 lines | very low | eliminates slice doublings |
-| 2 | O(1) eviction total (Area 2, Idea B) | 3 lines | very low | removes O(n) inner loop |
-| 3 | `FindSeams` lazy iteration (Area 1, Idea B) | 10 lines | low | removes WalkRings alloc |
-| 4 | Add `BenchmarkAPI_BatchPutCells` (Area 4) | ~40 lines | none | coverage only |
-| 5 | `QueryCells` MaxScanRows (Area 3, Idea A) | ~30 lines | low | bounds worst-case latency |
-| 6 | `FindSeams` pre-flight check (Area 1, Idea A) | ~10 lines | low | O(1) for seam-empty DBs |
-| 7 | Profile `LoadContextPack` decode allocs (Area 2, Idea C) | investigative | — | determine if pool helps |
+| #   | Area                                                     | Effort        | Risk     | Expected gain              |
+| --- | -------------------------------------------------------- | ------------- | -------- | -------------------------- |
+| 1   | `collectCandidates` pre-size (Area 2, Idea A)            | 5 lines       | very low | eliminates slice doublings |
+| 2   | O(1) eviction total (Area 2, Idea B)                     | 3 lines       | very low | removes O(n) inner loop    |
+| 3   | `FindSeams` lazy iteration (Area 1, Idea B)              | 10 lines      | low      | removes WalkRings alloc    |
+| 4   | Add `BenchmarkAPI_BatchPutCells` (Area 4)                | ~40 lines     | none     | coverage only              |
+| 5   | `QueryCells` MaxScanRows (Area 3, Idea A)                | ~30 lines     | low      | bounds worst-case latency  |
+| 6   | `FindSeams` pre-flight check (Area 1, Idea A)            | ~10 lines     | low      | O(1) for seam-empty DBs    |
+| 7   | Profile `LoadContextPack` decode allocs (Area 2, Idea C) | investigative | —        | determine if pool helps    |
 
 Run `make bench-api` baseline → implement #1 → run again → commit delta → repeat.
