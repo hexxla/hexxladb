@@ -88,7 +88,7 @@ func (t *BTree) Put(key, val []byte) error {
 	if len(key) > maxKeyBytes {
 		return ErrKeyTooLarge
 	}
-	if len(val) > maxValBytes {
+	if uint32(len(val)) > t.eng.maxValueBytes { //nolint:gosec // G115: len() is always non-negative; conversion is safe
 		return ErrValueTooLarge
 	}
 	hdr, err := t.eng.ReadHeader()

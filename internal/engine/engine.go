@@ -26,6 +26,8 @@ type Engine struct {
 	walMACKey     [32]byte
 	// usePrimaryFdatasync selects fdatasync vs fsync on the primary; see [Engine.syncPrimary].
 	usePrimaryFdatasync bool
+	// maxValueBytes is the effective per-database value size ceiling (read from header at Open).
+	maxValueBytes uint32
 	// wtxn is set between [Engine.BeginWriteTxn] and commit/abort. Not used concurrently.
 	wtxn *writeTxnState
 	// Group commit (Options.GroupWAL) — set at Open.
@@ -70,6 +72,11 @@ func Open(path string, opts *Options) (*Engine, error) {
 	}
 
 	if st.Size() == 0 {
+		mvb, mvbErr := resolveMaxValueBytes(opts)
+		if mvbErr != nil {
+			_ = db.Close()
+			return nil, mvbErr
+		}
 		ver := formatVersionV1
 		if opts != nil && opts.UseFormatV2 {
 			ver = formatVersionV2
@@ -80,6 +87,7 @@ func Open(path string, opts *Options) (*Engine, error) {
 			LastWALSeq:    0,
 			NextPageID:    1,
 			CommitSeq:     0,
+			MaxValueBytes: mvb,
 		}
 		if opts != nil && opts.NewEncryptedDB {
 			hdr.Features |= FeatureEncryptedDataPages
@@ -214,6 +222,26 @@ func Open(path string, opts *Options) (*Engine, error) {
 		return nil, err
 	}
 
+	if opts != nil && opts.MaxValueBytes != 0 && opts.MaxValueBytes != hdr.MaxValueBytes {
+		// Caller explicitly set a limit that differs from the stored header — validate and persist.
+		mvb, mvbErr := resolveMaxValueBytes(opts)
+		if mvbErr != nil {
+			_ = db.Close()
+			_ = wal.Close()
+			return nil, mvbErr
+		}
+		hdr.MaxValueBytes = mvb
+		if err := writeHeaderAt(db, hdr); err != nil {
+			_ = db.Close()
+			_ = wal.Close()
+			return nil, err
+		}
+	}
+	effectiveMaxVal := hdr.MaxValueBytes
+	if effectiveMaxVal == 0 {
+		effectiveMaxVal = DefaultMaxValueBytes
+	}
+
 	e := &Engine{
 		path:                path,
 		db:                  db,
@@ -223,6 +251,7 @@ func Open(path string, opts *Options) (*Engine, error) {
 		walMACEnabled:       walMACEnabled,
 		walMACKey:           walMACKey,
 		usePrimaryFdatasync: usePrimaryFdatasync,
+		maxValueBytes:       effectiveMaxVal,
 	}
 	if opts != nil {
 		e.groupWALCfg = opts.GroupWAL

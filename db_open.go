@@ -170,6 +170,17 @@ func mergeEnginePrimaryFdatasync(eo *engine.Options, o *Options) *engine.Options
 	return eo
 }
 
+func mergeEngineMaxValueBytes(eo *engine.Options, o *Options) *engine.Options {
+	if o == nil || o.MaxValueBytes == 0 {
+		return eo
+	}
+	if eo == nil {
+		return &engine.Options{MaxValueBytes: o.MaxValueBytes}
+	}
+	eo.MaxValueBytes = o.MaxValueBytes
+	return eo
+}
+
 func mergeEngineGroupWAL(eo *engine.Options, o *Options) *engine.Options {
 	mw := time.Duration(0)
 	if o != nil {

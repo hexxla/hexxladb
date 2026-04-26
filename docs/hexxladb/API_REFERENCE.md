@@ -9,19 +9,20 @@ This document lists **every exported symbol** in the root package as of the curr
 
 ## Storage limits (engine B+ tree)
 
-Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored in the engine B+ tree. **Maximum key length: 256 bytes; maximum value length: 8192 bytes (8KB)** per page layout in [`internal/engine/btree_page.go`](../../internal/engine/btree_page.go). Rationale and format details: **[`ORDERED_STORE.md`](../../internal/engine/ORDERED_STORE.md)**. **Cell** (and other encoded) records must fit in that value budget; larger logical payloads require application-level chunking or external blob storage.
+Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored in the engine B+ tree. **Maximum key length: 256 bytes.** **Maximum value length: configurable per-database** via [`Options.MaxValueBytes`](../../options.go) — accepted values: **512, 1024, 2048, 4096, 8192, 16384** bytes; **default 8192 (8 KB)**. The limit is persisted in the file header and enforced on every write. Read it at runtime with **[`(*DB).MaxValueBytes`](../../db.go)**. Rationale and format details: **[`ORDERED_STORE.md`](../../internal/engine/ORDERED_STORE.md)**. **Cell** (and other encoded) records must fit in the value budget; larger logical payloads require application-level chunking or external blob storage.
 
 ---
 
 ## Database lifecycle
 
-| Symbol                                  | Notes                                                                                                                       |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| **[`Open`](../../db.go)**               | Open or create a database file; applies WAL on startup.                                                                     |
-| **[`(*DB).Close`](../../db.go)**        | Waits for in-flight transactions; idempotent for nil receiver.                                                              |
-| **[`ErrCorruptDatabase`](../../db.go)** | Open-time corruption (header/WAL).                                                                                          |
-| **[`Options`](../../options.go)**       | `EnableMVCC`, `MVCCRetention`, changelog, encryption, `CellValidator`, `AfterPutCell`, `AfterPutSeam`, optional page hooks. |
-| **[`MVCCRetention`](../../options.go)** | Retention hint for prune suggestions.                                                                                       |
+| Symbol                                   | Notes                                                                                                                                        |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`Open`](../../db.go)**                | Open or create a database file; applies WAL on startup.                                                                                      |
+| **[`(*DB).Close`](../../db.go)**         | Waits for in-flight transactions; idempotent for nil receiver.                                                                               |
+| **[`ErrCorruptDatabase`](../../db.go)**  | Open-time corruption (header/WAL).                                                                                                           |
+| **[`Options`](../../options.go)**        | `EnableMVCC`, `MVCCRetention`, changelog, encryption, `CellValidator`, `AfterPutCell`, `AfterPutSeam`, `MaxValueBytes`, optional page hooks. |
+| **[`(*DB).MaxValueBytes`](../../db.go)** | Returns the effective per-database max value size (bytes) from the file header.                                                              |
+| **[`MVCCRetention`](../../options.go)**  | Retention hint for prune suggestions.                                                                                                        |
 
 ---
 

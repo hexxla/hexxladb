@@ -37,6 +37,7 @@ func Open(path string, opts *Options) (*DB, error) {
 	}
 	eopts = mergeEnginePrimaryFdatasync(eopts, opts)
 	eopts = mergeEngineGroupWAL(eopts, opts)
+	eopts = mergeEngineMaxValueBytes(eopts, opts)
 	eng, err := engine.Open(path, eopts)
 	if err != nil {
 		if errors.Is(err, engine.ErrCorruptHeader) || errors.Is(err, engine.ErrCorruptWAL) {
@@ -44,6 +45,9 @@ func Open(path string, opts *Options) (*DB, error) {
 		}
 		if errors.Is(err, engine.ErrBadEncryptionKey) {
 			return nil, ErrEncryptionKeyMismatch
+		}
+		if errors.Is(err, engine.ErrInvalidMaxValueBytes) {
+			return nil, fmt.Errorf("%w: MaxValueBytes must be 512, 1024, 2048, 4096, 8192, or 16384", ErrInvalidArgument)
 		}
 		return nil, err
 	}
@@ -120,6 +124,21 @@ func (db *DB) activeEng() *engine.Engine {
 		return nil
 	}
 	return db.eng
+}
+
+// MaxValueBytes returns the effective per-database maximum B+ tree value size in bytes.
+// This is the limit persisted in the file header; the default is 8192 (8 KB).
+// Returns 0 if the database is closed.
+func (db *DB) MaxValueBytes() uint32 {
+	if db == nil {
+		return 0
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.eng == nil {
+		return 0
+	}
+	return db.eng.MaxValueBytes()
 }
 
 // GroupWALStats returns group-WAL flusher counters when group commit is enabled: total

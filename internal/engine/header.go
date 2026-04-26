@@ -24,6 +24,8 @@ type Header struct {
 	CommitSeq uint64
 	// EncryptionKeyCheck is a keyed verifier for deterministic wrong-key detection on encrypted DBs.
 	EncryptionKeyCheck [HeaderEncryptionKeyCheckLen]byte
+	// MaxValueBytes is the per-database maximum B+ tree value size. Zero means [DefaultMaxValueBytes].
+	MaxValueBytes uint32
 }
 
 // FeatureEncryptedDataPages marks btree data pages (page_id >= 1) as encrypted on disk and in the WAL.
@@ -49,6 +51,7 @@ func decodeHeaderPage(page []byte) (Header, error) {
 	}
 	copy(h.EncryptionSalt[:], page[44:60])
 	copy(h.EncryptionKeyCheck[:], page[HeaderEncryptionKeyCheckOffset:HeaderEncryptionKeyCheckOffset+HeaderEncryptionKeyCheckLen])
+	h.MaxValueBytes = binary.BigEndian.Uint32(page[HeaderMaxValueBytesOffset : HeaderMaxValueBytesOffset+4])
 	switch h.FormatVersion {
 	case formatVersionV1:
 		h.CommitSeq = 0
@@ -79,6 +82,7 @@ func encodeHeaderPage(h Header) []byte {
 		binary.BigEndian.PutUint64(page[HeaderCommitSeqOffset:HeaderCommitSeqOffset+8], 0)
 	}
 	copy(page[HeaderEncryptionKeyCheckOffset:HeaderEncryptionKeyCheckOffset+HeaderEncryptionKeyCheckLen], h.EncryptionKeyCheck[:])
+	binary.BigEndian.PutUint32(page[HeaderMaxValueBytesOffset:HeaderMaxValueBytesOffset+4], h.MaxValueBytes)
 	return page
 }
 
