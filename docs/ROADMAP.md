@@ -60,7 +60,8 @@ Shipped with v0.1.0 release.
 
 Low effort, high value. No design required.
 
-_(Empty — all quick wins shipped or reclassified.)_
+- **Inline `internal/config` into `cmd/tui`** — `internal/config/config.go` is a 29-line single-file package used only by `cmd/tui`; inline `Load()` directly into `cmd/tui/main.go` to eliminate the unnecessary internal package boundary ([LEAN audit](./context/audits/LEAN_ARCHITECTURE_AUDIT.md))
+- **Benchmark additions** — add `QueryCells` benchmarks with varying predicate complexity, `LoadContextPack` with varying radii, and MVCC version resolution with high version counts; baselines needed before any performance work ([LEAN audit](./context/audits/LEAN_ARCHITECTURE_AUDIT.md))
 
 ## Near-term
 
@@ -79,6 +80,8 @@ Spec exists; implementation deferred.
 - Changelog Subscription (push mode) — real-time reactions via channels
 - Cell Relationship Graph Export — nodes/edges/seams for external analysis
 - Confidence Decay Policy — time-based confidence reduction with audit trail
+- **MVCC version chain optimisation** — for cells with many versions (>100), the current O(n) linear scan in `SelectVisible` may become a bottleneck; consider skip list or tree structure; defer until profiling shows this is a real hot path ([LEAN audit](./context/audits/LEAN_ARCHITECTURE_AUDIT.md))
+- **`domain.Storage` interface contract tests** — `internal/domain/storage_test.go` with a fake implementation to validate port contracts independently of the adapter; low urgency since `internal/app` tests cover the interface indirectly ([LEAN audit](./context/audits/LEAN_ARCHITECTURE_AUDIT.md))
 
 ## Future exploration
 
@@ -86,6 +89,7 @@ Interesting but unvalidated. Needs user demand or benchmark data before committi
 
 - Hot Cell Tracking — LRU-based access frequency tracking for cache warming (overhead concerns)
 - Content Compression — gzip/zstd compression for large cells >512B (benchmark first)
+- **Record encoding allocation reduction** — `AppendEnvelope` in `internal/record` allocates a fresh buffer on every encode; pre-sizing via pool or capacity hint could reduce GC pressure under write-heavy workloads; needs benchmark validation before committing ([LEAN audit](./context/audits/LEAN_ARCHITECTURE_AUDIT.md))
 - Edge Weight Decay — connections strengthen with traversal, weaken with disuse (speculative)
 - Facet Diff/Compare — see what changed between facet versions (audit utility)
 - Shortest Path Between Cells — graph traversal via edges (BFS implementation)

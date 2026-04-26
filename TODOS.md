@@ -10,6 +10,8 @@ Immediate next steps. Update after each session.
 
 - [ ] `Tx.DeleteCell` — primary + secondaries + facets + edges; MVCC tombstone on v2; regression tests
 - [ ] `DB.Compact` — copy-compaction to shrink file; `AscendRange` walk → fresh BTree → atomic swap; no lattice reorg needed
+- [ ] Inline `internal/config` into `cmd/tui` — eliminate single-use 29-line internal package (LEAN quick win)
+- [ ] Add benchmark suite: `QueryCells` predicate complexity, `LoadContextPack` radii, MVCC high version counts (LEAN quick win)
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
 
 ---
