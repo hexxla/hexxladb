@@ -93,6 +93,10 @@ Interesting but unvalidated. Needs user demand or benchmark data before committi
 - Edge Weight Decay — connections strengthen with traversal, weaken with disuse (speculative)
 - Facet Diff/Compare — see what changed between facet versions (audit utility)
 - Shortest Path Between Cells — graph traversal via edges (BFS implementation)
+- **`FindSeams` empty-neighbourhood short-circuit** — `BenchmarkAPI_FindSeams/seams_0` costs 2.3 ms despite zero seams present; base cost is the full spatial ring scan to collect candidate coords before the seam index is consulted; a bloom-filter or lightweight presence flag per ring coord could skip the ring walk entirely when no seams exist in the neighbourhood; validate with profiling before implementing
+- **`LoadContextPack` allocation reduction** — at r=5/2000 cells the hot path allocates 2.28 MB and 11,756 objects per call (`BenchmarkAPI_LoadContextPack/r5/cells_2000: 4.6 ms`); most allocations come from per-cell decode and candidate slice growth; a pre-sized ring-area capacity hint (`lattice.RingArea(r)`) on the candidate slice plus a `sync.Pool` for decode buffers could cut allocs significantly; benchmark before committing
+- **`QueryCells` source/combined index scan cursor limit** — source-only scan costs 10 ms at 512 cells and 54 ms at 2000 cells (5.2× for 4× data): O(n) full index walk with no early exit (`BenchmarkAPI_QueryCells/source_only`); adding a `MaxScanRows` cap to `CellQuery` (distinct from `MaxResults`) would bound worst-case latency; cost/benefit depends on whether callers ever query without `MaxResults` set
+- **`BatchPutCells` throughput benchmark** — `BenchmarkAPI_PutCell` at 8.3 ms/op reflects single-cell fsync overhead; `BatchPutCells` amortises this but has no benchmark; a `BenchmarkAPI_BatchPutCells` with batch sizes 10/100/500 would confirm the benefit and catch regressions
 
 ## Out of Scope
 

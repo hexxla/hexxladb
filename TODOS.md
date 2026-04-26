@@ -12,6 +12,13 @@ Immediate next steps. Update after each session.
 - [ ] `DB.Compact` — copy-compaction to shrink file; `AscendRange` walk → fresh BTree → atomic swap; no lattice reorg needed
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
 
+### Benchmark-identified concerns (added 2026-04-26)
+
+- [ ] **`FindSeams` empty-neighbourhood cost** — 2.3 ms with zero seams (full ring scan runs regardless); profile to find exact hot spot before designing fix (bloom filter / presence flag are candidates)
+- [ ] **`LoadContextPack` allocations at large radii** — r=5/2000 cells: 2.28 MB / 11,756 allocs per call; pre-size candidate slice with `lattice.RingArea(r)` and evaluate `sync.Pool` for decode buffers
+- [ ] **`QueryCells` source scan is O(n) unbounded** — 10 ms/512 cells → 54 ms/2000 cells (5.2× for 4× data); consider `MaxScanRows` field on `CellQuery` to bound worst-case latency
+- [ ] **`BenchmarkAPI_BatchPutCells` missing** — `PutCell` at 8.3 ms/op is single-fsync cost; `BatchPutCells` amortises but has no bench; add sizes 10/100/500
+
 ---
 
 ## Recently Completed
