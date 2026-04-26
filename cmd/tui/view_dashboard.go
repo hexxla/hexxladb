@@ -62,10 +62,7 @@ func (v *dashboardView) View() string {
 	colW := max(20, (w-4)/2)
 
 	// ── title ───────────────────────────────────────────────────────────────
-	title := lipgloss.NewStyle().
-		Foreground(colorPurple).
-		Bold(true).
-		Render("◈ HexxlaDB Explorer")
+	title := viewTitle("◈ HexxlaDB Explorer", w)
 	subtitle := styleDim.Render("  Spatial LLM Memory Database")
 
 	// ── stat cards ──────────────────────────────────────────────────────────
@@ -75,25 +72,19 @@ func (v *dashboardView) View() string {
 	}
 
 	statCard := func(label, value string, clr lipgloss.Color) string {
-		return lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(clr).
-			Background(colorBg2).
-			Padding(0, 2).
-			Width(colW).
-			Render(
-				styleDim.Render(label) + "\n" +
-					lipgloss.NewStyle().Foreground(clr).Bold(true).Render(value),
-			)
+		return styleCard.BorderForeground(clr).Width(colW).Render(
+			styleDim.Render(label) + "\n" +
+				lipgloss.NewStyle().Foreground(clr).Bold(true).Render(value),
+		)
 	}
 
 	row1 := lipgloss.JoinHorizontal(lipgloss.Top,
 		statCard("CELLS", fmt.Sprintf("%d", cellCount), colorCyan),
-		"  ",
+		" ",
 		statCard("SEAMS", fmt.Sprintf("%d", seamCount), colorOrange),
-		"  ",
+		" ",
 		statCard("COMMIT SEQ", fmt.Sprintf("%d", stats.CommitSeq), colorPurple),
-		"  ",
+		" ",
 		statCard("MVCC", mvccStr, colorGreen),
 	)
 
@@ -123,7 +114,8 @@ func (v *dashboardView) View() string {
 		tagLines.WriteString(styleDim.Render("  no tags yet"))
 	}
 
-	tagsBox := styleBorder.Width(w/2-2).Padding(0, 1).Render(
+	halfw := (w - 1) / 2
+	tagsBox := styleCard.Width(halfw).Render(
 		styleSectionHeader.Render("Top Tags") + "\n" + tagLines.String(),
 	)
 
@@ -147,11 +139,11 @@ func (v *dashboardView) View() string {
 			) + "\n",
 		)
 	}
-	kbBox := styleBorderSubtle.Width(w/2-2).Padding(0, 1).Render(
+	kbBox := styleCard.BorderForeground(colorText2).Width(w - halfw - 1).Render(
 		styleSectionHeader.Render("Keybindings") + "\n" + kbLines.String(),
 	)
 
-	infoRow := lipgloss.JoinHorizontal(lipgloss.Top, tagsBox, "  ", kbBox)
+	infoRow := lipgloss.JoinHorizontal(lipgloss.Top, tagsBox, " ", kbBox)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		title,

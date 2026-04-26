@@ -171,7 +171,7 @@ func (v *healthView) View() string {
 	help := helpItem("r", "re-run health check")
 
 	return lipgloss.JoinVertical(lipgloss.Left,
-		styleViewTitle.Render("◈ Health Check"),
+		viewTitle("◈ Health Check", v.width),
 		"  "+statusStr,
 		"",
 		row1,

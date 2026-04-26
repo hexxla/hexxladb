@@ -1,6 +1,10 @@
 package main
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // Neon-on-dark palette — all colors optimised for dark terminals.
 var (
@@ -59,15 +63,16 @@ var (
 				Foreground(colorText1).
 				Padding(0, 2)
 
-	styleTabGap = styleTabInactive.
-			BorderTop(false).
-			BorderLeft(false).
-			BorderRight(false)
+	styleTabGap = lipgloss.NewStyle().
+			BorderBottom(true).
+			BorderStyle(lipgloss.Border{Bottom: "─"}).
+			BorderForeground(colorText2).
+			Background(colorBg0)
 
 	styleContent = lipgloss.NewStyle().
 			Background(colorBg1).
 			Foreground(colorText0).
-			Padding(1, 2)
+			Padding(0, 2)
 
 	styleBorder = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -76,6 +81,12 @@ var (
 	styleBorderSubtle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(colorText2)
+
+	styleCard = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorText2).
+			Background(colorBg2).
+			Padding(0, 2)
 
 	// Status bar segments
 	styleStatusLeft = lipgloss.NewStyle().
@@ -150,6 +161,26 @@ var (
 // helpItem renders a key + description pair for the help bar.
 func helpItem(key, desc string) string {
 	return styleHelpKey.Render(key) + styleDim.Render(" "+desc)
+}
+
+// viewTitle renders a section title with a dim underline rule, sized to width w.
+func viewTitle(title string, w int) string {
+	t := styleViewTitle.Render(title)
+	rule := styleDim.Render(strings.Repeat("─", max(0, w-lipgloss.Width(t)-1)))
+	return lipgloss.JoinHorizontal(lipgloss.Top, t, " ", rule)
+}
+
+// clampLines hard-caps s to at most maxLines rendered lines, truncating the rest.
+// This prevents inner view content from overflowing the fixed-height content panel.
+func clampLines(s string, maxLines int) string {
+	if maxLines <= 0 {
+		return ""
+	}
+	lines := strings.SplitN(s, "\n", maxLines+1)
+	if len(lines) <= maxLines {
+		return s
+	}
+	return strings.Join(lines[:maxLines], "\n")
 }
 
 // truncStr truncates a string to maxLen with ellipsis.

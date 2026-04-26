@@ -94,7 +94,7 @@ func (v *diffView) View() string {
 	if v.err != nil {
 		if strings.Contains(v.err.Error(), "MVCC") || strings.Contains(v.err.Error(), "mvcc") {
 			return lipgloss.JoinVertical(lipgloss.Left,
-				styleViewTitle.Render("◈ Snapshot Diff"),
+				viewTitle("◈ Snapshot Diff", v.width),
 				"",
 				styleDim.Render("  Database not opened with MVCC enabled — diff requires EnableMVCC: true."),
 				"",
@@ -107,7 +107,7 @@ func (v *diffView) View() string {
 	d := v.diff
 	if d == nil || (len(d.Cells) == 0 && len(d.Seams) == 0) {
 		return lipgloss.JoinVertical(lipgloss.Left,
-			styleViewTitle.Render("◈ Snapshot Diff"),
+			viewTitle("◈ Snapshot Diff", v.width),
 			"",
 			styleDim.Render("  No changes detected in last 10 commits."),
 			"",
@@ -189,7 +189,7 @@ func (v *diffView) View() string {
 	help := helpItem("↑↓/jk", "navigate") + "  " + helpItem("r", "refresh")
 
 	return lipgloss.JoinVertical(lipgloss.Left,
-		styleViewTitle.Render("◈ Snapshot Diff  (last 10 commits)"),
+		viewTitle("◈ Snapshot Diff  (last 10 commits)", v.width),
 		"",
 		summaryRow,
 		"",

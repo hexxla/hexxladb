@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -94,7 +93,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		contentH := m.height - 5 // tabs(3) + statusbar(1) + padding
-		contentW := m.width - 2
+		contentW := m.width - 4  // 2-char padding each side
 		for _, t := range m.tabs {
 			t.SetSize(contentW, contentH)
 		}
@@ -165,22 +164,22 @@ func (m model) renderTabBar() string {
 			rendered = append(rendered, styleTabInactive.Render(name))
 		}
 	}
-	row := lipgloss.JoinHorizontal(lipgloss.Top, rendered...)
+	row := lipgloss.JoinHorizontal(lipgloss.Bottom, rendered...)
 	gapW := max(0, m.width-lipgloss.Width(row))
-	gap := styleTabGap.Render(strings.Repeat(" ", gapW))
+	gap := styleTabGap.Width(gapW).Render("")
 	return lipgloss.JoinHorizontal(lipgloss.Bottom, row, gap)
 }
 
 func (m model) renderContent() string {
 	contentH := m.height - 5
-	contentW := m.width - 2
+	contentW := m.width - 4 // account for 2-char padding each side
 	if contentH < 1 {
 		contentH = 1
 	}
 
 	inner := ""
 	if m.current >= 0 && m.current < len(m.tabs) {
-		inner = m.tabs[m.current].View()
+		inner = clampLines(m.tabs[m.current].View(), contentH)
 	}
 
 	return styleContent.

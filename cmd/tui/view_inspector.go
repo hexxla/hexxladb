@@ -119,7 +119,7 @@ func (v *inspectorView) View() string {
 		prompt := styleDim.Render("  Navigate to a cell in the Cells tab and press Enter to inspect it.")
 		hint := styleDim.Render(fmt.Sprintf("  (currently looking at (%d,%d) — not found)", v.cell.Q, v.cell.R))
 		return lipgloss.JoinVertical(lipgloss.Left,
-			styleViewTitle.Render("◈ Cell Inspector"),
+			viewTitle("◈ Cell Inspector", v.width),
 			"",
 			prompt,
 			hint,
@@ -191,7 +191,7 @@ func (v *inspectorView) View() string {
 	help := helpItem("c", "load context pack") + "  " + helpItem("r", "reset")
 
 	parts := []string{
-		styleViewTitle.Render("◈ Cell Inspector"),
+		viewTitle("◈ Cell Inspector", v.width),
 		"",
 		top,
 	}

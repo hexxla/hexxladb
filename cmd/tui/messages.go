@@ -58,19 +58,27 @@ type analyticsLoadedMsg struct {
 
 // ─── cell loading helper (shared by cells view and main.go tab switch) ───────
 
-// searchCells uses QueryCells to filter by query string (content/tag) returning up to limit results.
-func searchCells(db *hexxladb.DB, query string, limit int) []hexxladb.CellView {
-	var out []hexxladb.CellView
+// searchResult pairs a CellView with its relevance score from SearchCells.
+type searchResult struct {
+	cell  hexxladb.CellView
+	score float64
+}
+
+// searchCells uses SearchCells (lexical ranking) to find cells matching query.
+// Results are ordered by relevance score descending.
+func searchCells(db *hexxladb.DB, query string, limit int) []searchResult {
+	var out []searchResult
 	_ = db.View(func(tx *hexxladb.Tx) error {
-		results, err := tx.QueryCells(context.Background(), hexxladb.CellQuery{
-			Query:      query,
-			MaxResults: limit,
+		results, err := tx.SearchCells(context.Background(), hexxladb.CellSearchConfig{
+			Query:         query,
+			MaxResults:    limit,
+			MaxScanRadius: 64,
 		})
 		if err != nil {
 			return err
 		}
 		for _, r := range results {
-			out = append(out, r.Cell)
+			out = append(out, searchResult{cell: r.Cell, score: r.Score})
 		}
 		return nil
 	})

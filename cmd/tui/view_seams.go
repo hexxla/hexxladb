@@ -106,7 +106,7 @@ func (v *seamsView) View() string {
 	}
 	if len(v.seams) == 0 {
 		return lipgloss.JoinVertical(lipgloss.Left,
-			styleViewTitle.Render("◈ Seams"),
+			viewTitle("◈ Seams", v.width),
 			"",
 			styleDim.Render("  No seams found.  "+styleHelpKey.Render("r")+" to refresh."),
 		)
@@ -199,7 +199,7 @@ func (v *seamsView) View() string {
 	help := helpItem("↑↓/jk", "navigate") + "  " + helpItem("r", "refresh")
 
 	return lipgloss.JoinVertical(lipgloss.Left,
-		styleViewTitle.Render("◈ Seams"),
+		viewTitle("◈ Seams", v.width),
 		legend,
 		"",
 		t.Render(),

@@ -120,7 +120,7 @@ func (v *hexGridView) View() string {
 	}, "  ")
 
 	return lipgloss.JoinVertical(lipgloss.Left,
-		styleViewTitle.Render("◈ Hex Grid"),
+		viewTitle("◈ Hex Grid", v.width),
 		"",
 		lipgloss.JoinHorizontal(lipgloss.Top, gridPanel, "  ", statsPanel),
 		"",

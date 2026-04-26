@@ -209,7 +209,7 @@ func (v *analyticsView) View() string {
 	help := helpItem("r", "refresh")
 
 	return lipgloss.JoinVertical(lipgloss.Left,
-		styleViewTitle.Render("◈ Analytics"),
+		viewTitle("◈ Analytics", v.width),
 		"",
 		topRow,
 		"",
