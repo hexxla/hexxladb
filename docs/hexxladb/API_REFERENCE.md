@@ -188,6 +188,22 @@ Methods on **`Coord`** / **`PackedCoord`** (e.g. **`Distance`**, **`Neighbors`**
 
 ---
 
+## Snapshot Tags
+
+Human-friendly names for MVCC commit sequences. Tags are stored in the B+ tree under `__meta/snap-tag/<label>` and survive database close/reopen.
+
+| Symbol                                                  | Notes                                                                                                                                        |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*DB).TagSnapshot`](../../snapshot_tags.go)**       | Pin the current head `CommitSeq` under `label`. Overwrites an existing tag with the same name. Label: non-empty, ≤ 200 bytes.                |
+| **[`(*DB).ViewAtTag`](../../snapshot_tags.go)**         | Open a read-only snapshot pinned to the `CommitSeq` recorded by `TagSnapshot`. Returns **`ErrSnapshotTagNotFound`** if label does not exist. |
+| **[`(*DB).ListSnapshotTags`](../../snapshot_tags.go)**  | Return all tags as `[]SnapshotTag` sorted by label.                                                                                          |
+| **[`(*DB).DeleteSnapshotTag`](../../snapshot_tags.go)** | Remove a tag entry. Returns **`ErrSnapshotTagNotFound`** if absent. Does not affect the underlying data.                                     |
+| **[`SnapshotTag`](../../snapshot_tags.go)**             | `Label string`, `CommitSeq uint64`.                                                                                                          |
+| **[`ErrSnapshotTagNotFound`](../../errors.go)**         | Returned by `ViewAtTag` / `DeleteSnapshotTag` when the label has no entry.                                                                   |
+| **[`ErrSnapshotTagLabelTooLong`](../../errors.go)**     | Returned by `TagSnapshot` when `len(label) > 200`.                                                                                           |
+
+---
+
 ## Logical changefeed
 
 | Symbol                                                                                                                                                         | Notes                                                    |
