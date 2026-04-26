@@ -106,15 +106,22 @@ func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthRep
 				cellScanErr = err
 				return false
 			}
-			// Skip MVCC version keys (cell/<16 bytes><8-byte seq>) — only count v1 logical keys.
-			if len(k) != len(index.CellPrefix)+index.PackedCoordKeyLen {
+			// Accept both v1 keys (cell/<16>) and MVCC version keys (cell/<16><8-byte seq>).
+			// For MVCC, parse coord from the first 21 bytes; keys ascend by seq so the last
+			// entry per coord is the latest version — we simply upsert into liveCells.
+			keyLen := len(k)
+			v1Len := len(index.CellPrefix) + index.PackedCoordKeyLen
+			mvccLen := v1Len + index.VersionSuffixLen
+			if keyLen != v1Len && keyLen != mvccLen {
 				return true
 			}
-			p, err := index.ParseCellKey(k)
+			p, err := index.ParseCellKey(k[:v1Len])
 			if err != nil {
 				return true
 			}
-			report.CellCount++
+			if _, seen := liveCells[p]; !seen {
+				report.CellCount++
+			}
 			liveCells[p] = struct{}{}
 			return true
 		}); err != nil {

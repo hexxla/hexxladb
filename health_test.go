@@ -220,6 +220,40 @@ func TestHealthCheck_ResolvedSeamCounting(t *testing.T) {
 	}
 }
 
+func TestHealthCheck_MVCC(t *testing.T) {
+	t.Parallel()
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "health_mvcc.db"), &hexxladb.Options{EnableMVCC: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	coords := []hexxladb.Coord{{Q: 0, R: 0}, {Q: 1, R: 0}, {Q: 0, R: 1}}
+	for _, c := range coords {
+		pk := mustPackTest(t, c)
+		if err := db.Update(func(tx *hexxladb.Tx) error {
+			return tx.PutCell(ctx, hexxladb.NewFactCell(pk, "mvcc cell", "src-mvcc", "tag-mvcc", 0.9))
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	report, err := db.HealthCheck(ctx, hexxladb.DefaultHealthCheckConfig())
+	if err != nil {
+		t.Fatalf("HealthCheck: %v", err)
+	}
+	if report.CellCount != 3 {
+		t.Errorf("CellCount = %d, want 3", report.CellCount)
+	}
+	if report.TagIndexErrors != 0 {
+		t.Errorf("TagIndexErrors = %d, want 0", report.TagIndexErrors)
+	}
+	if report.SourceIndexErrors != 0 {
+		t.Errorf("SourceIndexErrors = %d, want 0", report.SourceIndexErrors)
+	}
+}
+
 func TestHealthCheck_MaxErrors(t *testing.T) {
 	t.Parallel()
 	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "health5.db"), nil)
