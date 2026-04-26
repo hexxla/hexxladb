@@ -46,6 +46,15 @@ type Options struct {
 	// Use for enforcing content limits, required tags, or custom business rules.
 	CellValidator CellValidator
 
+	// AfterPutCell optional post-write hook. When set, called synchronously after each
+	// successful [Tx.PutCell]. A non-nil error is returned from [Tx.PutCell] to the caller.
+	AfterPutCell AfterPutCellHook
+
+	// AfterPutSeam optional post-write hook. When set, called synchronously after each
+	// successful [Tx.PutSeam], [Tx.MarkConflict], or [Tx.MarkSupersedes].
+	// A non-nil error is returned from the triggering write method.
+	AfterPutSeam AfterPutSeamHook
+
 	// UsePrimaryFdatasync, when true, uses fdatasync(2) on the primary data file on supported
 	// platforms (e.g. Linux) instead of fsync(2) for engine durability barriers. Default false; see
 	// [docs/hexxladb/DURABILITY.md] before enabling in production.

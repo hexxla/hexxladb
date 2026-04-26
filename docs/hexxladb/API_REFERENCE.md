@@ -322,6 +322,21 @@ See **[ENCRYPTION.md](./ENCRYPTION.md)**.
 
 ---
 
+## Event Hooks
+
+Post-write callbacks invoked synchronously inside the `Update` callback, after the write succeeds. A non-nil error is returned from the triggering write method. Set on `Open` via `Options`.
+
+| Symbol                                         | Notes                                                                                                            |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **[`AfterPutCellHook`](../../hooks.go)**       | Interface: **`AfterPutCell(ctx, CellRecord) error`** — called after each successful `PutCell`.                   |
+| **[`AfterPutCellHookFunc`](../../hooks.go)**   | Adapter: plain function → **`AfterPutCellHook`**.                                                                |
+| **[`AfterPutSeamHook`](../../hooks.go)**       | Interface: **`AfterPutSeam(ctx, SeamRecord) error`** — called after `PutSeam`, `MarkConflict`, `MarkSupersedes`. |
+| **[`AfterPutSeamHookFunc`](../../hooks.go)**   | Adapter: plain function → **`AfterPutSeamHook`**.                                                                |
+| **[`Options.AfterPutCell`](../../options.go)** | Wire a cell hook at `Open`.                                                                                      |
+| **[`Options.AfterPutSeam`](../../options.go)** | Wire a seam hook at `Open`.                                                                                      |
+
+---
+
 ## Sentinel errors (complete)
 
 | Variable                                                                                                                  | When                                 |
