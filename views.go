@@ -488,6 +488,33 @@ func (tx *Tx) LoadContextPack(ctx context.Context, center Coord, maxR, maxTokens
 	return tx.LoadContextWithBudgeting(ctx, center, maxR, maxTokens, budgeter, cfg)
 }
 
+// LoadContextPackFrom is a unified entry point that works for one or many seed coordinates.
+//
+// When a single coord is provided it delegates to [Tx.LoadContextPack] directly (no overhead).
+// When multiple coords are provided it delegates to [Tx.LoadMultiContextPack] with
+// [MultiContextConfig.DeduplicateCoords] enabled so shared neighbourhood cells are not double-counted.
+//
+// Typical usage — feed top-N results from [Tx.SearchCells] without switching APIs:
+//
+//	pack, err := tx.LoadContextPackFrom(ctx, maxR, maxTokens, budgeter, assemblyCfg, coords...)
+func (tx *Tx) LoadContextPackFrom(ctx context.Context, maxR, maxTokens int, budgeter TokenBudgeter, cfg LoadContextBudgetConfig, centers ...Coord) (ContextPack, error) {
+	switch len(centers) {
+	case 0:
+		return ContextPack{}, nil
+	case 1:
+		return tx.LoadContextPack(ctx, centers[0], maxR, maxTokens, budgeter, cfg)
+	default:
+		return tx.LoadMultiContextPack(ctx, MultiContextConfig{
+			Centers:           centers,
+			MaxR:              maxR,
+			MaxTokens:         maxTokens,
+			Budgeter:          budgeter,
+			AssemblyConfig:    cfg,
+			DeduplicateCoords: true,
+		})
+	}
+}
+
 // CellViewPredicate selects [CellView] rows when filtering slices produced from walks or budgeting helpers.
 type CellViewPredicate func(CellView) bool
 

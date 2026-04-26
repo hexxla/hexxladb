@@ -667,23 +667,20 @@ func run() error {
 		fmt.Println()
 
 		sharedBudget := 400
+		assemblyCfg := hexxladb.LoadContextBudgetConfig{
+			Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
+			FilterSuperseded: true,
+		}
 		var multiPack hexxladb.ContextPack
 		if err := db.View(func(tx *hexxladb.Tx) error {
 			var err error
-			multiPack, err = tx.LoadMultiContextPack(ctx, hexxladb.MultiContextConfig{
-				Centers:           seeds,
-				MaxR:              1, // expand 1 ring around each seed
-				MaxTokens:         sharedBudget,
-				Budgeter:          hexxladb.ByteLenBudgeter{},
-				DeduplicateCoords: true,
-				AssemblyConfig: hexxladb.LoadContextBudgetConfig{
-					Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
-					FilterSuperseded: true,
-				},
-			})
+			// LoadContextPackFrom dispatches to LoadContextPack (1 seed) or
+			// LoadMultiContextPack (N seeds) automatically — no API switch needed.
+			multiPack, err = tx.LoadContextPackFrom(ctx, 1, sharedBudget,
+				hexxladb.ByteLenBudgeter{}, assemblyCfg, seeds...)
 			return err
 		}); err != nil {
-			return fmt.Errorf("load multi context pack: %w", err)
+			return fmt.Errorf("load context pack from: %w", err)
 		}
 
 		usedBytes := 0
