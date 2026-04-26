@@ -14,6 +14,7 @@ Shipped after v0.1.0 release on branch `feat/tier1-search-health`.
 - **Content Search** — `Tx.SearchCells(ctx, CellSearchConfig) ([]CellSearchResult, error)`; composite scoring (tag exact +1.0, tag prefix +0.8, content verbatim +0.6, content case-insensitive +0.5, source ID +0.3, confidence bonus); filters: `RequireTags` (AND), `AnyTags` (OR), confidence range, spatial radius, `MaxResults`; forward-compatible (`Embedding []float32` addable without breaking callers); 9 tests
 - **Multi-seed context assembly** — `Tx.LoadMultiContextPack` + `MultiContextConfig`; expands N seed coords, merges under shared token budget, cross-seed confidence re-ranking, `DeduplicateCoords`; `Tx.LoadContextPackFrom` unified variadic entry point (dispatches single→`LoadContextPack`, multi→`LoadMultiContextPack` with zero overhead for 1-seed case); 5 tests
 - **conversational_memory demo Phase 10** — `SearchCells` → seeds → `LoadContextPackFrom` pipeline demonstrated end-to-end with budget breakdown
+- **MVCC Snapshot Diff** — `DB.SnapshotDiff(ctx, fromSeq, toSeq, SnapshotDiffConfig) (SnapshotDiff, error)`; scans MVCC version keys for `(fromSeq, toSeq]`; `CellDiff`/`SeamDiff`/`DiffOp`; `ErrMVCCRequired` on v1 databases; `SnapshotDiffConfig{IncludeCells, IncludeSeams *bool}`; `ErrMVCCRequired` sentinel; 9 tests
 - **Event Hooks** — `AfterPutCellHook`/`AfterPutCellHookFunc` (`Options.AfterPutCell`) fires after `Tx.PutCell`; `AfterPutSeamHook`/`AfterPutSeamHookFunc` (`Options.AfterPutSeam`) fires after `Tx.PutSeam`, `Tx.MarkConflict`, `Tx.MarkSupersedes`; error propagates; nil hook is zero-cost; 9 tests
 - **`app.Service` use-case layer** — all 23 `domain.Storage` port methods delegated in `internal/app/app.go`; compile-time interface satisfaction check (`var _ domain.Storage = (*Service)(nil)`); every method returns `ErrNoStorage` when storage port not wired; 2 tests
 - **Snapshot Tags/Labels** — `DB.TagSnapshot(label)`, `DB.ViewAtTag(label, fn)`, `DB.ListSnapshotTags()`, `DB.DeleteSnapshotTag(label)`; `SnapshotTag{Label, CommitSeq}`; tags stored under `__meta/snap-tag/<label>` in B+ tree; persist across reopen; `ErrSnapshotTagNotFound` / `ErrSnapshotTagLabelTooLong`; 11 tests
@@ -64,7 +65,6 @@ Spec exists; implementation deferred.
 - Materialized views / super-hex aggregation as engine algorithms
 - Materialized changefeed consumers with automated prune policy
 - Changelog Subscription (push mode) — real-time reactions via channels
-- MVCC Snapshot Diff — compare state between two `CommitSeq` values
 - Cell Relationship Graph Export — nodes/edges/seams for external analysis
 - Confidence Decay Policy — time-based confidence reduction with audit trail
 
@@ -102,6 +102,7 @@ Intentional boundaries for embedded library v1.
 | 2026-04-25 | Seam-aware context assembly shipped: `SeamTypeSupersedes`, `MarkSupersedes`, `FilterSuperseded`; all v0.1.0 blockers resolved                                                                                                                                       |
 | 2026-04-25 | Seam observability additions: `CellView.SupersededFrom`, `CellExplanation.SupersededBy`, `Reason:"superseded"`; API_REFERENCE and demo updated                                                                                                                      |
 | 2026-04-26 | Tier 1 features shipped: Health Check API, Content Search (`SearchCells`), Multi-seed assembly (`LoadMultiContextPack`, `LoadContextPackFrom`); 19 tests; API_REFERENCE, CHANGELOG, ROADMAP, TODOS updated                                                          |
+| 2026-04-26 | MVCC Snapshot Diff shipped: `DB.SnapshotDiff`, `SnapshotDiff`/`CellDiff`/`SeamDiff`/`DiffOp`/`SnapshotDiffConfig`, `ErrMVCCRequired`; 9 tests                                                                                                                       |
 | 2026-04-26 | Event Hooks shipped: `AfterPutCellHook`, `AfterPutSeamHook`, `Func` adapters, `Options.AfterPutCell`/`AfterPutSeam`; 9 tests                                                                                                                                        |
 | 2026-04-26 | `app.Service` use-case layer completed: all 23 `domain.Storage` delegations; compile-time interface check; 2 tests                                                                                                                                                  |
 | 2026-04-26 | Snapshot Tags/Labels shipped: `DB.TagSnapshot`, `ViewAtTag`, `ListSnapshotTags`, `DeleteSnapshotTag`; `__meta/snap-tag/` B+ tree key prefix; 11 tests                                                                                                               |

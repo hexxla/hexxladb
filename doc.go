@@ -17,6 +17,7 @@
 //     MVCC on new databases via [Options.EnableMVCC] / [Options.MVCCRetention];
 //     lifecycle: [DB.StatsMVCC], [DB.PruneCellVersions], [DB.SuggestedPruneBeforeSeq], [PruneScheduler]
 //     (see docs/hexxladb/OPERATIONS.md). Encryption operations include [RotateEncryption].
+//   - [DB.SnapshotDiff] — MVCC change diff between two commit sequences; yields [SnapshotDiff] with [CellDiff]/[SeamDiff] slices.
 //   - [DB.View], [DB.ViewAt], [DB.ViewAtTime], [DB.Update], [DB.Batch], [Tx] —
 //     Bolt-style transactions; [DB.Batch] is an alias for [DB.Update]; see docs/hexxladb/TX.md.
 //   - [Tx.Get], [Tx.Put], [Tx.AscendRange] — byte-key ordered store.
@@ -37,7 +38,8 @@
 //     [ErrSeamEndpointMismatch], [ErrInvalidArgument], [ErrEncryptionKeyRequired],
 //     [ErrDatabaseNotEncrypted], [ErrEncryptionOptions], [ErrEncryptionKeyMismatch],
 //     [ErrCellNotFound], [ErrFacetDerivationMismatch], [ErrChangelogDisabled],
-//     [ErrChangelogCorrupt], [ErrReadSeqFuture].
+//     [ErrChangelogCorrupt], [ErrReadSeqFuture], [ErrMVCCRequired],
+//     [ErrSnapshotTagNotFound], [ErrSnapshotTagLabelTooLong].
 //
 // Lattice types ([Coord], [PackedCoord], [Pack], [Unpack], [Ring], [WalkRings]) are
 // re-exported from internal/lattice; see docs/hexxladb/HEXXLA.md and

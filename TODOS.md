@@ -17,6 +17,7 @@ Immediate next steps. Update after each session.
 
 ## Recently Completed
 
+- 2026-04-26: MVCC Snapshot Diff — `DB.SnapshotDiff`; `SnapshotDiff`/`CellDiff`/`SeamDiff`/`DiffOp`/`SnapshotDiffConfig`; `ErrMVCCRequired`; scans MVCC version keys for (fromSeq, toSeq]; 9 tests; API_REFERENCE + CHANGELOG + ROADMAP updated
 - 2026-04-26: Event Hooks — `AfterPutCellHook`/`AfterPutCellHookFunc` + `AfterPutSeamHook`/`AfterPutSeamHookFunc`; `Options.AfterPutCell`/`AfterPutSeam`; fires after `PutCell`, `PutSeam`, `MarkConflict`, `MarkSupersedes`; error propagates; 9 tests; API_REFERENCE + CHANGELOG + ROADMAP updated
 - 2026-04-26: `app.Service` use-case layer completed — all 23 `domain.Storage` port methods delegated; compile-time interface check; 2 tests
 - 2026-04-26: Snapshot Tags/Labels — `DB.TagSnapshot`/`ViewAtTag`/`ListSnapshotTags`/`DeleteSnapshotTag`; `SnapshotTag` type; `ErrSnapshotTagNotFound`/`ErrSnapshotTagLabelTooLong`; stored under `__meta/snap-tag/<label>` in B+ tree; persists across reopen; 11 tests; API_REFERENCE + CHANGELOG + ROADMAP updated

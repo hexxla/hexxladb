@@ -15,13 +15,13 @@ Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored 
 
 ## Database lifecycle
 
-| Symbol                                  | Notes                                                                                       |
-| --------------------------------------- | ------------------------------------------------------------------------------------------- |
-| **[`Open`](../../db.go)**               | Open or create a database file; applies WAL on startup.                                     |
-| **[`(*DB).Close`](../../db.go)**        | Waits for in-flight transactions; idempotent for nil receiver.                              |
-| **[`ErrCorruptDatabase`](../../db.go)** | Open-time corruption (header/WAL).                                                          |
-| **[`Options`](../../options.go)**       | `EnableMVCC`, `MVCCRetention`, changelog, encryption, `CellValidator`, optional page hooks. |
-| **[`MVCCRetention`](../../options.go)** | Retention hint for prune suggestions.                                                       |
+| Symbol                                  | Notes                                                                                                                       |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **[`Open`](../../db.go)**               | Open or create a database file; applies WAL on startup.                                                                     |
+| **[`(*DB).Close`](../../db.go)**        | Waits for in-flight transactions; idempotent for nil receiver.                                                              |
+| **[`ErrCorruptDatabase`](../../db.go)** | Open-time corruption (header/WAL).                                                                                          |
+| **[`Options`](../../options.go)**       | `EnableMVCC`, `MVCCRetention`, changelog, encryption, `CellValidator`, `AfterPutCell`, `AfterPutSeam`, optional page hooks. |
+| **[`MVCCRetention`](../../options.go)** | Retention hint for prune suggestions.                                                                                       |
 
 ---
 
@@ -322,6 +322,22 @@ See **[ENCRYPTION.md](./ENCRYPTION.md)**.
 
 ---
 
+## MVCC Snapshot Diff
+
+Compare database state between two commit sequences. Requires MVCC (format v2). Returns all cell and seam writes in the half-open range `(fromSeq, toSeq]`. Useful for incremental replication, CDC pipelines, and audit trails.
+
+| Symbol                                             | Notes                                                                                                                     |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*DB).SnapshotDiff`](../../snapshot_diff.go)** | Returns a [SnapshotDiff] with all cell/seam writes in `(fromSeq, toSeq]`. Requires MVCC; **`ErrMVCCRequired`** otherwise. |
+| **[`SnapshotDiff`](../../snapshot_diff.go)**       | `FromSeq`, `ToSeq uint64`; `Cells []CellDiff`; `Seams []SeamDiff`.                                                        |
+| **[`CellDiff`](../../snapshot_diff.go)**           | `Coord`, `CommitSeq`, `Op DiffOp`, `Record record.CellRecord`.                                                            |
+| **[`SeamDiff`](../../snapshot_diff.go)**           | `ID`, `CommitSeq`, `Op DiffOp`, `Record record.SeamRecord`.                                                               |
+| **[`DiffOp`](../../snapshot_diff.go)**             | String kind constant; currently only **`DiffOpPut`**.                                                                     |
+| **[`SnapshotDiffConfig`](../../snapshot_diff.go)** | `IncludeCells *bool`, `IncludeSeams *bool` — omit nil to include both.                                                    |
+| **[`ErrMVCCRequired`](../../errors.go)**           | Returned when `SnapshotDiff` is called on a format-v1 (non-MVCC) database.                                                |
+
+---
+
 ## Event Hooks
 
 Post-write callbacks invoked synchronously inside the `Update` callback, after the write succeeds. A non-nil error is returned from the triggering write method. Set on `Open` via `Options`.
@@ -339,23 +355,26 @@ Post-write callbacks invoked synchronously inside the `Update` callback, after t
 
 ## Sentinel errors (complete)
 
-| Variable                                                                                                                  | When                                 |
-| ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| **`ErrNotImplemented`**                                                                                                   | Stub API.                            |
-| **`ErrSeamNotFound`**                                                                                                     | Missing **`seam/<ulid>`**.           |
-| **`ErrSeamEndpointMismatch`**                                                                                             | Immutable endpoints for ULID.        |
-| **`ErrInvalidArgument`**                                                                                                  | Bad parameter.                       |
-| **`ErrClosed`**                                                                                                           | Closed handle.                       |
-| **`ErrDatabaseClosed`**                                                                                                   | **`DB`** closed.                     |
-| **`ErrTxReadOnly`**                                                                                                       | Write in **`View`**.                 |
-| **`ErrNilCallback`**                                                                                                      | Nil **`View`/`Update`** fn.          |
-| **`ErrEncryptionKeyRequired`**, **`ErrDatabaseNotEncrypted`**, **`ErrEncryptionOptions`**, **`ErrEncryptionKeyMismatch`** | Encryption options vs file.          |
-| **`ErrCellNotFound`**                                                                                                     | e.g. **`UpdateFacet`** without cell. |
-| **`ErrFacetDerivationMismatch`**                                                                                          | Facet hash vs raw.                   |
-| **`ErrChangelogDisabled`**, **`ErrChangelogCorrupt`**                                                                     | Changefeed.                          |
-| **`ErrReadSeqFuture`**                                                                                                    | **`ViewAt`** too new.                |
-| **`ErrCommitFinalization`**                                                                                               | Post-callback failure.               |
-| **`ErrCorruptDatabase`**                                                                                                  | Open failure.                        |
+| Variable                                                                                                                  | When                                                    |
+| ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| **`ErrNotImplemented`**                                                                                                   | Stub API.                                               |
+| **`ErrSeamNotFound`**                                                                                                     | Missing **`seam/<ulid>`**.                              |
+| **`ErrSeamEndpointMismatch`**                                                                                             | Immutable endpoints for ULID.                           |
+| **`ErrInvalidArgument`**                                                                                                  | Bad parameter.                                          |
+| **`ErrClosed`**                                                                                                           | Closed handle.                                          |
+| **`ErrDatabaseClosed`**                                                                                                   | **`DB`** closed.                                        |
+| **`ErrTxReadOnly`**                                                                                                       | Write in **`View`**.                                    |
+| **`ErrNilCallback`**                                                                                                      | Nil **`View`/`Update`** fn.                             |
+| **`ErrEncryptionKeyRequired`**, **`ErrDatabaseNotEncrypted`**, **`ErrEncryptionOptions`**, **`ErrEncryptionKeyMismatch`** | Encryption options vs file.                             |
+| **`ErrCellNotFound`**                                                                                                     | e.g. **`UpdateFacet`** without cell.                    |
+| **`ErrFacetDerivationMismatch`**                                                                                          | Facet hash vs raw.                                      |
+| **`ErrChangelogDisabled`**, **`ErrChangelogCorrupt`**                                                                     | Changefeed.                                             |
+| **`ErrReadSeqFuture`**                                                                                                    | **`ViewAt`** / **`SnapshotDiff`** seq too new.          |
+| **`ErrCommitFinalization`**                                                                                               | Post-callback failure.                                  |
+| **`ErrMVCCRequired`**                                                                                                     | MVCC-only op on v1 database.                            |
+| **`ErrSnapshotTagNotFound`**                                                                                              | **`ViewAtTag`** / **`DeleteSnapshotTag`** label absent. |
+| **`ErrSnapshotTagLabelTooLong`**                                                                                          | Label > 200 bytes in **`TagSnapshot`**.                 |
+| **`ErrCorruptDatabase`**                                                                                                  | Open failure.                                           |
 
 Use **`errors.Is` / `errors.As`** for stable handling.
 
