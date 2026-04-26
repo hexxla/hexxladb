@@ -4,6 +4,9 @@
 
 ### Added
 
+- `make demo` Makefile target — runs `examples/conversational_memory` with DB defaulting to `.tmp/demo/memory.db`; override via `make demo DEMO_DB=/path/to/my.db`; DB reused across runs (seed skipped if file exists)
+- `conversational_memory` demo expanded — corpus moved to `seed_data.go` (84 turns, 5 thematic sessions: preferences/workflow, HexxlaDB internals, Go patterns, LLM systems, security/ops); `-db` CLI flag for custom DB path; DB defaults to `.tmp/demo/memory.db` (no root pollution); `printSubHeader`/`printNote` helpers; all phase descriptions, metrics, and explain outputs improved for readability; `spiralCoord` widened to 11-column grid for 84-cell corpus; budgets increased to 600/800 bytes; Phase 11 demonstrates `DB.HealthCheck`, `AfterPutCell` telemetry, and `DB.SnapshotDiff` end-to-end
+
 - `Options.MaxValueBytes uint32` — per-database maximum B+ tree value size; accepted values: 512, 1024, 2048, 4096, 8192, 16384 bytes; default 0 = 8192 (8 KB); persisted in the file header; enforced on every write via `BTree.Put`; readable via `DB.MaxValueBytes()`; `ErrInvalidArgument` on invalid value; 9 tests
 - `(*DB).MaxValueBytes() uint32` — returns the effective limit read from the file header at `Open`
 

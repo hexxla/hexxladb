@@ -6,6 +6,18 @@ Must complete before release. Core functionality gaps.
 
 _(All blockers resolved — ready to release v0.1.0.)_
 
+## v0.2.0 Candidate
+
+All items below are shipped and in `[Unreleased]`. Ready to tag once remote push is done.
+
+- **Demo expansion** — `seed_data.go` (84 turns, 5 thematic sessions); `-db` CLI flag; `make demo` Makefile target (default `.tmp/demo/memory.db`, override via `DEMO_DB`); `printSubHeader`/`printNote` helpers; readability pass across all 11 phases; `spiralCoord` widened to 11-column grid
+- **Per-database MaxValueBytes** — `Options.MaxValueBytes`, `DB.MaxValueBytes()`, header offset 100; 9 tests
+- **MVCC Snapshot Diff** — `DB.SnapshotDiff`, `CellDiff`/`SeamDiff`/`DiffOp`/`SnapshotDiffConfig`, `ErrMVCCRequired`; 9 tests
+- **Event Hooks** — `AfterPutCellHook`/`AfterPutSeamHook` + `Func` adapters, `Options.AfterPutCell`/`AfterPutSeam`; 9 tests
+- **`app.Service` completion** — all 23 `domain.Storage` delegations; compile-time interface check; 2 tests
+- **Snapshot Tags/Labels** — `DB.TagSnapshot`/`ViewAtTag`/`ListSnapshotTags`/`DeleteSnapshotTag`; 11 tests
+- **Composable Query Engine** — `Tx.QueryCells`, temporal/spatial/tag/confidence predicates, `SortOrder`, `Explain`; 17 tests
+
 ## Completed (post-v0.1.0)
 
 Shipped after v0.1.0 release on branch `feat/tier1-search-health`.
@@ -108,3 +120,5 @@ Intentional boundaries for embedded library v1.
 | 2026-04-26 | `app.Service` use-case layer completed: all 23 `domain.Storage` delegations; compile-time interface check; 2 tests                                                                                                                                                  |
 | 2026-04-26 | Snapshot Tags/Labels shipped: `DB.TagSnapshot`, `ViewAtTag`, `ListSnapshotTags`, `DeleteSnapshotTag`; `__meta/snap-tag/` B+ tree key prefix; 11 tests                                                                                                               |
 | 2026-04-26 | Composable Query Engine shipped: `Tx.QueryCells`, `CellQuery`, temporal/spatial/tag/confidence predicates, `SortOrder`, `Explain`; `SearchCells` wrapper; Temporal Range Queries closed; 17 tests                                                                   |
+| 2026-04-26 | Demo expansion: `seed_data.go` 84-turn corpus, 5 sessions; `-db` flag; `make demo` target; `printSubHeader`/`printNote`; 11-column `spiralCoord`; readability pass all phases; API_REFERENCE updated                                                                |
+| 2026-04-26 | v0.2.0 candidate locked: all Unreleased items shipped; ready to tag                                                                                                                                                                                                 |
