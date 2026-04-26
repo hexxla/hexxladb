@@ -88,7 +88,7 @@ func (v *healthView) View() string {
 			Background(colorBg2).
 			Padding(0, 2).
 			Width(colW/2 - 1).
-			Render(styleDim.Render(label) + "\n" +
+			Render(styleCardDim.Render(label) + "\n" +
 				lipgloss.NewStyle().Foreground(clr).Background(colorBg2).Bold(true).Render(value))
 	}
 
@@ -133,7 +133,7 @@ func (v *healthView) View() string {
 		Padding(0, 2).
 		Width(colW).
 		Render(
-			styleSectionHeader.Render("MVCC Stats") + "\n" +
+			styleCardHeader.Render("MVCC Stats") + "\n" +
 				kvLine("Commit Seq", fmt.Sprintf("%d", r.MVCCStats.CommitSeq)) + "\n" +
 				kvLine("Versioned Rows", fmt.Sprintf("%d", r.MVCCStats.VersionedRows)) + "\n" +
 				kvLine("Logical Cells", fmt.Sprintf("%d", r.MVCCStats.LogicalCells)),
@@ -146,13 +146,15 @@ func (v *healthView) View() string {
 		shown = shown[:20]
 	}
 	if len(shown) == 0 {
-		warnLines.WriteString(styleGood.Render("  ✓  No warnings"))
+		warnLines.WriteString(lipgloss.NewStyle().Foreground(colorGreen).Background(colorBg2).Render("  ✓  No warnings"))
 	}
 	for _, w := range shown {
-		warnLines.WriteString(styleWarn.Render("  ⚠  ") + styleDim.Render(truncStr(w, v.width-10)) + "\n")
+		warnLines.WriteString(
+			lipgloss.NewStyle().Foreground(colorOrange).Background(colorBg2).Render("  ⚠  ") +
+				styleCardDim.Render(truncStr(w, v.width-10)) + "\n")
 	}
 	if len(r.Warnings) > 20 {
-		warnLines.WriteString(styleDim.Render(fmt.Sprintf("  … and %d more", len(r.Warnings)-20)) + "\n")
+		warnLines.WriteString(styleCardDim.Render(fmt.Sprintf("  … and %d more", len(r.Warnings)-20)) + "\n")
 	}
 	warnPanel := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -160,7 +162,7 @@ func (v *healthView) View() string {
 		Background(colorBg2).
 		Padding(0, 1).
 		Width(colW).
-		Render(styleSectionHeader.Render("Warnings") + "\n" + warnLines.String())
+		Render(styleCardHeader.Render("Warnings") + "\n" + warnLines.String())
 
 	midRow := lipgloss.JoinHorizontal(lipgloss.Top, mvccDetail, "  ", warnPanel)
 

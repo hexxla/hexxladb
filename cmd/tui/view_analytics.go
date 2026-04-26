@@ -112,7 +112,7 @@ func (v *analyticsView) View() string {
 		Padding(0, 2).
 		Width(colW).
 		Render(
-			styleSectionHeader.Render("MVCC") + "\n" +
+			styleCardHeader.Render("MVCC") + "\n" +
 				kvLine("Commit Seq", fmt.Sprintf("%d", d.mvccStats.CommitSeq)) + "\n" +
 				kvLine("Cells", fmt.Sprintf("%d", d.cellCount)) + "\n" +
 				kvLine("Seams", fmt.Sprintf("%d", d.seamCount)),
@@ -125,15 +125,13 @@ func (v *analyticsView) View() string {
 		if rd.Total > 0 {
 			pct = rd.Occupied * 100 / rd.Total
 		}
-		occupied := barGraph(rd.Occupied, rd.Total, 16, colorCyan)
-		empty := barGraph(rd.Total-rd.Occupied, rd.Total, 16, colorText2)
-		_ = empty
+		occupied := barGraphBg(rd.Occupied, rd.Total, 16, colorCyan, colorBg2)
 		ringLines.WriteString(
 			lipgloss.JoinHorizontal(lipgloss.Left,
-				styleDim.Render(fmt.Sprintf("  ring %d  ", rd.Ring)),
+				styleCardDim.Render(fmt.Sprintf("  ring %d  ", rd.Ring)),
 				occupied,
-				barGraph(rd.Total-rd.Occupied, rd.Total, 16, colorBg3),
-				styleDim.Render(fmt.Sprintf("  %d/%d (%d%%)", rd.Occupied, rd.Total, pct)),
+				barGraphBg(rd.Total-rd.Occupied, rd.Total, 16, colorBg3, colorBg2),
+				styleCardDim.Render(fmt.Sprintf("  %d/%d (%d%%)", rd.Occupied, rd.Total, pct)),
 			) + "\n",
 		)
 	}
@@ -143,7 +141,7 @@ func (v *analyticsView) View() string {
 		Background(colorBg2).
 		Padding(0, 1).
 		Width(colW).
-		Render(styleSectionHeader.Render("Ring Density (origin r=5)") + "\n" + ringLines.String())
+		Render(styleCardHeader.Render("Ring Density (origin r=5)") + "\n" + ringLines.String())
 
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, mvccCard, "  ", ringCard)
 
@@ -162,12 +160,12 @@ func (v *analyticsView) View() string {
 	tagColors := []lipgloss.Color{colorPurple, colorCyan, colorGreen, colorOrange, colorPink}
 	for i, t := range shown {
 		clr := tagColors[i%len(tagColors)]
-		bar := barGraph(t.Count, maxCount, 24, clr)
+		bar := barGraphBg(t.Count, maxCount, 24, clr, colorBg2)
 		tagLines.WriteString(
 			lipgloss.JoinHorizontal(lipgloss.Left,
-				lipgloss.NewStyle().Width(24).Foreground(colorYellow).Render(truncStr(t.Tag, 22)),
+				lipgloss.NewStyle().Width(24).Foreground(colorYellow).Background(colorBg2).Render(truncStr(t.Tag, 22)),
 				bar,
-				styleDim.Render(fmt.Sprintf("  %d", t.Count)),
+				styleCardDim.Render(fmt.Sprintf("  %d", t.Count)),
 			) + "\n",
 		)
 	}
@@ -177,7 +175,7 @@ func (v *analyticsView) View() string {
 		Background(colorBg2).
 		Padding(0, 2).
 		Width(colW).
-		Render(styleSectionHeader.Render("Tag Counts (top 15)") + "\n" + tagLines.String())
+		Render(styleCardHeader.Render("Tag Counts (top 15)") + "\n" + tagLines.String())
 
 	// ── co-occurrences ─────────────────────────────────────────────────────────
 	var pairLines strings.Builder
@@ -189,14 +187,14 @@ func (v *analyticsView) View() string {
 		pairLines.WriteString(
 			lipgloss.JoinHorizontal(lipgloss.Left,
 				styleTag.Render(truncStr(p.A, 12)),
-				styleDim.Render(" + "),
+				styleCardDim.Render(" + "),
 				styleTag.Render(truncStr(p.B, 12)),
-				styleDim.Render(fmt.Sprintf("  %d", p.Count)),
+				styleCardDim.Render(fmt.Sprintf("  %d", p.Count)),
 			) + "\n",
 		)
 	}
 	if pairLines.Len() == 0 {
-		pairLines.WriteString(styleDim.Render("  (need ≥2 co-occurrences)"))
+		pairLines.WriteString(styleCardDim.Render("  (need ≥2 co-occurrences)"))
 	}
 	pairCard := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -204,7 +202,7 @@ func (v *analyticsView) View() string {
 		Background(colorBg2).
 		Padding(0, 2).
 		Width(colW).
-		Render(styleSectionHeader.Render("Tag Co-occurrences (min 2)") + "\n" + pairLines.String())
+		Render(styleCardHeader.Render("Tag Co-occurrences (min 2)") + "\n" + pairLines.String())
 
 	midRow := lipgloss.JoinHorizontal(lipgloss.Top, tagCard, "  ", pairCard)
 
@@ -223,7 +221,7 @@ func (v *analyticsView) View() string {
 
 func kvLine(label, value string) string {
 	return lipgloss.JoinHorizontal(lipgloss.Left,
-		styleKey.Width(14).Render(label+":"),
-		styleValue.Render(value),
+		styleCardKey.Width(14).Render(label+":"),
+		styleCardValue.Render(value),
 	)
 }

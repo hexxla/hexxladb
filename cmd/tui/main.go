@@ -102,7 +102,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		contentH := m.height - 5 // tabs(3) + statusbar(1) + 1 for gap line
-		contentW := m.width - 4  // subtract Padding(0,2) added in renderContent
+		contentW := m.width
 		for _, t := range m.tabs {
 			t.SetSize(contentW, contentH)
 		}
@@ -203,13 +203,14 @@ func (m model) renderContent() string {
 		inner = m.tabs[m.current].View()
 	}
 
-	// Place fills the entire content area with colorBg1, then overlays the inner
-	// view top-left. This eliminates background "holes" from unstyled fragments.
-	return lipgloss.NewStyle().Background(colorBg1).Render(
+	// Place fills the exact terminal-width × contentH canvas with colorBg1,
+	// overlaying the inner view at top-left. Width() on the outer style ensures
+	// the right edge is always filled regardless of inner content width.
+	return lipgloss.NewStyle().Width(contentW).Background(colorBg1).Render(
 		lipgloss.Place(
 			contentW, contentH,
 			lipgloss.Left, lipgloss.Top,
-			lipgloss.NewStyle().Padding(0, 2).MaxHeight(contentH).Render(inner),
+			inner,
 			lipgloss.WithWhitespaceBackground(colorBg1),
 		),
 	)

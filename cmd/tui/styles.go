@@ -151,6 +151,25 @@ var (
 			Background(colorBg1).
 			Bold(true)
 
+	// Card-interior text styles (colorBg2 background for use inside styleCard panels).
+	styleCardDim = lipgloss.NewStyle().
+			Foreground(colorText2).
+			Background(colorBg2)
+
+	styleCardHeader = lipgloss.NewStyle().
+			Foreground(colorCyan).
+			Background(colorBg2).
+			Bold(true)
+
+	styleCardKey = lipgloss.NewStyle().
+			Foreground(colorPurple).
+			Background(colorBg2).
+			Bold(true)
+
+	styleCardValue = lipgloss.NewStyle().
+			Foreground(colorText0).
+			Background(colorBg2)
+
 	// Loading spinner text
 	styleLoading = lipgloss.NewStyle().
 			Foreground(colorPurple).
@@ -182,8 +201,13 @@ func truncStr(s string, maxLen int) string {
 	return s[:maxLen-1] + "…"
 }
 
-// barGraph renders a colored bar of proportional width.
+// barGraph renders a colored bar of proportional width against colorBg1.
 func barGraph(value, maxVal, maxWidth int, clr lipgloss.Color) string {
+	return barGraphBg(value, maxVal, maxWidth, clr, colorBg1)
+}
+
+// barGraphBg renders a colored bar with an explicit background color.
+func barGraphBg(value, maxVal, maxWidth int, clr, bg lipgloss.Color) string {
 	if maxVal == 0 {
 		return ""
 	}
@@ -191,7 +215,7 @@ func barGraph(value, maxVal, maxWidth int, clr lipgloss.Color) string {
 	if w < 1 && value > 0 {
 		w = 1
 	}
-	return lipgloss.NewStyle().Foreground(clr).Background(colorBg1).Render(repeatStr("█", w))
+	return lipgloss.NewStyle().Foreground(clr).Background(bg).Render(repeatStr("█", w))
 }
 
 func repeatStr(s string, n int) string {

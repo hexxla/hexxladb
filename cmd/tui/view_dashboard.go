@@ -67,14 +67,11 @@ func (v *dashboardView) View() string {
 	subtitle := styleDim.Render("  Spatial LLM Memory Database")
 
 	// ── stat cards ──────────────────────────────────────────────────────────
-	mvccStr := styleGood.Render("enabled")
-	if stats.CommitSeq == 0 {
-		mvccStr = styleDim.Render("disabled")
-	}
+	mvccEnabled := stats.CommitSeq > 0
 
 	statCard := func(label, value string, clr lipgloss.Color) string {
 		return styleCard.BorderForeground(clr).Width(colW).Render(
-			styleDim.Render(label) + "\n" +
+			styleCardDim.Render(label) + "\n" +
 				lipgloss.NewStyle().Foreground(clr).Background(colorBg2).Bold(true).Render(value),
 		)
 	}
@@ -86,7 +83,12 @@ func (v *dashboardView) View() string {
 		" ",
 		statCard("COMMIT SEQ", fmt.Sprintf("%d", stats.CommitSeq), colorPurple),
 		" ",
-		statCard("MVCC", mvccStr, colorGreen),
+		statCard("MVCC", func() string {
+			if mvccEnabled {
+				return "enabled"
+			}
+			return "disabled"
+		}(), colorGreen),
 	)
 
 	// ── top tags ────────────────────────────────────────────────────────────
@@ -102,22 +104,22 @@ func (v *dashboardView) View() string {
 		}
 	}
 	for _, t := range shown {
-		bar := barGraph(t.Count, maxCount, 20, colorCyan)
+		bar := barGraphBg(t.Count, maxCount, 20, colorCyan, colorBg2)
 		tagLines.WriteString(
 			lipgloss.JoinHorizontal(lipgloss.Left,
-				lipgloss.NewStyle().Width(22).Foreground(colorYellow).Render(truncStr(t.Tag, 20)),
+				lipgloss.NewStyle().Width(22).Foreground(colorYellow).Background(colorBg2).Render(truncStr(t.Tag, 20)),
 				bar,
-				styleDim.Render(fmt.Sprintf("  %d", t.Count)),
+				styleCardDim.Render(fmt.Sprintf("  %d", t.Count)),
 			) + "\n",
 		)
 	}
 	if tagLines.Len() == 0 {
-		tagLines.WriteString(styleDim.Render("  no tags yet"))
+		tagLines.WriteString(styleCardDim.Render("  no tags yet"))
 	}
 
 	halfw := (w - 1) / 2
 	tagsBox := styleCard.Width(halfw).Render(
-		styleSectionHeader.Render("Top Tags") + "\n" + tagLines.String(),
+		styleCardHeader.Render("Top Tags") + "\n" + tagLines.String(),
 	)
 
 	// ── keybindings card ────────────────────────────────────────────────────
@@ -135,13 +137,13 @@ func (v *dashboardView) View() string {
 	for _, b := range bindings {
 		kbLines.WriteString(
 			lipgloss.JoinHorizontal(lipgloss.Left,
-				styleKey.Width(18).Render(b.key),
-				styleDim.Render(b.desc),
+				styleCardKey.Width(18).Render(b.key),
+				styleCardDim.Render(b.desc),
 			) + "\n",
 		)
 	}
 	kbBox := styleCard.BorderForeground(colorText2).Width(w - halfw - 1).Render(
-		styleSectionHeader.Render("Keybindings") + "\n" + kbLines.String(),
+		styleCardHeader.Render("Keybindings") + "\n" + kbLines.String(),
 	)
 
 	infoRow := lipgloss.JoinHorizontal(lipgloss.Top, tagsBox, " ", kbBox)
