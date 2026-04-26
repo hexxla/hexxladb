@@ -26,6 +26,9 @@ testdata/fuzz/**/*
 __debug_bin
 __debug_bin_*
 
+# go run output binaries (e.g. from examples/) dropped at repo root
+/conversational_memory
+
 # --- Future / common output directories (binaries, releases, packagers) ---
 /bin/
 /build/
