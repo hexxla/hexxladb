@@ -74,7 +74,7 @@ func (v *dashboardView) View() string {
 	statCard := func(label, value string, clr lipgloss.Color) string {
 		return styleCard.BorderForeground(clr).Width(colW).Render(
 			styleDim.Render(label) + "\n" +
-				lipgloss.NewStyle().Foreground(clr).Bold(true).Render(value),
+				lipgloss.NewStyle().Foreground(clr).Background(colorBg2).Bold(true).Render(value),
 		)
 	}
 

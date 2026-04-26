@@ -63,17 +63,6 @@ var (
 				Foreground(colorText1).
 				Padding(0, 2)
 
-	styleTabGap = lipgloss.NewStyle().
-			BorderBottom(true).
-			BorderStyle(lipgloss.Border{Bottom: "─"}).
-			BorderForeground(colorText2).
-			Background(colorBg0)
-
-	styleContent = lipgloss.NewStyle().
-			Background(colorBg1).
-			Foreground(colorText0).
-			Padding(0, 2)
-
 	styleBorder = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colorPurple)
@@ -108,22 +97,27 @@ var (
 	// Section headers inside views
 	styleViewTitle = lipgloss.NewStyle().
 			Foreground(colorPurple).
+			Background(colorBg1).
 			Bold(true)
 
 	styleSectionHeader = lipgloss.NewStyle().
 				Foreground(colorCyan).
+				Background(colorBg1).
 				Bold(true)
 
 	// Labels / keys
 	styleKey = lipgloss.NewStyle().
 			Foreground(colorPurple).
+			Background(colorBg1).
 			Bold(true)
 
 	styleValue = lipgloss.NewStyle().
-			Foreground(colorText0)
+			Foreground(colorText0).
+			Background(colorBg1)
 
 	styleDim = lipgloss.NewStyle().
-			Foreground(colorText2)
+			Foreground(colorText2).
+			Background(colorBg1)
 
 	styleTag = lipgloss.NewStyle().
 			Foreground(colorYellow).
@@ -131,29 +125,36 @@ var (
 			Padding(0, 1)
 
 	styleGood = lipgloss.NewStyle().
-			Foreground(colorGreen)
+			Foreground(colorGreen).
+			Background(colorBg1)
 
 	styleWarn = lipgloss.NewStyle().
-			Foreground(colorOrange)
+			Foreground(colorOrange).
+			Background(colorBg1)
 
 	styleBad = lipgloss.NewStyle().
-			Foreground(colorRed)
+			Foreground(colorRed).
+			Background(colorBg1)
 
 	stylePink = lipgloss.NewStyle().
-			Foreground(colorPink)
+			Foreground(colorPink).
+			Background(colorBg1)
 
 	// Help bar at bottom of content
 	styleHelp = lipgloss.NewStyle().
 			Foreground(colorText2).
+			Background(colorBg1).
 			Italic(true)
 
 	styleHelpKey = lipgloss.NewStyle().
 			Foreground(colorCyan).
+			Background(colorBg1).
 			Bold(true)
 
 	// Loading spinner text
 	styleLoading = lipgloss.NewStyle().
 			Foreground(colorPurple).
+			Background(colorBg1).
 			Bold(true).
 			Italic(true)
 )
@@ -168,19 +169,6 @@ func viewTitle(title string, w int) string {
 	t := styleViewTitle.Render(title)
 	rule := styleDim.Render(strings.Repeat("─", max(0, w-lipgloss.Width(t)-1)))
 	return lipgloss.JoinHorizontal(lipgloss.Top, t, " ", rule)
-}
-
-// clampLines hard-caps s to at most maxLines rendered lines, truncating the rest.
-// This prevents inner view content from overflowing the fixed-height content panel.
-func clampLines(s string, maxLines int) string {
-	if maxLines <= 0 {
-		return ""
-	}
-	lines := strings.SplitN(s, "\n", maxLines+1)
-	if len(lines) <= maxLines {
-		return s
-	}
-	return strings.Join(lines[:maxLines], "\n")
 }
 
 // truncStr truncates a string to maxLen with ellipsis.
@@ -203,7 +191,7 @@ func barGraph(value, maxVal, maxWidth int, clr lipgloss.Color) string {
 	if w < 1 && value > 0 {
 		w = 1
 	}
-	return lipgloss.NewStyle().Foreground(clr).Render(repeatStr("█", w))
+	return lipgloss.NewStyle().Foreground(clr).Background(colorBg1).Render(repeatStr("█", w))
 }
 
 func repeatStr(s string, n int) string {

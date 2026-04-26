@@ -194,10 +194,10 @@ func (v *cellsView) View() string {
 		Width(w).
 		StyleFunc(func(row, col int) lipgloss.Style {
 			if row == table.HeaderRow {
-				return lipgloss.NewStyle().Foreground(colorPurple).Bold(true).Padding(0, 1)
+				return lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Bold(true).Padding(0, 1)
 			}
 			actualIdx := start + row
-			base := lipgloss.NewStyle().Padding(0, 1)
+			base := lipgloss.NewStyle().Padding(0, 1).Background(colorBg1)
 			switch {
 			case actualIdx == v.cursor:
 				base = base.Background(colorBg3).Foreground(colorCyan).Bold(true)
@@ -226,7 +226,7 @@ func (v *cellsView) View() string {
 		c, score := v.rowCell(i)
 		marker := "  "
 		if i == v.cursor {
-			marker = lipgloss.NewStyle().Foreground(colorPurple).Render(" ▶")
+			marker = lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Render(" ▶")
 		}
 		coord := fmt.Sprintf("(%d,%d)", c.Coord.Q, c.Coord.R)
 		content := truncStr(c.RawContent, contentW)
@@ -266,14 +266,14 @@ func (v *cellsView) View() string {
 
 func (v *cellsView) renderSearchBar() string {
 	if v.searching {
-		return lipgloss.NewStyle().Foreground(colorCyan).Render("  ⌕  ") +
-			lipgloss.NewStyle().Foreground(colorText0).Bold(true).Render(v.query) +
-			lipgloss.NewStyle().Foreground(colorPurple).Render("█") +
+		return lipgloss.NewStyle().Foreground(colorCyan).Background(colorBg1).Render("  ⌕  ") +
+			lipgloss.NewStyle().Foreground(colorText0).Background(colorBg1).Bold(true).Render(v.query) +
+			lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Render("█") +
 			"  " + styleDim.Render("Enter=search  Esc=clear")
 	}
 	if v.query != "" && v.searchHits != nil {
 		return styleDim.Render("  ⌕  ") +
-			lipgloss.NewStyle().Foreground(colorYellow).Render(v.query) +
+			lipgloss.NewStyle().Foreground(colorYellow).Background(colorBg1).Render(v.query) +
 			"  " + styleDim.Render("/=new search  r=browse all")
 	}
 	return ""

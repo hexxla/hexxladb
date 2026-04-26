@@ -148,10 +148,10 @@ func (v *seamsView) View() string {
 		Width(w).
 		StyleFunc(func(row, col int) lipgloss.Style {
 			if row == table.HeaderRow {
-				return lipgloss.NewStyle().Foreground(colorPurple).Bold(true).Padding(0, 1)
+				return lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Bold(true).Padding(0, 1)
 			}
 			actualIdx := start + row
-			base := lipgloss.NewStyle().Padding(0, 1)
+			base := lipgloss.NewStyle().Padding(0, 1).Background(colorBg1)
 			switch {
 			case actualIdx == v.cursor:
 				base = base.Background(colorBg3).Foreground(colorCyan).Bold(true)
@@ -176,7 +176,7 @@ func (v *seamsView) View() string {
 		s := v.seams[i]
 		marker := "  "
 		if i == v.cursor {
-			marker = lipgloss.NewStyle().Foreground(colorPurple).Render(" ▶")
+			marker = lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Render(" ▶")
 		}
 		t = t.Row(
 			marker,
@@ -190,9 +190,9 @@ func (v *seamsView) View() string {
 
 	// legend
 	legend := lipgloss.JoinHorizontal(lipgloss.Left,
-		lipgloss.NewStyle().Foreground(colorOrange).Render("  ⋈ mark_conflict"),
+		lipgloss.NewStyle().Foreground(colorOrange).Background(colorBg1).Render("  ⋈ mark_conflict"),
 		"   ",
-		lipgloss.NewStyle().Foreground(colorPink).Render("↺ supersedes"),
+		lipgloss.NewStyle().Foreground(colorPink).Background(colorBg1).Render("↺ supersedes"),
 		styleDim.Render(fmt.Sprintf("   total: %d", len(v.seams))),
 	)
 

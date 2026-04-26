@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -92,8 +93,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		contentH := m.height - 5 // tabs(3) + statusbar(1) + padding
-		contentW := m.width - 4  // 2-char padding each side
+		contentH := m.height - 5 // tabs(3) + statusbar(1) + 1 for gap line
+		contentW := m.width - 4  // subtract Padding(0,2) added in renderContent
 		for _, t := range m.tabs {
 			t.SetSize(contentW, contentH)
 		}
@@ -165,27 +166,41 @@ func (m model) renderTabBar() string {
 		}
 	}
 	row := lipgloss.JoinHorizontal(lipgloss.Bottom, rendered...)
+	rowH := lipgloss.Height(row)
 	gapW := max(0, m.width-lipgloss.Width(row))
-	gap := styleTabGap.Width(gapW).Render("")
+	// Gap fills horizontally; height must match the tab row so bottom-edge aligns.
+	gap := lipgloss.NewStyle().
+		Background(colorBg0).
+		Foreground(colorText2).
+		Width(gapW).
+		Height(rowH).
+		AlignVertical(lipgloss.Bottom).
+		Render(strings.Repeat("─", gapW))
 	return lipgloss.JoinHorizontal(lipgloss.Bottom, row, gap)
 }
 
 func (m model) renderContent() string {
 	contentH := m.height - 5
-	contentW := m.width - 4 // account for 2-char padding each side
+	contentW := m.width
 	if contentH < 1 {
 		contentH = 1
 	}
 
 	inner := ""
 	if m.current >= 0 && m.current < len(m.tabs) {
-		inner = clampLines(m.tabs[m.current].View(), contentH)
+		inner = m.tabs[m.current].View()
 	}
 
-	return styleContent.
-		Width(contentW).
-		Height(contentH).
-		Render(inner)
+	// Place fills the entire content area with colorBg1, then overlays the inner
+	// view top-left. This eliminates background "holes" from unstyled fragments.
+	return lipgloss.NewStyle().Background(colorBg1).Render(
+		lipgloss.Place(
+			contentW, contentH,
+			lipgloss.Left, lipgloss.Top,
+			lipgloss.NewStyle().Padding(0, 2).MaxHeight(contentH).Render(inner),
+			lipgloss.WithWhitespaceBackground(colorBg1),
+		),
+	)
 }
 
 func (m model) renderStatusBar() string {

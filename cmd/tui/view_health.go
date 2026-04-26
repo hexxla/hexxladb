@@ -93,7 +93,7 @@ func (v *healthView) View() string {
 			Padding(0, 2).
 			Width(colW/2 - 1).
 			Render(styleDim.Render(label) + "\n" +
-				lipgloss.NewStyle().Foreground(clr).Bold(true).Render(value))
+				lipgloss.NewStyle().Foreground(clr).Background(colorBg2).Bold(true).Render(value))
 	}
 
 	row1 := lipgloss.JoinHorizontal(lipgloss.Top,

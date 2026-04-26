@@ -235,18 +235,18 @@ func (v *inspectorView) renderPack(w int) string {
 		prefix := "  "
 		clr := colorText0
 		if c.SupersededFrom != nil {
-			prefix = lipgloss.NewStyle().Foreground(colorPink).Render(" ↺")
+			prefix = lipgloss.NewStyle().Foreground(colorPink).Background(colorBg2).Render(" ↺")
 			clr = colorCyan
 		}
 		bar := barGraph(int(c.Provenance.Confidence*100), int(maxConf*100), 8, colorGreen)
 		line := lipgloss.JoinHorizontal(lipgloss.Left,
 			prefix,
-			lipgloss.NewStyle().Foreground(colorText2).Width(10).Render(
+			lipgloss.NewStyle().Foreground(colorText2).Background(colorBg2).Width(10).Render(
 				fmt.Sprintf("(%d,%d)", c.Coord.Q, c.Coord.R),
 			),
 			bar,
 			"  ",
-			lipgloss.NewStyle().Foreground(clr).Render(truncStr(c.RawContent, w-32)),
+			lipgloss.NewStyle().Foreground(clr).Background(colorBg2).Render(truncStr(c.RawContent, w-32)),
 		)
 		if c.SupersededFrom != nil {
 			line += "\n" + stylePink.Render(
@@ -298,7 +298,7 @@ func (v *inspectorView) renderExplain(w int) string {
 			default:
 				return colorRed
 			}
-		}()).Render(ex.Reason)
+		}()).Background(colorBg1).Render(ex.Reason)
 		_ = clr
 		extra := ""
 		if ex.SupersededBy != nil {
@@ -312,5 +312,5 @@ func (v *inspectorView) renderExplain(w int) string {
 			extra,
 		)
 	}
-	return styleBorderSubtle.Width(w).Padding(0, 1).Render(sb.String())
+	return styleBorderSubtle.Background(colorBg1).Width(w).Padding(0, 1).Render(sb.String())
 }

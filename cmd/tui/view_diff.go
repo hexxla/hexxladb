@@ -129,7 +129,7 @@ func (v *diffView) View() string {
 			Padding(0, 2).
 			Width(colW).
 			Render(styleDim.Render(label) + "\n" +
-				lipgloss.NewStyle().Foreground(clr).Bold(true).Render(val))
+				lipgloss.NewStyle().Foreground(clr).Background(colorBg2).Bold(true).Render(val))
 	}
 
 	summaryRow := lipgloss.JoinHorizontal(lipgloss.Top,
@@ -154,10 +154,10 @@ func (v *diffView) View() string {
 		Width(w).
 		StyleFunc(func(row, _ int) lipgloss.Style {
 			if row == table.HeaderRow {
-				return lipgloss.NewStyle().Foreground(colorPurple).Bold(true).Padding(0, 1)
+				return lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Bold(true).Padding(0, 1)
 			}
 			actualIdx := start + row
-			base := lipgloss.NewStyle().Padding(0, 1)
+			base := lipgloss.NewStyle().Padding(0, 1).Background(colorBg1)
 			if actualIdx == v.cursor {
 				base = base.Background(colorBg3).Bold(true)
 			}
@@ -172,7 +172,7 @@ func (v *diffView) View() string {
 		c := d.Cells[i]
 		marker := "  "
 		if i == v.cursor {
-			marker = lipgloss.NewStyle().Foreground(colorPurple).Render(" ▶")
+			marker = lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Render(" ▶")
 		}
 		coord := c.Coord
 		opStr := string(c.Op)

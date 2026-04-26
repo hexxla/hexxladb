@@ -73,15 +73,15 @@ func (v *hexGridView) View() string {
 		coloredLine := line
 		// Dim empty cells, highlight filled
 		coloredLine = strings.ReplaceAll(coloredLine, "·",
-			lipgloss.NewStyle().Foreground(colorText2).Render("·"))
+			lipgloss.NewStyle().Foreground(colorText2).Background(colorBg1).Render("·"))
 		coloredLine = strings.ReplaceAll(coloredLine, "●",
-			lipgloss.NewStyle().Foreground(colorCyan).Bold(true).Render("●"))
+			lipgloss.NewStyle().Foreground(colorCyan).Background(colorBg1).Bold(true).Render("●"))
 		coloredLine = strings.ReplaceAll(coloredLine, "○",
-			lipgloss.NewStyle().Foreground(colorPurple).Render("○"))
+			lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Render("○"))
 		coloredGrid.WriteString(coloredLine + "\n")
 	}
 
-	gridPanel := styleBorder.Padding(0, 2).
+	gridPanel := styleBorder.Background(colorBg1).Padding(0, 2).
 		Render(
 			styleSectionHeader.Render(fmt.Sprintf("Hex Grid — center (%d,%d) radius %d", v.center.Q, v.center.R, v.radius)) + "\n\n" +
 				coloredGrid.String(),
@@ -109,7 +109,7 @@ func (v *hexGridView) View() string {
 			) + "\n",
 		)
 	}
-	statsPanel := styleBorderSubtle.Width(w/3).Padding(0, 1).
+	statsPanel := styleBorderSubtle.Background(colorBg1).Width(w/3).Padding(0, 1).
 		Render(styleSectionHeader.Render("Ring Density") + "\n" + ringLines.String())
 
 	help := strings.Join([]string{
