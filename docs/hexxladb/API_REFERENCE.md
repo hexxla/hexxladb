@@ -212,13 +212,42 @@ See **[CHANGEFEED.md](./CHANGEFEED.md)**.
 
 ---
 
+## Composable Query Engine
+
+`Tx.QueryCells` is the unified query entry point. All predicate fields are AND-combined; zero/empty values are ignored.
+
+| Symbol                                        | Notes                                                                                                                                                                                                                    |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **[`(*Tx).QueryCells`](../../query_exec.go)** | Execute a `CellQuery` against the snapshot. Planner picks cheapest index; remaining predicates applied in-memory.                                                                                                        |
+| **[`CellQuery`](../../query.go)**             | Predicate: `Query`, `RequireTags` (AND), `AnyTags` (OR), `ExcludeTags` (NOT), `SourceID`, `MinConfidence`, `MaxConfidence`, `After`/`Before` (temporal), `Center`+`Radius` (spatial), `MaxResults`, `SortBy`, `Explain`. |
+| **[`CellQueryResult`](../../query.go)**       | `Cell CellView`, `Score float64`, `Explanation string` (when `Explain=true`).                                                                                                                                            |
+| **[`SortOrder`](../../query.go)**             | `SortByScore` (default), `SortByConfidence`, `SortByRecency`, `SortByCoord`.                                                                                                                                             |
+
+### Query planner index selection
+
+| Condition               | Primary index                                                  |
+| ----------------------- | -------------------------------------------------------------- |
+| `RequireTags` non-empty | `tag/` secondary index                                         |
+| `SourceID` set          | `source/` secondary index                                      |
+| `After` or `Before` set | `time/` week-bucket index (single `AscendRange`, no full scan) |
+| `Center`+`Radius` set   | Ring walk around `Center`                                      |
+| Fallback                | Full scan (ring walk from origin, radius 32)                   |
+
+### Temporal queries
+
+`After`/`Before` filter on cell `ValidFrom`. Cells with no `ValidFrom` are excluded from any temporal query. Uses the existing `time/` weekly-bucket index.
+
+---
+
 ## Content Search
 
-| Symbol                                     | Notes                                                                                                                                                                                                                                                                       |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*Tx).SearchCells`](../../search.go)** | Scored scan over visible cells. Returns `[]CellSearchResult` sorted by relevance; each result includes a `Coord` suitable for use as a context-pack seed.                                                                                                                   |
-| **[`CellSearchConfig`](../../search.go)**  | `Query` (substring/tag/source), `RequireTags` (AND), `AnyTags` (OR), `MinConfidence`, `MaxConfidence`, `SourceID`, `Center`+`Radius` (spatial), `MaxResults`, `MaxScanRadius`. Forward-compatible: `Embedding []float32` will be added here later without breaking callers. |
-| **[`CellSearchResult`](../../search.go)**  | `Cell CellView` (full assembled view with `Coord`) + `Score float64` (composite relevance).                                                                                                                                                                                 |
+`SearchCells` is a convenience wrapper over `QueryCells` kept for backward compatibility. For `ExcludeTags`, `SortBy`, `Explain`, or temporal filters, use `QueryCells` directly.
+
+| Symbol                                     | Notes                                                                                                                                                                                                  |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **[`(*Tx).SearchCells`](../../search.go)** | Wrapper over `QueryCells`. Returns `[]CellSearchResult` sorted by score; each result includes a `Coord` for use as a context-pack seed.                                                                |
+| **[`CellSearchConfig`](../../search.go)**  | `Query`, `RequireTags` (AND), `AnyTags` (OR), `MinConfidence`, `MaxConfidence`, `SourceID`, `Center`+`Radius`, `MaxResults`, `MaxScanRadius`. Forward-compatible: `Embedding []float32` addable later. |
+| **[`CellSearchResult`](../../search.go)**  | `Cell CellView` + `Score float64`.                                                                                                                                                                     |
 
 ### Content Search scoring
 

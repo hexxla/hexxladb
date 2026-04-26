@@ -1,0 +1,116 @@
+package hexxladb
+
+import "time"
+
+// SortOrder controls how [Tx.QueryCells] orders its results.
+type SortOrder int
+
+const (
+	// SortByScore sorts results by composite relevance score descending (default).
+	SortByScore SortOrder = iota
+	// SortByConfidence sorts results by Provenance.Confidence descending.
+	SortByConfidence
+	// SortByRecency sorts results by ValidFrom descending (most recently written first).
+	// Cells with no ValidFrom are sorted after cells that have one.
+	SortByRecency
+	// SortByCoord sorts results by Coord lexicographically ascending (Q then R).
+	SortByCoord
+)
+
+// CellQuery is a composable predicate specification for [Tx.QueryCells].
+//
+// All non-zero fields are combined as AND conditions. Fields that are zero
+// values (empty strings, nil slices, zero times, etc.) are ignored.
+//
+// Typical usage:
+//
+//	results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
+//	    RequireTags:   []string{"fact"},
+//	    After:         time.Now().Add(-7 * 24 * time.Hour),
+//	    MinConfidence: 0.8,
+//	    MaxResults:    20,
+//	    SortBy:        hexxladb.SortByRecency,
+//	})
+type CellQuery struct {
+	// --- Lexical ---
+
+	// Query is matched against RawContent (substring), Tags (exact or prefix),
+	// and SourceID (exact). Empty string disables lexical matching.
+	Query string
+
+	// RequireTags requires ALL listed tags to be present on a cell (AND).
+	RequireTags []string
+
+	// AnyTags requires AT LEAST ONE of the listed tags to be present (OR).
+	// Ignored when empty.
+	AnyTags []string
+
+	// ExcludeTags rejects cells that carry ANY of the listed tags (NOT).
+	ExcludeTags []string
+
+	// --- Provenance ---
+
+	// SourceID restricts results to cells with exactly this source identifier.
+	SourceID string
+
+	// MinConfidence rejects cells with Confidence < MinConfidence.
+	// Zero means no lower bound.
+	MinConfidence float64
+
+	// MaxConfidence rejects cells with Confidence > MaxConfidence.
+	// Zero means no upper bound.
+	MaxConfidence float64
+
+	// --- Temporal ---
+
+	// After rejects cells whose ValidFrom is at or before this time.
+	// Uses the cell-level validity window (set when PutCell is called with
+	// a non-nil ValidFrom), not the MVCC commit timestamp.
+	// Zero time means no lower bound.
+	After time.Time
+
+	// Before rejects cells whose ValidFrom is at or after this time.
+	// Zero time means no upper bound.
+	Before time.Time
+
+	// --- Spatial ---
+
+	// Center and Radius together restrict results to cells within Radius rings
+	// of Center (using hex distance). Radius=0 disables spatial filtering.
+	Center Coord
+	Radius int
+
+	// --- Output ---
+
+	// MaxResults caps the number of returned results. Zero means unlimited.
+	MaxResults int
+
+	// SortBy controls result ordering. Defaults to SortByScore.
+	SortBy SortOrder
+
+	// Explain populates CellQueryResult.Explanation with a human-readable
+	// description of why each cell was included and its score breakdown.
+	Explain bool
+
+	// --- Forward compatibility ---
+
+	// Embedding is reserved for future ANN/vector similarity search.
+	// Currently ignored; set Query for lexical search instead.
+	// When the embed/ keyspace is implemented, this field will be used
+	// without any breaking change to existing callers.
+	Embedding []float32
+}
+
+// CellQueryResult is one result from [Tx.QueryCells].
+type CellQueryResult struct {
+	// Cell is the fully assembled view of the matching cell, including Coord.
+	Cell CellView
+
+	// Score is the composite relevance score used for SortByScore ordering.
+	// Zero for queries that use SortByConfidence, SortByRecency, or SortByCoord.
+	Score float64
+
+	// Explanation is a human-readable breakdown of the score and filter decisions.
+	// Only populated when CellQuery.Explain is true.
+	Explanation string
+}

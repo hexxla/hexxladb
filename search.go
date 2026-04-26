@@ -3,7 +3,6 @@ package hexxladb
 import (
 	"context"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -59,10 +58,11 @@ type CellSearchResult struct {
 	Score float64
 }
 
-const defaultSearchMaxResults = 20
-const defaultSearchScanRadius = 32
-
 // SearchCells scans visible cells and returns results ranked by relevance score.
+//
+// SearchCells is a convenience wrapper over [Tx.QueryCells]. For full control
+// over sort order, temporal filters, ExcludeTags, and Explain mode use
+// [Tx.QueryCells] directly.
 //
 // Scoring (contributions are additive):
 //   - Query matches a tag exactly (case-insensitive):           +1.0
@@ -75,101 +75,38 @@ const defaultSearchScanRadius = 32
 // Results are sorted descending by Score; ties broken by Confidence descending.
 // An empty Query still applies all filter fields and scores by Confidence only.
 func (tx *Tx) SearchCells(ctx context.Context, cfg CellSearchConfig) ([]CellSearchResult, error) {
-	if err := ctx.Err(); err != nil {
+	q := CellQuery{
+		Query:         cfg.Query,
+		RequireTags:   cfg.RequireTags,
+		AnyTags:       cfg.AnyTags,
+		SourceID:      cfg.SourceID,
+		MinConfidence: cfg.MinConfidence,
+		MaxConfidence: cfg.MaxConfidence,
+		Center:        cfg.Center,
+		Radius:        cfg.Radius,
+		MaxResults:    cfg.MaxResults,
+		SortBy:        SortByScore,
+	}
+	if q.MaxResults <= 0 {
+		q.MaxResults = defaultQueryMaxResults
+	}
+	if q.Radius <= 0 {
+		scanR := cfg.MaxScanRadius
+		if scanR <= 0 {
+			scanR = defaultQueryScanRadius
+		}
+		q.Radius = scanR
+	}
+
+	qrs, err := tx.QueryCells(ctx, q)
+	if err != nil {
 		return nil, err
 	}
-	if tx == nil || tx.db == nil {
-		return nil, ErrClosed
+	out := make([]CellSearchResult, len(qrs))
+	for i, r := range qrs {
+		out[i] = CellSearchResult{Cell: r.Cell, Score: r.Score}
 	}
-
-	maxResults := cfg.MaxResults
-	if maxResults <= 0 {
-		maxResults = defaultSearchMaxResults
-	}
-	scanRadius := cfg.MaxScanRadius
-	if scanRadius <= 0 {
-		scanRadius = defaultSearchScanRadius
-	}
-
-	// Determine the set of coordinates to scan.
-	var coords []Coord
-	if cfg.Radius > 0 {
-		coords = WalkRings(nil, cfg.Center, cfg.Radius)
-	} else {
-		coords = WalkRings(nil, Coord{}, scanRadius)
-	}
-
-	queryLow := strings.ToLower(strings.TrimSpace(cfg.Query))
-
-	var results []CellSearchResult
-	for _, c := range coords {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-
-		rec, ok, err := tx.GetCell(mustPack(c))
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			continue
-		}
-
-		// ── filter: RequireTags (AND) ────────────────────────────────────────
-		if len(cfg.RequireTags) > 0 && !hasAllTags(rec.Tags, cfg.RequireTags) {
-			continue
-		}
-
-		// ── filter: AnyTags (OR) ────────────────────────────────────────────
-		if len(cfg.AnyTags) > 0 && !hasAnyTag(rec.Tags, cfg.AnyTags) {
-			continue
-		}
-
-		// ── filter: confidence range ─────────────────────────────────────────
-		conf := rec.Provenance.Confidence
-		if cfg.MinConfidence > 0 && conf < cfg.MinConfidence {
-			continue
-		}
-		if cfg.MaxConfidence > 0 && conf > cfg.MaxConfidence {
-			continue
-		}
-
-		// ── filter: source ID ────────────────────────────────────────────────
-		if cfg.SourceID != "" && rec.Provenance.SourceID != cfg.SourceID {
-			continue
-		}
-
-		// ── scoring ──────────────────────────────────────────────────────────
-		score := scoreCell(queryLow, rec.Tags, rec.RawContent, rec.Provenance.SourceID, conf)
-
-		// If a non-empty query is set and the cell scores nothing, skip it.
-		if queryLow != "" && score <= 0.1*conf {
-			continue
-		}
-
-		results = append(results, CellSearchResult{
-			Cell: CellView{
-				Coord:      c,
-				RawContent: rec.RawContent,
-				Tags:       rec.Tags,
-				Provenance: rec.Provenance,
-				Validity:   rec.Validity,
-			},
-			Score: score,
-		})
-	}
-
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].Score != results[j].Score {
-			return results[i].Score > results[j].Score
-		}
-		return results[i].Cell.Provenance.Confidence > results[j].Cell.Provenance.Confidence
-	})
-
-	if len(results) > maxResults {
-		results = results[:maxResults]
-	}
-	return results, nil
+	return out, nil
 }
 
 // scoreCell computes a composite relevance score for a cell given a lower-cased query.
