@@ -6,6 +6,13 @@
 
 **The storage engine that makes associative memory a first-class physical property.**
 
+[![CI](https://github.com/hexxla/hexxladb/actions/workflows/ci.yml/badge.svg)](https://github.com/hexxla/hexxladb/actions/workflows/ci.yml)
+[![Integration](https://github.com/hexxla/hexxladb/actions/workflows/integration.yml/badge.svg)](https://github.com/hexxla/hexxladb/actions/workflows/integration.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/hexxla/hexxladb.svg)](https://pkg.go.dev/github.com/hexxla/hexxladb)
+[![Go Report Card](https://goreportcard.com/badge/github.com/hexxla/hexxladb)](https://goreportcard.com/report/github.com/hexxla/hexxladb)
+[![Go 1.26](https://img.shields.io/badge/go-1.26-00ADD8?logo=go)](https://go.dev/doc/go1.26)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 </div>
 
 LLM memory is a patchwork: RAG dumps, graph plugins, and "just stuff more tokens in the context" hacks. HexxlaDB is a different bet — it makes the entire storage engine a faithful implementation of a **structured, contradiction-aware, temporally-valid hexagonal memory model**, where spatial locality is not a query feature but a physical property of the on-disk format.
