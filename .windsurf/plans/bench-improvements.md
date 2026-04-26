@@ -2,7 +2,7 @@
 description: Benchmark-driven performance improvements for HexxlaDB
 branch: feat/bench-improvements
 created: 2026-04-26
-status: in-progress
+status: complete
 ---
 
 # Benchmark Improvement Plan

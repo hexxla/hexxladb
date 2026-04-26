@@ -5,7 +5,6 @@ Immediate next steps. Update after each session.
 ## Current
 
 - [ ] Ready for v0.2.0 / v0.3.0 release push to remote
-- [x] `feat/bench-improvements` — all 9 work items shipped
 
 ## Pending (next sessions)
 
@@ -24,6 +23,7 @@ Immediate next steps. Update after each session.
 
 ## Recently Completed
 
+- 2026-04-26: `HealthCheck` O(n) rewrite — replaced `WalkRings`+`GetCell` (O(ScanRadius²)) with `cell/`+`seam/`+`tag/`+`source/` single forward scans; all `GetCell` presence checks → O(1) `liveCells` map; `ScanRadius` deprecated; `BenchmarkAPI_HealthCheck` added; 445 µs (512 cells), 1.6 ms (2000 cells)
 - 2026-04-26: `feat/bench-improvements` — 9 perf changes: `mortonPack63` lookup table; `RingInto` buffer reuse in `collectCandidates`; pre-sized `items`+`seen` slices; O(1) eviction total; `AssembleCellView` tags copy removed; `findSeams` lazy iteration + pre-flight check; `CellQuery.MaxScanRows`; `BenchmarkAPI_BatchPutCells`; `make ci` clean
 - 2026-04-26: LEAN quick wins — deleted orphaned `internal/config` package (zero callers); added `BenchmarkAPI_QueryCells` (4 predicate shapes × 2 sizes), `BenchmarkAPI_LoadContextPack` (radii 1/3/5 × 2 sizes), `BenchmarkAPI_MVCCVersionResolution` (10/50/100/500 versions) to `api_bench_test.go`
 

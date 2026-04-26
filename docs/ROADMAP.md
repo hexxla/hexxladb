@@ -57,6 +57,7 @@ Shipped with v0.1.0 release.
 - **Secondary index btree coupling fix** — added `tx.deleteDirect` mirroring `tx.putDirect`; `cell_secondary.go` and `seam_secondary.go` no longer reach through to `tx.db.btree.Delete` directly
 - **LEAN quick wins** — deleted orphaned `internal/config` package (zero callers); added `BenchmarkAPI_QueryCells` (4 predicate shapes), `BenchmarkAPI_LoadContextPack` (radii 1/3/5), `BenchmarkAPI_MVCCVersionResolution` (10/50/100/500 versions) as performance baselines
 - **Benchmark-driven performance improvements** (`feat/bench-improvements`) — 9 targeted changes from `make bench-api` baseline: `mortonPack63` lookup table (3 passes × 7 bits, scalar unpack preserved); `RingInto` buffer-reuse variant; `collectCandidates` pre-sized with `min(3r²+3r+1, cap)`; O(1) eviction total; `AssembleCellView` tags copy removed (callers read-only); `findSeams` lazy iteration + single pre-flight `AscendRange` (saves 74–182 tree calls in seam-free DBs); `CellQuery.MaxScanRows`; `BenchmarkAPI_BatchPutCells` (10/100/500)
+- **`HealthCheck` O(n) rewrite** — replaced O(ScanRadius²) `WalkRings`+`GetCell` loop with `cell/` prefix scan; `seam/` primary scan replaces `FindSeams` spatial call; `tag/` and `source/` family scans replace per-tag/per-source `AscendCells*` loops; all presence checks use O(1) `liveCells` map built in first pass; `ScanRadius` deprecated (no-op); `BenchmarkAPI_HealthCheck` added; 445 µs/512 cells · 1.6 ms/2000 cells
 
 ## Quick Wins
 
