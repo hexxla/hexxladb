@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **B+ tree leaf-page-full on large inline value updates** — `insertIntoLeaf` unconditionally called `buildLeafPage` when replacing an existing key's value without checking whether the updated page still fit within `pageSize`. When HNSW node neighbor lists grow during `PutEmbedding` (e.g. 128-dim embeddings, 32-dim at >12 entries), the updated value is larger than the original, causing the page to overflow and returning `ErrCorruptTree: leaf page full`. Fix: added a `leafSerializedSize` guard on the update-in-place path; pages that exceed `pageSize` after an in-place update now fall through to the existing split path. Regression tests added: `TestPutEmbedding_HighCount_32d` (600 entries) and `TestPutEmbedding_HighCount_128d` (150 entries) in `btree_regression_test.go`.
+- **`leafSplitIndex` right-half overflow** — hardened the split-point algorithm to scan until the left half would exceed `pageSize` (not `pageSize/2`), ensuring the right half always fits. Previously, with very large entries, `leafSplitIndex` could return a `mid` where the right half alone exceeded `pageSize`.
+
 ### Added (llm-context-engine example)
 
 - New `examples/llm_context_engine` — realistic LLM memory retrieval demo

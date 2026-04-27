@@ -32,18 +32,31 @@ func internalSerializedSize(keys [][]byte) int {
 	return size
 }
 
-// leafSplitIndex finds the position where a leaf will fill fillPercent of pageSize.
-// Returns the split index ensuring at least minKeysPerPage entries on each side.
+// leafSplitIndex finds the position i at which to split a leaf so that both
+// the left half [0, i) and the right half [i, n) fit within pageSize.
+//
+// Strategy: advance i as long as the left half (including entry i) remains
+// strictly within pageSize. Stop when adding entry i would overflow the left
+// page. That entry and all remaining entries form the right half, which must
+// fit because Put enforces inlineThreshold < pageSize for any single value.
+//
+// Invariants:
+//   - i is clamped to [minKeysPerPage, len(keys)-minKeysPerPage] so each side
+//     has at least minKeysPerPage entries.
+//   - If no safe split exists (e.g. every entry is individually close to
+//     pageSize), we fall back to len(keys)/2 — the caller's buildLeafPage will
+//     return an error, which is the correct behaviour for corrupt input.
 func leafSplitIndex(keys, vals [][]byte, pageSize int) int {
-	threshold := pageSize / 2 // 50% fill
+	n := len(keys)
 	sz := btreeHeaderSize
-	for i := range keys {
-		sz += 4 + len(keys[i]) + len(vals[i])
-		if i >= minKeysPerPage && sz > threshold && i < len(keys)-minKeysPerPage {
+	for i := range n {
+		entry := 4 + len(keys[i]) + len(vals[i])
+		if sz+entry > pageSize && i >= minKeysPerPage && i <= n-minKeysPerPage {
 			return i
 		}
+		sz += entry
 	}
-	return len(keys) / 2
+	return n / 2
 }
 
 // OpenBTree returns a handle for the on-disk B+ tree rooted in the file header.
@@ -244,17 +257,23 @@ func (t *BTree) insertIntoLeaf(pid uint64, page, key, val []byte) (split bool, n
 			t.freeOverflowChain(oldFirst)
 		}
 		vals[idx] = append([]byte(nil), val...)
-		pg, err := buildLeafPage(t.pageSize(), ld.parent, ld.next, keys, vals)
-		if err != nil {
-			return false, 0, nil, err
+		// The replacement value may be larger than the original, causing the
+		// updated page to exceed pageSize. Re-check before writing in-place.
+		if leafSerializedSize(keys, vals) <= t.pageSize() {
+			pg, err := buildLeafPage(t.pageSize(), ld.parent, ld.next, keys, vals)
+			if err != nil {
+				return false, 0, nil, err
+			}
+			if err := t.eng.WritePage(pid, pg); err != nil {
+				return false, 0, nil, err
+			}
+			return false, 0, nil, nil
 		}
-		if err := t.eng.WritePage(pid, pg); err != nil {
-			return false, 0, nil, err
-		}
-		return false, 0, nil, nil
+		// Updated page overflows — fall through to the split path below.
+	} else {
+		keys = append(keys[:idx], append([][]byte{append([]byte(nil), key...)}, keys[idx:]...)...)
+		vals = append(vals[:idx], append([][]byte{append([]byte(nil), val...)}, vals[idx:]...)...)
 	}
-	keys = append(keys[:idx], append([][]byte{append([]byte(nil), key...)}, keys[idx:]...)...)
-	vals = append(vals[:idx], append([][]byte{append([]byte(nil), val...)}, vals[idx:]...)...)
 	if leafSerializedSize(keys, vals) <= t.pageSize() {
 		pg, err := buildLeafPage(t.pageSize(), ld.parent, ld.next, keys, vals)
 		if err != nil {
