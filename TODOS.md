@@ -14,6 +14,7 @@ Immediate next steps. Update after each session.
 
 ## Recently Completed
 
+- 2026-04-27: `examples/llm_context_engine` — realistic LLM memory retrieval demo (6 scenarios: ingest, semantic search, multi-signal, supersession, full pipeline, comparison); embedding Phase 13 removed from conversational_memory (reverted to 12 phases)
 - 2026-04-27: Embeddings keyspace complete (Phases 1-4) — flat-scan + HNSW ANN search; query engine integration via `CellQuery.Embedding` / `CellSearchConfig.Embedding`; benchmarks; docs updated (doc.go, HEXXLA_DB.md, API_REFERENCE.md, ROADMAP.md)
 
 - 2026-04-27: Content compression — always-on DEFLATE via compress/flate (Go stdlib); 5-byte `0xFE` envelope; no public API surface; 10 new engine tests
