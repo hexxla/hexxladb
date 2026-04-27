@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added (storage-contract-tests)
+
+- `internal/domain/storagecontract` package — 22 reusable contract tests for the `domain.Storage` port interface
+- Covers all port methods: cells, seams, facets, edges, walks, context assembly, time buckets, tags
+- `RunAll(t, Factory)` harness: any adapter can validate conformance by providing a factory function
+- Real `hexxladbout.Storage` adapter passes all contracts
+
 ### Added (efficient-storage)
 
 - **Configurable page size**: `Options.PageSize` selects 4096, 8192, 16384, or 65536 bytes for new databases (default 4 KiB); existing databases read page size from the file header on open
