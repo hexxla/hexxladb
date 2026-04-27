@@ -2,14 +2,16 @@
 
 ## [Unreleased]
 
-### Added (demo-embedding-search)
+### Added (llm-context-engine example)
 
-- Phase 13 in conversational_memory demo: Ollama all-minilm (384-dim) embedding generation
-- PutEmbedding for all seed data, HNSW graph built automatically
-- SearchByEmbedding raw ANN search demo
-- QueryCells with Embedding: ANN-accelerated seed selection + tag post-filter
-- Graceful Ollama detection: skips Phase 13 when Ollama not running
-- DB options updated: EmbeddingDimension=384, DistanceCosine, PageSize=65536
+- New `examples/llm_context_engine` — realistic LLM memory retrieval demo
+  - Scenario 1: Ingest 20 conversation turns with Ollama all-minilm embeddings
+  - Scenario 2: Semantic retrieval — 3 distinct queries showing HNSW differentiation
+  - Scenario 3: Multi-signal retrieval — embeddings + tag filters + confidence + source
+  - Scenario 4: Preference supersession — MarkSupersedes + FilterSuperseded in context assembly
+  - Scenario 5: Full LLM prompt assembly pipeline — search → preferences → LoadContextPackFrom
+  - Scenario 6: Comparison table — what HexxlaDB enables vs stateless LLMs
+- Moved embedding functionality out of conversational_memory demo (reverted to 12 phases)
 
 ### Added (benchmarks-docs)
 
