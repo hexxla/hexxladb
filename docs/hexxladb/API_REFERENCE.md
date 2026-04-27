@@ -294,11 +294,11 @@ See **[CHANGEFEED.md](./CHANGEFEED.md)**.
 
 `SearchCells` is a convenience wrapper over `QueryCells` kept for backward compatibility. For `ExcludeTags`, `SortBy`, `Explain`, or temporal filters, use `QueryCells` directly.
 
-| Symbol                                     | Notes                                                                                                                                                                                                  |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **[`(*Tx).SearchCells`](../../search.go)** | Wrapper over `QueryCells`. Returns `[]CellSearchResult` sorted by score; each result includes a `Coord` for use as a context-pack seed.                                                                |
-| **[`CellSearchConfig`](../../search.go)**  | `Query`, `RequireTags` (AND), `AnyTags` (OR), `MinConfidence`, `MaxConfidence`, `SourceID`, `Center`+`Radius`, `MaxResults`, `MaxScanRadius`. Forward-compatible: `Embedding []float32` addable later. |
-| **[`CellSearchResult`](../../search.go)**  | `Cell CellView` + `Score float64`.                                                                                                                                                                     |
+| Symbol                                     | Notes                                                                                                                                                                                       |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*Tx).SearchCells`](../../search.go)** | Wrapper over `QueryCells`. Returns `[]CellSearchResult` sorted by score; each result includes a `Coord` for use as a context-pack seed.                                                     |
+| **[`CellSearchConfig`](../../search.go)**  | `Query`, `RequireTags` (AND), `AnyTags` (OR), `MinConfidence`, `MaxConfidence`, `SourceID`, `Center`+`Radius`, `MaxResults`, `MaxScanRadius`, `Embedding` (ANN-accelerated seed selection). |
+| **[`CellSearchResult`](../../search.go)**  | `Cell CellView` + `Score float64`.                                                                                                                                                          |
 
 ### Content Search scoring
 
@@ -417,6 +417,8 @@ Use **`errors.Is` / `errors.As`** for stable handling.
 ## Live demos and coverage
 
 - **Conversational memory service:** [`examples/conversational_memory`](../../examples/conversational_memory/) — **`go run ./examples/conversational_memory`** seeds **`./.tmp/conversational_memory/`** (MVCC + changelog + `AfterPutCell` hook) and walks through: cell storage (templates + batch), supersession, tag analytics + co-occurrences, query patterns (`QueryCells` + `SearchCells`), MVCC time-travel, ASCII grid + ring density, filtered changelog, multi-seed context assembly, **database health check** (`HealthCheck`), **event hook telemetry** (`AfterPutCell`), **MaxValueBytes** (per-database limit printed at startup), **MVCC Snapshot Diff** (`SnapshotDiff` full range + narrow diff), **`Tx.DeleteCell`** (MVCC tombstone + snapshot isolation + idempotent re-delete), and **`DB.Compact`** (bulk write→delete→prune→compact with file size reduction). Phases 1–12.
+
+- **LLM Context Engine:** [`examples/llm_context_engine`](../../examples/llm_context_engine/) — **`go run ./examples/llm_context_engine`** (requires Ollama with `all-minilm`). Realistic LLM memory retrieval workflow: ingest 20 turns with 384-dim embeddings (`PutEmbedding`), semantic retrieval with 3 distinct queries (`SearchByEmbedding`, `QueryCells` + `Embedding`), multi-signal retrieval (embeddings + `RequireTags` + `MinConfidence` + `SourceID`), preference supersession (`MarkSupersedes` + `FilterSuperseded` in `LoadContextPackFrom`), full LLM prompt assembly pipeline, and a comparison of HexxlaDB capabilities vs stateless LLMs. 6 scenarios.
 
 ## What `examples/conversational_memory` does _not_ call (and why)
 
