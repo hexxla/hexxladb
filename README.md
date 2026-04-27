@@ -4,7 +4,7 @@
 
 # HexxlaDB
 
-**The storage engine that makes associative memory a first-class physical property.**
+**Persistent, structured, contradiction-aware memory for LLMs and agents.**
 
 [![CI](https://github.com/hexxla/hexxladb/actions/workflows/ci.yml/badge.svg)](https://github.com/hexxla/hexxladb/actions/workflows/ci.yml)
 [![Integration](https://github.com/hexxla/hexxladb/actions/workflows/integration.yml/badge.svg)](https://github.com/hexxla/hexxladb/actions/workflows/integration.yml)
@@ -15,39 +15,44 @@
 
 </div>
 
-LLM memory is a patchwork: RAG dumps, graph plugins, and "just stuff more tokens in the context" hacks. HexxlaDB is a different bet — it makes the entire storage engine a faithful implementation of a **structured, contradiction-aware, temporally-valid hexagonal memory model**, where spatial locality is not a query feature but a physical property of the on-disk format.
+---
 
-Every memory lives at a coordinate on a honeycomb grid. Retrieval expands outward in predictable rings — mirroring how associative human memory actually works. That means **repeated bounded-radius traversals with no random I/O tax**, deterministic context assembly that fits token budgets, and a database that can genuinely give agents persistent, inspectable, updatable, contradiction-resolving long-term memory at scale.
+Every LLM call today is stateless. Context windows are packed with RAG snippets that were retrieved by similarity alone — no provenance, no contradiction awareness, no memory of what the user said three sessions ago. When the model gives the wrong answer, there is no way to ask _"what did you actually know when you said that?"_
 
-This is not "yet another vector DB with graph plugins." Spatial locality is baked into the primary key encoding. Contradictions are first-class citizens, not silent overwrites. **When two memories disagree, HexxlaDB surfaces the conflict so the LLM can reason about it.** And with built-in HNSW-accelerated embedding search, you get semantic retrieval without leaving the engine.
+HexxlaDB is an embedded database built from scratch for this problem. It stores memories on a hexagonal coordinate grid where **spatial locality is a physical property of the on-disk format**, not a query-time approximation. Retrieval expands outward in deterministic rings — predictable, reproducible, and bounded by token budgets. Every memory carries provenance, confidence, and a validity window. When two memories contradict each other, the database doesn't silently overwrite one — it stores a **seam** that surfaces the conflict so the LLM can reason about it.
+
+HexxlaDB also has a built-in **HNSW vector index** for embedding-based semantic search, so you can combine "find memories similar to this question" with "only include high-confidence facts from session 3 that are tagged as architecture decisions" — in a single query. The results feed directly into a token-budgeted context assembler that knows how to evict low-value memories and respect supersession chains.
+
+The result: **an LLM that remembers across sessions, tracks preference changes, surfaces contradictions, and builds reproducible prompts — all from a single embedded Go library with zero network dependencies.**
 
 ---
 
-## Core concepts
+## The problem
 
-| Primitive | What it is                                                                                                                       |
-| --------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| **Cell**  | A memory — fact, message, or document chunk — at a hex coordinate `(q, r)` with content, tags, provenance, and a validity window |
-| **Seam**  | A visible contradiction marker between two conflicting cells, with type, reason, confidence delta, and resolution status         |
-| **Edge**  | A directed "see also" relationship between cells                                                                                 |
-| **Facet** | A cryptographically-bound summary attached to a cell                                                                             |
+| What you get today                                  | What you actually need                                                                   |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Stateless API calls — context lost between sessions | Persistent memory that survives restarts and spans sessions                              |
+| RAG retrieves by similarity alone                   | Retrieval that combines semantic similarity _with_ tags, confidence, source, and recency |
+| User preferences silently overwritten               | Supersession chains that track how preferences evolve over time                          |
+| Contradictions invisible to the model               | Explicit conflict markers the LLM can see and reason about                               |
+| Token budget enforced by truncation                 | Intelligent eviction that drops low-confidence outer context first                       |
+| No audit trail                                      | MVCC snapshots: "what did the model know at 3pm Tuesday?"                                |
 
 ---
 
-## Key features
+## How it works
 
-- **Hex-native spatial keys** — Morton-ordered `(q, r)` coordinates; ring walks are prefix scans, not graph traversals
-- **HNSW embedding search** — store 384/768-dim vectors alongside cells; approximate nearest-neighbor retrieval with flat-scan fallback
-- **Hybrid retrieval** — `QueryCells` combines embedding similarity + tag filters + confidence thresholds + source/temporal predicates in a single call
-- **Contradiction tracking** — seams surface conflicts between cells so LLMs can reason about disagreements
-- **Supersession chains** — `MarkSupersedes` tracks preference evolution; `FilterSuperseded` auto-resolves stale context
-- **Token-budgeted context assembly** — `LoadContextPack` evicts low-confidence outer-ring cells first; spatial locality preserves coherence
-- **MVCC time-travel** — `ViewAt` / `ViewAtTime` pin read snapshots; `SnapshotDiff` for CDC pipelines
-- **AES-256-XTS encryption at rest** — passphrase or raw key; per-page encryption with HKDF-SHA256 / Argon2id
-- **Logical changefeed** — append-only changelog with op-code filtering for audit trails and replication
-- **Configurable storage** — page sizes (4–64 KiB), overflow pages for large values (up to 1 MiB), always-on DEFLATE compression
-- **Delete + compact** — MVCC tombstones, version pruning, copy-compaction for file size recovery
-- **Embedded, zero-network** — in-process Go library, no daemon, no serialization overhead
+Every memory lives at a coordinate on a honeycomb grid. Related memories are placed near each other. When you need context for a prompt, HexxlaDB walks outward ring by ring from a seed coordinate — picking up the most relevant memories first, staying within your token budget, and automatically filtering out superseded or low-confidence content.
+
+**Core primitives:**
+
+| Primitive     | What it is                                                                                                                                                 |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Cell**      | A memory — a fact, message, preference, or document chunk — at a hex coordinate `(q, r)` with content, tags, provenance, confidence, and a validity window |
+| **Seam**      | A visible marker linking two cells that contradict each other, with a reason, confidence delta, and resolution status                                      |
+| **Edge**      | A directed relationship between cells ("see also", "follow-up", "derived from")                                                                            |
+| **Facet**     | A summary or annotation cryptographically bound to a cell                                                                                                  |
+| **Embedding** | A vector stored alongside a cell for semantic similarity search (HNSW-indexed)                                                                             |
 
 ---
 
@@ -57,142 +62,227 @@ This is not "yet another vector DB with graph plugins." Spatial locality is bake
 go get github.com/hexxla/hexxladb
 ```
 
-### Store a memory with an embedding
+The following walkthrough shows the real production workflow — the same pipeline used by the [`llm_context_engine`](examples/llm_context_engine/) example. Every code block is copy-pasteable.
+
+### 1. Open a database
 
 ```go
-db, _ := hexxladb.Open("memories.db", &hexxladb.Options{
-    EnableMVCC:         true,
-    EmbeddingDimension: 384,
+db, err := hexxladb.Open("memory.db", &hexxladb.Options{
+    EnableMVCC:         true,  // snapshot isolation + time-travel
+    EmbeddingDimension: 384,   // vector size (e.g. all-MiniLM-L6-v2)
     DistanceMetric:     hexxladb.DistanceCosine,
 })
+if err != nil {
+    log.Fatal(err)
+}
 defer db.Close()
+```
 
+### 2. Store a conversation turn with its embedding
+
+Every message gets a cell with content, tags, provenance, and a vector embedding from your model of choice.
+
+```go
 db.Update(func(tx *hexxladb.Tx) error {
-    pk, _ := lattice.Pack(hexxladb.Coord{Q: 0, R: 0})
-    _ = tx.PutCell(ctx, record.CellRecord{
+    coord := hexxladb.Coord{Q: 3, R: 1}
+    pk, _ := lattice.Pack(coord)
+
+    // Store the memory
+    err := tx.PutCell(ctx, record.CellRecord{
         Key:        pk,
-        RawContent: "User prefers concise responses.",
-        Tags:       []string{"preference", "communication-style"},
-        Provenance: record.ProvenanceWire{SourceID: "session-1", Confidence: 1.0},
+        RawContent: "Use testcontainers-go for integration tests with real Postgres.",
+        Tags:       []string{"fact", "testing", "database", "best-practice"},
+        Provenance: record.ProvenanceWire{SourceID: "session-2", Confidence: 0.95},
     })
-    return tx.PutEmbedding(pk, embeddingVector) // 384-dim float32 from your model
+    if err != nil {
+        return err
+    }
+
+    // Store its embedding (HNSW index is maintained automatically)
+    return tx.PutEmbedding(pk, vectorFromYourModel)
 })
 ```
 
-### Semantic search + structured filters
+### 3. Find relevant memories by meaning
+
+When a new user message arrives, embed it and search. HexxlaDB uses the HNSW graph for fast approximate nearest-neighbor lookup, then applies your filters as post-predicates.
 
 ```go
-results, _ := tx.QueryCells(ctx, hexxladb.CellQuery{
-    Embedding:   queryVector,       // ANN-accelerated seed selection
-    RequireTags: []string{"fact"},   // must have this tag
-    MinConfidence: 0.8,              // epistemic quality floor
-    MaxResults:  10,
-    SortBy:      hexxladb.SortByScore,
-    Explain:     true,               // score breakdown per result
+db.View(func(tx *hexxladb.Tx) error {
+    results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
+        Embedding:     queryVector,          // "How do I test my HTTP handlers?"
+        ExcludeTags:   []string{"preference"}, // keep preferences separate
+        MinConfidence: 0.5,
+        MaxResults:    8,
+        SortBy:        hexxladb.SortByScore,
+    })
+    // results: ranked cells with score, content, tags, provenance
 })
 ```
 
-### Assemble context for an LLM prompt
+### 4. Retrieve user preferences (for the system prompt)
+
+Preferences are just cells with a `"preference"` tag. Query them separately so they always appear in the system prompt, regardless of what the user is asking about.
 
 ```go
-// Token-budgeted load: expands outward ring by ring, evicts outer rings first
-pack, _ := tx.LoadContextPack(ctx, center, radius, maxTokens,
-    hexxladb.ByteLenBudgeter{}, hexxladb.LoadContextBudgetConfig{
-        FilterSuperseded: true, // auto-resolve stale preferences
-        IncludeSeams:     true, // surface contradictions
+db.View(func(tx *hexxladb.Tx) error {
+    prefs, err := tx.QueryCells(ctx, hexxladb.CellQuery{
+        RequireTags: []string{"preference"},
+        MaxResults:  5,
+        SortBy:      hexxladb.SortByConfidence,
     })
-// Same seed → same order → reproducible prompts every time
+    // prefs: "concise responses", "table-driven tests", etc.
+})
 ```
 
-### Track a contradiction
+### 5. Assemble a token-budgeted context window
+
+Take the top search results as seed coordinates and expand outward. The assembler walks concentric rings, fills your token budget, and automatically replaces superseded cells with their successors.
+
+```go
+db.View(func(tx *hexxladb.Tx) error {
+    // Use the top-3 search results as seeds
+    seeds := []hexxladb.Coord{results[0].Cell.Coord, results[1].Cell.Coord, results[2].Cell.Coord}
+
+    pack, err := tx.LoadContextPackFrom(ctx,
+        2,     // max ring radius
+        4096,  // token budget
+        hexxladb.ByteLenBudgeter{},
+        hexxladb.LoadContextBudgetConfig{
+            FilterSuperseded: true,  // old preferences auto-replaced by new ones
+            IncludeSeams:     true,  // surface contradictions for the LLM
+        },
+        seeds...,
+    )
+    // pack.Cells: ordered context, pack.TotalTokens: fits your budget
+})
+```
+
+### 6. Track contradictions and preference changes
+
+When a user changes their mind, HexxlaDB doesn't silently overwrite — it records the relationship so context assembly can handle it automatically.
 
 ```go
 db.Update(func(tx *hexxladb.Tx) error {
-    return tx.MarkConflict(cellA, cellB, "User reversed their stated preference")
+    // User now wants verbose explanations (previously wanted brevity)
+    return tx.MarkSupersedes(newPrefCoord, oldPrefCoord, "User changed communication preference")
 })
 
-// Seams surface automatically in LoadContextPack with IncludeSeams: true
-seams, _ := tx.FindSeams(ctx, center, 2, true) // unresolved only
+// Or flag an outright contradiction between two facts
+db.Update(func(tx *hexxladb.Tx) error {
+    return tx.MarkConflict(cellA, cellB, "Conflicting architecture recommendations")
+})
 ```
 
----
-
-## Why HexxlaDB
-
-| Need                       | How HexxlaDB delivers                                                                                                         |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| **Spatial locality**       | Morton-ordered hex keys — ring walks are prefix scans, not graph traversals; cost scales with ring area, not DB size          |
-| **Semantic retrieval**     | HNSW-accelerated embedding search with cosine/dot/L2 metrics — combined with tag and confidence filters in one query          |
-| **Token budgets**          | `LoadContextPack` evicts outer rings first; spatial locality preserves semantic coherence under budget pressure               |
-| **Contradiction handling** | Seams are stored, queryable, and injected into context — the LLM sees the conflict rather than a silently overwritten fact    |
-| **Reproducibility**        | Same coordinate + same radius + same seed → same cell order → identical prompt construction                                   |
-| **Provenance & audit**     | Every cell carries source ID, confidence, and a validity window; MVCC snapshots let you ask "what did the DB know at time T?" |
-| **Embedded, no network**   | In-process, no daemon, no serialization round-trips                                                                           |
-
-### vs. existing approaches
-
-- **Vector DBs** (Pinecone, Weaviate, Chroma) — great at similarity search; no contradiction model, no spatial coherence, no provenance, no token budgets
-- **Graph DBs** (Neo4j) — rich relationships; no hex-native addressing, no seam semantics, not embeddable
-- **Temporal DBs** (Datomic) — immutable history; no spatial indexing, no token-budget-aware retrieval
-- **General stores** (Postgres, SQLite) — reliable; hex coordinates and seam semantics are application-level afterthoughts
-
-HexxlaDB combines HNSW vector search, Morton-ordered spatial keys, seams as first-class storage primitives, MVCC time-travel, and token-budgeted context assembly in a single embedded engine. Nothing else does all five.
+> **That's the full pipeline.** Embed → search → filter → assemble → prompt. Every step runs in-process, deterministically, with no network calls to the database layer. See [`examples/llm_context_engine`](examples/llm_context_engine/) for a complete runnable version.
 
 ---
 
-## API overview
+## What makes this different
 
-See [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.md) for the full reference.
+| Capability                         | HexxlaDB | Vector DBs | Graph DBs | General stores |
+| ---------------------------------- | :------: | :--------: | :-------: | :------------: |
+| Semantic search (HNSW)             |    ✓     |     ✓      |     —     |       —        |
+| Structured filters in same query   |    ✓     |  partial   |     ✓     |       ✓        |
+| Contradiction tracking             |    ✓     |     —      |     —     |       —        |
+| Supersession chains                |    ✓     |     —      |     —     |       —        |
+| Token-budgeted context assembly    |    ✓     |     —      |     —     |       —        |
+| Spatial locality (ring walks)      |    ✓     |     —      |     —     |       —        |
+| MVCC time-travel                   |    ✓     |     —      |     —     |    partial     |
+| Reproducible prompt construction   |    ✓     |     —      |     —     |       —        |
+| Provenance + confidence per memory |    ✓     |     —      |     —     |       —        |
+| Embedded (no network)              |    ✓     |     —      |     —     |       ✓        |
+| Encryption at rest                 |    ✓     |   varies   |     —     |       ✓        |
 
-**Core operations:**
+**Vector DBs** (Pinecone, Weaviate, Chroma) excel at similarity search but have no concept of contradiction, supersession, or token-budgeted assembly. **Graph DBs** (Neo4j) model relationships well but aren't embeddable and lack spatial coherence. **Temporal DBs** (Datomic) offer immutable history but no spatial indexing or LLM-aware retrieval. **General stores** (Postgres, SQLite) are reliable foundations, but hex coordinates, seam semantics, and context budgeting become application-level afterthoughts.
 
-- `PutCell` / `GetCell` / `DeleteCell` — store, retrieve, and tombstone memories
-- `PutEmbedding` / `SearchByEmbedding` — HNSW-accelerated vector search (cosine, dot product, L2)
-- `QueryCells` — hybrid queries: embeddings + tags + confidence + source + temporal + spatial predicates
-- `LoadContextPack` / `LoadContextPackFrom` — token-budgeted context assembly with supersession filtering
-- `MarkConflict` / `MarkSupersedes` / `FindSeams` — contradiction and preference evolution tracking
-- `SearchCells` — lexical ranked search across cell content, tags, and source IDs
-- `ViewAt` / `ViewAtTime` / `SnapshotDiff` — MVCC time-travel and change detection
-- `Compact` — copy-compaction for file size recovery after deletes and prunes
+HexxlaDB is purpose-built: HNSW vector search, Morton-ordered spatial keys, contradiction-aware seams, MVCC snapshots, and token-budgeted context assembly — in a single embedded engine.
 
 ---
 
-## Benchmarks
+## Features
+
+- **HNSW embedding search** — store vectors alongside cells; approximate nearest-neighbor retrieval with flat-scan fallback for small datasets
+- **Hybrid queries** — combine embedding similarity with tag filters, confidence thresholds, source IDs, temporal ranges, and spatial predicates in one call
+- **Hex-native spatial keys** — Morton-ordered `(q, r)` coordinates; ring walks are prefix scans that scale with ring area, not database size
+- **Token-budgeted context assembly** — `LoadContextPackFrom` evicts low-confidence outer-ring cells first; spatial locality preserves semantic coherence
+- **Contradiction tracking** — `MarkConflict` stores seams that surface disagreements; `IncludeSeams` injects them into context so models can reason about conflicts
+- **Supersession chains** — `MarkSupersedes` records preference evolution; `FilterSuperseded` automatically replaces stale cells with their successors
+- **MVCC time-travel** — `ViewAt` / `ViewAtTime` pin read snapshots; `SnapshotDiff` computes changes between any two points in time
+- **Logical changefeed** — append-only changelog with op-code filtering for audit trails, CDC, and replication pipelines
+- **AES-256-XTS encryption at rest** — passphrase or raw key; per-page encryption with HKDF-SHA256 / Argon2id key derivation
+- **Configurable storage** — page sizes from 4 KiB to 64 KiB, overflow pages for values up to 1 MiB, always-on DEFLATE compression
+- **Delete + compact** — MVCC tombstones, version pruning, copy-compaction for file size recovery
+- **Zero dependencies at runtime** — single Go binary, no daemon, no network, no serialization overhead
+
+---
+
+## API at a glance
+
+Full reference: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.md)
+
+| Operation                                 | What it does                                                                |
+| ----------------------------------------- | --------------------------------------------------------------------------- |
+| `PutCell` / `GetCell` / `DeleteCell`      | Store, retrieve, or tombstone a memory                                      |
+| `PutEmbedding` / `SearchByEmbedding`      | Store a vector; HNSW nearest-neighbor search                                |
+| `QueryCells`                              | Hybrid search: embeddings + tags + confidence + source + temporal + spatial |
+| `LoadContextPack` / `LoadContextPackFrom` | Token-budgeted context assembly with supersession filtering                 |
+| `MarkConflict` / `MarkSupersedes`         | Record contradictions or preference changes                                 |
+| `FindSeams`                               | Retrieve contradiction/supersession markers                                 |
+| `SearchCells`                             | Lexical ranked search across content, tags, and source IDs                  |
+| `ViewAt` / `ViewAtTime` / `SnapshotDiff`  | MVCC time-travel and change detection                                       |
+| `Compact` / `CompactTo`                   | Copy-compaction for file size recovery                                      |
+| `HealthCheck`                             | Structural integrity verification                                           |
+| `TagCounts` / `TagCooccurrences`          | Tag analytics for memory exploration                                        |
+
+---
+
+## Performance
 
 ```bash
-make bench-api   # DB files land in .tmp/
+make bench-api
 ```
 
-Key characteristics confirmed by benchmarks:
+| Operation                   | Latency       | Notes                                                                 |
+| --------------------------- | ------------- | --------------------------------------------------------------------- |
+| **Ring walk (r=3)**         | ~500 µs       | Stable across 512 and 2000 cells — scales with ring area, not DB size |
+| **HNSW search**             | sub-ms        | 500 vectors at 32 dimensions; flat-scan fallback for small datasets   |
+| **Point read**              | ~28 µs        | O(log n) B+ tree; stable across DB sizes                              |
+| **Batch write**             | ~0.34 ms/cell | At batch size 500; vs ~8.3 ms/cell for single writes                  |
+| **FindSeams (zero-seam)**   | ~26 µs        | Pre-flight fast path; down from 2.3 ms (-98.9%)                       |
+| **MVCC version resolution** | sub-ms        | Up to 100 versions per cell                                           |
 
-- **Ring walks scale with ring area, not DB size** — `LoadContext` at r=3 costs ~500 µs on 512 or 2000 cells
-- **HNSW search: sub-millisecond** at 500 vectors (32d); flat-scan fallback for small datasets
-- **`FindSeams` zero-seam fast path: ~26 µs** (down from ~2.3 ms; -98.9%)
-- **Batch writes: ~0.34 ms/cell at batch=500** vs. ~8.3 ms/cell single `PutCell`
-- **Point reads: ~28 µs** plain, stable across DB sizes — O(log n) B+ tree confirmed
-- **MVCC version resolution: sub-millisecond up to 100 versions**
+Full tables and methodology: [`docs/hexxladb/OPERATIONS.md`](docs/hexxladb/OPERATIONS.md).
 
-Full tables: [`docs/hexxladb/OPERATIONS.md`](docs/hexxladb/OPERATIONS.md).
+_Hardware: Intel Core i9-14900HX, 16 GB, Go 1.26, Linux._
 
-_Hardware: Intel Core i9-14900HX, 16 GB RAM, Go 1.26, Linux. Results vary by storage speed and data shape._
+---
+
+## Examples
+
+| Example                                                  | Run                                       | What it demonstrates                                                                                                                |
+| -------------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| [Conversational Memory](examples/conversational_memory/) | `go run ./examples/conversational_memory` | 12-phase production walkthrough: cells, seams, tags, MVCC time-travel, queries, context assembly, delete, compact                   |
+| [LLM Context Engine](examples/llm_context_engine/)       | `go run ./examples/llm_context_engine`    | Full LLM memory pipeline with Ollama embeddings: ingest → semantic search → multi-signal retrieval → supersession → prompt assembly |
+
+The LLM Context Engine example requires [Ollama](https://ollama.com/) with the `all-minilm` model:
+
+```bash
+ollama pull all-minilm
+go run ./examples/llm_context_engine
+```
 
 ---
 
 ## Documentation
 
-| Document                                             | What's inside                        |
-| ---------------------------------------------------- | ------------------------------------ |
-| [`API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.md) | Complete API reference               |
-| [`HEXXLA.md`](docs/hexxladb/HEXXLA.md)               | Memory model and concepts            |
-| [`HEXXLA_DB.md`](docs/hexxladb/HEXXLA_DB.md)         | Storage layout and key encoding      |
-| [`OPERATIONS.md`](docs/hexxladb/OPERATIONS.md)       | Production operations and benchmarks |
-
-### Examples
-
-| Example                                                             | What it shows                                                                                                            |
-| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| [`examples/conversational_memory`](examples/conversational_memory/) | 12-phase production walkthrough: cells, seams, tags, MVCC, queries, context assembly, delete, compact                    |
-| [`examples/llm_context_engine`](examples/llm_context_engine/)       | Realistic LLM memory pipeline: Ollama embeddings, semantic search, multi-signal retrieval, supersession, prompt assembly |
+| Document                                             | What's inside                                            |
+| ---------------------------------------------------- | -------------------------------------------------------- |
+| [`API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.md) | Complete API reference — every exported symbol           |
+| [`HEXXLA.md`](docs/hexxladb/HEXXLA.md)               | Memory model: hex lattice, seams, validity, supersession |
+| [`HEXXLA_DB.md`](docs/hexxladb/HEXXLA_DB.md)         | Storage layout, key encoding, HNSW keyspace              |
+| [`OPERATIONS.md`](docs/hexxladb/OPERATIONS.md)       | Production operations, benchmarks, backup, encryption    |
+| [`ROADMAP.md`](docs/ROADMAP.md)                      | What's next and what's out of scope                      |
 
 ---
 
@@ -204,10 +294,10 @@ _Hardware: Intel Core i9-14900HX, 16 GB RAM, Go 1.26, Linux. Results vary by sto
 
 ## Sponsorship
 
-HexxlaDB is open source and actively developed. If it's useful to your work — or you want to see the roadmap (distributed replication, materialized views, richer seam semantics) move faster — sponsorship is the most direct way to help.
+HexxlaDB is open source and under active development. If it's useful to your work — or you want to accelerate the roadmap (distributed replication, materialized views, richer seam semantics) — sponsorship is the most direct way to help.
 
 - **GitHub Sponsors:** [github.com/sponsors/hexxla](https://github.com/sponsors/hexxla)
-- **Monero (XMR):** 46shAhAihZ3dmVHGU4V6H2ZZt21ex8xydB7Awkxaheq4U1VZFoK53K92tsqhnL8roV2bV8pQWCryR3yNRJJd5gAeBsZUXPF
+- **Monero (XMR):** `46shAhAihZ3dmVHGU4V6H2ZZt21ex8xydB7Awkxaheq4U1VZFoK53K92tsqhnL8roV2bV8pQWCryR3yNRJJd5gAeBsZUXPF`
 - **Open Collective:** _coming soon_
 
 Sponsors get early access to roadmap discussions, priority issue triage, and attribution in release notes.
