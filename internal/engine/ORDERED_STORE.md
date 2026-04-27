@@ -1,6 +1,6 @@
 # Ordered store (M4 — B+ tree on engine pages)
 
-This document specifies the **v1 B+ tree** stored in the primary database file. It builds on **[ENGINE_FORMAT.md](./ENGINE_FORMAT.md)** (64 KiB pages, WAL). Bump **`format_version`** if any incompatible layout changes.
+This document specifies the **v1 B+ tree** stored in the primary database file. It builds on **[ENGINE_FORMAT.md](./ENGINE_FORMAT.md)** (configurable page size, WAL). Bump **`format_version`** if any incompatible layout changes.
 
 ## Goals
 
@@ -20,7 +20,7 @@ Older databases that zeroed this region behave as **empty tree** (`root = 0`).
 
 ## Page layout (all tree nodes)
 
-Every tree page uses the full **PageSize** (64 KiB). Byte order: **big-endian** for multi-byte numeric fields.
+Every tree page uses the full **page size** (configurable per-database: 4/8/16/64 KiB). Byte order: **big-endian** for multi-byte numeric fields.
 
 ### Common header (first 64 bytes)
 
@@ -58,7 +58,7 @@ Invariant: child page **ptr0** contains keys `< key[0]`; **ptr[i+1]** contains k
 
 ## Capacity and splits
 
-- **maxLeafKeys** / **maxInternalKeys** are chosen so a full node still fits in **PageSize** (see `btree_page.go` constants). Inserts that would overflow trigger a **split** (leaf or internal) and may increase tree height.
+- Leaf and internal node capacity is **dynamic**, derived from the database's page size. Inserts use **fill-based splitting**: a node splits when its serialized size exceeds ~50% of the page. See `btree_page.go` for `maxLeafEntriesForPage` / `maxInternalChildrenForPage`.
 - **Root:** when the root splits, a new internal node becomes the root; **`btree_root_page`** in the file header is updated.
 
 ## Allocator

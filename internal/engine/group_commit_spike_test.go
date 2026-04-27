@@ -21,11 +21,11 @@ func TestSpike_twoWALRecordsOneSyncThenPersist(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p1 := bytes.Repeat([]byte{0x11}, PageSize)
-	p2 := bytes.Repeat([]byte{0x22}, PageSize)
+	p1 := bytes.Repeat([]byte{0x11}, e.pageSize)
+	p2 := bytes.Repeat([]byte{0x22}, e.pageSize)
 
-	rec1 := encodeWALRecordWithMAC(1, 1, p1, e.walMACKey, e.walMACEnabled)
-	rec2 := encodeWALRecordWithMAC(2, 2, p2, e.walMACKey, e.walMACEnabled)
+	rec1 := encodeWALRecordWithMAC(1, 1, p1, e.walMACKey, e.walMACEnabled, e.pageSize)
+	rec2 := encodeWALRecordWithMAC(2, 2, p2, e.walMACKey, e.walMACEnabled, e.pageSize)
 
 	if _, err := e.wal.Write(rec1); err != nil {
 		t.Fatal(err)
@@ -77,8 +77,8 @@ func TestReplay_restoresStalePrimaryWhenWALAhead(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wal_ahead.db")
 
-	oldP := bytes.Repeat([]byte{0xaa}, PageSize)
-	newP := bytes.Repeat([]byte{0xbb}, PageSize)
+	oldP := bytes.Repeat([]byte{0xaa}, DefaultPageSize)
+	newP := bytes.Repeat([]byte{0xbb}, DefaultPageSize)
 
 	e, err := Open(path, nil)
 	if err != nil {
@@ -91,7 +91,7 @@ func TestReplay_restoresStalePrimaryWhenWALAhead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec2 := encodeWALRecord(2, 1, newP)
+	rec2 := encodeWALRecord(2, 1, newP, DefaultPageSize)
 	wf, err := os.OpenFile(WalPath(path), os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatal(err)

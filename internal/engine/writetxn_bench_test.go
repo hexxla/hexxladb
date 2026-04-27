@@ -8,7 +8,7 @@ import (
 )
 
 func BenchmarkCommitWriteTxn_multiPage(b *testing.B) {
-	tmpl := bytes.Repeat([]byte{0x5a}, PageSize)
+	tmpl := bytes.Repeat([]byte{0x5a}, DefaultPageSize)
 	for _, nPages := range []int{1, 8, 32} {
 		b.Run(strconv.Itoa(nPages), func(b *testing.B) {
 			b.ReportAllocs()

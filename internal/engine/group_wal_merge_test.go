@@ -22,7 +22,7 @@ func TestGroupWAL_twoJobsOneBatch(t *testing.T) {
 	}
 	defer func() { _ = e.Close() }()
 
-	page := bytes.Repeat([]byte{0x55}, PageSize)
+	page := bytes.Repeat([]byte{0x55}, DefaultPageSize)
 
 	// G1 enqueues J1; before G1 calls wait(), G2 must Begin+enqueue J2 so the flusher collects both.
 	ready := make(chan struct{})

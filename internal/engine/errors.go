@@ -12,8 +12,11 @@ var (
 	// ErrBadPageID means the page id is out of range for the operation.
 	ErrBadPageID = errors.New("engine: invalid page id")
 
-	// ErrBadPageSize means the payload length is not exactly PageSize.
-	ErrBadPageSize = errors.New("engine: page payload must be PageSize bytes")
+	// ErrBadPageSize means the payload length does not match the database page size.
+	ErrBadPageSize = errors.New("engine: page payload size mismatch")
+
+	// ErrInvalidPageSize means the requested page size is not a supported value.
+	ErrInvalidPageSize = errors.New("engine: invalid page size")
 
 	// ErrBadEncryptionKey means the provided encryption key/passphrase does not match the database verifier.
 	ErrBadEncryptionKey = errors.New("engine: encryption key mismatch")

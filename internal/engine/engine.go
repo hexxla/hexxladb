@@ -13,11 +13,12 @@ import (
 
 // Engine is a minimal page-oriented store with redo WAL.
 type Engine struct {
-	path    string
-	db      *os.File
-	wal     *os.File
-	hooks   PageHooks
-	lastSeq uint64
+	path     string
+	db       *os.File
+	wal      *os.File
+	hooks    PageHooks
+	pageSize int // effective page size in bytes (set at Open, immutable)
+	lastSeq  uint64
 	// nextWALSeq is the high-water for allocating redo [pendingRedo.seq] values; it must stay
 	// monotonic when write transactions can overlap the group-WAL flusher. Initialized from lastSeq
 	// at [Open] (first Add(1) yields lastSeq+1).
@@ -28,6 +29,8 @@ type Engine struct {
 	usePrimaryFdatasync bool
 	// maxValueBytes is the effective per-database value size ceiling (read from header at Open).
 	maxValueBytes uint32
+	// pageBufPool is an instance-level pool of page-sized buffers.
+	pageBufPool sync.Pool
 	// wtxn is set between [Engine.BeginWriteTxn] and commit/abort. Not used concurrently.
 	wtxn *writeTxnState
 	// Group commit (Options.GroupWAL) — set at Open.
@@ -71,7 +74,16 @@ func Open(path string, opts *Options) (*Engine, error) {
 		return nil, err
 	}
 
+	// Bootstrap page size: for new files, use opts; for existing files, read from header.
+	var effectivePageSize int
 	if st.Size() == 0 {
+		ps, psErr := resolvePageSize(opts)
+		if psErr != nil {
+			_ = db.Close()
+			return nil, psErr
+		}
+		effectivePageSize = int(ps)
+
 		mvb, mvbErr := resolveMaxValueBytes(opts)
 		if mvbErr != nil {
 			_ = db.Close()
@@ -83,7 +95,7 @@ func Open(path string, opts *Options) (*Engine, error) {
 		}
 		hdr := Header{
 			FormatVersion: ver,
-			PageSize:      uint32(PageSize),
+			PageSize:      ps,
 			LastWALSeq:    0,
 			NextPageID:    1,
 			CommitSeq:     0,
@@ -112,12 +124,21 @@ func Open(path string, opts *Options) (*Engine, error) {
 			_ = db.Close()
 			return nil, err
 		}
-	} else if st.Size() < PageSize {
-		_ = db.Close()
-		return nil, ErrCorruptHeader
+	} else {
+		// Existing file: bootstrap page size from the header prefix.
+		ps, psErr := bootstrapPageSize(db)
+		if psErr != nil {
+			_ = db.Close()
+			return nil, psErr
+		}
+		effectivePageSize = int(ps)
+		if st.Size() < int64(effectivePageSize) {
+			_ = db.Close()
+			return nil, ErrCorruptHeader
+		}
 	}
 
-	hdr, err := readHeaderAt(db)
+	hdr, err := readHeaderAt(db, effectivePageSize)
 	if err != nil {
 		_ = db.Close()
 		return nil, err
@@ -166,7 +187,7 @@ func Open(path string, opts *Options) (*Engine, error) {
 	}
 
 	apply := func(_ uint64, pageID uint64, payload []byte) error {
-		off, err := pageByteOffset(pageID)
+		off, err := pageByteOffset(pageID, effectivePageSize)
 		if err != nil {
 			return err
 		}
@@ -184,7 +205,7 @@ func Open(path string, opts *Options) (*Engine, error) {
 		}
 		walMACKey = opts.WALMACKey
 	}
-	maxSeq, err := parseAndReplayWALWithMAC(walData, hdr.LastWALSeq, apply, walMACKey, walMACEnabled)
+	maxSeq, err := parseAndReplayWALWithMAC(walData, hdr.LastWALSeq, apply, walMACKey, walMACEnabled, effectivePageSize)
 	if err != nil {
 		_ = db.Close()
 		_ = wal.Close()
@@ -247,11 +268,18 @@ func Open(path string, opts *Options) (*Engine, error) {
 		db:                  db,
 		wal:                 wal,
 		hooks:               hooks,
+		pageSize:            effectivePageSize,
 		lastSeq:             newLast,
 		walMACEnabled:       walMACEnabled,
 		walMACKey:           walMACKey,
 		usePrimaryFdatasync: usePrimaryFdatasync,
 		maxValueBytes:       effectiveMaxVal,
+	}
+	e.pageBufPool = sync.Pool{
+		New: func() any {
+			b := make([]byte, e.pageSize)
+			return &b
+		},
 	}
 	if opts != nil {
 		e.groupWALCfg = opts.GroupWAL
@@ -284,12 +312,8 @@ func (e *Engine) Close() error {
 	return nil
 }
 
-var pageBufPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, PageSize)
-		return &b
-	},
-}
+// PageSizeInt returns the effective page size in bytes for this engine instance.
+func (e *Engine) PageSizeInt() int { return e.pageSize }
 
 func releaseNothing() {}
 
@@ -309,7 +333,7 @@ func (e *Engine) visibleHeader() (Header, error) {
 	if e.db == nil {
 		return Header{}, fmt.Errorf("engine: closed")
 	}
-	disk, err := readHeaderAt(e.db)
+	disk, err := readHeaderAt(e.db, e.pageSize)
 	if err != nil {
 		return Header{}, err
 	}
@@ -335,33 +359,33 @@ func (e *Engine) readPagePooled(pageID uint64) (data []byte, release func(), err
 	if e.wtxn != nil {
 		if pageID == 0 {
 			page := encodeHeaderPage(e.wtxn.hdr)
-			bp := pageBufPool.Get().(*[]byte)
-			buf := (*bp)[:PageSize]
+			bp := e.pageBufPool.Get().(*[]byte)
+			buf := (*bp)[:e.pageSize]
 			copy(buf, page)
 			out, err := e.hooks.transformRead(0, buf)
 			if err != nil {
-				pageBufPool.Put(bp)
+				e.pageBufPool.Put(bp)
 				return nil, releaseNothing, err
 			}
 			if sliceSameBase(out, buf) {
-				return out, func() { pageBufPool.Put(bp) }, nil
+				return out, func() { e.pageBufPool.Put(bp) }, nil
 			}
-			pageBufPool.Put(bp)
+			e.pageBufPool.Put(bp)
 			return out, releaseNothing, nil
 		}
 		if plain, ok := e.wtxn.dirty[pageID]; ok {
-			bp := pageBufPool.Get().(*[]byte)
-			buf := (*bp)[:PageSize]
+			bp := e.pageBufPool.Get().(*[]byte)
+			buf := (*bp)[:e.pageSize]
 			copy(buf, plain)
 			out, err := e.hooks.transformRead(pageID, buf)
 			if err != nil {
-				pageBufPool.Put(bp)
+				e.pageBufPool.Put(bp)
 				return nil, releaseNothing, err
 			}
 			if sliceSameBase(out, buf) {
-				return out, func() { pageBufPool.Put(bp) }, nil
+				return out, func() { e.pageBufPool.Put(bp) }, nil
 			}
-			pageBufPool.Put(bp)
+			e.pageBufPool.Put(bp)
 			return out, releaseNothing, nil
 		}
 	}
@@ -375,18 +399,18 @@ func (e *Engine) readPagePooled(pageID uint64) (data []byte, release func(), err
 		plain, ok := e.groupOverlay[pageID]
 		e.groupOverlayMu.RUnlock()
 		if ok {
-			bp := pageBufPool.Get().(*[]byte)
-			buf := (*bp)[:PageSize]
+			bp := e.pageBufPool.Get().(*[]byte)
+			buf := (*bp)[:e.pageSize]
 			copy(buf, plain)
 			out, err := e.hooks.transformRead(pageID, buf)
 			if err != nil {
-				pageBufPool.Put(bp)
+				e.pageBufPool.Put(bp)
 				return nil, releaseNothing, err
 			}
 			if sliceSameBase(out, buf) {
-				return out, func() { pageBufPool.Put(bp) }, nil
+				return out, func() { e.pageBufPool.Put(bp) }, nil
 			}
-			pageBufPool.Put(bp)
+			e.pageBufPool.Put(bp)
 			return out, releaseNothing, nil
 		}
 	}
@@ -398,42 +422,42 @@ func (e *Engine) readPagePooled(pageID uint64) (data []byte, release func(), err
 			return nil, releaseNothing, err
 		}
 		page := encodeHeaderPage(vh)
-		bp := pageBufPool.Get().(*[]byte)
-		buf := (*bp)[:PageSize]
+		bp := e.pageBufPool.Get().(*[]byte)
+		buf := (*bp)[:e.pageSize]
 		copy(buf, page)
 		out, err := e.hooks.transformRead(0, buf)
 		if err != nil {
-			pageBufPool.Put(bp)
+			e.pageBufPool.Put(bp)
 			return nil, releaseNothing, err
 		}
 		if sliceSameBase(out, buf) {
-			return out, func() { pageBufPool.Put(bp) }, nil
+			return out, func() { e.pageBufPool.Put(bp) }, nil
 		}
-		pageBufPool.Put(bp)
+		e.pageBufPool.Put(bp)
 		return out, releaseNothing, nil
 	}
 
-	bp := pageBufPool.Get().(*[]byte)
-	buf := (*bp)[:PageSize]
+	bp := e.pageBufPool.Get().(*[]byte)
+	buf := (*bp)[:e.pageSize]
 
-	off, err := pageByteOffset(pageID)
+	off, err := pageByteOffset(pageID, e.pageSize)
 	if err != nil {
-		pageBufPool.Put(bp)
+		e.pageBufPool.Put(bp)
 		return nil, releaseNothing, err
 	}
 	if _, err := e.db.ReadAt(buf, off); err != nil {
-		pageBufPool.Put(bp)
+		e.pageBufPool.Put(bp)
 		return nil, releaseNothing, err
 	}
 	out, err := e.hooks.transformRead(pageID, buf)
 	if err != nil {
-		pageBufPool.Put(bp)
+		e.pageBufPool.Put(bp)
 		return nil, releaseNothing, err
 	}
 	if sliceSameBase(out, buf) {
-		return out, func() { pageBufPool.Put(bp) }, nil
+		return out, func() { e.pageBufPool.Put(bp) }, nil
 	}
-	pageBufPool.Put(bp)
+	e.pageBufPool.Put(bp)
 	return out, releaseNothing, nil
 }
 
@@ -456,14 +480,14 @@ func (e *Engine) WritePage(pageID uint64, data []byte) error {
 	if pageID < 1 {
 		return ErrBadPageID
 	}
-	if len(data) != PageSize {
+	if len(data) != e.pageSize {
 		return ErrBadPageSize
 	}
 	plain, err := e.hooks.transformWrite(pageID, append([]byte(nil), data...))
 	if err != nil {
 		return err
 	}
-	if len(plain) != PageSize {
+	if len(plain) != e.pageSize {
 		return ErrBadPageSize
 	}
 
@@ -479,7 +503,7 @@ func (e *Engine) WritePage(pageID uint64, data []byte) error {
 	}
 
 	seq := e.nextWALSeq.Add(1)
-	rec := encodeWALRecordWithMAC(seq, pageID, plain, e.walMACKey, e.walMACEnabled)
+	rec := encodeWALRecordWithMAC(seq, pageID, plain, e.walMACKey, e.walMACEnabled, e.pageSize)
 	if _, err := e.wal.Write(rec); err != nil {
 		return err
 	}
@@ -494,7 +518,7 @@ func (e *Engine) WritePage(pageID uint64, data []byte) error {
 // is already durable (caller must have synced the WAL). Used by [Engine.WritePage]
 // and by tests exploring batched WAL sync + sequential primary application.
 func (e *Engine) persistRedoPage(seq, pageID uint64, plain []byte) error {
-	off, err := pageByteOffset(pageID)
+	off, err := pageByteOffset(pageID, e.pageSize)
 	if err != nil {
 		return err
 	}
@@ -505,7 +529,7 @@ func (e *Engine) persistRedoPage(seq, pageID uint64, plain []byte) error {
 		return err
 	}
 
-	hdr, err := readHeaderAt(e.db)
+	hdr, err := readHeaderAt(e.db, e.pageSize)
 	if err != nil {
 		return err
 	}
@@ -550,7 +574,7 @@ func (e *Engine) UpdateHeader(mut func(*Header)) error {
 		mut(&e.wtxn.hdr)
 		return nil
 	}
-	hdr, err := readHeaderAt(e.db)
+	hdr, err := readHeaderAt(e.db, e.pageSize)
 	if err != nil {
 		return err
 	}

@@ -112,6 +112,7 @@ func (db *DB) Compact(ctx context.Context, destPath string) error {
 func compactDestOpts(hdr engine.Header, srcOpts *Options) *Options {
 	o := &Options{
 		EnableMVCC:    hdr.FormatVersion >= 2,
+		PageSize:      hdr.PageSize,
 		MaxValueBytes: hdr.MaxValueBytes,
 	}
 	// Forward encryption credentials from caller (source opts).

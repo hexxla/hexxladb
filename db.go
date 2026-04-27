@@ -35,6 +35,7 @@ func Open(path string, opts *Options) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	eopts = mergeEnginePageSize(eopts, opts)
 	eopts = mergeEnginePrimaryFdatasync(eopts, opts)
 	eopts = mergeEngineGroupWAL(eopts, opts)
 	eopts = mergeEngineMaxValueBytes(eopts, opts)
@@ -48,6 +49,9 @@ func Open(path string, opts *Options) (*DB, error) {
 		}
 		if errors.Is(err, engine.ErrInvalidMaxValueBytes) {
 			return nil, fmt.Errorf("%w: MaxValueBytes must be 512, 1024, 2048, 4096, 8192, or 16384", ErrInvalidArgument)
+		}
+		if errors.Is(err, engine.ErrInvalidPageSize) {
+			return nil, fmt.Errorf("%w: PageSize must be 4096, 8192, 16384, or 65536", ErrInvalidArgument)
 		}
 		return nil, err
 	}
@@ -124,6 +128,22 @@ func (db *DB) activeEng() *engine.Engine {
 		return nil
 	}
 	return db.eng
+}
+
+// PageSize returns the page size of the database in bytes.
+// For new databases, this is the value from [Options.PageSize] (or the default 4096).
+// For existing databases, it is read from the file header.
+// Returns 0 if the database is closed.
+func (db *DB) PageSize() uint32 {
+	if db == nil {
+		return 0
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.eng == nil {
+		return 0
+	}
+	return uint32(db.eng.PageSizeInt()) //nolint:gosec // PageSizeInt always returns a valid page size
 }
 
 // MaxValueBytes returns the effective per-database maximum B+ tree value size in bytes.

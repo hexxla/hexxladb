@@ -4,8 +4,8 @@ For completed work, see `TODOS.md` (Recently Completed) and `CHANGELOG.md`.
 
 ## Near-term
 
-- **Content Compression** — zstd/gzip transparent compression of cell values. Addresses file size bloat (82 cells = 5.6 MB with 1.2% page utilization) and obscures plaintext in unencrypted databases. Compress on write, decompress on read, controlled by `Options`.
-- **Configurable page size** — expose `Options.PageSize` (4/8/16/64 KiB, default 4 KiB for new databases). Stored in file header; existing 64 KiB databases continue to work. Combined with higher `maxLeafEntries` this brings typical small-database overhead from 98% wasted space to <20%.
+- **Overflow pages** — support values larger than a single page via chained overflow pages; raise `MaxValueBytes` ceiling beyond 16 KiB.
+- **Content Compression** — zstd/gzip transparent compression of cell values. Addresses file size bloat and obscures plaintext in unencrypted databases. Compress on write, decompress on read, controlled by `Options`.
 - **Relocate `cell_secondary.go` / `seam_secondary.go` to `internal/`** — pure file move, no logic change. Both files contain only unexported `*Tx` methods.
 - **`domain.Storage` interface contract tests** — `internal/domain/storage_test.go` with a fake implementation to validate port contracts independently of the adapter.
 

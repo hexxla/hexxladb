@@ -158,6 +158,17 @@ func buildEngineOptions(path string, opts *Options) (*engine.Options, error) {
 	}, opts), nil
 }
 
+func mergeEnginePageSize(eo *engine.Options, o *Options) *engine.Options {
+	if o == nil || o.PageSize == 0 {
+		return eo
+	}
+	if eo == nil {
+		return &engine.Options{PageSize: o.PageSize}
+	}
+	eo.PageSize = o.PageSize
+	return eo
+}
+
 // mergeEnginePrimaryFdatasync sets [engine.Options.UsePrimaryFdatasync] from public [Options].
 func mergeEnginePrimaryFdatasync(eo *engine.Options, o *Options) *engine.Options {
 	if o == nil || !o.UsePrimaryFdatasync {

@@ -15,7 +15,7 @@ func TestEngine_writeReadReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := bytes.Repeat([]byte{0x37}, PageSize)
+	want := bytes.Repeat([]byte{0x37}, DefaultPageSize)
 	if err := e.WritePage(1, want); err != nil {
 		t.Fatal(err)
 	}
@@ -49,8 +49,8 @@ func TestOpen_replaysPendingWAL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	payload := bytes.Repeat([]byte{0x99}, PageSize)
-	rec := encodeWALRecord(1, 1, payload)
+	payload := bytes.Repeat([]byte{0x99}, DefaultPageSize)
+	rec := encodeWALRecord(1, 1, payload, DefaultPageSize)
 	if err := os.WriteFile(WalPath(path), rec, 0o600); err != nil {
 		t.Fatal(err)
 	}

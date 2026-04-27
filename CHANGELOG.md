@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added (efficient-storage)
+
+- **Configurable page size**: `Options.PageSize` selects 4096, 8192, 16384, or 65536 bytes for new databases (default 4 KiB); existing databases read page size from the file header on open
+- `DB.PageSize()` introspection method returns the active page size
+- `engine.IsValidPageSize` public helper for callers that need to validate before Open
+- Fill-based B+ tree leaf splitting (replaces fixed `maxLeafEntries=32`); leaves split when serialized size exceeds 50% of page capacity
+- Dynamic internal node capacity derived from page size
+- WAL record size adapts to runtime page size
+- Instance-level page buffer pool sized to the database's page size
+- `CompactTo` preserves source page size in destination database
+- Parametric engine tests at all four valid page sizes
+
 ### Added (delete-compact)
 
 - `Tx.DeleteCell` — remove cell + secondary indexes + facets + outbound edges atomically; idempotent (missing cell returns nil)

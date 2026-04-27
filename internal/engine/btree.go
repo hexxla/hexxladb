@@ -11,6 +11,41 @@ type BTree struct {
 	eng *Engine
 }
 
+// pageSize returns the engine page size.
+func (t *BTree) pageSize() int { return t.eng.pageSize }
+
+// leafSerializedSize returns the on-disk byte count for a leaf with the given entries.
+func leafSerializedSize(keys, vals [][]byte) int {
+	size := btreeHeaderSize
+	for i := range keys {
+		size += 4 + len(keys[i]) + len(vals[i]) // keyLen(2) + valLen(2) + key + val
+	}
+	return size
+}
+
+// internalSerializedSize returns the on-disk byte count for an internal node.
+func internalSerializedSize(keys [][]byte) int {
+	size := btreeHeaderSize + 8 // header + ptr0
+	for _, k := range keys {
+		size += 2 + len(k) + 8 // keyLen(2) + key + ptr(8)
+	}
+	return size
+}
+
+// leafSplitIndex finds the position where a leaf will fill fillPercent of pageSize.
+// Returns the split index ensuring at least minKeysPerPage entries on each side.
+func leafSplitIndex(keys, vals [][]byte, pageSize int) int {
+	threshold := pageSize / 2 // 50% fill
+	sz := btreeHeaderSize
+	for i := range keys {
+		sz += 4 + len(keys[i]) + len(vals[i])
+		if i >= minKeysPerPage && sz > threshold && i < len(keys)-minKeysPerPage {
+			return i
+		}
+	}
+	return len(keys) / 2
+}
+
 // OpenBTree returns a handle for the on-disk B+ tree rooted in the file header.
 func OpenBTree(e *Engine) *BTree {
 	return &BTree{eng: e}
@@ -112,7 +147,7 @@ func (t *BTree) Put(key, val []byte) error {
 	}
 	ptrs := []uint64{left, nr}
 	keys := [][]byte{append([]byte(nil), sep...)}
-	page, err := buildInternalPage(0, ptrs, keys)
+	page, err := buildInternalPage(t.pageSize(), 0, ptrs, keys)
 	if err != nil {
 		return err
 	}
@@ -135,7 +170,7 @@ func (t *BTree) putFirst(key, val []byte) error {
 	if err != nil {
 		return err
 	}
-	page, err := buildLeafPage(0, 0, [][]byte{append([]byte(nil), key...)}, [][]byte{append([]byte(nil), val...)})
+	page, err := buildLeafPage(t.pageSize(), 0, 0, [][]byte{append([]byte(nil), key...)}, [][]byte{append([]byte(nil), val...)})
 	if err != nil {
 		return err
 	}
@@ -173,7 +208,7 @@ func (t *BTree) insertIntoLeaf(pid uint64, page, key, val []byte) (split bool, n
 	idx := leafKeyIndex(keys, key)
 	if idx < len(keys) && bytes.Equal(keys[idx], key) {
 		vals[idx] = append([]byte(nil), val...)
-		pg, err := buildLeafPage(ld.parent, ld.next, keys, vals)
+		pg, err := buildLeafPage(t.pageSize(), ld.parent, ld.next, keys, vals)
 		if err != nil {
 			return false, 0, nil, err
 		}
@@ -184,8 +219,8 @@ func (t *BTree) insertIntoLeaf(pid uint64, page, key, val []byte) (split bool, n
 	}
 	keys = append(keys[:idx], append([][]byte{append([]byte(nil), key...)}, keys[idx:]...)...)
 	vals = append(vals[:idx], append([][]byte{append([]byte(nil), val...)}, vals[idx:]...)...)
-	if len(keys) <= maxLeafEntries {
-		pg, err := buildLeafPage(ld.parent, ld.next, keys, vals)
+	if leafSerializedSize(keys, vals) <= t.pageSize() {
+		pg, err := buildLeafPage(t.pageSize(), ld.parent, ld.next, keys, vals)
 		if err != nil {
 			return false, 0, nil, err
 		}
@@ -194,7 +229,7 @@ func (t *BTree) insertIntoLeaf(pid uint64, page, key, val []byte) (split bool, n
 		}
 		return false, 0, nil, nil
 	}
-	mid := len(keys) / 2
+	mid := leafSplitIndex(keys, vals, t.pageSize())
 	leftK, rightK := keys[:mid], keys[mid:]
 	leftV, rightV := vals[:mid], vals[mid:]
 	sepKey := append([]byte(nil), rightK[0]...)
@@ -202,11 +237,11 @@ func (t *BTree) insertIntoLeaf(pid uint64, page, key, val []byte) (split bool, n
 	if err != nil {
 		return false, 0, nil, err
 	}
-	leftPg, err := buildLeafPage(ld.parent, rid, leftK, leftV)
+	leftPg, err := buildLeafPage(t.pageSize(), ld.parent, rid, leftK, leftV)
 	if err != nil {
 		return false, 0, nil, err
 	}
-	rightPg, err := buildLeafPage(ld.parent, ld.next, rightK, rightV)
+	rightPg, err := buildLeafPage(t.pageSize(), ld.parent, ld.next, rightK, rightV)
 	if err != nil {
 		return false, 0, nil, err
 	}
@@ -241,8 +276,8 @@ func (t *BTree) insertIntoInternal(pid uint64, page, key, val []byte) (split boo
 	newKeys = append(newKeys, in.keys[:ci]...)
 	newKeys = append(newKeys, sep)
 	newKeys = append(newKeys, in.keys[ci:]...)
-	if len(newKeys) <= maxInternalChildren-1 {
-		pg, err := buildInternalPage(in.parent, newPtrs, newKeys)
+	if internalSerializedSize(newKeys) <= t.pageSize() {
+		pg, err := buildInternalPage(t.pageSize(), in.parent, newPtrs, newKeys)
 		if err != nil {
 			return false, 0, nil, err
 		}
@@ -272,11 +307,11 @@ func (t *BTree) splitInternal(pid, parent uint64, ptrs []uint64, keys [][]byte) 
 	if err != nil {
 		return false, 0, nil, err
 	}
-	lp, err := buildInternalPage(parent, leftPtrs, leftKeys)
+	lp, err := buildInternalPage(t.pageSize(), parent, leftPtrs, leftKeys)
 	if err != nil {
 		return false, 0, nil, err
 	}
-	rp, err := buildInternalPage(parent, rightPtrs, rightKeys)
+	rp, err := buildInternalPage(t.pageSize(), parent, rightPtrs, rightKeys)
 	if err != nil {
 		return false, 0, nil, err
 	}

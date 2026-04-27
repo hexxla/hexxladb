@@ -9,22 +9,23 @@ This document lists **every exported symbol** in the root package as of the curr
 
 ## Storage limits (engine B+ tree)
 
-Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored in the engine B+ tree. **Maximum key length: 256 bytes.** **Maximum value length: configurable per-database** via [`Options.MaxValueBytes`](../../options.go) — accepted values: **512, 1024, 2048, 4096, 8192, 16384** bytes; **default 8192 (8 KB)**. The limit is persisted in the file header and enforced on every write. Read it at runtime with **[`(*DB).MaxValueBytes`](../../db.go)**. Rationale and format details: **[`ORDERED_STORE.md`](../../internal/engine/ORDERED_STORE.md)**. **Cell** (and other encoded) records must fit in the value budget; larger logical payloads require application-level chunking or external blob storage.
+Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored in the engine B+ tree. **Maximum key length: 256 bytes.** **Maximum value length: configurable per-database** via [`Options.MaxValueBytes`](../../options.go) — accepted values: **512, 1024, 2048, 4096, 8192, 16384** bytes; **default 8192 (8 KB)**. The limit is persisted in the file header and enforced on every write. Read it at runtime with **[`(*DB).MaxValueBytes`](../../db.go)**. **Page size: configurable per-database** via [`Options.PageSize`](../../options.go) — accepted values: **4096, 8192, 16384, 65536** bytes; **default 4096 (4 KiB)**. Existing databases read the page size from the file header on open. Read it at runtime with **[`(*DB).PageSize`](../../db.go)**. B+ tree leaf capacity is dynamic (fill-based splitting); smaller pages reduce wasted space for small databases. Rationale and format details: **[`ORDERED_STORE.md`](../../internal/engine/ORDERED_STORE.md)**. **Cell** (and other encoded) records must fit in the value budget; larger logical payloads require application-level chunking or external blob storage.
 
 ---
 
 ## Database lifecycle
 
-| Symbol                                   | Notes                                                                                                                                        |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`Open`](../../db.go)**                | Open or create a database file; applies WAL on startup.                                                                                      |
-| **[`(*DB).Close`](../../db.go)**         | Waits for in-flight transactions; idempotent for nil receiver.                                                                               |
-| **[`(*DB).Compact`](../../compact.go)**  | Copy-compact open DB to destPath (minimal-size file, preserves all data including MVCC history).                                             |
-| **[`CompactTo`](../../compact.go)**      | Standalone copy-compaction from srcPath to destPath; propagates format, encryption, MaxValueBytes.                                           |
-| **[`ErrCorruptDatabase`](../../db.go)**  | Open-time corruption (header/WAL).                                                                                                           |
-| **[`Options`](../../options.go)**        | `EnableMVCC`, `MVCCRetention`, changelog, encryption, `CellValidator`, `AfterPutCell`, `AfterPutSeam`, `MaxValueBytes`, optional page hooks. |
-| **[`(*DB).MaxValueBytes`](../../db.go)** | Returns the effective per-database max value size (bytes) from the file header.                                                              |
-| **[`MVCCRetention`](../../options.go)**  | Retention hint for prune suggestions.                                                                                                        |
+| Symbol                                   | Notes                                                                                                                                                    |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`Open`](../../db.go)**                | Open or create a database file; applies WAL on startup.                                                                                                  |
+| **[`(*DB).Close`](../../db.go)**         | Waits for in-flight transactions; idempotent for nil receiver.                                                                                           |
+| **[`(*DB).Compact`](../../compact.go)**  | Copy-compact open DB to destPath (minimal-size file, preserves all data including MVCC history).                                                         |
+| **[`CompactTo`](../../compact.go)**      | Standalone copy-compaction from srcPath to destPath; propagates format, encryption, MaxValueBytes.                                                       |
+| **[`ErrCorruptDatabase`](../../db.go)**  | Open-time corruption (header/WAL).                                                                                                                       |
+| **[`Options`](../../options.go)**        | `EnableMVCC`, `MVCCRetention`, changelog, encryption, `CellValidator`, `AfterPutCell`, `AfterPutSeam`, `PageSize`, `MaxValueBytes`, optional page hooks. |
+| **[`(*DB).PageSize`](../../db.go)**      | Returns the active page size (bytes); 4096 default for new databases.                                                                                    |
+| **[`(*DB).MaxValueBytes`](../../db.go)** | Returns the effective per-database max value size (bytes) from the file header.                                                                          |
+| **[`MVCCRetention`](../../options.go)**  | Retention hint for prune suggestions.                                                                                                                    |
 
 ---
 

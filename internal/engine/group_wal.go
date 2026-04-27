@@ -158,7 +158,7 @@ func (e *Engine) applyGroupBatch(jobs []*groupJob) {
 	for _, job := range jobs {
 		for i := range job.pending {
 			p := &job.pending[i]
-			rec := encodeWALRecordWithMAC(p.seq, p.pageID, p.plain, e.walMACKey, e.walMACEnabled)
+			rec := encodeWALRecordWithMAC(p.seq, p.pageID, p.plain, e.walMACKey, e.walMACEnabled, e.pageSize)
 			if _, err := e.wal.Write(rec); err != nil {
 				fail(err)
 				return

@@ -10,8 +10,8 @@ func TestWAL_roundTripAndReplayOrder(t *testing.T) {
 	t.Parallel()
 	payload1 := makeTestPage('a')
 	payload2 := makeTestPage('b')
-	rec1 := encodeWALRecord(1, 1, payload1)
-	rec2 := encodeWALRecord(2, 2, payload2)
+	rec1 := encodeWALRecord(1, 1, payload1, DefaultPageSize)
+	rec2 := encodeWALRecord(2, 2, payload2, DefaultPageSize)
 	data := append(append([]byte{}, rec1...), rec2...)
 
 	var applied []string
@@ -19,7 +19,7 @@ func TestWAL_roundTripAndReplayOrder(t *testing.T) {
 		applied = append(applied, formatApply(seq, pageID, payload))
 		return nil
 	}
-	maxSeq, err := parseAndReplayWAL(data, 0, apply)
+	maxSeq, err := parseAndReplayWAL(data, 0, apply, DefaultPageSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestWAL_roundTripAndReplayOrder(t *testing.T) {
 
 	// Idempotent: replay with lastApplied=2 applies nothing new.
 	applied = nil
-	maxSeq, err = parseAndReplayWAL(data, 2, apply)
+	maxSeq, err = parseAndReplayWAL(data, 2, apply, DefaultPageSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,9 +50,9 @@ func TestWAL_roundTripAndReplayOrder(t *testing.T) {
 func TestWAL_corruptTruncated(t *testing.T) {
 	t.Parallel()
 	payload := makeTestPage('z')
-	rec := encodeWALRecord(1, 1, payload)
+	rec := encodeWALRecord(1, 1, payload, DefaultPageSize)
 	trunc := rec[:len(rec)-10]
-	_, err := parseAndReplayWAL(trunc, 0, func(uint64, uint64, []byte) error { return nil })
+	_, err := parseAndReplayWAL(trunc, 0, func(uint64, uint64, []byte) error { return nil }, DefaultPageSize)
 	if !errors.Is(err, ErrCorruptWAL) {
 		t.Fatalf("want ErrCorruptWAL, got %v", err)
 	}
@@ -61,9 +61,9 @@ func TestWAL_corruptTruncated(t *testing.T) {
 func TestWAL_corruptCRC(t *testing.T) {
 	t.Parallel()
 	payload := makeTestPage('z')
-	rec := encodeWALRecord(1, 1, payload)
+	rec := encodeWALRecord(1, 1, payload, DefaultPageSize)
 	rec[len(rec)-1] ^= 0xff
-	_, err := parseAndReplayWAL(rec, 0, func(uint64, uint64, []byte) error { return nil })
+	_, err := parseAndReplayWAL(rec, 0, func(uint64, uint64, []byte) error { return nil }, DefaultPageSize)
 	if !errors.Is(err, ErrCorruptWAL) {
 		t.Fatalf("want ErrCorruptWAL, got %v", err)
 	}
@@ -74,16 +74,16 @@ func TestWAL_macMismatchRejected(t *testing.T) {
 	payload := makeTestPage('m')
 	var key [32]byte
 	key[0] = 1
-	rec := encodeWALRecordWithMAC(1, 1, payload, key, true)
+	rec := encodeWALRecordWithMAC(1, 1, payload, key, true, DefaultPageSize)
 	rec[len(rec)-1] ^= 0xff
-	_, err := parseAndReplayWALWithMAC(rec, 0, func(uint64, uint64, []byte) error { return nil }, key, true)
+	_, err := parseAndReplayWALWithMAC(rec, 0, func(uint64, uint64, []byte) error { return nil }, key, true, DefaultPageSize)
 	if !errors.Is(err, ErrCorruptWAL) {
 		t.Fatalf("want ErrCorruptWAL, got %v", err)
 	}
 }
 
 func makeTestPage(fill byte) []byte {
-	b := bytes.Repeat([]byte{fill}, PageSize)
+	b := bytes.Repeat([]byte{fill}, DefaultPageSize)
 	return b
 }
 

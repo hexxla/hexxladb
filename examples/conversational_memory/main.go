@@ -2,7 +2,7 @@
 //
 // Demonstrates production patterns for building an LLM memory system with HexxlaDB:
 //
-//   - Phase  1  Database init (MVCC, AfterPutCell hook, MaxValueBytes)
+//   - Phase  1  Database init (MVCC, AfterPutCell hook, PageSize, MaxValueBytes)
 //   - Phase  2  Batch-storing a rich, multi-session conversation corpus
 //   - Phase  3  Contradiction detection with MarkConflict seams
 //   - Phase  4  Supersession — seam-aware context assembly (FilterSuperseded)
@@ -149,7 +149,7 @@ func run(dbPath string) error {
 		}),
 	}
 
-	_, _ = infoStyle.Println("  Opening database (MVCC + changelog + AfterPutCell hook)...")
+	_, _ = infoStyle.Println("  Opening database (MVCC + changelog + AfterPutCell hook + PageSize)...")
 	db, err := hexxladb.Open(dbPath, opts)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -160,6 +160,7 @@ func run(dbPath string) error {
 	printInfo("Path", dbPath)
 	printInfo("Status", map[bool]string{true: "new (will seed)", false: "existing (re-using)"}[isNew])
 	printInfo("MVCC", "enabled · retain 100 commits behind head")
+	printInfo("PageSize", fmt.Sprintf("%d bytes (%d KiB, configurable per-database)", db.PageSize(), db.PageSize()/1024))
 	printInfo("MaxValueBytes", fmt.Sprintf("%d bytes (%d KB, configurable per-database)", db.MaxValueBytes(), db.MaxValueBytes()/1024))
 	printInfo("AfterPutCell", "hook active — counting every write")
 	fmt.Println()
@@ -1127,11 +1128,15 @@ func run(dbPath string) error {
 		_ = cDB.Close()
 		return fmt.Errorf("compact health: %w", err)
 	}
+	compactPageSize := cDB.PageSize()
 	_ = cDB.Close()
 	_ = os.Remove(compactPath)          // clean up demo artifact
 	_ = os.Remove(compactPath + "-wal") // clean up compacted WAL
 
 	printMetric("Compacted DB cells", cReport.CellCount, fmt.Sprintf("(matches source: %d)", postDeleteReport.CellCount))
+	if compactPageSize == db.PageSize() {
+		printSuccess(fmt.Sprintf("Compacted DB preserves page size: %d bytes", compactPageSize))
+	}
 	if len(cReport.Warnings) == 0 {
 		printSuccess("Compacted database passes health check")
 	}
@@ -1158,6 +1163,7 @@ func run(dbPath string) error {
 	_, _ = dimStyle.Println("    •  Wire AfterPutCell/AfterPutSeam for real-time CDC or audit logging")
 	_, _ = dimStyle.Println("    •  Use SnapshotDiff for incremental replication pipelines")
 	_, _ = dimStyle.Println("    •  Enable encryption (Options.Passphrase / Options.EncryptionKey)")
+	_, _ = dimStyle.Println("    •  Tune Options.PageSize (4096/8192/16384/65536) for your workload")
 	_, _ = dimStyle.Println("    •  Schedule Compact after PruneCellVersions for optimal file size")
 	_, _ = dimStyle.Println("    •  See docs/hexxladb/API_REFERENCE.md for the full API surface")
 	fmt.Println()

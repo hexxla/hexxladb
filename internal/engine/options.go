@@ -40,4 +40,8 @@ type Options struct {
 	// header. Zero means [DefaultMaxValueBytes] (8192). Accepted values: 512, 1024, 2048, 4096,
 	// 8192, 16384. Invalid values are rejected at [Open] time.
 	MaxValueBytes uint32
+	// PageSize sets the page size for newly created databases. Accepted values: 4096, 8192,
+	// 16384, 65536. Zero means [DefaultPageSize] (4096). Ignored when opening an existing
+	// database — the page size is read from the file header.
+	PageSize uint32
 }

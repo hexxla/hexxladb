@@ -55,6 +55,11 @@ type Options struct {
 	// A non-nil error is returned from the triggering write method.
 	AfterPutSeam AfterPutSeamHook
 
+	// PageSize sets the page size for newly created databases. Accepted values: 4096, 8192,
+	// 16384, 65536. Zero means the default (4096 bytes = 4 KiB). Ignored when opening an
+	// existing database — the page size is read from the file header.
+	PageSize uint32
+
 	// MaxValueBytes sets the per-database maximum encoded value size stored in the B+ tree.
 	// The limit is persisted in the file header and enforced on every write.
 	// Zero means the default (8192 bytes = 8 KB). Accepted non-zero values: 512, 1024, 2048,

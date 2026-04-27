@@ -4,7 +4,7 @@
 
 ## What is encrypted
 
-- **Data pages** (page id **≥ 1**) use **AES-256-XTS** with the **page id** as the tweak (sector index). Length is unchanged (**64 KiB** per page), so the on-disk B+ tree layout is unchanged.
+- **Data pages** (page id **≥ 1**) use **AES-256-XTS** with the **page id** as the tweak (sector index). Length is unchanged (equals the database's page size), so the on-disk B+ tree layout is unchanged.
 - **Page 0** (file header) is **not** encrypted so magic, format version, allocator fields, and encryption metadata remain readable without a key.
 
 ## Header metadata
