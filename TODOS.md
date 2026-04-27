@@ -4,7 +4,7 @@ Immediate next steps. Update after each session.
 
 ## Current
 
-- [ ] Push 11-commit batch to origin/main (git push)
+_(No active work item.)_
 
 ## Pending (next sessions)
 
@@ -12,21 +12,15 @@ Immediate next steps. Update after each session.
 - [ ] `DB.Compact` — copy-compaction to shrink file; `AscendRange` walk → fresh BTree → atomic swap; no lattice reorg needed
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
 
-- 2026-04-26: TUI audit — Bubbletea pattern fixes (`Init`, `tea.Cmd` one-shot loads, `tabActivatedMsg` lazy load, `Consuming` interface, duplicate-load guards); Lipgloss layout fixes (hard-clip `MaxHeight`, terminal-width fill, `colorBg1`→`colorBg2` card-interior styles, `barGraphBg`); lexical search input fix; tab bar height from measurement not hardcode
-- 2026-04-26: README rewrite + badges (CI, Integration, Go Reference, Go Report Card, Go version, License) + `FUNDING.yml`
-- 2026-04-26: Deleted completed plan files (`lean-quick-wins.md`, `bench-improvements.md`)
-
-### Benchmark-identified concerns — all shipped in `feat/bench-improvements`
-
-- [x] **`FindSeams` empty-neighbourhood cost** — pre-flight presence check + lazy ring iteration (no `WalkRings` materialisation)
-- [x] **`LoadContextPack` allocations at large radii** — `collectCandidates` pre-sized; `RingInto` buffer reuse; `AssembleCellView` tags copy removed
-- [x] **`QueryCells` source scan is O(n) unbounded** — `CellQuery.MaxScanRows` added
-- [x] **`BenchmarkAPI_BatchPutCells` missing** — added; sizes 10/100/500
-
 ---
 
 ## Recently Completed
 
+- 2026-04-27: Pushed all commits to origin/main
+- 2026-04-26: TUI audit — Bubbletea pattern fixes (`Init`, `tea.Cmd` one-shot loads, `tabActivatedMsg` lazy load, `Consuming` interface, duplicate-load guards); Lipgloss layout fixes (hard-clip `MaxHeight`, terminal-width fill, `colorBg1`→`colorBg2` card-interior styles, `barGraphBg`); lexical search input fix; tab bar height from measurement not hardcode
+- 2026-04-26: README rewrite + badges (CI, Integration, Go Reference, Go Report Card, Go version, License) + `FUNDING.yml`; logo added to header
+- 2026-04-26: Deleted completed plan files (`lean-quick-wins.md`, `bench-improvements.md`)
+- 2026-04-26: Benchmark-driven perf shipped — `FindSeams` pre-flight check, `LoadContextPack` alloc reduction, `CellQuery.MaxScanRows`, `BenchmarkAPI_BatchPutCells`
 - 2026-04-26: `HealthCheck` O(n) rewrite — replaced `WalkRings`+`GetCell` (O(ScanRadius²)) with `cell/`+`seam/`+`tag/`+`source/` single forward scans; all `GetCell` presence checks → O(1) `liveCells` map; `ScanRadius` deprecated; `BenchmarkAPI_HealthCheck` added; 445 µs (512 cells), 1.6 ms (2000 cells)
 - 2026-04-26: `feat/bench-improvements` — 9 perf changes: `mortonPack63` lookup table; `RingInto` buffer reuse in `collectCandidates`; pre-sized `items`+`seen` slices; O(1) eviction total; `AssembleCellView` tags copy removed; `findSeams` lazy iteration + pre-flight check; `CellQuery.MaxScanRows`; `BenchmarkAPI_BatchPutCells`; `make ci` clean
 - 2026-04-26: LEAN quick wins — deleted orphaned `internal/config` package (zero callers); added `BenchmarkAPI_QueryCells` (4 predicate shapes × 2 sizes), `BenchmarkAPI_LoadContextPack` (radii 1/3/5 × 2 sizes), `BenchmarkAPI_MVCCVersionResolution` (10/50/100/500 versions) to `api_bench_test.go`

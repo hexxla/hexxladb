@@ -1,28 +1,18 @@
 # Roadmap
 
-## v0.1.0 Blockers (Active)
+## v0.1.0 Blockers (Resolved)
 
-Must complete before release. Core functionality gaps.
+All blockers resolved. Released v0.1.0 on 2026-04-24.
 
-_(All blockers resolved — ready to release v0.1.0.)_
+## v0.2.0 Candidate (Shipped)
 
-## v0.2.0 Candidate
-
-All items below are shipped and in `[Unreleased]`. Ready to tag once remote push is done.
-
-- **Demo expansion** — `seed_data.go` (84 turns, 5 thematic sessions); `-db` CLI flag; `make demo` Makefile target (default `.tmp/demo/memory.db`, override via `DEMO_DB`); `printSubHeader`/`printNote` helpers; readability pass across all 11 phases; `spiralCoord` widened to 11-column grid
-- **Per-database MaxValueBytes** — `Options.MaxValueBytes`, `DB.MaxValueBytes()`, header offset 100; 9 tests
-- **MVCC Snapshot Diff** — `DB.SnapshotDiff`, `CellDiff`/`SeamDiff`/`DiffOp`/`SnapshotDiffConfig`, `ErrMVCCRequired`; 9 tests
-- **Event Hooks** — `AfterPutCellHook`/`AfterPutSeamHook` + `Func` adapters, `Options.AfterPutCell`/`AfterPutSeam`; 9 tests
-- **`app.Service` completion** — all 23 `domain.Storage` delegations; compile-time interface check; 2 tests
-- **Snapshot Tags/Labels** — `DB.TagSnapshot`/`ViewAtTag`/`ListSnapshotTags`/`DeleteSnapshotTag`; 11 tests
-- **Composable Query Engine** — `Tx.QueryCells`, temporal/spatial/tag/confidence predicates, `SortOrder`, `Explain`; 17 tests
+All items shipped and in `[Unreleased]` CHANGELOG. See "Completed (post-v0.1.0)" below for full descriptions.
 
 ## Completed (post-v0.1.0)
 
 Shipped after v0.1.0 release on branch `feat/tier1-search-health`.
 
-- **Database Health Check API** — `DB.HealthCheck(ctx, HealthCheckConfig) (HealthReport, error)`; cell count via ring walk, seam resolution summary, orphaned seam detection, tag/source index consistency, MVCC stats snapshot; `DefaultHealthCheckConfig`; 5 regression tests
+- **Database Health Check API** — `DB.HealthCheck(ctx, HealthCheckConfig) (HealthReport, error)`; O(n) forward-scan implementation (`cell/`+`seam/`+`tag/`+`source/` prefix scans, O(1) `liveCells` map); seam resolution summary, orphaned seam detection, tag/source index consistency, MVCC stats snapshot; `ScanRadius` deprecated; `BenchmarkAPI_HealthCheck` added
 - **Content Search** — `Tx.SearchCells(ctx, CellSearchConfig) ([]CellSearchResult, error)`; composite scoring (tag exact +1.0, tag prefix +0.8, content verbatim +0.6, content case-insensitive +0.5, source ID +0.3, confidence bonus); filters: `RequireTags` (AND), `AnyTags` (OR), confidence range, spatial radius, `MaxResults`; forward-compatible (`Embedding []float32` addable without breaking callers); 9 tests
 - **Multi-seed context assembly** — `Tx.LoadMultiContextPack` + `MultiContextConfig`; expands N seed coords, merges under shared token budget, cross-seed confidence re-ranking, `DeduplicateCoords`; `Tx.LoadContextPackFrom` unified variadic entry point (dispatches single→`LoadContextPack`, multi→`LoadMultiContextPack` with zero overhead for 1-seed case); 5 tests
 - **conversational_memory demo Phase 10** — `SearchCells` → seeds → `LoadContextPackFrom` pipeline demonstrated end-to-end with budget breakdown
@@ -95,10 +85,8 @@ Interesting but unvalidated. Needs user demand or benchmark data before committi
 - Edge Weight Decay — connections strengthen with traversal, weaken with disuse (speculative)
 - Facet Diff/Compare — see what changed between facet versions (audit utility)
 - Shortest Path Between Cells — graph traversal via edges (BFS implementation)
-- **`FindSeams` empty-neighbourhood short-circuit** — `BenchmarkAPI_FindSeams/seams_0` costs 2.3 ms despite zero seams present; base cost is the full spatial ring scan to collect candidate coords before the seam index is consulted; a bloom-filter or lightweight presence flag per ring coord could skip the ring walk entirely when no seams exist in the neighbourhood; validate with profiling before implementing
-- **`LoadContextPack` allocation reduction** — at r=5/2000 cells the hot path allocates 2.28 MB and 11,756 objects per call (`BenchmarkAPI_LoadContextPack/r5/cells_2000: 4.6 ms`); most allocations come from per-cell decode and candidate slice growth; a pre-sized ring-area capacity hint (`lattice.RingArea(r)`) on the candidate slice plus a `sync.Pool` for decode buffers could cut allocs significantly; benchmark before committing
-- **`QueryCells` source/combined index scan cursor limit** — source-only scan costs 10 ms at 512 cells and 54 ms at 2000 cells (5.2× for 4× data): O(n) full index walk with no early exit (`BenchmarkAPI_QueryCells/source_only`); adding a `MaxScanRows` cap to `CellQuery` (distinct from `MaxResults`) would bound worst-case latency; cost/benefit depends on whether callers ever query without `MaxResults` set
-- **`BatchPutCells` throughput benchmark** — `BenchmarkAPI_PutCell` at 8.3 ms/op reflects single-cell fsync overhead; `BatchPutCells` amortises this but has no benchmark; a `BenchmarkAPI_BatchPutCells` with batch sizes 10/100/500 would confirm the benefit and catch regressions
+
+_Items previously listed here — `FindSeams` short-circuit, `LoadContextPack` alloc reduction, `QueryCells` scan limit, `BatchPutCells` benchmark — have all shipped in `feat/bench-improvements`. See "Completed (v0.1.0)" above._
 
 ## Out of Scope
 
