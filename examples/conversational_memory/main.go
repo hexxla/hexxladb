@@ -925,44 +925,46 @@ func run(dbPath string) error {
 	// ═══════════════════════════════════════════════════════════════
 	printHeader("Phase 12: DeleteCell + Compact")
 
-	// --- 12a: pick a cell to delete and capture its state before deletion ---
+	// --- 12a: write a fresh cell specifically for this demo phase ---
 	printSubHeader("Tx.DeleteCell — MVCC tombstone deletion")
 	printNote("Deleting a cell writes a tombstone (zero-length value) so older MVCC snapshots remain consistent.")
 	printNote("Secondary indexes, facets, and outbound edges are cleaned up atomically.")
 	fmt.Println()
 
-	// Choose the first seed cell as the deletion target.
-	delCoord := spiralCoord(0)
+	// Use an unused coord so this works even on re-runs of an existing DB.
+	delCoord := lattice.Coord{Q: 10, R: 10}
 	delKey, err := hexxladb.Pack(delCoord)
 	if err != nil {
 		return fmt.Errorf("pack delete coord: %w", err)
 	}
 
-	// Snapshot *before* the delete for time-travel verification.
+	// Write the cell fresh so we always have something to delete.
+	err = db.Update(func(tx *hexxladb.Tx) error {
+		return tx.PutCell(ctx, record.CellRecord{
+			Key:        delKey,
+			RawContent: "This cell was written specifically to demonstrate DeleteCell.",
+			Tags:       []string{"demo", "ephemeral"},
+			Provenance: record.ProvenanceWire{SourceID: "phase-12"},
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("seed delete target: %w", err)
+	}
+
+	// Capture cell count and MVCC seq *after* the write, *before* the delete.
+	preReport, err := db.HealthCheck(ctx, hexxladb.DefaultHealthCheckConfig())
+	if err != nil {
+		return fmt.Errorf("health pre-delete: %w", err)
+	}
 	preDeleteStats, err := db.StatsMVCC()
 	if err != nil {
 		return fmt.Errorf("stats pre-delete: %w", err)
 	}
 	seqBeforeDelete := preDeleteStats.CommitSeq
 
-	// Read the cell that will be deleted (for display).
-	var deletedContent string
-	err = db.View(func(tx *hexxladb.Tx) error {
-		rec, ok, err := tx.GetCell(delKey)
-		if err != nil {
-			return err
-		}
-		if ok {
-			deletedContent = rec.RawContent
-		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("read cell pre-delete: %w", err)
-	}
-
 	printInfo("Target cell", fmt.Sprintf("(%d,%d)", delCoord.Q, delCoord.R))
-	printInfo("Content", truncate(deletedContent, 50))
+	printInfo("Content", "This cell was written specifically to demonstrate DeleteCell.")
+	printInfo("Cells before delete", fmt.Sprintf("%d", preReport.CellCount))
 	printInfo("MVCC seq before delete", fmt.Sprintf("%d", seqBeforeDelete))
 	fmt.Println()
 
@@ -1009,12 +1011,12 @@ func run(dbPath string) error {
 		return fmt.Errorf("verify delete viewat: %w", err)
 	}
 
-	// Health check after delete — confirm clean.
+	// Health check after delete — confirm cell count dropped by 1.
 	postDeleteReport, err := db.HealthCheck(ctx, hexxladb.DefaultHealthCheckConfig())
 	if err != nil {
 		return fmt.Errorf("health post-delete: %w", err)
 	}
-	printMetric("Cells after delete", postDeleteReport.CellCount, "(was "+fmt.Sprint(report.CellCount)+")")
+	printMetric("Cells after delete", postDeleteReport.CellCount, fmt.Sprintf("(was %d — dropped by %d)", preReport.CellCount, preReport.CellCount-postDeleteReport.CellCount))
 	if len(postDeleteReport.Warnings) == 0 {
 		printSuccess("Post-delete health check: no warnings")
 	}
@@ -1031,11 +1033,65 @@ func run(dbPath string) error {
 	printSuccess("Re-deleting the same cell returns nil (idempotent)")
 	fmt.Println()
 
-	// --- 12d: compact the database ---
-	printSubHeader("DB.Compact — copy-compaction")
-	printNote("Rewrites all B+ tree keys into a minimal-size file, reclaiming dead pages.")
-	printNote("All data (including MVCC history and tombstones) is preserved verbatim.")
+	// --- 12d: bulk-delete to create dead pages, then compact ---
+	printSubHeader("DB.Compact — copy-compaction after bulk delete")
+	printNote("Writes 200 throwaway cells, then deletes them all to create reclaimable dead space.")
+	printNote("Compact rewrites live keys into a minimal-size file.")
 	fmt.Println()
+
+	// Write 200 throwaway cells to bloat the file.
+	const bulkCount = 200
+	err = db.Update(func(tx *hexxladb.Tx) error {
+		for i := range bulkCount {
+			p, err := hexxladb.Pack(lattice.Coord{Q: 20 + i, R: 20})
+			if err != nil {
+				return err
+			}
+			if err := tx.PutCell(ctx, record.CellRecord{
+				Key:        p,
+				RawContent: fmt.Sprintf("Bulk cell %d — written to demonstrate compaction size reduction after delete.", i),
+				Tags:       []string{"bulk", "throwaway"},
+				Provenance: record.ProvenanceWire{SourceID: "compact-demo"},
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("bulk write: %w", err)
+	}
+	printSuccess(fmt.Sprintf("Wrote %d throwaway cells", bulkCount))
+
+	// Delete them all.
+	err = db.Update(func(tx *hexxladb.Tx) error {
+		for i := range bulkCount {
+			p, err := hexxladb.Pack(lattice.Coord{Q: 20 + i, R: 20})
+			if err != nil {
+				return err
+			}
+			if err := tx.DeleteCell(ctx, p); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("bulk delete: %w", err)
+	}
+	printSuccess(fmt.Sprintf("Deleted %d throwaway cells (secondary indexes + tombstones written)", bulkCount))
+	fmt.Println()
+
+	// Prune old versions to convert tombstones into reclaimable dead space.
+	pruneStats, err := db.StatsMVCC()
+	if err != nil {
+		return fmt.Errorf("prune stats: %w", err)
+	}
+	pruned, err := db.PruneCellVersions(pruneStats.CommitSeq, 10000)
+	if err != nil {
+		return fmt.Errorf("prune: %w", err)
+	}
+	printMetric("Pruned stale versions", pruned, "rows")
 
 	srcInfo, _ := os.Stat(dbPath)
 	srcSize := srcInfo.Size()
@@ -1052,16 +1108,16 @@ func run(dbPath string) error {
 	destSize := destInfo.Size()
 	printMetric("Compacted file size", fmt.Sprintf("%.1f KB", float64(destSize)/1024), "")
 
-	reduction := 100.0 * float64(srcSize-destSize) / float64(srcSize)
-	if reduction > 0 {
+	if destSize < srcSize {
+		reduction := 100.0 * float64(srcSize-destSize) / float64(srcSize)
 		printMetric("Size reduction", fmt.Sprintf("%.1f%%", reduction), "")
 	} else {
-		printMetric("Size change", fmt.Sprintf("%+.1f%%", -reduction), "(no dead pages to reclaim)")
+		printMetric("Size change", fmt.Sprintf("%+.1f%%", 100.0*float64(destSize-srcSize)/float64(srcSize)), "")
 	}
 	printMetric("Compact duration", elapsed.Round(time.Microsecond), "")
 	fmt.Println()
 
-	// Verify the compacted database is readable and has the right cell count.
+	// Verify the compacted database is readable.
 	cDB, err := hexxladb.Open(compactPath, &hexxladb.Options{EnableMVCC: true})
 	if err != nil {
 		return fmt.Errorf("open compacted: %w", err)
@@ -1074,7 +1130,7 @@ func run(dbPath string) error {
 	_ = cDB.Close()
 	_ = os.Remove(compactPath) // clean up demo artifact
 
-	printMetric("Compacted DB cells", cReport.CellCount, "(matches source)")
+	printMetric("Compacted DB cells", cReport.CellCount, fmt.Sprintf("(matches source: %d)", postDeleteReport.CellCount))
 	if len(cReport.Warnings) == 0 {
 		printSuccess("Compacted database passes health check")
 	}

@@ -101,14 +101,19 @@ func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthRep
 		liveCells := map[lattice.PackedCoord]struct{}{}
 		cellFrom := []byte(index.CellPrefix)
 		cellTo := []byte("cell0") // sorts after all cell/<16-byte packed> keys
-		if err := tx.AscendRange(cellFrom, cellTo, func(k, _ []byte) bool {
+		isMVCC := db.useMVCC
+		// For MVCC databases, keys ascend as (packed_coord, commit_seq).
+		// The last entry per coord carries the latest version — if its value
+		// is zero-length the cell was tombstoned by DeleteCell and must not
+		// be counted as live.
+		var lastCoord lattice.PackedCoord
+		var lastCoordLive bool // true if latest version for lastCoord has len(v) > 0
+		if err := tx.AscendRange(cellFrom, cellTo, func(k, v []byte) bool {
 			if err := ctx.Err(); err != nil {
 				cellScanErr = err
 				return false
 			}
 			// Accept both v1 keys (cell/<16>) and MVCC version keys (cell/<16><8-byte seq>).
-			// For MVCC, parse coord from the first 21 bytes; keys ascend by seq so the last
-			// entry per coord is the latest version — we simply upsert into liveCells.
 			keyLen := len(k)
 			v1Len := len(index.CellPrefix) + index.PackedCoordKeyLen
 			mvccLen := v1Len + index.VersionSuffixLen
@@ -119,13 +124,33 @@ func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthRep
 			if err != nil {
 				return true
 			}
-			if _, seen := liveCells[p]; !seen {
+			if isMVCC {
+				// Keys ascend by (coord, seq). When we move to a new coord,
+				// finalize the previous one.
+				if p != lastCoord {
+					if lastCoordLive {
+						liveCells[lastCoord] = struct{}{}
+						report.CellCount++
+					}
+					lastCoord = p
+					lastCoordLive = false
+				}
+				// Each successive key for the same coord has a higher seq;
+				// overwrite so at the end of iteration lastCoordLive reflects
+				// the latest version.
+				lastCoordLive = len(v) > 0
+			} else {
+				liveCells[p] = struct{}{}
 				report.CellCount++
 			}
-			liveCells[p] = struct{}{}
 			return true
 		}); err != nil {
 			return fmt.Errorf("hexxladb: health cell scan: %w", err)
+		}
+		// Finalize the last MVCC coord after the scan completes.
+		if isMVCC && lastCoordLive {
+			liveCells[lastCoord] = struct{}{}
+			report.CellCount++
 		}
 		if cellScanErr != nil {
 			return cellScanErr
