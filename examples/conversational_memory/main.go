@@ -2,7 +2,7 @@
 //
 // Demonstrates production patterns for building an LLM memory system with HexxlaDB:
 //
-//   - Phase  1  Database init (MVCC, AfterPutCell hook, PageSize, MaxValueBytes)
+//   - Phase  1  Database init (MVCC, AfterPutCell hook, PageSize, Compression)
 //   - Phase  2  Batch-storing a rich, multi-session conversation corpus
 //   - Phase  3  Contradiction detection with MarkConflict seams
 //   - Phase  4  Supersession — seam-aware context assembly (FilterSuperseded)
@@ -140,6 +140,7 @@ func run(dbPath string) error {
 	opts := &hexxladb.Options{
 		EnableMVCC:       true,
 		ChangelogEnabled: true,
+		Compression:      hexxladb.CompressionDeflate,
 		MVCCRetention: hexxladb.MVCCRetention{
 			RetainCommitsBehindHead: 100,
 		},
@@ -149,7 +150,7 @@ func run(dbPath string) error {
 		}),
 	}
 
-	_, _ = infoStyle.Println("  Opening database (MVCC + changelog + AfterPutCell hook + PageSize)...")
+	_, _ = infoStyle.Println("  Opening database (MVCC + changelog + AfterPutCell hook + DEFLATE compression)...")
 	db, err := hexxladb.Open(dbPath, opts)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -162,6 +163,10 @@ func run(dbPath string) error {
 	printInfo("MVCC", "enabled · retain 100 commits behind head")
 	printInfo("PageSize", fmt.Sprintf("%d bytes (%d KiB, configurable per-database)", db.PageSize(), db.PageSize()/1024))
 	printInfo("MaxValueBytes", fmt.Sprintf("%d bytes (%d KB, configurable per-database)", db.MaxValueBytes(), db.MaxValueBytes()/1024))
+	printInfo("Compression", map[hexxladb.CompressionType]string{
+		hexxladb.CompressionNone:    "none",
+		hexxladb.CompressionDeflate: "DEFLATE (compress/flate, Go stdlib)",
+	}[db.Compression()])
 	printInfo("AfterPutCell", "hook active — counting every write")
 	fmt.Println()
 
