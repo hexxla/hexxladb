@@ -36,7 +36,8 @@ HexxlaDB v1 engine shell: **configurable page size** (4/8/16/64 KiB; default **4
 | 60     | 8    | **commit_seq** `uint64` — last committed logical sequence (**format_version ≥ 2**); **zero** when **format_version == 1** (treated as unused)       |
 | 68     | 32   | **encryption_key_check** — keyed verifier for deterministic wrong-key detection on encrypted DBs                                                    |
 | 100    | 4    | **max_value_bytes** `uint32` — per-database max B+ tree value size; **0** = default (8192)                                                          |
-| 104    | 408  | **reserved** (zero)                                                                                                                                 |
+| 104    | 1    | **compression_type** `uint8` — **0** = none, **1** = DEFLATE (`compress/flate`)                                                                     |
+| 105    | 407  | **reserved** (zero)                                                                                                                                 |
 
 Unrecognized **format_version** → open fails (forward-only policy; migration tooling later).
 
@@ -56,6 +57,18 @@ Unrecognized **format_version** → open fails (forward-only policy; migration t
 | **mac**     | `[32]byte` (optional) | Present when header feature bit 1 is set. HMAC-SHA256 over `seq                                                                                                     |     | page_id |     | payload` using key derived from encryption key material. |
 
 Records are read sequentially from the start of the WAL file. Partial tail → **`ErrCorruptWAL`**.
+
+## Value compression
+
+When **compression_type ≠ 0** in the header, values ≥ 64 bytes are compressed before storage. Compressed values carry a 5-byte envelope:
+
+| Offset | Size | Field                                                                          |
+| ------ | ---- | ------------------------------------------------------------------------------ |
+| 0      | 1    | `0xFE` compression magic (distinct from overflow `0xFF` and record `'H'`=0x48) |
+| 1      | 4    | **uncompressed_length** `uint32` big-endian                                    |
+| 5..    | var  | DEFLATE-compressed payload (`compress/flate`, level 1)                         |
+
+If compression does not reduce size, the value is stored raw (no envelope). Compressed and uncompressed values coexist; the per-value `0xFE` magic disambiguates on read. Compression runs **before** the overflow threshold check, so compressible values may fit inline even if the raw size exceeds the threshold.
 
 ## Overflow pages
 

@@ -37,11 +37,16 @@ type Options struct {
 	// primary file instead of fsync for durability barriers. Default false. See [Engine.syncPrimary].
 	UsePrimaryFdatasync bool
 	// MaxValueBytes sets the per-database maximum B+ tree value size and is persisted in the file
-	// header. Zero means [DefaultMaxValueBytes] (8192). Accepted values: 512, 1024, 2048, 4096,
-	// 8192, 16384. Invalid values are rejected at [Open] time.
+	// header. Zero means [DefaultMaxValueBytes] (8192). Accepted values: 512..1048576.
+	// Values exceeding the inline threshold spill to overflow pages. Invalid values are rejected at [Open] time.
 	MaxValueBytes uint32
 	// PageSize sets the page size for newly created databases. Accepted values: 4096, 8192,
 	// 16384, 65536. Zero means [DefaultPageSize] (4096). Ignored when opening an existing
 	// database — the page size is read from the file header.
 	PageSize uint32
+	// Compression selects per-value compression for the B+ tree. Persisted in the file header.
+	// Zero ([CompressionNone]) means no compression (default). [CompressionDeflate] enables
+	// DEFLATE via compress/flate. Compressed and uncompressed values coexist; the per-value
+	// magic byte disambiguates on read.
+	Compression CompressionType
 }

@@ -1,6 +1,10 @@
 package hexxladb
 
-import "time"
+import (
+	"time"
+
+	"github.com/hexxla/hexxladb/internal/engine"
+)
 
 // MVCCRetention configures optional defaults for [DB.SuggestedPruneBeforeSeq] and [DB.MVCCPrunePlan].
 // Zero values mean automatic prune suggestions are disabled (operators pass explicit beforeSeq to [DB.PruneCellVersions]).
@@ -68,6 +72,12 @@ type Options struct {
 	// Invalid values cause [Open] to return [ErrInvalidArgument].
 	MaxValueBytes uint32
 
+	// Compression selects per-value compression for the B+ tree. Persisted in the file header.
+	// Zero ([CompressionNone]) means no compression (default). [CompressionDeflate] enables
+	// DEFLATE via compress/flate (Go standard library). Compressed and uncompressed values
+	// coexist transparently — the per-value magic byte disambiguates on read.
+	Compression CompressionType
+
 	// UsePrimaryFdatasync, when true, uses fdatasync(2) on the primary data file on supported
 	// platforms (e.g. Linux) instead of fsync(2) for engine durability barriers. Default false; see
 	// [docs/hexxladb/DURABILITY.md] before enabling in production.
@@ -76,3 +86,13 @@ type Options struct {
 	// the first job in a batch. Zero means a 2ms default in the engine. See [docs/hexxladb/DURABILITY.md].
 	GroupWALMaxBatchWait time.Duration
 }
+
+// CompressionType selects the per-database compression algorithm.
+type CompressionType = engine.CompressionType
+
+const (
+	// CompressionNone disables value compression (default).
+	CompressionNone CompressionType = engine.CompressionNone
+	// CompressionDeflate enables DEFLATE compression via compress/flate.
+	CompressionDeflate CompressionType = engine.CompressionDeflate
+)

@@ -4,7 +4,6 @@ Immediate next steps. Update after each session.
 
 ## Current
 
-- [ ] Content compression (Phase 4, separate branch)
 - [ ] Embeddings keyspace (`embed/`) for ANN/hybrid retrieval
 
 ## Pending (next sessions)
@@ -15,6 +14,7 @@ Immediate next steps. Update after each session.
 
 ## Recently Completed
 
+- 2026-04-27: Content compression — `Options.Compression = CompressionDeflate` enables DEFLATE via compress/flate (Go stdlib); 5-byte `0xFE` envelope; mixed-mode; 11 new engine tests; header persistence
 - 2026-04-27: Overflow pages — values exceeding inline leaf threshold spill to chained overflow pages; MaxValueBytes raised to 1 MiB; 10 new engine tests; docs updated
 - 2026-04-27: `domain.Storage` contract tests — 22 reusable contract tests in `internal/domain/storagecontract/`; covers all 27 port methods (cells, seams, facets, edges, walks, context); real adapter passes all contracts; reusable `RunAll(t, factory)` harness for any future adapter
 - 2026-04-27: Configurable page size (efficient-storage Phases 1-2) — runtime `e.pageSize` replaces fixed 64 KiB constant; `Options.PageSize` (4096/8192/16384/65536); `DB.PageSize()`; fill-based B+ tree splitting; dynamic WAL record size; instance page buffer pool; compact propagation; parametric tests at all sizes; CHANGELOG + API_REFERENCE updated
