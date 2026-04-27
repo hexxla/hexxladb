@@ -6,6 +6,8 @@ status: active
 
 # DeleteCell + Compact Implementation Plan
 
+Audited against bbolt Compact, CockroachDB/Pebble MVCC tombstones, and Badger delete patterns.
+
 ## Item 1 — `Tx.DeleteCell`
 
 ### Behaviour
@@ -14,53 +16,75 @@ status: active
 
 Delete a cell and **all associated data** atomically within the current transaction:
 
-1. **Primary key** — `cell/<packed>` (v1) or all `cell/<packed>/<commitSeq>` MVCC rows (v2)
-2. **Secondary indexes** — `source/<...>/<packed>`, `time/<...>/<packed>`, `tag/<...>/<packed>` (and MVCC variants)
-3. **Facets** — `facet/<packed>/<facetID>` (0..5) (and MVCC variants)
-4. **Edges** — all `edge/<packed>/...` where `from == key` (outbound edges only — inbound edges from other cells reference this cell but are owned by their from-cell; orphan detection is a HealthCheck concern)
+1. **Primary key** — `cell/<packed>` (v1 hard-delete) or tombstone at `cell/<packed>/<commitSeq>` (v2 MVCC)
+2. **Secondary indexes** — `source/<...>/<packed>`, `time/<...>/<packed>`, `tag/<...>/<packed>` removed for current visible version (and MVCC-versioned variants)
+3. **Facets** — `facet/<packed>/<facetID>` (0..5) hard-deleted (v1) or tombstoned (v2 MVCC)
+4. **Edges** — all `edge/<packed>/...` where `from == key` hard-deleted (outbound only)
+5. **Seams** — NOT touched. Seams reference two cells; removing one endpoint is a domain decision. Orphaned seams surface via `HealthCheck`. Documented in API_REFERENCE.
 
-### MVCC behaviour (format v2)
+### MVCC tombstone design (format v2)
 
-On MVCC databases, `DeleteCell` writes a **tombstone** — a version-suffixed cell key with a zero-length value — rather than hard-deleting physical rows. This ensures `ViewAt` / `ViewAtTime` snapshots before the delete remain consistent. The tombstone is prunable via `PruneCellVersions` like any other stale version.
+**Tombstone = zero-length value** at `cell/<packed>/<writeSeq>` (matches Pebble/CockroachDB convention).
 
-Secondary indexes for the current visible version are removed (they point to a now-invisible cell). The tombstone row ensures `GetCell` returns `(zero, false, nil)` for the current snapshot.
+Visibility layer changes required in `getCellVisibleRaw`:
+
+- After `SelectVisible` returns `(value, seq, true)`, check `len(value) == 0` → treat as deleted, return `(nil, 0, false, nil)`
+- Same pattern for `getFacetVisibleRaw` — zero-length value = deleted facet
+
+**Overlay tracking** — `tx.cellOverlay` stores `record.CellRecord` which can't represent "deleted". Add `tx.cellDeleted map[lattice.PackedCoord]bool` checked in `getCellVisibleRaw` before overlay lookup. If `cellDeleted[key]` is true, return not-found immediately.
+
+**Snapshot consistency** — `ViewAt`/`ViewAtTime` with readSeq < delete's writeSeq still see the cell (tombstone has higher seq). `ViewAt` with readSeq >= writeSeq sees not-found. This is correct MVCC behaviour.
+
+**Pruning** — tombstones are prunable via `PruneCellVersions` like any other stale version. After pruning, the physical row is removed.
 
 ### Error semantics
 
-- `ErrCellNotFound` — cell does not exist at the given coordinate (no-op alternative: return nil — **decision: return nil** for idempotency, matching `BTree.Delete` which ignores missing keys)
+- Missing cell → **return nil** (idempotent, matches `BTree.Delete` which ignores missing keys, bbolt `Delete`, Badger `Delete`)
 - `ErrTxReadOnly` — called inside `DB.View`
 - `ErrClosed` / `ErrDatabaseClosed` — standard guards
 
 ### Implementation steps
 
-1. **Add `Tx.DeleteCell` to `primitives.go`**
+1. **Tombstone visibility support** (prerequisite)
+   - `getCellVisibleRaw`: after `SelectVisible`, if `len(value) == 0` return `(nil, 0, false, nil)`
+   - `getFacetVisibleRaw`: same zero-length check
+   - Add `tx.cellDeleted` map to `Tx` struct; check in `getCellVisibleRaw` before overlay
+   - Test: write cell, write tombstone at higher seq, confirm GetCell returns not-found
+
+2. **Add `Tx.DeleteCell` to `primitives.go`**
    - Guard: `requireWritable`, `ctx.Err`
    - Read current cell via `tx.GetCell(key)` — if not found, return nil (idempotent)
-   - v1 path: `tx.deleteDirect(index.CellKey(key))`
-   - v2 path: write tombstone `tx.putDirect(index.CellKeyWithVersion(key, tx.writeSeq), nil)`
-   - Call `tx.removeCellSecondaryIndex(oldRec, commitSeq)` — existing helper handles source/time/tag
-   - Delete facets: `AscendRange` over `FacetRangeLower(key)..FacetRangeUpper(key)` collecting keys, then `deleteDirect` each (v1); for MVCC use `FacetCellAllVersionsRange` and write tombstones
-   - Delete outbound edges: `AscendRange` with `EdgeFromPrefix(key)` collecting keys, then `deleteDirect` each
-   - Fire `tx.noteChangelog(changelog.OpDeleteCell, ...)` — new op code
-   - Fire `AfterPutCell` hook? **No** — add `AfterDeleteCellHook` later if needed; keep scope minimal
-   - Clear `tx.cellOverlay[key]` if present (MVCC overlay)
+   - **v1 path:**
+     - `tx.deleteDirect(index.CellKey(key))` — hard-delete primary
+     - `tx.removeCellSecondaryIndex(oldRec, 0)` — remove source/time/tag
+     - Delete facets: collect keys via `AscendRange(FacetRangeLower..FacetRangeUpper)`, `deleteDirect` each
+     - Delete outbound edges: collect keys via `AscendRange(EdgeFromPrefix(key), nil)` with prefix check, `deleteDirect` each
+   - **v2 (MVCC) path:**
+     - Write tombstone: `tx.putDirect(index.CellKeyWithVersion(key, tx.writeSeq), []byte{})`
+     - `tx.removeCellSecondaryIndex(oldRec, oldCommitSeq)` — remove current visible secondary keys
+     - Tombstone facets: for each facetID 0..5, if visible facet exists, write `tx.putDirect(index.FacetKeyWithVersion(key, facetID, tx.writeSeq), []byte{})`
+     - Delete outbound edges: same as v1 (edges are not MVCC-versioned)
+     - Set `tx.cellDeleted[key] = true`, delete `tx.cellOverlay[key]` if present
+   - `tx.noteChangelog(changelog.OpDeleteCell, index.CellKey(key), nil)`
 
-2. **Add `changelog.OpDeleteCell` constant** in `internal/changelog/changelog.go`
+3. **Add `changelog.OpDeleteCell` constant** in `internal/changelog/changelog.go`
 
-3. **Add tests in `delete_cell_test.go`**
-   - Delete existing cell — primary gone, secondaries gone, facets gone, edges gone
+4. **Add tests in `delete_cell_test.go`**
+   - Delete existing cell (v1) — primary gone, secondaries gone, facets gone, edges gone
    - Delete missing cell — no error (idempotent)
-   - Delete in read-only tx — `ErrTxReadOnly`
-   - Delete with MVCC — tombstone written, `GetCell` returns false, `ViewAt` before delete still sees cell
-   - Delete cell with facets — all facets removed
-   - Delete cell with outbound edges — all outbound edges removed
-   - Delete then re-put at same coord — works correctly
-   - Secondary index cleanup: source/time/tag indexes no longer contain deleted cell
-   - HealthCheck after delete — clean report
+   - Delete in read-only tx — error
+   - Delete with MVCC — tombstone written, `GetCell` returns false
+   - MVCC snapshot: `ViewAt` before delete still sees cell; `ViewAt` after sees not-found
+   - Delete cell with facets — all facets not-found after delete
+   - Delete cell with outbound edges — edges removed
+   - Delete then re-put at same coord — new cell visible
+   - Secondary index cleanup: source/time/tag scans no longer contain deleted cell
+   - HealthCheck after delete — clean report (no orphaned indexes)
+   - Same-tx: put cell, delete cell, get cell → not-found (overlay correctness)
 
-4. **Update `doc.go`, `API_REFERENCE.md`** — document new method
+5. **Update `doc.go`, `API_REFERENCE.md`** — document method, seam/edge orphan behaviour
 
-5. **`make ci`** — green
+6. **`make ci`** — green
 
 ---
 
@@ -70,46 +94,53 @@ Secondary indexes for the current visible version are removed (they point to a n
 
 `Compact(ctx context.Context, destPath string) error`
 
-Offline copy-compaction: walk all live B+ tree keys, write them sequentially into a fresh database file, producing a minimal-size copy.
+Copy-compaction: walk all B+ tree keys, write them sequentially into a fresh database file, producing a minimal-size copy. Modeled after bbolt's `Compact(dst, src *DB, txMaxSize int64)`.
 
 ### Design
 
-- Caller must close the source DB before calling Compact (or: Compact opens a read-only view internally)
-- **Simpler approach**: standalone function `CompactTo(ctx, srcPath, destPath string, opts *Options) error`
-  - Opens source read-only, creates fresh dest via `Open(destPath, opts)`
-  - `AscendRange(nil, nil, ...)` over source → `btree.Put` into dest
-  - Closes both
-  - Caller renames dest over source if desired
-- Preserves: encryption settings (re-encrypts with same key), MaxValueBytes, format version
-- Does NOT preserve: MVCC pruned rows (they're gone), freelist gaps (compacted away)
-- Context cancellation: checked every N keys (e.g. every 1000) for early abort
+- **`CompactTo(ctx, srcPath, destPath string, opts *Options) error`** — standalone function
+  - Opens source via `Open(srcPath, opts)` (read-only View)
+  - Opens fresh dest via `Open(destPath, opts)` with same format version, MVCC flag, MaxValueBytes, encryption
+  - `AscendRange(nil, nil)` over source → `putDirect` into dest within `Update` tx
+  - Context checked every 1000 keys for cancellation
+  - On error or cancellation: close dest, remove temp file, return error
+  - Closes both on success
+- **`DB.Compact(ctx, destPath string) error`** — convenience on open DB
+  - Holds read lock (View) on source, writes to destPath
+  - Caller can then close source and rename dest over source if desired
+- **Verbatim copy** — ALL physical keys copied as-is, including MVCC version rows and tombstones. This preserves full history. Callers who want to strip history should `PruneCellVersions` before compacting (Pebble/RocksDB approach).
+- **Space reclaimed from:** freelist gaps, deleted-but-not-tombstoned keys (v1), pages with low fill factor
+- **Preserves:** format version, MVCC flag, MaxValueBytes, encryption key
+- Context cancellation: partial dest file cleaned up on abort
 
 ### Implementation steps
 
 1. **Add `CompactTo` function in `compact.go`**
-   - Open source DB read-only (View)
-   - Open dest DB with same options
-   - AscendRange(nil, nil) over source btree, Put each key into dest
-   - Check ctx every 1000 keys
-   - Close dest, close source read-only handle
+   - Open source, open dest with matching options
+   - `source.View` → `AscendRange(nil, nil)` → batch `dest.Update` with `putDirect`
+   - Check `ctx.Err()` every 1000 keys; on cancel, clean up temp file
+   - Close both handles
    - Return nil on success
 
 2. **Add `DB.Compact` convenience method**
-   - Creates temp file alongside DB path
-   - Calls `CompactTo`
-   - Atomic rename temp → original path
-   - Reopens DB from compacted file
+   - `db.View` to hold read lock
+   - Open fresh dest at destPath
+   - Copy all keys from source btree to dest btree
+   - Close dest
+   - Return nil (caller manages rename/reopen)
 
 3. **Add tests in `compact_test.go`**
    - Compact empty DB — produces valid empty DB
-   - Compact DB with cells/facets/edges/seams — all data preserved in dest
-   - Compact MVCC DB with pruned versions — only live versions in dest
-   - Compact encrypted DB — dest is also encrypted, readable with same key
-   - Compact respects MaxValueBytes
-   - Compact with context cancellation — aborts cleanly
-   - File size: dest <= source (strictly less if source had deleted keys)
+   - Compact DB with cells/facets/edges/seams — all data preserved and readable in dest
+   - Compact MVCC DB — tombstones and version history preserved
+   - Compact after PruneCellVersions — dest has fewer keys, smaller file
+   - Compact encrypted DB — dest readable with same key
+   - Compact respects MaxValueBytes from source header
+   - Compact with context cancellation — aborts cleanly, no partial dest
+   - File size: dest <= source (strictly less when source had deletes/gaps)
+   - HealthCheck on dest — clean report
 
-4. **Update `doc.go`, `API_REFERENCE.md`, `OPERATIONS.md`** — document compaction
+4. **Update `doc.go`, `API_REFERENCE.md`, `OPERATIONS.md`** — document compaction workflow
 
 5. **`make ci`** — green
 
@@ -117,11 +148,13 @@ Offline copy-compaction: walk all live B+ tree keys, write them sequentially int
 
 ## Execution Order
 
-1. `Tx.DeleteCell` first — it's the more impactful API gap
-2. `DB.Compact` second — benefits from DeleteCell being available (deleted keys leave gaps that Compact reclaims)
+1. `Tx.DeleteCell` first (tombstone visibility support is a prerequisite)
+2. `DB.Compact` second (benefits from DeleteCell leaving reclaimable gaps)
 
 ## Completion Checklist
 
+- [ ] Tombstone visibility in `getCellVisibleRaw` / `getFacetVisibleRaw`
+- [ ] `tx.cellDeleted` overlay tracking
 - [ ] `Tx.DeleteCell` implemented + tests
 - [ ] `changelog.OpDeleteCell` added
 - [ ] `DB.Compact` / `CompactTo` implemented + tests
