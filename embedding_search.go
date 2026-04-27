@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/hexxla/hexxladb/internal/engine"
+	"github.com/hexxla/hexxladb/internal/hnsw"
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
@@ -27,7 +28,7 @@ type EmbeddingSearchResult struct {
 }
 
 // SearchByEmbedding finds the cells whose embeddings are most similar to vec.
-// Uses flat scan over the embed/ keyspace with parallel distance computation.
+// Uses HNSW graph when available, falling back to flat scan over the embed/ keyspace.
 // The database must have been opened with a non-zero [Options.EmbeddingDimension].
 func (tx *Tx) SearchByEmbedding(vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, error) {
 	if tx == nil || tx.db == nil {
@@ -49,7 +50,14 @@ func (tx *Tx) SearchByEmbedding(vec []float32, cfg EmbeddingSearchConfig) ([]Emb
 	}
 	metric := tx.db.eng.EmbeddingMetric()
 
-	// Phase 1: collect all embeddings from the embed/ keyspace.
+	// Try HNSW graph first.
+	if results, used, err := tx.searchHNSW(vec, maxResults, cfg.MinScore, metric); err != nil {
+		return nil, err
+	} else if used {
+		return results, nil
+	}
+
+	// Flat-scan fallback: collect all embeddings from the embed/ keyspace.
 	type candidate struct {
 		coord lattice.PackedCoord
 		vec   []float32
@@ -135,6 +143,41 @@ func (tx *Tx) SearchByEmbedding(vec []float32, cfg EmbeddingSearchConfig) ([]Emb
 		out[i] = EmbeddingSearchResult{Coord: item.coord, Score: item.score}
 	}
 	return out, nil
+}
+
+// searchHNSW attempts HNSW search. Returns (results, true, nil) if graph exists,
+// or (nil, false, nil) if no graph is available (caller should fall back to flat scan).
+func (tx *Tx) searchHNSW(vec []float32, maxResults int, minScore float64, metric engine.DistanceMetric) ([]EmbeddingSearchResult, bool, error) {
+	stor := &txHNSWStorage{tx: tx}
+	_, hasMeta, err := stor.GetHNSWMeta()
+	if err != nil {
+		return nil, false, err
+	}
+	if !hasMeta {
+		return nil, false, nil // no graph — fall back to flat scan
+	}
+	g := hnsw.NewGraph(stor, metric)
+	efSearch := max(
+		// reasonable default: 2× k
+		maxResults*2, 100)
+	hnswResults, err := g.Search(vec, maxResults, efSearch)
+	if err != nil {
+		return nil, false, err
+	}
+	if hnswResults == nil {
+		return nil, true, nil
+	}
+	out := make([]EmbeddingSearchResult, 0, len(hnswResults))
+	for _, r := range hnswResults {
+		if minScore != 0 && r.Score < minScore {
+			continue
+		}
+		out = append(out, EmbeddingSearchResult{Coord: r.Coord, Score: r.Score})
+	}
+	if len(out) == 0 {
+		return nil, true, nil
+	}
+	return out, true, nil
 }
 
 // searchHit is a scored embedding result used internally for top-K selection.

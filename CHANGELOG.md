@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added (hnsw-graph)
+
+- **HNSW graph** (`hnsw/` keyspace): sub-linear approximate nearest-neighbor search persisted in the B+ tree
+- `internal/hnsw` package: `Node` and `Meta` encode/decode, `Graph` with Insert/Search/Delete
+- `hnsw/meta`, `hnsw/entry`, `hnsw/node/<packed_coord>` keyspace (keys in `internal/index/hnsw_key.go`)
+- HNSW insert with random layer selection, greedy descent, ef-bounded beam search, bidirectional linking
+- HNSW search with greedy layer descent and ef-bounded beam at layer 0
+- HNSW delete with neighbor repair and entry point promotion
+- `SearchByEmbedding` uses HNSW when graph exists, flat-scan fallback otherwise
+- `PutEmbedding`/`DeleteEmbedding`/`DeleteCell` cascade maintain HNSW graph automatically
+- `Tx.getDirect` helper for internal reads bypassing public API guards
+- `txHNSWStorage` adapter bridges `Tx` to `hnsw.Storage` interface
+- 7 graph tests (insert, recall, delete, delete-all, delete-entry, update, empty) + 6 node/meta encoding tests
+
 ### Added (embeddings-keyspace)
 
 - **Embedding keyspace** (`embed/<packed_coord>`): fixed-dimension float32 vector storage per cell

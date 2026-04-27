@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/hexxla/hexxladb/internal/engine"
+	"github.com/hexxla/hexxladb/internal/hnsw"
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
@@ -26,7 +28,12 @@ func (tx *Tx) PutEmbedding(coord lattice.PackedCoord, vec []float32) error {
 	}
 	key := index.EmbedKey(coord)
 	val := encodeFloat32s(vec)
-	return tx.putDirect(key, val)
+	if err := tx.putDirect(key, val); err != nil {
+		return err
+	}
+	// Update HNSW graph.
+	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.DistanceMetric(tx.db.eng.EmbeddingMetric()))
+	return g.Insert(coord, vec)
 }
 
 // GetEmbedding returns the vector embedding for the cell at coord, or (nil, false, nil) if none stored.
@@ -42,14 +49,9 @@ func (tx *Tx) GetEmbedding(coord lattice.PackedCoord) (vec []float32, ok bool, e
 		return nil, false, ErrEmbeddingsDisabled
 	}
 	key := index.EmbedKey(coord)
-	var val []byte
-	if !tx.writable {
-		val, ok, err = tx.db.btree.GetUsingRoot(tx.cachedBTreeRoot, key)
-	} else {
-		val, ok, err = tx.db.btree.Get(key)
-	}
-	if err != nil || !ok {
-		return nil, false, err
+	val, found, getErr := tx.getDirect(key)
+	if getErr != nil || !found {
+		return nil, false, getErr
 	}
 	return decodeFloat32s(val), true, nil
 }
@@ -65,7 +67,11 @@ func (tx *Tx) DeleteEmbedding(coord lattice.PackedCoord) error {
 		return ErrEmbeddingsDisabled
 	}
 	key := index.EmbedKey(coord)
-	return tx.deleteDirect(key)
+	if err := tx.deleteDirect(key); err != nil {
+		return err
+	}
+	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.DistanceMetric(tx.db.eng.EmbeddingMetric()))
+	return g.Delete(coord)
 }
 
 // deleteEmbeddingIfEnabled removes the embedding for coord if embeddings are enabled. No-op otherwise.
@@ -75,7 +81,11 @@ func (tx *Tx) deleteEmbeddingIfEnabled(coord lattice.PackedCoord) error {
 		return nil // embeddings not configured — nothing to cascade
 	}
 	key := index.EmbedKey(coord)
-	return tx.deleteDirect(key)
+	if err := tx.deleteDirect(key); err != nil {
+		return err
+	}
+	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.DistanceMetric(tx.db.eng.EmbeddingMetric()))
+	return g.Delete(coord)
 }
 
 // encodeFloat32s encodes a float32 slice as raw little-endian bytes.
