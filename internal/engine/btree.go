@@ -91,7 +91,15 @@ func (t *BTree) GetUsingRoot(root uint64, key []byte) (val []byte, ok bool, err 
 			}
 			i := leafKeyIndex(ld.keys, key)
 			if i < len(ld.keys) && bytes.Equal(ld.keys[i], key) {
-				return ld.vals[i], true, nil
+				v := ld.vals[i]
+				if isOverflowStub(v) {
+					logLen, firstPage := decodeOverflowStub(v)
+					v, err = t.readOverflowChain(firstPage, logLen)
+					if err != nil {
+						return nil, false, err
+					}
+				}
+				return v, true, nil
 			}
 			return nil, false, nil
 		case btreeKindInternal:
@@ -119,6 +127,8 @@ func (t *BTree) Get(key []byte) (val []byte, ok bool, err error) {
 }
 
 // Put inserts or replaces a key/value pair.
+// Values larger than inlineThreshold are stored in overflow pages; a 14-byte
+// stub is placed in the leaf entry.
 func (t *BTree) Put(key, val []byte) error {
 	if len(key) > maxKeyBytes {
 		return ErrKeyTooLarge
@@ -126,14 +136,25 @@ func (t *BTree) Put(key, val []byte) error {
 	if uint32(len(val)) > t.eng.maxValueBytes { //nolint:gosec // G115: len() is always non-negative; conversion is safe
 		return ErrValueTooLarge
 	}
+
+	// Spill to overflow pages if value exceeds the inline threshold.
+	leafVal := val
+	if len(val) > inlineThreshold(t.pageSize()) {
+		firstPage, err := t.writeOverflowChain(val)
+		if err != nil {
+			return err
+		}
+		leafVal = encodeOverflowStub(uint32(len(val)), firstPage) //nolint:gosec // len(val) <= maxValueBytes (uint32)
+	}
+
 	hdr, err := t.eng.ReadHeader()
 	if err != nil {
 		return err
 	}
 	if hdr.BTreeRoot == 0 {
-		return t.putFirst(key, val)
+		return t.putFirst(key, leafVal)
 	}
-	split, nr, sep, err := t.insertAt(hdr.BTreeRoot, key, val)
+	split, nr, sep, err := t.insertAt(hdr.BTreeRoot, key, leafVal)
 	if err != nil {
 		return err
 	}
@@ -207,6 +228,11 @@ func (t *BTree) insertIntoLeaf(pid uint64, page, key, val []byte) (split bool, n
 	vals := append([][]byte(nil), ld.vals...)
 	idx := leafKeyIndex(keys, key)
 	if idx < len(keys) && bytes.Equal(keys[idx], key) {
+		// Free old overflow chain if the previous value was an overflow stub.
+		if isOverflowStub(vals[idx]) {
+			_, oldFirst := decodeOverflowStub(vals[idx])
+			t.freeOverflowChain(oldFirst)
+		}
 		vals[idx] = append([]byte(nil), val...)
 		pg, err := buildLeafPage(t.pageSize(), ld.parent, ld.next, keys, vals)
 		if err != nil {
@@ -368,7 +394,15 @@ func (t *BTree) AscendRange(from, to []byte, fn func(k, v []byte) bool) error {
 			if to != nil && bytes.Compare(k, to) > 0 {
 				return nil
 			}
-			if !fn(k, ld.vals[i]) {
+			v := ld.vals[i]
+			if isOverflowStub(v) {
+				logLen, firstPage := decodeOverflowStub(v)
+				v, err = t.readOverflowChain(firstPage, logLen)
+				if err != nil {
+					return err
+				}
+			}
+			if !fn(k, v) {
 				return nil
 			}
 		}

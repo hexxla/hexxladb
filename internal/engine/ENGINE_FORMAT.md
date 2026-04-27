@@ -35,7 +35,8 @@ HexxlaDB v1 engine shell: **configurable page size** (4/8/16/64 KiB; default **4
 | 44     | 16   | **encryption_salt** — used with Argon2id passphrase mode and keyed encryption verifier derivation                                                   |
 | 60     | 8    | **commit_seq** `uint64` — last committed logical sequence (**format_version ≥ 2**); **zero** when **format_version == 1** (treated as unused)       |
 | 68     | 32   | **encryption_key_check** — keyed verifier for deterministic wrong-key detection on encrypted DBs                                                    |
-| 100    | 412  | **reserved** (zero)                                                                                                                                 |
+| 100    | 4    | **max_value_bytes** `uint32` — per-database max B+ tree value size; **0** = default (8192)                                                          |
+| 104    | 408  | **reserved** (zero)                                                                                                                                 |
 
 Unrecognized **format_version** → open fails (forward-only policy; migration tooling later).
 
@@ -55,6 +56,27 @@ Unrecognized **format_version** → open fails (forward-only policy; migration t
 | **mac**     | `[32]byte` (optional) | Present when header feature bit 1 is set. HMAC-SHA256 over `seq                                                                                                     |     | page_id |     | payload` using key derived from encryption key material. |
 
 Records are read sequentially from the start of the WAL file. Partial tail → **`ErrCorruptWAL`**.
+
+## Overflow pages
+
+Values larger than the **inline threshold** (`pageSize - btreeHeaderSize - maxKeyBytes - 4`, typically ~3.7 KiB at 4 KiB page size) are stored in a chain of overflow pages. The leaf entry holds a 14-byte **overflow stub** instead of the raw value.
+
+### Overflow stub (in leaf)
+
+| Offset | Size | Field                                                                               |
+| ------ | ---- | ----------------------------------------------------------------------------------- |
+| 0      | 2    | `0xFF 0x4F` overflow magic (`0xFF` cannot be the first byte of any record envelope) |
+| 2      | 4    | **logical_length** `uint32` — full value size                                       |
+| 6      | 8    | **first_page_id** `uint64` — first overflow page                                    |
+
+### Overflow page layout
+
+| Offset | Size         | Field                                                     |
+| ------ | ------------ | --------------------------------------------------------- |
+| 0      | 8            | **next_page_id** `uint64` — next overflow page (0 = last) |
+| 8      | pageSize - 8 | payload chunk                                             |
+
+Overflow pages are ordinary data pages: they are written via `WritePage`, appear in the WAL, and encrypt like any other page.
 
 ## Freelist
 

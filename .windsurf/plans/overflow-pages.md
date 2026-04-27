@@ -26,30 +26,31 @@ plus a 4-byte `nextPage` pointer. This is the proven pattern we follow.
 
 ### On-disk format
 
-1. **Inline threshold:** `T = pageSize - btreeHeaderSize - 4 - maxKeyBytes - 8`
-   (roughly the max payload that fits in a leaf alongside the key, key length,
-   value length fields, and the 8-byte overflow page pointer).
-   In practice, for 4 KiB pages: T ≈ 3768 bytes.
+1. **Inline threshold:** `T = pageSize - btreeHeaderSize - maxKeyBytes - 4`
+   (the max payload that fits in a leaf alongside the key, key length,
+   and value length fields). For 4 KiB pages: T ≈ 3768 bytes.
    Values ≤ T bytes are stored inline (no change to current format).
 
-2. **Overflow indicator:** When `len(val) > T`, the leaf entry stores:
-   - `keyLen(2) + key + valLen(2)` as normal (valLen = full logical length)
-   - First `T` bytes of value inline
-   - `uint64` overflow page ID (8 bytes) at end of entry
+2. **Overflow stub:** When `len(val) > T`, the leaf entry stores a 14-byte
+   stub instead of the raw value:
+   - `0xFF 0x4F` (2-byte magic; 0xFF cannot be the first byte of any record envelope)
+   - `uint32` logical value length (4 bytes, big-endian)
+   - `uint64` first overflow page ID (8 bytes, big-endian)
 
 3. **Overflow page chain:** Each overflow page has:
    - Bytes `[0..7]`: `uint64` next page ID (0 = last page in chain)
    - Bytes `[8..pageSize-1]`: payload chunk (`pageSize - 8` usable bytes)
 
-4. **Header changes:** New field at a free offset in the 512-byte header:
-   - `overflow_enabled` flag (1 byte) — allows forward detection by old code
-   - Or: use a format_version bump (v3) if cleaner
+4. **Header:** No header changes needed. Overflow is transparent — detected by
+   the 2-byte magic in leaf values. Old databases without overflow values work
+   unmodified.
 
 ### Engine changes (internal/engine only — hex boundary)
 
 All overflow logic is encapsulated in `internal/engine`. No domain/app changes.
 
 **Phase 1: Overflow write path**
+
 - `btree.go` Put: if `len(val) > inlineThreshold(pageSize)`, split into inline
   prefix + overflow chain. Allocate pages via `NextPageID`.
 - New `overflow.go`: `writeOverflowChain(eng, data []byte) (firstPageID uint64, err error)`
@@ -57,11 +58,13 @@ All overflow logic is encapsulated in `internal/engine`. No domain/app changes.
 - WAL: overflow pages are ordinary data pages — no WAL format change needed.
 
 **Phase 2: Overflow read path**
+
 - `btree.go` Get/scan: detect overflow pointer, read chain, reassemble value.
 - New: `readOverflowChain(eng, firstPageID uint64) ([]byte, error)`
 - `parseLeafPage` must detect and handle overflow entries.
 
 **Phase 3: Overflow delete path**
+
 - When deleting a key with overflow, free the overflow pages.
 - Since the engine is extend-only (no freelist), overflow pages become dead space
   until `Compact`. This matches the existing allocator model.
@@ -69,12 +72,14 @@ All overflow logic is encapsulated in `internal/engine`. No domain/app changes.
   compacted because only referenced pages are copied.
 
 **Phase 4: Raise MaxValueBytes**
+
 - Add new valid sizes: `32768, 65536, 131072, 262144, 524288, 1048576`
 - Update `validMaxValueBytes` array.
 - Update `Options.MaxValueBytes` documentation.
 - Existing databases with smaller limits continue working; the limit is per-DB.
 
 **Phase 5: Tests**
+
 - Unit: overflow write/read round-trip at all page sizes.
 - Unit: overflow chain spanning 1, 2, 5, 20 pages.
 - Unit: delete key with overflow chain.
@@ -84,6 +89,7 @@ All overflow logic is encapsulated in `internal/engine`. No domain/app changes.
 - Backward compat: databases without overflow open normally.
 
 **Phase 6: Documentation**
+
 - `ENGINE_FORMAT.md`: overflow page layout.
 - `ORDERED_STORE.md`: inline threshold and overflow chain.
 - `API_REFERENCE.md`: updated MaxValueBytes accepted values.

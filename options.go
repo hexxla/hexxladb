@@ -63,7 +63,9 @@ type Options struct {
 	// MaxValueBytes sets the per-database maximum encoded value size stored in the B+ tree.
 	// The limit is persisted in the file header and enforced on every write.
 	// Zero means the default (8192 bytes = 8 KB). Accepted non-zero values: 512, 1024, 2048,
-	// 4096, 8192, 16384. Invalid values cause [Open] to return [ErrInvalidArgument].
+	// 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576.
+	// Values exceeding the inline leaf threshold are stored in overflow pages automatically.
+	// Invalid values cause [Open] to return [ErrInvalidArgument].
 	MaxValueBytes uint32
 
 	// UsePrimaryFdatasync, when true, uses fdatasync(2) on the primary data file on supported

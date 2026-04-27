@@ -40,6 +40,11 @@ func (t *BTree) Delete(key []byte) error {
 	if err != nil {
 		return err
 	}
+	// Free overflow chain if the deleted entry was an overflow stub.
+	if isOverflowStub(ld.vals[keyIdx]) {
+		_, firstPage := decodeOverflowStub(ld.vals[keyIdx])
+		t.freeOverflowChain(firstPage)
+	}
 	ld.keys = append(ld.keys[:keyIdx], ld.keys[keyIdx+1:]...)
 	ld.vals = append(ld.vals[:keyIdx], ld.vals[keyIdx+1:]...)
 	pg, err := buildLeafPage(t.pageSize(), ld.parent, ld.next, ld.keys, ld.vals)

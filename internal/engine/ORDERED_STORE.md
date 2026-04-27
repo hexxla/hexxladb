@@ -59,6 +59,7 @@ Invariant: child page **ptr0** contains keys `< key[0]`; **ptr[i+1]** contains k
 ## Capacity and splits
 
 - Leaf and internal node capacity is **dynamic**, derived from the database's page size. Inserts use **fill-based splitting**: a node splits when its serialized size exceeds ~50% of the page. See `btree_page.go` for `maxLeafEntriesForPage` / `maxInternalChildrenForPage`.
+- **Overflow pages:** values larger than the **inline threshold** (`pageSize - btreeHeaderSize - maxKeyBytes - 4`) are stored in a chain of overflow pages; the leaf entry holds a 14-byte stub (`0xFF 0x4F` magic + `uint32` logical length + `uint64` first page ID). See `overflow.go` and `ENGINE_FORMAT.md` for the on-disk layout.
 - **Root:** when the root splits, a new internal node becomes the root; **`btree_root_page`** in the file header is updated.
 
 ## Allocator

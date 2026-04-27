@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added (overflow-pages)
+
+- **Overflow pages**: values exceeding the inline leaf threshold are automatically stored in a chain of overflow pages; reads, scans, deletes, and compact all resolve overflow transparently
+- `Options.MaxValueBytes` now accepts 32768, 65536, 131072, 262144, 524288, 1048576 (up to 1 MiB)
+- 10 new engine tests: parametric round-trip at all page sizes, multi-page chain, overwrite, inline→overflow transition, delete, AscendRange, many-key stress
+- Overflow pages are ordinary data pages — encryption, WAL, and compact work without changes
+
 ### Added (storage-contract-tests)
 
 - `internal/domain/storagecontract` package — 22 reusable contract tests for the `domain.Storage` port interface

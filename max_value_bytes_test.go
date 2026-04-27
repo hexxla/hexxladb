@@ -53,7 +53,7 @@ func TestMaxValueBytes_ExplicitLimit(t *testing.T) {
 // TestMaxValueBytes_InvalidRejected verifies unsupported sizes return ErrInvalidArgument.
 func TestMaxValueBytes_InvalidRejected(t *testing.T) {
 	t.Parallel()
-	for _, bad := range []uint32{1, 100, 1000, 3000, 9000, 32768} {
+	for _, bad := range []uint32{1, 100, 1000, 3000, 9000, 2_000_000} {
 		_, err := hexxladb.Open(filepath.Join(t.TempDir(), "bad.db"), &hexxladb.Options{MaxValueBytes: bad})
 		if !errors.Is(err, hexxladb.ErrInvalidArgument) {
 			t.Errorf("MaxValueBytes=%d: expected ErrInvalidArgument, got %v", bad, err)
@@ -64,7 +64,7 @@ func TestMaxValueBytes_InvalidRejected(t *testing.T) {
 // TestMaxValueBytes_AllValidValues exercises every accepted value.
 func TestMaxValueBytes_AllValidValues(t *testing.T) {
 	t.Parallel()
-	for _, v := range []uint32{512, 1024, 2048, 4096, 8192, 16384} {
+	for _, v := range []uint32{512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576} {
 		t.Run("limit", func(t *testing.T) {
 			t.Parallel()
 			db := openMaxValDB(t, &hexxladb.Options{MaxValueBytes: v})
