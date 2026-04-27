@@ -19,6 +19,8 @@ type cellsView struct {
 	loading    bool
 	searching  bool   // search bar is open (typing)
 	query      string // last executed query (shown when results are displayed)
+	searchMode string // "lexical" or "embedding"
+	searchErr  error  // error from last search
 	width      int
 	height     int
 }
@@ -66,6 +68,14 @@ func (v *cellsView) Update(msg tea.Msg) (view, tea.Cmd) {
 		v.loading = false
 		v.cursor = 0
 		return v, nil
+	case embeddingSearchHitsLoadedMsg:
+		v.searchErr = msg.err
+		if msg.err == nil {
+			v.searchHits = msg.hits
+		}
+		v.loading = false
+		v.cursor = 0
+		return v, nil
 
 	case tea.KeyMsg:
 		if v.searching {
@@ -74,6 +84,7 @@ func (v *cellsView) Update(msg tea.Msg) (view, tea.Cmd) {
 				v.searching = false
 				v.query = ""
 				v.searchHits = nil
+				v.searchErr = nil
 				v.loading = true
 				v.cells = nil
 				db := v.db
@@ -82,8 +93,12 @@ func (v *cellsView) Update(msg tea.Msg) (view, tea.Cmd) {
 				v.searching = false
 				v.loading = true
 				v.searchHits = nil
+				v.searchErr = nil
 				q := v.query
 				db := v.db
+				if v.searchMode == "embedding" {
+					return v, func() tea.Msg { return searchByEmbedding(db, q, 200) }
+				}
 				return v, func() tea.Msg { return searchHitsLoadedMsg{hits: searchCells(db, q, 200)} }
 			case tea.KeyBackspace, tea.KeyDelete:
 				if v.query != "" {
@@ -122,10 +137,18 @@ func (v *cellsView) Update(msg tea.Msg) (view, tea.Cmd) {
 			v.searching = true
 			v.query = ""
 			return v, nil
+		case "e":
+			if v.searchMode == "lexical" {
+				v.searchMode = "embedding"
+			} else {
+				v.searchMode = "lexical"
+			}
+			return v, nil
 		case "r":
 			v.loading = true
 			v.cells = nil
 			v.searchHits = nil
+			v.searchErr = nil
 			v.query = ""
 			v.searching = false
 			db := v.db
@@ -146,6 +169,15 @@ func (v *cellsView) View() string {
 
 	if total == 0 {
 		if isSearch {
+			if v.searchErr != nil {
+				return lipgloss.JoinVertical(lipgloss.Left,
+					v.renderSearchBar(),
+					"",
+					styleBad.Render("  ✗  Search error: "+v.searchErr.Error()),
+					"",
+					styleHelp.Render("  "+helpItem("/", "new search")+"  "+helpItem("r", "browse all")),
+				)
+			}
 			return lipgloss.JoinVertical(lipgloss.Left,
 				v.renderSearchBar(),
 				"",
@@ -245,7 +277,11 @@ func (v *cellsView) View() string {
 	}
 	title := "◈ Cells"
 	if isSearch {
-		title = fmt.Sprintf("◈ Cells  ⌕ %q  — %d results", v.query, total)
+		modeStr := "lexical"
+		if v.searchMode == "embedding" {
+			modeStr = "semantic"
+		}
+		title = fmt.Sprintf("◈ Cells  ⌕ %q [%s] — %d results", v.query, modeStr, total)
 	}
 	scrollInfo := styleDim.Render(fmt.Sprintf("  %d/%d  (%d%%)", v.cursor+1, total, pct))
 
@@ -253,6 +289,7 @@ func (v *cellsView) View() string {
 		helpItem("g/G", "top/bottom") + "  " +
 		helpItem("Enter", "inspect") + "  " +
 		helpItem("/", "search") + "  " +
+		helpItem("e", "toggle mode") + "  " +
 		helpItem("r", "browse all")
 
 	parts := []string{viewTitle(title, v.width), scrollInfo}
@@ -265,13 +302,27 @@ func (v *cellsView) View() string {
 
 func (v *cellsView) renderSearchBar() string {
 	if v.searching {
+		modeStr := "lexical"
+		modeClr := colorCyan
+		if v.searchMode == "embedding" {
+			modeStr = "semantic"
+			modeClr = colorPink
+		}
 		return lipgloss.NewStyle().Foreground(colorCyan).Background(colorBg1).Render("  ⌕  ") +
+			lipgloss.NewStyle().Foreground(modeClr).Background(colorBg1).Render("["+modeStr+"] ") +
 			lipgloss.NewStyle().Foreground(colorText0).Background(colorBg1).Bold(true).Render(v.query) +
 			lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Render("█") +
 			styleDim.Render("  Enter=search  Esc=clear")
 	}
 	if v.query != "" && v.searchHits != nil {
+		modeStr := "lexical"
+		modeClr := colorYellow
+		if v.searchMode == "embedding" {
+			modeStr = "semantic"
+			modeClr = colorPink
+		}
 		return styleDim.Render("  ⎔  ") +
+			lipgloss.NewStyle().Foreground(modeClr).Background(colorBg1).Render("["+modeStr+"] ") +
 			lipgloss.NewStyle().Foreground(colorYellow).Background(colorBg1).Render(v.query) +
 			styleDim.Render("  /=new search  r=browse all")
 	}
