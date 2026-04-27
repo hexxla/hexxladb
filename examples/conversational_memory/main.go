@@ -1128,7 +1128,8 @@ func run(dbPath string) error {
 		return fmt.Errorf("compact health: %w", err)
 	}
 	_ = cDB.Close()
-	_ = os.Remove(compactPath) // clean up demo artifact
+	_ = os.Remove(compactPath)          // clean up demo artifact
+	_ = os.Remove(compactPath + "-wal") // clean up compacted WAL
 
 	printMetric("Compacted DB cells", cReport.CellCount, fmt.Sprintf("(matches source: %d)", postDeleteReport.CellCount))
 	if len(cReport.Warnings) == 0 {

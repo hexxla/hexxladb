@@ -254,9 +254,12 @@ func TestCompactTo_ctxCancellation(t *testing.T) {
 		t.Fatal("expected error from cancelled context")
 	}
 
-	// dest file should not exist (or be removed).
+	// dest file and WAL should not exist (or be removed).
 	if _, statErr := os.Stat(destPath); statErr == nil {
 		t.Error("dest file should have been removed after cancellation")
+	}
+	if _, statErr := os.Stat(destPath + "-wal"); statErr == nil {
+		t.Error("dest WAL should have been removed after cancellation")
 	}
 }
 

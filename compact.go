@@ -11,6 +11,12 @@ import (
 // compactCtxCheckInterval is how many keys between context cancellation checks during compaction.
 const compactCtxCheckInterval = 1024
 
+// removeDBFiles removes a database file and its associated WAL.
+func removeDBFiles(path string) {
+	_ = os.Remove(path)
+	_ = os.Remove(path + "-wal")
+}
+
 // CompactTo copies all data from srcPath into a fresh database at destPath,
 // producing a minimal-size file with no freelist gaps. All physical keys are
 // copied verbatim — including MVCC version rows and tombstones — preserving full
@@ -55,18 +61,18 @@ func CompactTo(ctx context.Context, srcPath, destPath string, opts *Options) err
 	copyErr := compactCopy(ctx, src, dest)
 	closeErr := dest.Close()
 	if copyErr != nil {
-		_ = os.Remove(destPath)
+		removeDBFiles(destPath)
 		return copyErr
 	}
 	if closeErr != nil {
-		_ = os.Remove(destPath)
+		removeDBFiles(destPath)
 		return fmt.Errorf("compact: close dest: %w", closeErr)
 	}
 
 	// Propagate source CommitSeq to dest header so MVCC snapshots align.
 	if srcHdr.FormatVersion >= 2 {
 		if err := propagateCommitSeq(destPath, destOpts, srcHdr.CommitSeq); err != nil {
-			_ = os.Remove(destPath)
+			removeDBFiles(destPath)
 			return err
 		}
 	}
