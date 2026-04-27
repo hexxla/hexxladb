@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-27
+
 ### Fixed
 
 - **WAL unbounded growth** — both `CommitWriteTxn` (classic path) and `applyGroupBatch` (group WAL path, used by all `DB.Update` calls) now truncate the WAL to zero after all pages are durably applied to the primary. Previously the WAL was only truncated on the next `Open`, causing it to accumulate all redo records indefinitely (25 MB for a 128 KB DB after 20 embedding inserts). The WAL is now always zero-length between transactions.
@@ -218,4 +220,6 @@
 
 _First release._
 
+[Unreleased]: https://github.com/hexxla/hexxladb/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/hexxla/hexxladb/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/hexxla/hexxladb/releases/tag/v0.1.0

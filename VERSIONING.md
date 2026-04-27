@@ -1,6 +1,6 @@
 # Versioning and compatibility
 
-**Current version:** `v0.1.0` — Initial development release.
+**Current version:** `v0.2.0`
 
 This document describes how **module versions**, **Go API stability**, and **on-disk format** relate for [`github.com/hexxla/hexxladb`](https://github.com/hexxla/hexxladb).
 
