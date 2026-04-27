@@ -1206,16 +1206,16 @@ func run(dbPath string) error {
 		fmt.Println()
 
 		// 13b: SearchByEmbedding — raw ANN search.
-		printSubHeader("Step 2 — SearchByEmbedding: find turns similar to 'database architecture'")
-		queryVec, err := ollamaEmbed("database architecture and storage engine design")
+		printSubHeader("Step 2 — SearchByEmbedding: 'database architecture'")
+		queryVec1, err := ollamaEmbed("database architecture and storage engine design")
 		if err != nil {
-			return fmt.Errorf("embed query: %w", err)
+			return fmt.Errorf("embed query 1: %w", err)
 		}
 
 		var annResults []hexxladb.EmbeddingSearchResult
 		err = db.View(func(tx *hexxladb.Tx) error {
 			var err error
-			annResults, err = tx.SearchByEmbedding(queryVec, hexxladb.EmbeddingSearchConfig{MaxResults: 5})
+			annResults, err = tx.SearchByEmbedding(queryVec1, hexxladb.EmbeddingSearchConfig{MaxResults: 5})
 			return err
 		})
 		if err != nil {
@@ -1237,16 +1237,21 @@ func run(dbPath string) error {
 		}
 		fmt.Println()
 
-		// 13c: QueryCells with Embedding — ANN + post-filters.
-		printSubHeader("Step 3 — QueryCells with Embedding: semantic search + tag filter")
-		printNote("Embedding triggers ANN seed selection; RequireTags applied as post-filter.")
+		// 13c: QueryCells with a DIFFERENT query — 'Go error handling'.
+		printSubHeader("Step 3 — QueryCells+Embedding: 'Go error handling'")
+		printNote("Different query vector to show HNSW returns distinct results per query.")
 		fmt.Println()
+
+		queryVec2, err := ollamaEmbed("Go error handling best practices with errors.Is and fmt.Errorf")
+		if err != nil {
+			return fmt.Errorf("embed query 2: %w", err)
+		}
 
 		var embQueryResults []hexxladb.CellQueryResult
 		err = db.View(func(tx *hexxladb.Tx) error {
 			var err error
 			embQueryResults, err = tx.QueryCells(ctx, hexxladb.CellQuery{
-				Embedding:  queryVec,
+				Embedding:  queryVec2,
 				MaxResults: 5,
 				SortBy:     hexxladb.SortByScore,
 			})
@@ -1263,13 +1268,18 @@ func run(dbPath string) error {
 		}
 		fmt.Println()
 
-		// 13d: QueryCells with Embedding + tag filter.
-		printSubHeader("Step 4 — Embedding + RequireTags: 'fact' cells nearest to query")
+		// 13d: A THIRD query with tag filter — 'security compliance'.
+		printSubHeader("Step 4 — Embedding+RequireTags: 'security compliance' filtered to 'fact'")
+		queryVec3, err := ollamaEmbed("security compliance GDPR data protection and encryption")
+		if err != nil {
+			return fmt.Errorf("embed query 3: %w", err)
+		}
+
 		var filteredResults []hexxladb.CellQueryResult
 		err = db.View(func(tx *hexxladb.Tx) error {
 			var err error
 			filteredResults, err = tx.QueryCells(ctx, hexxladb.CellQuery{
-				Embedding:   queryVec,
+				Embedding:   queryVec3,
 				RequireTags: []string{"fact"},
 				MaxResults:  5,
 				SortBy:      hexxladb.SortByScore,
@@ -1286,7 +1296,7 @@ func run(dbPath string) error {
 			_, _ = dataStyle.Printf("%s\n", truncate(r.Cell.RawContent, 48))
 		}
 		fmt.Println()
-		printSuccess("Embedding search phase complete — ANN + query engine integration demonstrated")
+		printSuccess("Embedding search phase complete — 3 distinct queries, ANN + tag filters demonstrated")
 	}
 	fmt.Println()
 
