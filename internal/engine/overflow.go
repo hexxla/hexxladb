@@ -12,16 +12,18 @@ import (
 //
 // Overflow stub stored in leaf value:
 //
-//	[0]      0x01 (overflow marker)
-//	[1..4]   uint32 big-endian — logical value length
-//	[5..12]  uint64 big-endian — first overflow page ID
+//	[0..1]   0xFF 0x4F (overflow magic; 0xFF cannot be the first byte of any
+//	          record envelope ('H'=0x48) or empty secondary index value)
+//	[2..5]   uint32 big-endian — logical value length
+//	[6..13]  uint64 big-endian — first overflow page ID
 //
-// Total stub size: 13 bytes. Always fits inline in any leaf entry.
+// Total stub size: 14 bytes. Always fits inline in any leaf entry.
 
 const (
-	overflowMarker  = byte(0x01)
-	overflowStubLen = 1 + 4 + 8 // marker + logicalLen + pageID
-	overflowPtrSize = 8         // next-page pointer at start of each overflow page
+	overflowMagic0  = byte(0xFF) // first byte — cannot be first byte of any record envelope
+	overflowMagic1  = byte(0x4F) // second byte — 'O' for overflow
+	overflowStubLen = 2 + 4 + 8  // magic(2) + logicalLen(4) + pageID(8)
+	overflowPtrSize = 8          // next-page pointer at start of each overflow page
 )
 
 // overflowPayloadPerPage returns the usable payload bytes per overflow page.
@@ -44,22 +46,23 @@ func inlineThreshold(pageSize int) int {
 // isOverflowStub reports whether val is an overflow stub (starts with the marker
 // and has exactly the expected length).
 func isOverflowStub(val []byte) bool {
-	return len(val) == overflowStubLen && val[0] == overflowMarker
+	return len(val) == overflowStubLen && val[0] == overflowMagic0 && val[1] == overflowMagic1
 }
 
-// encodeOverflowStub builds a 13-byte leaf stub for an overflow value.
+// encodeOverflowStub builds a 14-byte leaf stub for an overflow value.
 func encodeOverflowStub(logicalLen uint32, firstPageID uint64) []byte {
 	buf := make([]byte, overflowStubLen)
-	buf[0] = overflowMarker
-	binary.BigEndian.PutUint32(buf[1:5], logicalLen)
-	binary.BigEndian.PutUint64(buf[5:13], firstPageID)
+	buf[0] = overflowMagic0
+	buf[1] = overflowMagic1
+	binary.BigEndian.PutUint32(buf[2:6], logicalLen)
+	binary.BigEndian.PutUint64(buf[6:14], firstPageID)
 	return buf
 }
 
 // decodeOverflowStub extracts logical length and first page ID from a stub.
 func decodeOverflowStub(stub []byte) (logicalLen uint32, firstPageID uint64) {
-	logicalLen = binary.BigEndian.Uint32(stub[1:5])
-	firstPageID = binary.BigEndian.Uint64(stub[5:13])
+	logicalLen = binary.BigEndian.Uint32(stub[2:6])
+	firstPageID = binary.BigEndian.Uint64(stub[6:14])
 	return
 }
 
@@ -78,19 +81,20 @@ func (t *BTree) writeOverflowChain(data []byte) (uint64, error) {
 		nPages = 1
 	}
 
+	// Allocate all page IDs in one header update (O(1) instead of O(N)).
+	hdr, err := t.eng.ReadHeader()
+	if err != nil {
+		return 0, err
+	}
+	firstID := hdr.NextPageID
 	pageIDs := make([]uint64, nPages)
 	for i := range nPages {
-		id, err := t.allocPageID()
-		if err != nil {
-			return 0, err
-		}
-		pageIDs[i] = id
-		// Bump NextPageID in header for the next allocation.
-		if err := t.eng.UpdateHeader(func(h *Header) {
-			h.NextPageID = id + 1
-		}); err != nil {
-			return 0, err
-		}
+		pageIDs[i] = firstID + uint64(i)
+	}
+	if err := t.eng.UpdateHeader(func(h *Header) {
+		h.NextPageID = firstID + uint64(nPages) //nolint:gosec // G115: nPages derived from len(); always non-negative
+	}); err != nil {
+		return 0, err
 	}
 
 	off := 0

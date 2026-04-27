@@ -127,7 +127,7 @@ func (t *BTree) Get(key []byte) (val []byte, ok bool, err error) {
 }
 
 // Put inserts or replaces a key/value pair.
-// Values larger than inlineThreshold are stored in overflow pages; a 13-byte
+// Values larger than inlineThreshold are stored in overflow pages; a 14-byte
 // stub is placed in the leaf entry.
 func (t *BTree) Put(key, val []byte) error {
 	if len(key) > maxKeyBytes {

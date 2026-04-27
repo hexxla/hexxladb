@@ -59,15 +59,15 @@ Records are read sequentially from the start of the WAL file. Partial tail → *
 
 ## Overflow pages
 
-Values larger than the **inline threshold** (`pageSize - btreeHeaderSize - maxKeyBytes - 4`, typically ~3.7 KiB at 4 KiB page size) are stored in a chain of overflow pages. The leaf entry holds a 13-byte **overflow stub** instead of the raw value.
+Values larger than the **inline threshold** (`pageSize - btreeHeaderSize - maxKeyBytes - 4`, typically ~3.7 KiB at 4 KiB page size) are stored in a chain of overflow pages. The leaf entry holds a 14-byte **overflow stub** instead of the raw value.
 
 ### Overflow stub (in leaf)
 
-| Offset | Size | Field                                            |
-| ------ | ---- | ------------------------------------------------ |
-| 0      | 1    | `0x01` overflow marker                           |
-| 1      | 4    | **logical_length** `uint32` — full value size    |
-| 5      | 8    | **first_page_id** `uint64` — first overflow page |
+| Offset | Size | Field                                                                               |
+| ------ | ---- | ----------------------------------------------------------------------------------- |
+| 0      | 2    | `0xFF 0x4F` overflow magic (`0xFF` cannot be the first byte of any record envelope) |
+| 2      | 4    | **logical_length** `uint32` — full value size                                       |
+| 6      | 8    | **first_page_id** `uint64` — first overflow page                                    |
 
 ### Overflow page layout
 
