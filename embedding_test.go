@@ -488,6 +488,161 @@ func TestEmbedding_PersistedAcrossReopen(t *testing.T) {
 	}
 }
 
+// ── QueryCells / SearchCells integration ──────────────────────────────────────
+
+func TestQueryCells_Embedding(t *testing.T) {
+	t.Parallel()
+	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
+	ctx := context.Background()
+
+	// Insert cells with embeddings.
+	type cell struct {
+		q, r    int
+		content string
+		tags    []string
+		vec     []float32
+	}
+	cells := []cell{
+		{1, 0, "cat facts", []string{"animal"}, []float32{1, 0, 0}},
+		{2, 0, "dog facts", []string{"animal"}, []float32{0.9, 0.1, 0}},
+		{3, 0, "quantum physics", []string{"science"}, []float32{0, 1, 0}},
+		{4, 0, "history of rome", []string{"history"}, []float32{0, 0, 1}},
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		for _, c := range cells {
+			pk := mustPackEmb(t, c.q, c.r)
+			rec := record.CellRecord{Key: pk, RawContent: c.content, Tags: c.tags}
+			if err := tx.PutCell(ctx, rec); err != nil {
+				return err
+			}
+			if err := tx.PutEmbedding(pk, c.vec); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Query with embedding close to (1,0,0) — should return "cat facts" first.
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
+			Embedding:  []float32{1, 0, 0},
+			MaxResults: 3,
+		})
+		if err != nil {
+			return err
+		}
+		if len(results) == 0 {
+			t.Fatal("expected results")
+		}
+		if results[0].Cell.RawContent != "cat facts" {
+			t.Fatalf("top result: want 'cat facts', got %q", results[0].Cell.RawContent)
+		}
+		// Scores should be descending.
+		for i := 1; i < len(results); i++ {
+			if results[i].Score > results[i-1].Score+1e-9 {
+				t.Fatalf("scores not descending at %d: %f > %f", i, results[i].Score, results[i-1].Score)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestQueryCells_EmbeddingWithTagFilter(t *testing.T) {
+	t.Parallel()
+	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
+	ctx := context.Background()
+
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		// Two animal cells, one science cell.
+		for _, c := range []struct {
+			q    int
+			tags []string
+			vec  []float32
+		}{
+			{1, []string{"animal"}, []float32{1, 0, 0}},
+			{2, []string{"science"}, []float32{0.95, 0.05, 0}},
+			{3, []string{"animal"}, []float32{0, 1, 0}},
+		} {
+			pk := mustPackEmb(t, c.q, 0)
+			if err := tx.PutCell(ctx, record.CellRecord{Key: pk, RawContent: "content", Tags: c.tags}); err != nil {
+				return err
+			}
+			if err := tx.PutEmbedding(pk, c.vec); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Embedding query close to (1,0,0) but filtered to "animal" tag.
+	// The science cell (0.95,0.05,0) is closer but should be filtered out.
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
+			Embedding:   []float32{1, 0, 0},
+			RequireTags: []string{"animal"},
+			MaxResults:  10,
+		})
+		if err != nil {
+			return err
+		}
+		for _, r := range results {
+			found := false
+			for _, tag := range r.Cell.Tags {
+				if tag == "animal" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("result %v missing 'animal' tag", r.Cell.Coord)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSearchCells_Embedding(t *testing.T) {
+	t.Parallel()
+	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
+	ctx := context.Background()
+
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		pk := mustPackEmb(t, 1, 0)
+		if err := tx.PutCell(ctx, record.CellRecord{Key: pk, RawContent: "hello"}); err != nil {
+			return err
+		}
+		return tx.PutEmbedding(pk, []float32{1, 0, 0})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		results, err := tx.SearchCells(ctx, hexxladb.CellSearchConfig{
+			Embedding:  []float32{1, 0, 0},
+			MaxResults: 5,
+		})
+		if err != nil {
+			return err
+		}
+		if len(results) != 1 {
+			t.Fatalf("want 1 result, got %d", len(results))
+		}
+		if results[0].Cell.RawContent != "hello" {
+			t.Fatalf("want 'hello', got %q", results[0].Cell.RawContent)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestEmbedding_DimensionMismatchOnReopen(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

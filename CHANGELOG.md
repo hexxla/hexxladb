@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added (query-engine-embedding)
+
+- `CellQuery.Embedding` and `CellSearchConfig.Embedding` trigger ANN-accelerated seed selection
+- `QueryCells` planner picks embedding index when `Embedding` is set (highest priority)
+- Embedding similarity score added to composite relevance score alongside lexical scoring
+- `scanByEmbedding` over-fetches 2× to leave room for post-filter narrowing
+- All existing predicates (tags, temporal, spatial, confidence) apply as post-filters on embedding results
+- 3 new integration tests: QueryCells + Embedding, Embedding + tag filter, SearchCells + Embedding
+
 ### Added (hnsw-graph)
 
 - **HNSW graph** (`hnsw/` keyspace): sub-linear approximate nearest-neighbor search persisted in the B+ tree
