@@ -1,3 +1,9 @@
+// cell_secondary.go — secondary index key builders and scan methods for cells.
+//
+// These are *Tx receiver methods that access unexported fields (tx.db.useMVCC,
+// tx.putDirect, tx.deleteDirect) and therefore must remain in package hexxladb.
+// Pure key-encoding logic lives in internal/index; tag normalisation in
+// record.UniqueSortedTags.
 package hexxladb
 
 import (
@@ -67,7 +73,7 @@ func (tx *Tx) removeCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) 
 			return err
 		}
 	}
-	for _, tag := range uniqueSortedTags(rec.Tags) {
+	for _, tag := range record.UniqueSortedTags(rec.Tags) {
 		k, err := tx.cellTagSecondaryKey(tag, rec.Key, commitSeq)
 		if err != nil {
 			return err
@@ -97,7 +103,7 @@ func (tx *Tx) putCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) err
 			return err
 		}
 	}
-	for _, tag := range uniqueSortedTags(rec.Tags) {
+	for _, tag := range record.UniqueSortedTags(rec.Tags) {
 		k, err := tx.cellTagSecondaryKey(tag, rec.Key, commitSeq)
 		if err != nil {
 			if errors.Is(err, index.ErrTagTooLong) {
@@ -110,28 +116,6 @@ func (tx *Tx) putCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) err
 		}
 	}
 	return nil
-}
-
-// uniqueSortedTags returns deduplicated trimmed non-empty tags in stable sorted order for deterministic index writes.
-func uniqueSortedTags(tags []string) []string {
-	if len(tags) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(tags))
-	var tmp []string
-	for _, t := range tags {
-		t = strings.TrimSpace(t)
-		if t == "" {
-			continue
-		}
-		if _, ok := seen[t]; ok {
-			continue
-		}
-		seen[t] = struct{}{}
-		tmp = append(tmp, t)
-	}
-	sort.Strings(tmp)
-	return tmp
 }
 
 func (tx *Tx) cellSourceScanBounds(sourceID string) (from, to []byte, err error) {
