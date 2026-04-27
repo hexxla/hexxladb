@@ -4,10 +4,9 @@ Immediate next steps. Update after each session.
 
 ## Current
 
-- [ ] Merge `feat/delete-compact` to main + push
-- [ ] Relocate `cell_secondary.go` / `seam_secondary.go` to `internal/`
 - [ ] Overflow pages for large values (Phase 3 of efficient-storage)
 - [ ] Content compression (Phase 4, separate branch)
+- [ ] Embeddings keyspace (`embed/`) for ANN/hybrid retrieval
 
 ## Pending (next sessions)
 

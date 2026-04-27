@@ -6,6 +6,7 @@ For completed work, see `TODOS.md` (Recently Completed) and `CHANGELOG.md`.
 
 - **Overflow pages** — support values larger than a single page via chained overflow pages; raise `MaxValueBytes` ceiling beyond 16 KiB.
 - **Content Compression** — zstd/gzip transparent compression of cell values. Addresses file size bloat and obscures plaintext in unencrypted databases. Compress on write, decompress on read, controlled by `Options`.
+- **Embeddings keyspace (`embed/`)** — store vector embeddings alongside cells for ANN/hybrid retrieval; HNSW or flat-scan index in the B+ tree; `CellSearchConfig.Embedding []float32` for semantic search; existing `Query string` callers unaffected. Vital for service-layer semantic seed selection and context retrieval.
 - **Extract `TxWriter` interface for secondary index testing** — `cell_secondary.go` and `seam_secondary.go` must remain in `package hexxladb` (receiver methods on `*Tx` using unexported fields); extracting a `TxWriter` interface would let the secondary-index logic be unit-tested without a real DB. Low priority given contract tests now cover the public surface.
 
 ## Future
@@ -13,7 +14,6 @@ For completed work, see `TODOS.md` (Recently Completed) and `CHANGELOG.md`.
 Spec exists; implementation deferred.
 
 - **Move `rotation.go` to `internal/tooling/rotation`** — uses `DB.Open`, `Tx.putDirect`, root error sentinels; cycle is hard to break without significant restructuring or exposing `UnsafePut`; in-root placement is not architecturally wrong; reclassified from Near-term.
-- `embed/` keyspace for ANN/hybrid retrieval — vector storage and similarity search for semantic seed selection ([`HEXXLA_DB.md`](./hexxladb/HEXXLA_DB.md)). When implemented, `CellSearchConfig.Embedding []float32` field will be added to Content Search API — existing `Query string` callers unaffected.
 - Materialized views / super-hex aggregation as engine algorithms
 - Materialized changefeed consumers with automated prune policy
 - Changelog Subscription (push mode) — real-time reactions via channels

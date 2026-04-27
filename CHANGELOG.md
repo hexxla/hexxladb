@@ -8,6 +8,7 @@
 - Covers all port methods: cells, seams, facets, edges, walks, context assembly, time buckets, tags
 - `RunAll(t, Factory)` harness: any adapter can validate conformance by providing a factory function
 - Real `hexxladbout.Storage` adapter passes all contracts
+- `record.UniqueSortedTags` extracted from root package for reuse; `cell_secondary.go` / `seam_secondary.go` documented in-place
 
 ### Added (efficient-storage)
 

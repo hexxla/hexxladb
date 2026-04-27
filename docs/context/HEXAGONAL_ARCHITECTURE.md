@@ -271,7 +271,7 @@ Network client
 
 - **SHOULD:** Test **domain** and **app** with **port fakes** or test doubles.
 - **SHOULD:** Add integration tests **only** where boundaries matter; tag or script them separately.
-- **MAY:** Add contract-style tests for critical port behavior expected by app.
+- **SHOULD:** Add contract tests for port behaviour. See **`internal/domain/storagecontract`** — 22 reusable tests validating `domain.Storage`; any adapter calls `storagecontract.RunAll(t, factory)` to prove conformance.
 
 ---
 
