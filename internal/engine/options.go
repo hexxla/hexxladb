@@ -44,4 +44,10 @@ type Options struct {
 	// 16384, 65536. Zero means [DefaultPageSize] (4096). Ignored when opening an existing
 	// database — the page size is read from the file header.
 	PageSize uint32
+	// EmbeddingDim sets the fixed vector dimension for new databases. Zero means embeddings
+	// disabled. Persisted in the file header; immutable after creation.
+	EmbeddingDim uint16
+	// EmbeddingMetric sets the distance function for embedding search. Only valid when
+	// EmbeddingDim > 0. Persisted in the file header; immutable after creation.
+	EmbeddingMetric DistanceMetric
 }

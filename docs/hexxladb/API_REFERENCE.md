@@ -121,6 +121,33 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 
 ---
 
+## Embeddings (vector search)
+
+| Symbol                                                      | Notes                                                                                                |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| **[`Options.EmbeddingDimension`](../../options.go)**        | Fixed vector dimension for new databases (0 = disabled). Immutable after creation.                   |
+| **[`Options.DistanceMetric`](../../options.go)**            | Similarity function: **`DistanceCosine`** (default), **`DistanceDotProduct`**, **`DistanceL2`**.     |
+| **[`DistanceMetric`](../../embedding.go)**                  | Type alias for the distance metric constants.                                                        |
+| **[`DistanceCosine`](../../embedding.go)**                  | Cosine similarity. Range [-1, 1]; higher = more similar.                                             |
+| **[`DistanceDotProduct`](../../embedding.go)**              | Raw dot product. Assumes normalized vectors.                                                         |
+| **[`DistanceL2`](../../embedding.go)**                      | Euclidean distance, inverted for ranking.                                                            |
+| **[`(*DB).EmbeddingDimension`](../../embedding.go)**        | Returns the configured vector dimension (0 = disabled).                                              |
+| **[`(*DB).EmbeddingMetric`](../../embedding.go)**           | Returns the configured distance metric.                                                              |
+| **[`(*Tx).PutEmbedding`](../../tx_embedding.go)**           | Store a vector embedding for a cell coordinate. Dimension must match.                                |
+| **[`(*Tx).GetEmbedding`](../../tx_embedding.go)**           | Retrieve the vector embedding for a cell coordinate.                                                 |
+| **[`(*Tx).DeleteEmbedding`](../../tx_embedding.go)**        | Remove an embedding. Idempotent.                                                                     |
+| **[`(*Tx).SearchByEmbedding`](../../embedding_search.go)**  | Flat-scan nearest-neighbor search with goroutine parallelism. Returns top-K results sorted by score. |
+| **[`(*Tx).ReindexEmbeddings`](../../embedding_reindex.go)** | Bulk recompute all embeddings via a user-supplied function. Intended for model changes.              |
+| **[`EmbeddingSearchConfig`](../../embedding_search.go)**    | Search config: `MaxResults` (default 10), `MinScore` threshold.                                      |
+| **[`EmbeddingSearchResult`](../../embedding_search.go)**    | Coord + score pair.                                                                                  |
+| **[`EmbeddingFunc`](../../embedding_reindex.go)**           | Callback type for **`ReindexEmbeddings`**: `(ctx, CellRecord) → ([]float32, error)`.                 |
+| **[`ErrEmbeddingsDisabled`](../../errors.go)**              | Embedding operation on a database with dimension 0.                                                  |
+| **[`ErrEmbeddingDimension`](../../errors.go)**              | Vector length does not match **`EmbeddingDimension`**.                                               |
+
+**`DeleteCell`** cascades to remove the cell's embedding automatically.
+
+---
+
 ## Cell templates
 
 | Symbol                                               | Notes                                                    |

@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Added (embeddings-keyspace)
+
+- **Embedding keyspace** (`embed/<packed_coord>`): fixed-dimension float32 vector storage per cell
+- `Options.EmbeddingDimension` / `Options.DistanceMetric` — dimension and metric locked at creation, persisted in file header (offsets 104–106)
+- `DistanceMetric` type with `DistanceCosine`, `DistanceDotProduct`, `DistanceL2` constants
+- Distance functions: cosine similarity, dot product, Euclidean distance (pure math, `internal/engine`)
+- `DB.EmbeddingDimension()` / `DB.EmbeddingMetric()` introspection accessors
+- `Tx.PutEmbedding`, `Tx.GetEmbedding`, `Tx.DeleteEmbedding` — embed/ keyspace CRUD
+- `Tx.SearchByEmbedding` — flat-scan nearest-neighbor search with goroutine parallelism and min-heap top-K
+- `Tx.ReindexEmbeddings` — bulk recompute all embeddings via user-supplied callback (model switch support)
+- `DeleteCell` cascades to remove the cell's embedding automatically
+- `ErrEmbeddingsDisabled`, `ErrEmbeddingDimension` sentinel errors
+- 14 new tests covering: put/get round-trip, delete, dimension mismatch, disabled DB, cascade, search (top-K, empty, min-score), reindex, reindex-skip, DB accessors, persistence across reopen, dimension mismatch on reopen
+- Distance function unit tests and benchmarks (384-dim, 768-dim)
+
 ### Added (content-compression)
 
 - **Always-on transparent per-value DEFLATE compression** via `compress/flate` (Go stdlib, zero external dependencies)

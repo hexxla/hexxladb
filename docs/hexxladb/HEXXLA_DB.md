@@ -132,7 +132,7 @@ Morton ordering is chosen because space-filling curves of this family map spatia
 - `tag/<tag>/<packed_coord>` → tag index for cells (length-prefixed UTF-8 tag + packed coord — see **`internal/index/tag_key.go`**)
 - `seam-time/<valid_bucket>/<ulid>` → temporal index for seams (week bucket from seam validity `ValidFrom`)
 - `seam-source/<source_id>/<ulid>` → source index for seams (length-prefixed `source_id` + ULID)
-- `embed/<partition>/<vector_ref>` → **optional** future hybrid index (ANN pointer for seed selection); **not required in v1**—HexxlaDB has **no vector columns** and **no ANN indexes** in the minimal engine; seed selection is a **separate** orchestration concern (embeddings, lexical search, tags, or explicit coordinates are all valid **outside** the core store API—see **Hybrid Retrieval Path**).
+- `embed/<packed_coord>` → fixed-dimension float32 vector (little-endian). Enabled when [`Options.EmbeddingDimension`](../../options.go) > 0; dimension and distance metric are persisted in the file header and immutable after creation. One embedding per cell. **[`Tx.PutEmbedding`](../../tx_embedding.go)** / **[`Tx.GetEmbedding`](../../tx_embedding.go)** / **[`Tx.DeleteEmbedding`](../../tx_embedding.go)**; **[`Tx.SearchByEmbedding`](../../embedding_search.go)** for flat-scan nearest-neighbor; **[`Tx.ReindexEmbeddings`](../../embedding_reindex.go)** for bulk recompute. **[`DeleteCell`](../../delete_cell.go)** cascades to remove the embedding. HNSW-backed ANN index is planned for a future phase.
 
 `nbr/` keys are optional as noted above.
 
@@ -207,7 +207,7 @@ AND optional seam filters apply
 - Cells, facets, edges, seams, and validity.
 - **Embedded persistence** via the **custom HexxlaDB engine** (pages, WAL, Morton-keyed **B+-tree**); durable, crash-recoverable; **no** third-party ordered-KV/SQL core or SQLite.
 - Core query primitives.
-- **No embedding or ANN requirement:** operations are keyed by **`PackedCoord`** and non-vector indexes; optional `embed/` keyspace and hybrid retrieval are **future/optional**—v1 remains useful with explicit coords, tags, or external seeding only.
+- **Embedding keyspace (flat-scan):** optional `embed/<packed_coord>` stores one fixed-dimension float32 vector per cell (dimension + metric locked at creation). Flat-scan nearest-neighbor search with goroutine parallelism. HNSW-backed ANN index is planned for a future phase. v1 remains useful without embeddings—explicit coords, tags, lexical search, or external seeding are all supported.
 
 ### Non-Goals
 

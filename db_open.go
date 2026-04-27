@@ -205,6 +205,21 @@ func mergeEngineGroupWAL(eo *engine.Options, o *Options) *engine.Options {
 	return eo
 }
 
+func mergeEngineEmbedding(eo *engine.Options, o *Options) *engine.Options {
+	if o == nil || o.EmbeddingDimension == 0 {
+		return eo
+	}
+	if eo == nil {
+		return &engine.Options{
+			EmbeddingDim:    o.EmbeddingDimension,
+			EmbeddingMetric: engine.DistanceMetric(o.DistanceMetric),
+		}
+	}
+	eo.EmbeddingDim = o.EmbeddingDimension
+	eo.EmbeddingMetric = engine.DistanceMetric(o.DistanceMetric)
+	return eo
+}
+
 func openValidateEncryption(opts *Options, hdr engine.Header) error {
 	if opts == nil {
 		opts = &Options{}
