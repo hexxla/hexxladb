@@ -4,7 +4,7 @@ Immediate next steps. Update after each session.
 
 ## Current
 
-- [ ] B+ tree leaf-page-full at high embedding counts — HNSW nodes + embedding values overflow leaf pages when count exceeds ~500 (32d) or ~100 (128d) even at 65536 page size; likely a split-index edge case in `internal/engine/btree.go:leafSplitIndex`; benchmarks capped at safe sizes for now
+- [ ] B+ tree leaf-page-full at high embedding counts — HNSW nodes + embedding values overflow leaf pages when count exceeds ~500 (32d) or ~100 (128d) even at 65536 page size; likely a split-index edge case in `internal/engine/btree.go:leafSplitIndex`; benchmarks capped at safe sizes for now — **active on `fix/btree-leaf-page-full`**
 
 ## Pending (next sessions)
 
