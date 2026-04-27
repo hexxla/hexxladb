@@ -48,12 +48,6 @@ type HealthCheckConfig struct {
 	CheckSourceIndex bool
 	// MaxErrors stops counting secondary-index errors after this many (0 = unlimited).
 	MaxErrors int
-	// ScanRadius is retained for backward compatibility but is no longer used.
-	// HealthCheck now scans the cell/ primary key range directly, visiting only
-	// existing cells regardless of their coordinates.
-	//
-	// Deprecated: has no effect.
-	ScanRadius int
 }
 
 // DefaultHealthCheckConfig returns a HealthCheckConfig with all checks enabled
@@ -64,7 +58,6 @@ func DefaultHealthCheckConfig() HealthCheckConfig {
 		CheckTagIndex:    true,
 		CheckSourceIndex: true,
 		MaxErrors:        0,
-		ScanRadius:       64,
 	}
 }
 
@@ -75,10 +68,6 @@ func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthRep
 	if db == nil {
 		return HealthReport{}, ErrClosed
 	}
-	if cfg.ScanRadius <= 0 {
-		cfg.ScanRadius = 64
-	}
-
 	var report HealthReport
 	var err error
 

@@ -254,12 +254,12 @@ See **[CHANGEFEED.md](./CHANGEFEED.md)**.
 
 ## Database health check
 
-| Symbol                                            | Notes                                                                                                                                                                       |
-| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*DB).HealthCheck`](../../health.go)**        | Integrity scan: cell count, seam resolution summary, orphaned seam detection, index consistency, MVCC stats.                                                                |
-| **[`HealthReport`](../../health.go)**             | Result type: `CellCount`, `SeamCount`, `SeamsResolved`, `SeamsUnresolved`, `OrphanedSeams`, `TagIndexErrors`, `SourceIndexErrors`, `MVCCStats`, `Warnings`.                 |
-| **[`HealthCheckConfig`](../../health.go)**        | `CheckOrphans`, `CheckTagIndex`, `CheckSourceIndex`, `MaxErrors`. `ScanRadius` — deprecated, retained for backward compat, has no effect (cell scan now covers all coords). |
-| **[`DefaultHealthCheckConfig`](../../health.go)** | Returns config with all checks enabled.                                                                                                                                     |
+| Symbol                                            | Notes                                                                                                                                                       |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*DB).HealthCheck`](../../health.go)**        | Integrity scan: cell count, seam resolution summary, orphaned seam detection, index consistency, MVCC stats.                                                |
+| **[`HealthReport`](../../health.go)**             | Result type: `CellCount`, `SeamCount`, `SeamsResolved`, `SeamsUnresolved`, `OrphanedSeams`, `TagIndexErrors`, `SourceIndexErrors`, `MVCCStats`, `Warnings`. |
+| **[`HealthCheckConfig`](../../health.go)**        | `CheckOrphans`, `CheckTagIndex`, `CheckSourceIndex`, `MaxErrors`.                                                                                           |
+| **[`DefaultHealthCheckConfig`](../../health.go)** | Returns config with all checks enabled.                                                                                                                     |
 
 ---
 
