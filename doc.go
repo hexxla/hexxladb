@@ -37,6 +37,11 @@
 //     HEXXLA-shaped views ([views.go]): [CellView], [ContextPack], [Tx.AssembleCellView],
 //     [Tx.LoadContextWithBudgeting], [Tx.LoadContextPack], [CellViewPredicate],
 //     [FilterCellViews], [TruncateCellViewsToTokenBudget], [TokenBudgeter].
+//   - Embedding / vector search: [Options.EmbeddingDimension], [Options.DistanceMetric];
+//     [Tx.PutEmbedding], [Tx.GetEmbedding], [Tx.DeleteEmbedding];
+//     [Tx.SearchByEmbedding] (HNSW-accelerated ANN, flat-scan fallback), [EmbeddingSearchConfig];
+//     [Tx.ReindexEmbeddings]; [CellQuery.Embedding] / [CellSearchConfig.Embedding] integrate
+//     vector search into [Tx.QueryCells] / [Tx.SearchCells] (see docs/hexxladb/API_REFERENCE.md).
 //   - Sentinel errors: [ErrCorruptDatabase], [ErrDatabaseClosed], [ErrTxReadOnly],
 //     [ErrNilCallback], [ErrNotImplemented], [ErrClosed], [ErrSeamNotFound],
 //     [ErrSeamEndpointMismatch], [ErrInvalidArgument], [ErrEncryptionKeyRequired],

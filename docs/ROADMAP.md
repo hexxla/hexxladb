@@ -4,7 +4,7 @@ For completed work, see `TODOS.md` (Recently Completed) and `CHANGELOG.md`.
 
 ## Near-term
 
-- **Embeddings keyspace (`embed/`)** — store vector embeddings alongside cells for ANN/hybrid retrieval; HNSW or flat-scan index in the B+ tree; `CellSearchConfig.Embedding []float32` for semantic search; existing `Query string` callers unaffected. Vital for service-layer semantic seed selection and context retrieval.
+- ~~**Embeddings keyspace (`embed/`)**~~ — **Done.** Flat-scan + HNSW ANN search, query engine integration via `CellQuery.Embedding` / `CellSearchConfig.Embedding`. See `CHANGELOG.md`.
 - **Extract `TxWriter` interface for secondary index testing** — `cell_secondary.go` and `seam_secondary.go` must remain in `package hexxladb` (receiver methods on `*Tx` using unexported fields); extracting a `TxWriter` interface would let the secondary-index logic be unit-tested without a real DB. Low priority given contract tests now cover the public surface.
 
 ## Future

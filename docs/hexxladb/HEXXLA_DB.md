@@ -132,7 +132,11 @@ Morton ordering is chosen because space-filling curves of this family map spatia
 - `tag/<tag>/<packed_coord>` → tag index for cells (length-prefixed UTF-8 tag + packed coord — see **`internal/index/tag_key.go`**)
 - `seam-time/<valid_bucket>/<ulid>` → temporal index for seams (week bucket from seam validity `ValidFrom`)
 - `seam-source/<source_id>/<ulid>` → source index for seams (length-prefixed `source_id` + ULID)
-- `embed/<packed_coord>` → fixed-dimension float32 vector (little-endian). Enabled when [`Options.EmbeddingDimension`](../../options.go) > 0; dimension and distance metric are persisted in the file header and immutable after creation. One embedding per cell. **[`Tx.PutEmbedding`](../../tx_embedding.go)** / **[`Tx.GetEmbedding`](../../tx_embedding.go)** / **[`Tx.DeleteEmbedding`](../../tx_embedding.go)**; **[`Tx.SearchByEmbedding`](../../embedding_search.go)** for flat-scan nearest-neighbor; **[`Tx.ReindexEmbeddings`](../../embedding_reindex.go)** for bulk recompute. **[`DeleteCell`](../../delete_cell.go)** cascades to remove the embedding. HNSW-backed ANN index is planned for a future phase.
+- `embed/<packed_coord>` → fixed-dimension float32 vector (little-endian). Enabled when [`Options.EmbeddingDimension`](../../options.go) > 0; dimension and distance metric are persisted in the file header and immutable after creation. One embedding per cell. **[`Tx.PutEmbedding`](../../tx_embedding.go)** / **[`Tx.GetEmbedding`](../../tx_embedding.go)** / **[`Tx.DeleteEmbedding`](../../tx_embedding.go)**; **[`Tx.SearchByEmbedding`](../../embedding_search.go)** for HNSW-accelerated nearest-neighbor search (flat-scan fallback); **[`Tx.ReindexEmbeddings`](../../embedding_reindex.go)** for bulk recompute. **[`DeleteCell`](../../delete_cell.go)** cascades to remove the embedding and HNSW node.
+- `hnsw/meta` → HNSW graph metadata (M, efConstruction, maxLayer, count). Created automatically on first `PutEmbedding`.
+- `hnsw/entry` → HNSW entry point coordinate (16 bytes big-endian PackedCoord).
+- `hnsw/node/<packed_coord>` → HNSW node (maxLayer + per-layer neighbor lists). Maintained automatically by `PutEmbedding`/`DeleteEmbedding`.
+- **[`CellQuery.Embedding`](../../query.go)** / **[`CellSearchConfig.Embedding`](../../search.go)** triggers ANN-accelerated seed selection in **`QueryCells`** / **`SearchCells`**; embedding similarity is added to the composite relevance score.
 
 `nbr/` keys are optional as noted above.
 
@@ -207,7 +211,7 @@ AND optional seam filters apply
 - Cells, facets, edges, seams, and validity.
 - **Embedded persistence** via the **custom HexxlaDB engine** (pages, WAL, Morton-keyed **B+-tree**); durable, crash-recoverable; **no** third-party ordered-KV/SQL core or SQLite.
 - Core query primitives.
-- **Embedding keyspace (flat-scan):** optional `embed/<packed_coord>` stores one fixed-dimension float32 vector per cell (dimension + metric locked at creation). Flat-scan nearest-neighbor search with goroutine parallelism. HNSW-backed ANN index is planned for a future phase. v1 remains useful without embeddings—explicit coords, tags, lexical search, or external seeding are all supported.
+- **Embedding keyspace (HNSW):** optional `embed/<packed_coord>` stores one fixed-dimension float32 vector per cell (dimension + metric locked at creation). HNSW-backed approximate nearest-neighbor search with flat-scan fallback. `CellQuery.Embedding` / `CellSearchConfig.Embedding` integrate vector search into the query planner. v1 remains useful without embeddings—explicit coords, tags, lexical search, or external seeding are all supported.
 
 ### Non-Goals
 

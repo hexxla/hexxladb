@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added (benchmarks-docs)
+
+- Embedding search benchmarks: `BenchmarkSearchByEmbedding_HNSW` (500×32d, 200×64d, 100×128d), `BenchmarkQueryCells_Embedding` (500×32d)
+- Updated `doc.go` with embedding/HNSW entrypoints
+- Updated `HEXXLA_DB.md` with HNSW keyspace layout and query engine integration
+- Updated `API_REFERENCE.md` with HNSW-accelerated search and query planner integration
+- Updated `ROADMAP.md` to mark embeddings keyspace as complete
+
 ### Added (query-engine-embedding)
 
 - `CellQuery.Embedding` and `CellSearchConfig.Embedding` trigger ANN-accelerated seed selection
