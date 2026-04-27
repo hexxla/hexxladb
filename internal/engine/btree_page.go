@@ -82,8 +82,8 @@ func parseLeafPage(page []byte) (*leafData, error) {
 		kl := binary.BigEndian.Uint16(page[off : off+2])
 		vl := binary.BigEndian.Uint16(page[off+2 : off+4])
 		off += 4
-		if kl > maxKeyBytes || vl > DefaultMaxValueBytes*2 {
-			return nil, fmt.Errorf("%w: leaf kv len", ErrCorruptTree)
+		if kl > maxKeyBytes {
+			return nil, fmt.Errorf("%w: leaf key len", ErrCorruptTree)
 		}
 		if off+int(kl)+int(vl) > len(page) {
 			return nil, fmt.Errorf("%w: leaf payload", ErrCorruptTree)
