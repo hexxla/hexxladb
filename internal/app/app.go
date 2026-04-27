@@ -247,3 +247,11 @@ func (s *Service) AscendEdgesFrom(ctx context.Context, from lattice.PackedCoord,
 	}
 	return s.Storage.AscendEdgesFrom(ctx, from, fn)
 }
+
+// DeleteCell removes a cell and all associated data via [domain.Storage].
+func (s *Service) DeleteCell(ctx context.Context, key lattice.PackedCoord) error {
+	if s == nil || s.Storage == nil {
+		return ErrNoStorage
+	}
+	return s.Storage.DeleteCell(ctx, key)
+}

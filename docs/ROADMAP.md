@@ -4,8 +4,12 @@ For completed work, see `TODOS.md` (Recently Completed) and `CHANGELOG.md`.
 
 ## Near-term
 
-- **`Tx.DeleteCell`** — remove a cell and all its associated data atomically: primary key (`cell/<packed>`), all secondary indexes (`source/`, `time/`, `tag/`), all facets (`facet/<packed>/<id>`), all edges (`edge/<packed>/...`). Seam cleanup is caller-controlled (seams reference two cells; deleting one endpoint does not auto-resolve the seam — caller should `ResolveSeam` or let the orphan surface via `HealthCheck`). New sentinel: `ErrCellNotFound` on delete of a missing cell (or silent no-op — needs decision). MVCC: on v2 databases, the primary key is tombstoned rather than hard-deleted so `as_of` snapshots before the delete remain consistent. Regression tests required covering: primary removal, secondary index cleanup, facet/edge cleanup, MVCC tombstone behaviour.
-- **`DB.Compact`** — offline copy-compaction that shrinks the database file to the minimum size needed for live data. Walks all live B+ tree keys via `AscendRange`, writes them sequentially into a fresh file using a new `BTree`, then atomically swaps. No lattice reorganisation required — hex coordinates are encoded in keys (Morton-packed), not page positions; a page-level rewrite is sufficient. Should honour `Options` (encryption, `MaxValueBytes`). API: `DB.Compact(ctx, destPath string, opts *Options) error` or `DB.CompactInPlace(ctx) error` (write to temp file, rename). Produces an identical-content but smaller database; safe to run offline (caller closes DB first) or online with a read lock depending on design chosen.
+No pending items — all near-term items shipped. See Completed below.
+
+## Completed
+
+- **`Tx.DeleteCell`** — shipped on `feat/delete-compact`. Atomic removal of cell + secondary indexes + facets + outbound edges. MVCC tombstone (zero-length value), overlay tracking, idempotent, changelog `OpDeleteCell`. Hexagonal boundary: `domain.Storage` port + adapter + `app.Service`. Comprehensive tests.
+- **`DB.Compact` / `CompactTo`** — shipped on `feat/delete-compact`. Copy-compaction preserving all data including MVCC history, encryption, format version, MaxValueBytes. Context cancellation with cleanup. Prune-then-compact workflow demonstrated in Phase 12 of the conversational memory demo.
 
 ## Future
 
@@ -38,6 +42,6 @@ Interesting but unvalidated. Needs user demand or benchmark data before committi
 Intentional boundaries for embedded library v1.
 
 - Distributed replication / HA — product-tier orchestration
-- Freelist / primary file shrink — extend-only allocator by design ([`OPERATIONS.md`](./hexxladb/OPERATIONS.md))
+- Freelist / automatic primary file shrink — extend-only allocator by design; use `DB.Compact` for offline file size reduction ([`OPERATIONS.md`](./hexxladb/OPERATIONS.md))
 - Online re-encryption — offline rotation only ([`VERSIONING.md`](../VERSIONING.md))
 - Third-party KV backends (SQLite, etc.) — Hex-native engine is the direction

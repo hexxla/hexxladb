@@ -4,18 +4,20 @@ Immediate next steps. Update after each session.
 
 ## Current
 
-_(No active work item.)_
+- [ ] Merge `feat/delete-compact` to main + push
 
 ## Pending (next sessions)
 
-- [ ] `Tx.DeleteCell` — primary + secondaries + facets + edges; MVCC tombstone on v2; regression tests
-- [ ] `DB.Compact` — copy-compaction to shrink file; `AscendRange` walk → fresh BTree → atomic swap; no lattice reorg needed
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
 
 ---
 
 ## Recently Completed
 
+- 2026-04-27: Plan cleanup — deleted `.windsurf/plans/delete-compact.md`, updated ROADMAP (Near-term→Completed), API_REFERENCE (Phase 12 demo), CHANGELOG (HealthCheck tombstone fix), OPERATIONS (compaction section)
+- 2026-04-27: Fixed `HealthCheck` to exclude tombstoned cells from `CellCount` on MVCC databases
+- 2026-04-27: Phase 12 demo rewrite — fresh cell for deletion, bulk write→delete→prune→compact showing 26–52% size reduction
+- 2026-04-27: `Tx.DeleteCell` + `DB.Compact` implemented on `feat/delete-compact` — MVCC tombstones, overlay tracking, hex boundary (domain.Storage + adapter + app.Service), `CompactTo`, 18 tests, docs updated
 - 2026-04-27: Pushed all commits to origin/main
 - 2026-04-26: TUI audit — Bubbletea pattern fixes (`Init`, `tea.Cmd` one-shot loads, `tabActivatedMsg` lazy load, `Consuming` interface, duplicate-load guards); Lipgloss layout fixes (hard-clip `MaxHeight`, terminal-width fill, `colorBg1`→`colorBg2` card-interior styles, `barGraphBg`); lexical search input fix; tab bar height from measurement not hardcode
 - 2026-04-26: README rewrite + badges (CI, Integration, Go Reference, Go Report Card, Go version, License) + `FUNDING.yml`; logo added to header

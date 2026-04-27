@@ -26,6 +26,9 @@ type Tx struct {
 	cachedBTreeRoot uint64
 	// cellOverlay holds uncommitted cell writes in the current Update (read-your-writes).
 	cellOverlay map[lattice.PackedCoord]record.CellRecord
+	// cellDeleted tracks coordinates deleted via [Tx.DeleteCell] in the current Update.
+	// Checked before cellOverlay and btree scan so same-tx delete is visible.
+	cellDeleted map[lattice.PackedCoord]bool
 }
 
 // View runs fn inside a read-only transaction. Many concurrent View calls are allowed;

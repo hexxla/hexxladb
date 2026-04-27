@@ -77,6 +77,7 @@ func (tx *Tx) PutCell(ctx context.Context, rec record.CellRecord) error {
 		return err
 	}
 	tx.cellOverlay[rec.Key] = rec
+	delete(tx.cellDeleted, rec.Key) // clear same-tx delete if re-putting
 	tx.noteChangelog(changelog.OpPutCell, index.CellKey(rec.Key), data)
 	if h := tx.db.afterPutCell; h != nil {
 		return h.AfterPutCell(ctx, rec)
