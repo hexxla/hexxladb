@@ -13,6 +13,7 @@
 //   - Phase  9  Lattice visualisation: ASCII hex grid + RingDensityMap
 //   - Phase 10  QueryCells + multi-seed context assembly (LoadContextPackFrom)
 //   - Phase 11  Health check (DB.HealthCheck) + MVCC Snapshot Diff
+//   - Phase 12  DeleteCell + Compact (MVCC tombstones, snapshot isolation, copy-compaction)
 //
 // Usage:
 //
@@ -116,7 +117,7 @@ func run(dbPath string) error {
 
 	_, _ = separatorStyle.Println(strings.Repeat("═", lineWidth))
 	_, _ = headerStyle.Printf("  ▶  HexxlaDB — Conversational Memory Demo\n")
-	_, _ = dimStyle.Printf("  %d-turn corpus · 5 thematic sessions · 11 phases\n", len(seedConversation))
+	_, _ = dimStyle.Printf("  %d-turn corpus · 5 thematic sessions · 12 phases\n", len(seedConversation))
 	_, _ = separatorStyle.Println(strings.Repeat("═", lineWidth))
 	fmt.Println()
 
@@ -920,6 +921,168 @@ func run(dbPath string) error {
 	fmt.Println()
 
 	// ═══════════════════════════════════════════════════════════════
+	// PHASE 12: DeleteCell + Compact
+	// ═══════════════════════════════════════════════════════════════
+	printHeader("Phase 12: DeleteCell + Compact")
+
+	// --- 12a: pick a cell to delete and capture its state before deletion ---
+	printSubHeader("Tx.DeleteCell — MVCC tombstone deletion")
+	printNote("Deleting a cell writes a tombstone (zero-length value) so older MVCC snapshots remain consistent.")
+	printNote("Secondary indexes, facets, and outbound edges are cleaned up atomically.")
+	fmt.Println()
+
+	// Choose the first seed cell as the deletion target.
+	delCoord := spiralCoord(0)
+	delKey, err := hexxladb.Pack(delCoord)
+	if err != nil {
+		return fmt.Errorf("pack delete coord: %w", err)
+	}
+
+	// Snapshot *before* the delete for time-travel verification.
+	preDeleteStats, err := db.StatsMVCC()
+	if err != nil {
+		return fmt.Errorf("stats pre-delete: %w", err)
+	}
+	seqBeforeDelete := preDeleteStats.CommitSeq
+
+	// Read the cell that will be deleted (for display).
+	var deletedContent string
+	err = db.View(func(tx *hexxladb.Tx) error {
+		rec, ok, err := tx.GetCell(delKey)
+		if err != nil {
+			return err
+		}
+		if ok {
+			deletedContent = rec.RawContent
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("read cell pre-delete: %w", err)
+	}
+
+	printInfo("Target cell", fmt.Sprintf("(%d,%d)", delCoord.Q, delCoord.R))
+	printInfo("Content", truncate(deletedContent, 50))
+	printInfo("MVCC seq before delete", fmt.Sprintf("%d", seqBeforeDelete))
+	fmt.Println()
+
+	// --- 12b: delete the cell ---
+	err = db.Update(func(tx *hexxladb.Tx) error {
+		return tx.DeleteCell(ctx, delKey)
+	})
+	if err != nil {
+		return fmt.Errorf("delete cell: %w", err)
+	}
+	printSuccess("Cell deleted (MVCC tombstone written)")
+
+	// Confirm current snapshot returns not-found.
+	err = db.View(func(tx *hexxladb.Tx) error {
+		_, ok, err := tx.GetCell(delKey)
+		if err != nil {
+			return err
+		}
+		if ok {
+			_, _ = warningStyle.Println("  ⚠  Cell should be gone in current snapshot")
+		} else {
+			printSuccess("Current snapshot: cell not found (tombstone working)")
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("verify delete current: %w", err)
+	}
+
+	// ViewAt the snapshot *before* the delete — cell should still be visible.
+	err = db.ViewAt(seqBeforeDelete, func(tx *hexxladb.Tx) error {
+		rec, ok, err := tx.GetCell(delKey)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			_, _ = warningStyle.Println("  ⚠  Cell should be visible in pre-delete snapshot")
+		} else {
+			printSuccess(fmt.Sprintf("ViewAt(seq=%d): cell visible — %q", seqBeforeDelete, truncate(rec.RawContent, 40)))
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("verify delete viewat: %w", err)
+	}
+
+	// Health check after delete — confirm clean.
+	postDeleteReport, err := db.HealthCheck(ctx, hexxladb.DefaultHealthCheckConfig())
+	if err != nil {
+		return fmt.Errorf("health post-delete: %w", err)
+	}
+	printMetric("Cells after delete", postDeleteReport.CellCount, "(was "+fmt.Sprint(report.CellCount)+")")
+	if len(postDeleteReport.Warnings) == 0 {
+		printSuccess("Post-delete health check: no warnings")
+	}
+	fmt.Println()
+
+	// --- 12c: idempotent re-delete (no error) ---
+	printSubHeader("Idempotent re-delete")
+	err = db.Update(func(tx *hexxladb.Tx) error {
+		return tx.DeleteCell(ctx, delKey)
+	})
+	if err != nil {
+		return fmt.Errorf("re-delete: %w", err)
+	}
+	printSuccess("Re-deleting the same cell returns nil (idempotent)")
+	fmt.Println()
+
+	// --- 12d: compact the database ---
+	printSubHeader("DB.Compact — copy-compaction")
+	printNote("Rewrites all B+ tree keys into a minimal-size file, reclaiming dead pages.")
+	printNote("All data (including MVCC history and tombstones) is preserved verbatim.")
+	fmt.Println()
+
+	srcInfo, _ := os.Stat(dbPath)
+	srcSize := srcInfo.Size()
+	printMetric("Source file size", fmt.Sprintf("%.1f KB", float64(srcSize)/1024), "")
+
+	compactPath := dbPath + ".compacted"
+	start := time.Now()
+	if err := db.Compact(ctx, compactPath); err != nil {
+		return fmt.Errorf("compact: %w", err)
+	}
+	elapsed := time.Since(start)
+
+	destInfo, _ := os.Stat(compactPath)
+	destSize := destInfo.Size()
+	printMetric("Compacted file size", fmt.Sprintf("%.1f KB", float64(destSize)/1024), "")
+
+	reduction := 100.0 * float64(srcSize-destSize) / float64(srcSize)
+	if reduction > 0 {
+		printMetric("Size reduction", fmt.Sprintf("%.1f%%", reduction), "")
+	} else {
+		printMetric("Size change", fmt.Sprintf("%+.1f%%", -reduction), "(no dead pages to reclaim)")
+	}
+	printMetric("Compact duration", elapsed.Round(time.Microsecond), "")
+	fmt.Println()
+
+	// Verify the compacted database is readable and has the right cell count.
+	cDB, err := hexxladb.Open(compactPath, &hexxladb.Options{EnableMVCC: true})
+	if err != nil {
+		return fmt.Errorf("open compacted: %w", err)
+	}
+	cReport, err := cDB.HealthCheck(ctx, hexxladb.DefaultHealthCheckConfig())
+	if err != nil {
+		_ = cDB.Close()
+		return fmt.Errorf("compact health: %w", err)
+	}
+	_ = cDB.Close()
+	_ = os.Remove(compactPath) // clean up demo artifact
+
+	printMetric("Compacted DB cells", cReport.CellCount, "(matches source)")
+	if len(cReport.Warnings) == 0 {
+		printSuccess("Compacted database passes health check")
+	}
+
+	printSuccess("DeleteCell + Compact phase complete")
+	fmt.Println()
+
+	// ═══════════════════════════════════════════════════════════════
 	// COMPLETION
 	// ═══════════════════════════════════════════════════════════════
 	_, _ = separatorStyle.Println(strings.Repeat("═", lineWidth))
@@ -929,7 +1092,7 @@ func run(dbPath string) error {
 
 	printInfo("Database", dbPath)
 	printInfo("Corpus", fmt.Sprintf("%d turns · 5 thematic sessions", len(seedConversation)))
-	printInfo("Phases run", "1–11 (all)")
+	printInfo("Phases run", "1–12 (all)")
 	printInfo("Hook writes", fmt.Sprintf("%d cell writes observed via AfterPutCell", hookCellCount))
 	fmt.Println()
 
@@ -938,7 +1101,7 @@ func run(dbPath string) error {
 	_, _ = dimStyle.Println("    •  Wire AfterPutCell/AfterPutSeam for real-time CDC or audit logging")
 	_, _ = dimStyle.Println("    •  Use SnapshotDiff for incremental replication pipelines")
 	_, _ = dimStyle.Println("    •  Enable encryption (Options.Passphrase / Options.EncryptionKey)")
-	_, _ = dimStyle.Println("    •  Add Options.MaxValueBytes if your payloads exceed 8 KB")
+	_, _ = dimStyle.Println("    •  Schedule Compact after PruneCellVersions for optimal file size")
 	_, _ = dimStyle.Println("    •  See docs/hexxladb/API_REFERENCE.md for the full API surface")
 	fmt.Println()
 
