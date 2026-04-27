@@ -4,12 +4,7 @@ For completed work, see `TODOS.md` (Recently Completed) and `CHANGELOG.md`.
 
 ## Near-term
 
-No pending items — all near-term items shipped. See Completed below.
-
-## Completed
-
-- **`Tx.DeleteCell`** — shipped on `feat/delete-compact`. Atomic removal of cell + secondary indexes + facets + outbound edges. MVCC tombstone (zero-length value), overlay tracking, idempotent, changelog `OpDeleteCell`. Hexagonal boundary: `domain.Storage` port + adapter + `app.Service`. Comprehensive tests.
-- **`DB.Compact` / `CompactTo`** — shipped on `feat/delete-compact`. Copy-compaction preserving all data including MVCC history, encryption, format version, MaxValueBytes. Context cancellation with cleanup. Prune-then-compact workflow demonstrated in Phase 12 of the conversational memory demo.
+No pending items.
 
 ## Future
 
