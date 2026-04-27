@@ -4,12 +4,12 @@
 
 ### Added (content-compression)
 
-- **Transparent per-value compression**: `Options.Compression = CompressionDeflate` enables DEFLATE via `compress/flate` (Go stdlib, zero external dependencies)
+- **Always-on transparent per-value DEFLATE compression** via `compress/flate` (Go stdlib, zero external dependencies)
 - Compressed values carry a 5-byte `0xFE` envelope; uncompressed values coexist transparently
 - Compression runs before overflow check — compressible values may fit inline even if raw size exceeds the threshold
-- `DB.Compression()` reads the persisted setting; `compression_type` field at header offset 104
-- 11 new engine tests: round-trip, skip-short, skip-none, mixed-mode, AscendRange, overflow+compression, incompressible, header persistence, delete
 - Values < 64 bytes and incompressible values stored raw (no overhead)
+- 10 new engine tests: round-trip, skip-short, mixed long/short, AscendRange, overflow+compression, incompressible, reopen, delete
+- No configuration required — compression is always-on with no public API surface
 
 ### Added (overflow-pages)
 

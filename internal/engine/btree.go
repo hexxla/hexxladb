@@ -143,9 +143,9 @@ func (t *BTree) Put(key, val []byte) error {
 		return ErrValueTooLarge
 	}
 
-	// Compress the value if compression is enabled. Compression runs before
-	// the overflow check so that compressible values may fit inline.
-	storeVal := compressValue(t.eng.compression, val)
+	// Compress the value. Compression runs before the overflow check so
+	// that compressible values may fit inline.
+	storeVal := compressValue(val)
 
 	// Spill to overflow pages if value exceeds the inline threshold.
 	leafVal := storeVal

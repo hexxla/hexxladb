@@ -21,7 +21,7 @@ func openCompressDB(t *testing.T, opts *Options) *Engine {
 func TestCompress_CompressDecompressRoundTrip(t *testing.T) {
 	t.Parallel()
 	val := []byte(strings.Repeat("hello world, this is a test of compression. ", 20))
-	compressed := compressValue(CompressionDeflate, val)
+	compressed := compressValue(val)
 	if bytes.Equal(compressed, val) {
 		t.Fatal("expected compressed output to differ from input")
 	}
@@ -43,18 +43,9 @@ func TestCompress_CompressDecompressRoundTrip(t *testing.T) {
 func TestCompress_SkipShortValues(t *testing.T) {
 	t.Parallel()
 	short := []byte("tiny")
-	got := compressValue(CompressionDeflate, short)
+	got := compressValue(short)
 	if !bytes.Equal(got, short) {
 		t.Fatal("short values should not be compressed")
-	}
-}
-
-func TestCompress_SkipWhenNone(t *testing.T) {
-	t.Parallel()
-	val := []byte(strings.Repeat("test data ", 100))
-	got := compressValue(CompressionNone, val)
-	if !bytes.Equal(got, val) {
-		t.Fatal("CompressionNone should return input unchanged")
 	}
 }
 
@@ -73,7 +64,7 @@ func TestCompress_NotCompressedValue(t *testing.T) {
 
 func TestCompress_BTreePutGetRoundTrip(t *testing.T) {
 	t.Parallel()
-	eng := openCompressDB(t, &Options{Compression: CompressionDeflate})
+	eng := openCompressDB(t, nil)
 	bt := &BTree{eng: eng}
 
 	key := []byte("compress-key")
@@ -95,57 +86,43 @@ func TestCompress_BTreePutGetRoundTrip(t *testing.T) {
 	}
 }
 
-func TestCompress_MixedMode(t *testing.T) {
+func TestCompress_MixedLongAndShort(t *testing.T) {
 	t.Parallel()
-	// Open with compression, write some values.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "mixed.db")
-	eng1, err := Open(path, &Options{Compression: CompressionDeflate})
-	if err != nil {
-		t.Fatal(err)
-	}
-	bt1 := &BTree{eng: eng1}
-	compKey := []byte("compressed")
-	compVal := []byte(strings.Repeat("COMPRESSED DATA ", 50))
-	if err := bt1.Put(compKey, compVal); err != nil {
-		t.Fatal(err)
-	}
-	_ = eng1.Close()
+	// Write both long (compressed) and short (raw) values; read both back.
+	eng := openCompressDB(t, nil)
+	bt := &BTree{eng: eng}
 
-	// Reopen without compression, write a raw value, read both.
-	eng2, err := Open(path, &Options{Compression: CompressionNone})
-	if err != nil {
+	longKey := []byte("long")
+	longVal := []byte(strings.Repeat("COMPRESSED DATA ", 50))
+	shortKey := []byte("short")
+	shortVal := []byte("tiny")
+
+	if err := bt.Put(longKey, longVal); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = eng2.Close() }()
-	bt2 := &BTree{eng: eng2}
-
-	rawKey := []byte("raw")
-	rawVal := []byte("plain uncompressed value")
-	if err := bt2.Put(rawKey, rawVal); err != nil {
+	if err := bt.Put(shortKey, shortVal); err != nil {
 		t.Fatal(err)
 	}
 
-	// Both values should be readable.
-	gotComp, ok, err := bt2.Get(compKey)
+	gotLong, ok, err := bt.Get(longKey)
 	if err != nil || !ok {
-		t.Fatalf("Get(compressed): ok=%v err=%v", ok, err)
+		t.Fatalf("Get(long): ok=%v err=%v", ok, err)
 	}
-	if !bytes.Equal(gotComp, compVal) {
-		t.Fatalf("compressed value mismatch: got %d bytes want %d", len(gotComp), len(compVal))
+	if !bytes.Equal(gotLong, longVal) {
+		t.Fatalf("long value mismatch: got %d bytes want %d", len(gotLong), len(longVal))
 	}
-	gotRaw, ok, err := bt2.Get(rawKey)
+	gotShort, ok, err := bt.Get(shortKey)
 	if err != nil || !ok {
-		t.Fatalf("Get(raw): ok=%v err=%v", ok, err)
+		t.Fatalf("Get(short): ok=%v err=%v", ok, err)
 	}
-	if !bytes.Equal(gotRaw, rawVal) {
-		t.Fatal("raw value mismatch")
+	if !bytes.Equal(gotShort, shortVal) {
+		t.Fatal("short value mismatch")
 	}
 }
 
 func TestCompress_AscendRange(t *testing.T) {
 	t.Parallel()
-	eng := openCompressDB(t, &Options{Compression: CompressionDeflate})
+	eng := openCompressDB(t, nil)
 	bt := &BTree{eng: eng}
 
 	key1 := []byte("aaa")
@@ -182,7 +159,6 @@ func TestCompress_AscendRange(t *testing.T) {
 func TestCompress_OverflowWithCompression(t *testing.T) {
 	t.Parallel()
 	eng := openCompressDB(t, &Options{
-		Compression:   CompressionDeflate,
 		MaxValueBytes: 65536,
 	})
 	bt := &BTree{eng: eng}
@@ -209,7 +185,6 @@ func TestCompress_OverflowWithCompression(t *testing.T) {
 func TestCompress_IncompressibleOverflow(t *testing.T) {
 	t.Parallel()
 	eng := openCompressDB(t, &Options{
-		Compression:   CompressionDeflate,
 		MaxValueBytes: 65536,
 	})
 	bt := &BTree{eng: eng}
@@ -235,31 +210,42 @@ func TestCompress_IncompressibleOverflow(t *testing.T) {
 	}
 }
 
-func TestCompress_HeaderPersistence(t *testing.T) {
+func TestCompress_ReopenReadBack(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "persist.db")
+	path := filepath.Join(dir, "reopen.db")
 
-	eng1, err := Open(path, &Options{Compression: CompressionDeflate})
+	eng1, err := Open(path, nil)
 	if err != nil {
+		t.Fatal(err)
+	}
+	bt1 := &BTree{eng: eng1}
+	key := []byte("persist")
+	val := []byte(strings.Repeat("PERSIST ", 50))
+	if err := bt1.Put(key, val); err != nil {
 		t.Fatal(err)
 	}
 	_ = eng1.Close()
 
-	// Reopen without specifying compression — should read from header.
+	// Reopen and verify data survives.
 	eng2, err := Open(path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = eng2.Close() }()
-	if eng2.compression != CompressionDeflate {
-		t.Fatalf("expected CompressionDeflate, got %d", eng2.compression)
+	bt2 := &BTree{eng: eng2}
+	got, ok, err := bt2.Get(key)
+	if err != nil || !ok {
+		t.Fatalf("Get after reopen: ok=%v err=%v", ok, err)
+	}
+	if !bytes.Equal(got, val) {
+		t.Fatalf("value mismatch after reopen: got %d want %d", len(got), len(val))
 	}
 }
 
 func TestCompress_DeleteCompressed(t *testing.T) {
 	t.Parallel()
-	eng := openCompressDB(t, &Options{Compression: CompressionDeflate})
+	eng := openCompressDB(t, nil)
 	bt := &BTree{eng: eng}
 
 	key := []byte("del-me")

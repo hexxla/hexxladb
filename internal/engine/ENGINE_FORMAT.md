@@ -36,8 +36,7 @@ HexxlaDB v1 engine shell: **configurable page size** (4/8/16/64 KiB; default **4
 | 60     | 8    | **commit_seq** `uint64` — last committed logical sequence (**format_version ≥ 2**); **zero** when **format_version == 1** (treated as unused)       |
 | 68     | 32   | **encryption_key_check** — keyed verifier for deterministic wrong-key detection on encrypted DBs                                                    |
 | 100    | 4    | **max_value_bytes** `uint32` — per-database max B+ tree value size; **0** = default (8192)                                                          |
-| 104    | 1    | **compression_type** `uint8` — **0** = none, **1** = DEFLATE (`compress/flate`)                                                                     |
-| 105    | 407  | **reserved** (zero)                                                                                                                                 |
+| 104    | 408  | **reserved** (zero)                                                                                                                                 |
 
 Unrecognized **format_version** → open fails (forward-only policy; migration tooling later).
 
@@ -60,7 +59,7 @@ Records are read sequentially from the start of the WAL file. Partial tail → *
 
 ## Value compression
 
-When **compression_type ≠ 0** in the header, values ≥ 64 bytes are compressed before storage. Compressed values carry a 5-byte envelope:
+Values ≥ 64 bytes are transparently compressed before storage using DEFLATE (`compress/flate`, Go standard library). Compression is always-on and requires no configuration. Compressed values carry a 5-byte envelope:
 
 | Offset | Size | Field                                                                          |
 | ------ | ---- | ------------------------------------------------------------------------------ |

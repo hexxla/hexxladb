@@ -23,23 +23,6 @@ const (
 	compressMinInput   = 64    // values shorter than this skip compression
 )
 
-// CompressionType selects the per-database compression algorithm.
-type CompressionType uint8
-
-const (
-	// CompressionNone disables value compression (default).
-	CompressionNone CompressionType = 0
-	// CompressionDeflate enables DEFLATE compression via compress/flate.
-	CompressionDeflate CompressionType = 1
-)
-
-// HeaderCompressionOffset is the byte offset in the header page for the
-// compression_type field (uint8). Offset 104, immediately after MaxValueBytes.
-const HeaderCompressionOffset = 104
-
-// Compression returns the per-database compression type (read from header at Open).
-func (e *Engine) Compression() CompressionType { return e.compression }
-
 // flateWriterPool reuses *flate.Writer instances (~256 KiB each).
 var flateWriterPool = sync.Pool{
 	New: func() any {
@@ -54,9 +37,9 @@ func isCompressedValue(val []byte) bool {
 }
 
 // compressValue compresses val using DEFLATE. Returns the original val unchanged
-// if compression is disabled, the input is too short, or compression didn't shrink it.
-func compressValue(ct CompressionType, val []byte) []byte {
-	if ct == CompressionNone || len(val) < compressMinInput {
+// if the input is too short or compression didn't shrink it.
+func compressValue(val []byte) []byte {
+	if len(val) < compressMinInput {
 		return val
 	}
 

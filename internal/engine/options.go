@@ -44,9 +44,4 @@ type Options struct {
 	// 16384, 65536. Zero means [DefaultPageSize] (4096). Ignored when opening an existing
 	// database — the page size is read from the file header.
 	PageSize uint32
-	// Compression selects per-value compression for the B+ tree. Persisted in the file header.
-	// Zero ([CompressionNone]) means no compression (default). [CompressionDeflate] enables
-	// DEFLATE via compress/flate. Compressed and uncompressed values coexist; the per-value
-	// magic byte disambiguates on read.
-	Compression CompressionType
 }

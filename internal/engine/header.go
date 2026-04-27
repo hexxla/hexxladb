@@ -26,8 +26,6 @@ type Header struct {
 	EncryptionKeyCheck [HeaderEncryptionKeyCheckLen]byte
 	// MaxValueBytes is the per-database maximum B+ tree value size. Zero means [DefaultMaxValueBytes].
 	MaxValueBytes uint32
-	// Compression is the per-database compression algorithm. Zero means no compression.
-	Compression CompressionType
 }
 
 // FeatureEncryptedDataPages marks btree data pages (page_id >= 1) as encrypted on disk and in the WAL.
@@ -54,7 +52,6 @@ func decodeHeaderPage(page []byte) (Header, error) {
 	copy(h.EncryptionSalt[:], page[44:60])
 	copy(h.EncryptionKeyCheck[:], page[HeaderEncryptionKeyCheckOffset:HeaderEncryptionKeyCheckOffset+HeaderEncryptionKeyCheckLen])
 	h.MaxValueBytes = binary.BigEndian.Uint32(page[HeaderMaxValueBytesOffset : HeaderMaxValueBytesOffset+4])
-	h.Compression = CompressionType(page[HeaderCompressionOffset])
 	switch h.FormatVersion {
 	case formatVersionV1:
 		h.CommitSeq = 0
@@ -86,7 +83,6 @@ func encodeHeaderPage(h Header) []byte {
 	}
 	copy(page[HeaderEncryptionKeyCheckOffset:HeaderEncryptionKeyCheckOffset+HeaderEncryptionKeyCheckLen], h.EncryptionKeyCheck[:])
 	binary.BigEndian.PutUint32(page[HeaderMaxValueBytesOffset:HeaderMaxValueBytesOffset+4], h.MaxValueBytes)
-	page[HeaderCompressionOffset] = byte(h.Compression)
 	return page
 }
 

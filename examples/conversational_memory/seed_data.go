@@ -118,7 +118,7 @@ var seedConversation = []seedMessage{
 	},
 	{
 		"assistant",
-		"Max key: 256 bytes. Max value: configurable per-database via Options.MaxValueBytes (512 to 1048576 bytes; default 8192). Values exceeding the inline leaf threshold spill to overflow pages automatically. Optional DEFLATE compression (Options.Compression = CompressionDeflate) reduces stored size transparently.",
+		"Max key: 256 bytes. Max value: configurable per-database via Options.MaxValueBytes (512 to 1048576 bytes; default 8192). Values exceeding the inline leaf threshold spill to overflow pages automatically. Always-on DEFLATE compression reduces stored size transparently for values >= 64 bytes.",
 		[]string{"fact", "limits", "configuration", "api", "compression", "user-123"},
 	},
 	{
