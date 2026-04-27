@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/hexxla/hexxladb/internal/engine/crashtest"
@@ -211,6 +212,20 @@ func (e *Engine) applyGroupBatch(jobs []*groupJob) {
 	}
 	e.lastSeq = lastRedoSeq
 	e.clearGroupUnflushed()
+
+	// Truncate WAL: primary is durable, redo records no longer needed.
+	if err := e.wal.Truncate(0); err != nil {
+		fail(err)
+		return
+	}
+	if _, err := e.wal.Seek(0, io.SeekStart); err != nil {
+		fail(err)
+		return
+	}
+	if err := e.wal.Sync(); err != nil {
+		fail(err)
+		return
+	}
 
 	for _, j := range jobs {
 		j.done <- nil
