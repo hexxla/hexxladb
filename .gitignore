@@ -28,6 +28,7 @@ __debug_bin_*
 
 # go run output binaries (e.g. from examples/) dropped at repo root
 /conversational_memory
+/llm_context_engine
 
 # --- Future / common output directories (binaries, releases, packagers) ---
 /bin/

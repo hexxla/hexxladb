@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/hexxla/hexxladb/internal/engine/crashtest"
 )
@@ -131,7 +132,17 @@ func (e *Engine) CommitWriteTxn() error {
 		return err
 	}
 	e.lastSeq = final.LastWALSeq
-	return nil
+
+	// Truncate WAL: primary is durable, so redo records are no longer needed.
+	// This prevents unbounded WAL growth across many transactions. On next Open
+	// the WAL will be empty and replay is a no-op.
+	if err := e.wal.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := e.wal.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	return e.wal.Sync()
 }
 
 // AbortWriteTxn discards a write transaction without writing the WAL. Buffered state is dropped.

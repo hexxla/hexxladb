@@ -106,16 +106,21 @@ func run() error {
 	var nextQ, nextR int
 
 	start := time.Now()
-	err = db.Update(func(tx *hexxladb.Tx) error {
-		for i, t := range turns {
-			coord := lattice.Coord{Q: nextQ, R: nextR}
-			pk, _ := lattice.Pack(coord)
-			nextQ++
-			if nextQ > 5 {
-				nextQ = 0
-				nextR++
-			}
+	for i, t := range turns {
+		coord := lattice.Coord{Q: nextQ, R: nextR}
+		pk, _ := lattice.Pack(coord)
+		nextQ++
+		if nextQ > 5 {
+			nextQ = 0
+			nextR++
+		}
 
+		vec, err := embed(t.content)
+		if err != nil {
+			return fmt.Errorf("embed %d: %w", i, err)
+		}
+
+		if err := db.Update(func(tx *hexxladb.Tx) error {
 			if err := tx.PutCell(ctx, record.CellRecord{
 				Key:        pk,
 				RawContent: t.content,
@@ -125,21 +130,12 @@ func run() error {
 					Confidence: t.confidence,
 				},
 			}); err != nil {
-				return fmt.Errorf("put cell %d: %w", i, err)
+				return fmt.Errorf("put cell: %w", err)
 			}
-
-			vec, err := embed(t.content)
-			if err != nil {
-				return fmt.Errorf("embed %d: %w", i, err)
-			}
-			if err := tx.PutEmbedding(pk, vec); err != nil {
-				return fmt.Errorf("put embedding %d: %w", i, err)
-			}
+			return tx.PutEmbedding(pk, vec)
+		}); err != nil {
+			return fmt.Errorf("ingest turn %d: %w", i, err)
 		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("ingest: %w", err)
 	}
 	ingestDur := time.Since(start)
 
@@ -380,7 +376,6 @@ func run() error {
 		// Write new preference
 		newCoord := lattice.Coord{Q: nextQ, R: nextR}
 		newPK, _ := lattice.Pack(newCoord)
-		nextQ++
 
 		err = db.Update(func(tx *hexxladb.Tx) error {
 			if err := tx.PutCell(ctx, record.CellRecord{
