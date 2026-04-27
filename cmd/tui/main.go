@@ -55,7 +55,7 @@ func run() int {
 
 // ── tab definitions ──────────────────────────────────────────────────────────
 
-var tabNames = []string{"Dashboard", "Cells", "Hex Grid", "Inspector", "Analytics", "Seams", "Health", "Diff"}
+var tabNames = []string{"Dashboard", "Cells", "Hex Grid", "Inspector", "Analytics", "Seams", "Health", "Diff", "Embeddings"}
 
 // ── model ────────────────────────────────────────────────────────────────────
 
@@ -81,6 +81,7 @@ func newModel(db *hexxladb.DB, dbPath string) model {
 			newSeamsView(db),
 			newHealthView(db),
 			newDiffView(db),
+			newEmbeddingsView(db),
 		},
 	}
 }

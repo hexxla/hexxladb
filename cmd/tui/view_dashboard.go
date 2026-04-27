@@ -31,25 +31,14 @@ func (v *dashboardView) View() string {
 	ctx := context.Background()
 
 	stats, _ := v.db.StatsMVCC()
+	cellCount := int(stats.LogicalCells)
+	pageSize := v.db.PageSize()
+	maxVal := v.db.MaxValueBytes()
+	embedDim := v.db.EmbeddingDimension()
 
-	v1Len := len(index.CellPrefix) + index.PackedCoordKeyLen
-	mvccLen := v1Len + index.VersionSuffixLen
-	seenCells := map[[16]byte]struct{}{}
-	var cellCount, seamCount int
+	var seamCount int
 	var tags []hexxladb.TagCount
 	_ = v.db.View(func(tx *hexxladb.Tx) error {
-		_ = tx.AscendRange([]byte(index.CellPrefix), []byte("cell0"), func(k, _ []byte) bool {
-			if len(k) != v1Len && len(k) != mvccLen {
-				return true
-			}
-			var key [16]byte
-			copy(key[:], k[len(index.CellPrefix):len(index.CellPrefix)+16])
-			if _, ok := seenCells[key]; !ok {
-				seenCells[key] = struct{}{}
-				cellCount++
-			}
-			return cellCount < 100000
-		})
 		_ = tx.AscendRange([]byte(index.SeamPrefix), index.SeamScanUpperBound(), func(_, _ []byte) bool {
 			seamCount++
 			return seamCount < 100000
@@ -58,7 +47,6 @@ func (v *dashboardView) View() string {
 		tags, err = tx.TagCounts(ctx)
 		return err
 	})
-
 	w := max(40, v.width-6)
 	colW := max(20, (w-4)/2)
 
@@ -76,6 +64,13 @@ func (v *dashboardView) View() string {
 		)
 	}
 
+	embedStr := "off"
+	embedClr := colorText2
+	if embedDim > 0 {
+		embedStr = fmt.Sprintf("%dd", embedDim)
+		embedClr = colorPink
+	}
+
 	row1 := lipgloss.JoinHorizontal(lipgloss.Top,
 		statCard("CELLS", fmt.Sprintf("%d", cellCount), colorCyan),
 		" ",
@@ -89,6 +84,16 @@ func (v *dashboardView) View() string {
 			}
 			return "disabled"
 		}(), colorGreen),
+	)
+
+	row2 := lipgloss.JoinHorizontal(lipgloss.Top,
+		statCard("PAGE SIZE", fmt.Sprintf("%d B", pageSize), colorText1),
+		" ",
+		statCard("MAX VALUE", fmt.Sprintf("%d B", maxVal), colorText1),
+		" ",
+		statCard("EMBEDDINGS", embedStr, embedClr),
+		" ",
+		statCard("VERSIONED", fmt.Sprintf("%d", stats.VersionedRows), colorText2),
 	)
 
 	// ── top tags ────────────────────────────────────────────────────────────
@@ -153,6 +158,8 @@ func (v *dashboardView) View() string {
 		subtitle,
 		"",
 		row1,
+		"",
+		row2,
 		"",
 		infoRow,
 	)

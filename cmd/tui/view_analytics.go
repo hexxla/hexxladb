@@ -56,6 +56,8 @@ func (v *analyticsView) loadCmd() tea.Cmd {
 		ctx := context.Background()
 		var d analyticsLoadedMsg
 		var err error
+		d.mvccStats, _ = db.StatsMVCC()
+		d.cellCount = int(d.mvccStats.LogicalCells)
 		_ = db.View(func(tx *hexxladb.Tx) error {
 			d.tagCounts, err = tx.TagCounts(ctx)
 			if err != nil {
@@ -70,28 +72,12 @@ func (v *analyticsView) loadCmd() tea.Cmd {
 			if err != nil {
 				return err
 			}
-			v1Len := len(index.CellPrefix) + index.PackedCoordKeyLen
-			mvccLen := v1Len + index.VersionSuffixLen
-			seenCells := map[[16]byte]struct{}{}
-			_ = tx.AscendRange([]byte(index.CellPrefix), []byte("cell0"), func(k, _ []byte) bool {
-				if len(k) != v1Len && len(k) != mvccLen {
-					return true
-				}
-				var key [16]byte
-				copy(key[:], k[len(index.CellPrefix):len(index.CellPrefix)+16])
-				if _, ok := seenCells[key]; !ok {
-					seenCells[key] = struct{}{}
-					d.cellCount++
-				}
-				return d.cellCount < 100000
-			})
 			_ = tx.AscendRange([]byte(index.SeamPrefix), index.SeamScanUpperBound(), func(_, _ []byte) bool {
 				d.seamCount++
 				return d.seamCount < 100000
 			})
 			return nil
 		})
-		d.mvccStats, _ = db.StatsMVCC()
 		return d
 	}
 }

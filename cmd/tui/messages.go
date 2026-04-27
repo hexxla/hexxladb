@@ -56,6 +56,14 @@ type analyticsLoadedMsg struct {
 	seamCount   int
 }
 
+type embeddingsLoadedMsg struct {
+	embedCount  int
+	dimension   uint16
+	metric      hexxladb.DistanceMetric
+	hnswEnabled bool
+	err         error
+}
+
 // ─── cell loading helper (shared by cells view and main.go tab switch) ───────
 
 // searchResult pairs a CellView with its relevance score from SearchCells.
@@ -92,6 +100,7 @@ func loadCells(db *hexxladb.DB, limit int) []hexxladb.CellView {
 	seen := map[lattice.PackedCoord]struct{}{}
 	v1Len := len(index.CellPrefix) + index.PackedCoordKeyLen
 	mvccLen := v1Len + index.VersionSuffixLen
+	opts := hexxladb.DefaultAssembleCellViewOpts()
 	_ = db.View(func(tx *hexxladb.Tx) error {
 		return tx.AscendRange(
 			[]byte(index.CellPrefix),
@@ -115,15 +124,9 @@ func loadCells(db *hexxladb.DB, limit int) []hexxladb.CellView {
 				if err != nil {
 					return true
 				}
-				rec, ok, _ := tx.GetCell(p)
-				if ok {
-					out = append(out, hexxladb.CellView{
-						Coord:      coord,
-						RawContent: rec.RawContent,
-						Tags:       rec.Tags,
-						Provenance: rec.Provenance,
-						Validity:   rec.Validity,
-					})
+				cv, err := tx.AssembleCellView(context.Background(), coord, nil, opts)
+				if err == nil {
+					out = append(out, cv)
 				}
 				return len(out) < limit
 			},
