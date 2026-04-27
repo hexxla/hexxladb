@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added (demo-embedding-search)
+
+- Phase 13 in conversational_memory demo: Ollama all-minilm (384-dim) embedding generation
+- PutEmbedding for all seed data, HNSW graph built automatically
+- SearchByEmbedding raw ANN search demo
+- QueryCells with Embedding: ANN-accelerated seed selection + tag post-filter
+- Graceful Ollama detection: skips Phase 13 when Ollama not running
+- DB options updated: EmbeddingDimension=384, DistanceCosine, PageSize=65536
+
 ### Added (benchmarks-docs)
 
 - Embedding search benchmarks: `BenchmarkSearchByEmbedding_HNSW` (500×32d, 200×64d, 100×128d), `BenchmarkQueryCells_Embedding` (500×32d)

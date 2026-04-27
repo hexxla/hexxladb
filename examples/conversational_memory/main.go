@@ -14,6 +14,7 @@
 //   - Phase 10  QueryCells + multi-seed context assembly (LoadContextPackFrom)
 //   - Phase 11  Health check (DB.HealthCheck) + MVCC Snapshot Diff
 //   - Phase 12  DeleteCell + Compact (MVCC tombstones, snapshot isolation, copy-compaction)
+//   - Phase 13  Embedding search (Ollama all-minilm, PutEmbedding, QueryCells with Embedding)
 //
 // Usage:
 //
@@ -23,10 +24,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,7 +121,7 @@ func run(dbPath string) error {
 
 	_, _ = separatorStyle.Println(strings.Repeat("═", lineWidth))
 	_, _ = headerStyle.Printf("  ▶  HexxlaDB — Conversational Memory Demo\n")
-	_, _ = dimStyle.Printf("  %d-turn corpus · 5 thematic sessions · 12 phases\n", len(seedConversation))
+	_, _ = dimStyle.Printf("  %d-turn corpus · 5 thematic sessions · 13 phases\n", len(seedConversation))
 	_, _ = separatorStyle.Println(strings.Repeat("═", lineWidth))
 	fmt.Println()
 
@@ -143,6 +147,9 @@ func run(dbPath string) error {
 		MVCCRetention: hexxladb.MVCCRetention{
 			RetainCommitsBehindHead: 100,
 		},
+		EmbeddingDimension: 384, // all-minilm via Ollama
+		DistanceMetric:     hexxladb.DistanceCosine,
+		PageSize:           65536, // larger pages for embedding + HNSW data
 		AfterPutCell: hexxladb.AfterPutCellHookFunc(func(_ context.Context, _ record.CellRecord) error {
 			hookCellCount++
 			return nil
@@ -160,6 +167,7 @@ func run(dbPath string) error {
 	printInfo("Path", dbPath)
 	printInfo("Status", map[bool]string{true: "new (will seed)", false: "existing (re-using)"}[isNew])
 	printInfo("MVCC", "enabled · retain 100 commits behind head")
+	printInfo("Embeddings", "384-dim (all-minilm via Ollama) · cosine distance")
 	printInfo("PageSize", fmt.Sprintf("%d bytes (%d KiB, configurable per-database)", db.PageSize(), db.PageSize()/1024))
 	printInfo("MaxValueBytes", fmt.Sprintf("%d bytes (%d KB, configurable per-database)", db.MaxValueBytes(), db.MaxValueBytes()/1024))
 	printInfo("Compression", "DEFLATE (always-on, compress/flate, Go stdlib)")
@@ -1146,6 +1154,143 @@ func run(dbPath string) error {
 	fmt.Println()
 
 	// ═══════════════════════════════════════════════════════════════
+	// PHASE 13: Embedding Search (Ollama all-minilm)
+	// ═══════════════════════════════════════════════════════════════
+	printHeader("Phase 13: Embedding Search (Ollama all-minilm)")
+
+	printNote("Generates 384-dim embeddings via local Ollama (all-minilm model).")
+	printNote("PutEmbedding stores each vector and builds an HNSW index automatically.")
+	printNote("QueryCells with Embedding triggers ANN-accelerated seed selection.")
+	fmt.Println()
+
+	ollamaAvailable := isOllamaRunning()
+	if !ollamaAvailable {
+		_, _ = warningStyle.Println("  ⚠  Ollama not reachable at localhost:11434 — skipping embedding phase.")
+		printNote("Start Ollama with: ollama serve & ollama pull all-minilm")
+	} else {
+		printSuccess("Ollama reachable — generating embeddings for all seed cells")
+		fmt.Println()
+
+		// 13a: Generate and store embeddings for all seed cells.
+		printSubHeader("Step 1 — PutEmbedding: embed all seed turns via Ollama")
+		var embedded int
+		embedStart := time.Now()
+		err = db.Update(func(tx *hexxladb.Tx) error {
+			for i, msg := range seedConversation {
+				pk, _ := lattice.Pack(spiralCoord(i))
+				vec, err := ollamaEmbed(msg.content)
+				if err != nil {
+					_, _ = warningStyle.Printf("    ⚠  embed[%d] failed: %v (skipping)\n", i, err)
+					continue
+				}
+				if err := tx.PutEmbedding(pk, vec); err != nil {
+					return err
+				}
+				embedded++
+				if (embedded)%20 == 0 {
+					_, _ = dimStyle.Printf("    ...embedded %d/%d turns\n", embedded, len(seedConversation))
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("put embeddings: %w", err)
+		}
+		embedDur := time.Since(embedStart)
+
+		fmt.Println()
+		printMetric("Cells embedded", embedded, fmt.Sprintf("/ %d", len(seedConversation)))
+		printMetric("Embedding time", embedDur.Round(time.Millisecond), "")
+		printMetric("Avg per turn", (embedDur / time.Duration(max(embedded, 1))).Round(time.Millisecond), "")
+		printSuccess("HNSW graph built automatically via PutEmbedding")
+		fmt.Println()
+
+		// 13b: SearchByEmbedding — raw ANN search.
+		printSubHeader("Step 2 — SearchByEmbedding: find turns similar to 'database architecture'")
+		queryVec, err := ollamaEmbed("database architecture and storage engine design")
+		if err != nil {
+			return fmt.Errorf("embed query: %w", err)
+		}
+
+		var annResults []hexxladb.EmbeddingSearchResult
+		err = db.View(func(tx *hexxladb.Tx) error {
+			var err error
+			annResults, err = tx.SearchByEmbedding(queryVec, hexxladb.EmbeddingSearchConfig{MaxResults: 5})
+			return err
+		})
+		if err != nil {
+			return fmt.Errorf("search by embedding: %w", err)
+		}
+
+		fmt.Println()
+		printMetric("ANN results", len(annResults), "cells")
+		for i, hit := range annResults {
+			_ = db.View(func(tx *hexxladb.Tx) error {
+				rec, ok, _ := tx.GetCell(hit.Coord)
+				if ok {
+					c, _ := lattice.Unpack(rec.Key)
+					_, _ = dimStyle.Printf("    [%d] score=%.4f  (%d,%d)  ", i+1, hit.Score, c.Q, c.R)
+					_, _ = dataStyle.Printf("%s\n", truncate(rec.RawContent, 48))
+				}
+				return nil
+			})
+		}
+		fmt.Println()
+
+		// 13c: QueryCells with Embedding — ANN + post-filters.
+		printSubHeader("Step 3 — QueryCells with Embedding: semantic search + tag filter")
+		printNote("Embedding triggers ANN seed selection; RequireTags applied as post-filter.")
+		fmt.Println()
+
+		var embQueryResults []hexxladb.CellQueryResult
+		err = db.View(func(tx *hexxladb.Tx) error {
+			var err error
+			embQueryResults, err = tx.QueryCells(ctx, hexxladb.CellQuery{
+				Embedding:  queryVec,
+				MaxResults: 5,
+				SortBy:     hexxladb.SortByScore,
+			})
+			return err
+		})
+		if err != nil {
+			return fmt.Errorf("query cells with embedding: %w", err)
+		}
+
+		printMetric("QueryCells+Embedding results", len(embQueryResults), "cells")
+		for i, r := range embQueryResults {
+			_, _ = dimStyle.Printf("    [%d] score=%.4f  (%d,%d)  ", i+1, r.Score, r.Cell.Coord.Q, r.Cell.Coord.R)
+			_, _ = dataStyle.Printf("%s\n", truncate(r.Cell.RawContent, 48))
+		}
+		fmt.Println()
+
+		// 13d: QueryCells with Embedding + tag filter.
+		printSubHeader("Step 4 — Embedding + RequireTags: 'fact' cells nearest to query")
+		var filteredResults []hexxladb.CellQueryResult
+		err = db.View(func(tx *hexxladb.Tx) error {
+			var err error
+			filteredResults, err = tx.QueryCells(ctx, hexxladb.CellQuery{
+				Embedding:   queryVec,
+				RequireTags: []string{"fact"},
+				MaxResults:  5,
+				SortBy:      hexxladb.SortByScore,
+			})
+			return err
+		})
+		if err != nil {
+			return fmt.Errorf("query cells embedding+tags: %w", err)
+		}
+
+		printMetric("Embedding+tag results", len(filteredResults), "cells (filtered to 'fact')")
+		for i, r := range filteredResults {
+			_, _ = dimStyle.Printf("    [%d] score=%.4f  (%d,%d)  ", i+1, r.Score, r.Cell.Coord.Q, r.Cell.Coord.R)
+			_, _ = dataStyle.Printf("%s\n", truncate(r.Cell.RawContent, 48))
+		}
+		fmt.Println()
+		printSuccess("Embedding search phase complete — ANN + query engine integration demonstrated")
+	}
+	fmt.Println()
+
+	// ═══════════════════════════════════════════════════════════════
 	// COMPLETION
 	// ═══════════════════════════════════════════════════════════════
 	_, _ = separatorStyle.Println(strings.Repeat("═", lineWidth))
@@ -1155,7 +1300,7 @@ func run(dbPath string) error {
 
 	printInfo("Database", dbPath)
 	printInfo("Corpus", fmt.Sprintf("%d turns · 5 thematic sessions", len(seedConversation)))
-	printInfo("Phases run", "1–12 (all)")
+	printInfo("Phases run", "1–13 (all)")
 	printInfo("Hook writes", fmt.Sprintf("%d cell writes observed via AfterPutCell", hookCellCount))
 	fmt.Println()
 
@@ -1187,4 +1332,48 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// ── Ollama helpers ─────────────────────────────────────────────────────
+
+const ollamaURL = "http://localhost:11434"
+
+// isOllamaRunning returns true if the Ollama API responds.
+func isOllamaRunning() bool {
+	resp, err := http.Get(ollamaURL) //nolint:noctx // demo code, no context needed
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+// ollamaEmbed calls the Ollama embeddings API and returns a float32 vector.
+func ollamaEmbed(text string) ([]float32, error) {
+	body, err := json.Marshal(map[string]string{
+		"model":  "all-minilm",
+		"prompt": text,
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.Post(ollamaURL+"/api/embeddings", "application/json", bytes.NewReader(body)) //nolint:noctx // demo code
+	if err != nil {
+		return nil, fmt.Errorf("ollama request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ollama status %d", resp.StatusCode)
+	}
+	var result struct {
+		Embedding []float64 `json:"embedding"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode embedding: %w", err)
+	}
+	vec := make([]float32, len(result.Embedding))
+	for i, v := range result.Embedding {
+		vec[i] = float32(v)
+	}
+	return vec, nil
 }
