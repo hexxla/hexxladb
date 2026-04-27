@@ -261,16 +261,18 @@ _Hardware: Intel Core i9-14900HX, 16 GB, Go 1.26, Linux._
 
 ## Examples
 
-| Example                                                  | Run                                       | What it demonstrates                                                                                                                |
-| -------------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| [Conversational Memory](examples/conversational_memory/) | `go run ./examples/conversational_memory` | 12-phase production walkthrough: cells, seams, tags, MVCC time-travel, queries, context assembly, delete, compact                   |
-| [LLM Context Engine](examples/llm_context_engine/)       | `go run ./examples/llm_context_engine`    | Full LLM memory pipeline with Ollama embeddings: ingest → semantic search → multi-signal retrieval → supersession → prompt assembly |
+| Example                                                  | Run             | What it demonstrates                                                                                                                |
+| -------------------------------------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| [Conversational Memory](examples/conversational_memory/) | `make demo`     | 12-phase production walkthrough: cells, seams, tags, MVCC time-travel, queries, context assembly, delete, compact                   |
+| [LLM Context Engine](examples/llm_context_engine/)       | `make demo-llm` | Full LLM memory pipeline with Ollama embeddings: ingest → semantic search → multi-signal retrieval → supersession → prompt assembly |
+
+Each `make demo*` target cleans the database before running so every invocation shows a fresh walkthrough. Override the DB path with `make demo DEMO_DB=/path/to/my.db` or `make demo-llm LLM_DB=/path/to/my.db`.
 
 The LLM Context Engine example requires [Ollama](https://ollama.com/) with the `all-minilm` model:
 
 ```bash
 ollama pull all-minilm
-go run ./examples/llm_context_engine
+make demo-llm
 ```
 
 ---
