@@ -68,8 +68,14 @@ Visibility layer changes required in `getCellVisibleRaw`:
    - `tx.noteChangelog(changelog.OpDeleteCell, index.CellKey(key), nil)`
 
 3. **Add `changelog.OpDeleteCell` constant** in `internal/changelog/changelog.go`
+   - `OpDeleteCell = byte(6)` — next after `OpPutEdge`
 
-4. **Add tests in `delete_cell_test.go`**
+4. **Hexagonal boundary: `domain.Storage` + adapter + app.Service**
+   - Add `DeleteCell(ctx context.Context, key lattice.PackedCoord) error` to `internal/domain/storage.go` interface
+   - Implement in `internal/adapters/out/hexxladb/storage.go` — forwards to `db.Update(tx.DeleteCell)`
+   - Add delegation in `internal/app/app.go` — `s.Storage.DeleteCell(ctx, key)` with `ErrNoStorage` guard
+
+5. **Add tests in `delete_cell_test.go`**
    - Delete existing cell (v1) — primary gone, secondaries gone, facets gone, edges gone
    - Delete missing cell — no error (idempotent)
    - Delete in read-only tx — error
@@ -82,9 +88,9 @@ Visibility layer changes required in `getCellVisibleRaw`:
    - HealthCheck after delete — clean report (no orphaned indexes)
    - Same-tx: put cell, delete cell, get cell → not-found (overlay correctness)
 
-5. **Update `doc.go`, `API_REFERENCE.md`** — document method, seam/edge orphan behaviour
+6. **Update `doc.go`, `API_REFERENCE.md`** — document method, seam/edge orphan behaviour
 
-6. **`make ci`** — green
+7. **`make ci`** — green
 
 ---
 
