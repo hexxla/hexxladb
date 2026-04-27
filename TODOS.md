@@ -5,6 +5,7 @@ Immediate next steps. Update after each session.
 ## Current
 
 - [ ] Merge `feat/delete-compact` to main + push
+- [ ] Relocate `cell_secondary.go` / `seam_secondary.go` to `internal/`
 - [ ] Overflow pages for large values (Phase 3 of efficient-storage)
 - [ ] Content compression (Phase 4, separate branch)
 
@@ -16,6 +17,7 @@ Immediate next steps. Update after each session.
 
 ## Recently Completed
 
+- 2026-04-27: `domain.Storage` contract tests — 22 reusable contract tests in `internal/domain/storagecontract/`; covers all 27 port methods (cells, seams, facets, edges, walks, context); real adapter passes all contracts; reusable `RunAll(t, factory)` harness for any future adapter
 - 2026-04-27: Configurable page size (efficient-storage Phases 1-2) — runtime `e.pageSize` replaces fixed 64 KiB constant; `Options.PageSize` (4096/8192/16384/65536); `DB.PageSize()`; fill-based B+ tree splitting; dynamic WAL record size; instance page buffer pool; compact propagation; parametric tests at all sizes; CHANGELOG + API_REFERENCE updated
 - 2026-04-27: Plan cleanup — deleted `.windsurf/plans/delete-compact.md`, updated ROADMAP (Near-term→Completed), API_REFERENCE (Phase 12 demo), CHANGELOG (HealthCheck tombstone fix), OPERATIONS (compaction section)
 - 2026-04-27: Fixed `HealthCheck` to exclude tombstoned cells from `CellCount` on MVCC databases

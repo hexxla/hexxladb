@@ -57,7 +57,7 @@ func (tx *Tx) TagCooccurrences(ctx context.Context, minCount int) ([]TagPair, er
 			return nil, err
 		}
 		if err := tx.AscendCellsByTag(ctx, tag, func(rec record.CellRecord) bool {
-			sorted := uniqueSortedTags(rec.Tags)
+			sorted := record.UniqueSortedTags(rec.Tags)
 			for i := range sorted {
 				for j := i + 1; j < len(sorted); j++ {
 					counts[[2]string{sorted[i], sorted[j]}]++
