@@ -2,6 +2,63 @@
 
 ## [Unreleased]
 
+### Added (llm-context-engine example)
+
+- New `examples/llm_context_engine` — realistic LLM memory retrieval demo
+  - Scenario 1: Ingest 20 conversation turns with Ollama all-minilm embeddings
+  - Scenario 2: Semantic retrieval — 3 distinct queries showing HNSW differentiation
+  - Scenario 3: Multi-signal retrieval — embeddings + tag filters + confidence + source
+  - Scenario 4: Preference supersession — MarkSupersedes + FilterSuperseded in context assembly
+  - Scenario 5: Full LLM prompt assembly pipeline — search → preferences → LoadContextPackFrom
+  - Scenario 6: Comparison table — what HexxlaDB enables vs stateless LLMs
+- Moved embedding functionality out of conversational_memory demo (reverted to 12 phases)
+
+### Added (benchmarks-docs)
+
+- Embedding search benchmarks: `BenchmarkSearchByEmbedding_HNSW` (500×32d, 200×64d, 100×128d), `BenchmarkQueryCells_Embedding` (500×32d)
+- Updated `doc.go` with embedding/HNSW entrypoints
+- Updated `HEXXLA_DB.md` with HNSW keyspace layout and query engine integration
+- Updated `API_REFERENCE.md` with HNSW-accelerated search and query planner integration
+- Updated `ROADMAP.md` to mark embeddings keyspace as complete
+
+### Added (query-engine-embedding)
+
+- `CellQuery.Embedding` and `CellSearchConfig.Embedding` trigger ANN-accelerated seed selection
+- `QueryCells` planner picks embedding index when `Embedding` is set (highest priority)
+- Embedding similarity score added to composite relevance score alongside lexical scoring
+- `scanByEmbedding` over-fetches 2× to leave room for post-filter narrowing
+- All existing predicates (tags, temporal, spatial, confidence) apply as post-filters on embedding results
+- 3 new integration tests: QueryCells + Embedding, Embedding + tag filter, SearchCells + Embedding
+
+### Added (hnsw-graph)
+
+- **HNSW graph** (`hnsw/` keyspace): sub-linear approximate nearest-neighbor search persisted in the B+ tree
+- `internal/hnsw` package: `Node` and `Meta` encode/decode, `Graph` with Insert/Search/Delete
+- `hnsw/meta`, `hnsw/entry`, `hnsw/node/<packed_coord>` keyspace (keys in `internal/index/hnsw_key.go`)
+- HNSW insert with random layer selection, greedy descent, ef-bounded beam search, bidirectional linking
+- HNSW search with greedy layer descent and ef-bounded beam at layer 0
+- HNSW delete with neighbor repair and entry point promotion
+- `SearchByEmbedding` uses HNSW when graph exists, flat-scan fallback otherwise
+- `PutEmbedding`/`DeleteEmbedding`/`DeleteCell` cascade maintain HNSW graph automatically
+- `Tx.getDirect` helper for internal reads bypassing public API guards
+- `txHNSWStorage` adapter bridges `Tx` to `hnsw.Storage` interface
+- 7 graph tests (insert, recall, delete, delete-all, delete-entry, update, empty) + 6 node/meta encoding tests
+
+### Added (embeddings-keyspace)
+
+- **Embedding keyspace** (`embed/<packed_coord>`): fixed-dimension float32 vector storage per cell
+- `Options.EmbeddingDimension` / `Options.DistanceMetric` — dimension and metric locked at creation, persisted in file header (offsets 104–106)
+- `DistanceMetric` type with `DistanceCosine`, `DistanceDotProduct`, `DistanceL2` constants
+- Distance functions: cosine similarity, dot product, Euclidean distance (pure math, `internal/engine`)
+- `DB.EmbeddingDimension()` / `DB.EmbeddingMetric()` introspection accessors
+- `Tx.PutEmbedding`, `Tx.GetEmbedding`, `Tx.DeleteEmbedding` — embed/ keyspace CRUD
+- `Tx.SearchByEmbedding` — flat-scan nearest-neighbor search with goroutine parallelism and min-heap top-K
+- `Tx.ReindexEmbeddings` — bulk recompute all embeddings via user-supplied callback (model switch support)
+- `DeleteCell` cascades to remove the cell's embedding automatically
+- `ErrEmbeddingsDisabled`, `ErrEmbeddingDimension` sentinel errors
+- 14 new tests covering: put/get round-trip, delete, dimension mismatch, disabled DB, cascade, search (top-K, empty, min-score), reindex, reindex-skip, DB accessors, persistence across reopen, dimension mismatch on reopen
+- Distance function unit tests and benchmarks (384-dim, 768-dim)
+
 ### Added (content-compression)
 
 - **Always-on transparent per-value DEFLATE compression** via `compress/flate` (Go stdlib, zero external dependencies)

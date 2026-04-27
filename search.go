@@ -45,6 +45,12 @@ type CellSearchConfig struct {
 	// MaxScanRadius controls how far from origin to walk when Radius is zero
 	// (default 32). Increase for sparse or geographically wide databases.
 	MaxScanRadius int
+
+	// Embedding enables ANN-accelerated seed selection. When non-nil, the
+	// query planner uses [Tx.SearchByEmbedding] to narrow the candidate set
+	// and boosts scores by embedding similarity. Requires the database to
+	// have been opened with a non-zero [Options.EmbeddingDimension].
+	Embedding []float32
 }
 
 // CellSearchResult is one entry returned by [Tx.SearchCells].
@@ -86,6 +92,7 @@ func (tx *Tx) SearchCells(ctx context.Context, cfg CellSearchConfig) ([]CellSear
 		Radius:        cfg.Radius,
 		MaxResults:    cfg.MaxResults,
 		SortBy:        SortByScore,
+		Embedding:     cfg.Embedding,
 	}
 	if q.MaxResults <= 0 {
 		q.MaxResults = defaultQueryMaxResults

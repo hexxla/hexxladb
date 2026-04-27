@@ -59,6 +59,9 @@ func (tx *Tx) deleteCellV1(key lattice.PackedCoord) error {
 	if err := tx.deleteOutboundEdges(key); err != nil {
 		return err
 	}
+	if err := tx.deleteEmbeddingIfEnabled(key); err != nil {
+		return err
+	}
 	tx.noteChangelog(changelog.OpDeleteCell, index.CellKey(key), nil)
 	return nil
 }
@@ -92,6 +95,11 @@ func (tx *Tx) deleteCellMVCC(ctx context.Context, key lattice.PackedCoord) error
 
 	// Outbound edges are not MVCC-versioned; hard-delete.
 	if err := tx.deleteOutboundEdges(key); err != nil {
+		return err
+	}
+
+	// Cascade: remove embedding (not MVCC-versioned; hard-delete).
+	if err := tx.deleteEmbeddingIfEnabled(key); err != nil {
 		return err
 	}
 

@@ -121,6 +121,35 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 
 ---
 
+## Embeddings (vector search)
+
+| Symbol                                                      | Notes                                                                                                 |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| **[`Options.EmbeddingDimension`](../../options.go)**        | Fixed vector dimension for new databases (0 = disabled). Immutable after creation.                    |
+| **[`Options.DistanceMetric`](../../options.go)**            | Similarity function: **`DistanceCosine`** (default), **`DistanceDotProduct`**, **`DistanceL2`**.      |
+| **[`DistanceMetric`](../../embedding.go)**                  | Type alias for the distance metric constants.                                                         |
+| **[`DistanceCosine`](../../embedding.go)**                  | Cosine similarity. Range [-1, 1]; higher = more similar.                                              |
+| **[`DistanceDotProduct`](../../embedding.go)**              | Raw dot product. Assumes normalized vectors.                                                          |
+| **[`DistanceL2`](../../embedding.go)**                      | Euclidean distance, inverted for ranking.                                                             |
+| **[`(*DB).EmbeddingDimension`](../../embedding.go)**        | Returns the configured vector dimension (0 = disabled).                                               |
+| **[`(*DB).EmbeddingMetric`](../../embedding.go)**           | Returns the configured distance metric.                                                               |
+| **[`(*Tx).PutEmbedding`](../../tx_embedding.go)**           | Store a vector embedding for a cell coordinate. Dimension must match.                                 |
+| **[`(*Tx).GetEmbedding`](../../tx_embedding.go)**           | Retrieve the vector embedding for a cell coordinate.                                                  |
+| **[`(*Tx).DeleteEmbedding`](../../tx_embedding.go)**        | Remove an embedding. Idempotent.                                                                      |
+| **[`(*Tx).SearchByEmbedding`](../../embedding_search.go)**  | HNSW-accelerated nearest-neighbor search (flat-scan fallback). Returns top-K results sorted by score. |
+| **[`(*Tx).ReindexEmbeddings`](../../embedding_reindex.go)** | Bulk recompute all embeddings via a user-supplied function. Intended for model changes.               |
+| **[`EmbeddingSearchConfig`](../../embedding_search.go)**    | Search config: `MaxResults` (default 10), `MinScore` threshold.                                       |
+| **[`EmbeddingSearchResult`](../../embedding_search.go)**    | Coord + score pair.                                                                                   |
+| **[`EmbeddingFunc`](../../embedding_reindex.go)**           | Callback type for **`ReindexEmbeddings`**: `(ctx, CellRecord) → ([]float32, error)`.                  |
+| **[`ErrEmbeddingsDisabled`](../../errors.go)**              | Embedding operation on a database with dimension 0.                                                   |
+| **[`ErrEmbeddingDimension`](../../errors.go)**              | Vector length does not match **`EmbeddingDimension`**.                                                |
+
+**`DeleteCell`** cascades to remove the cell's embedding and HNSW node automatically.
+
+**`CellQuery.Embedding`** / **`CellSearchConfig.Embedding`** triggers ANN-accelerated seed selection in **`QueryCells`** / **`SearchCells`**. Embedding similarity is added to the composite relevance score; all other predicates (tags, temporal, spatial) apply as post-filters.
+
+---
+
 ## Cell templates
 
 | Symbol                                               | Notes                                                    |
@@ -265,11 +294,11 @@ See **[CHANGEFEED.md](./CHANGEFEED.md)**.
 
 `SearchCells` is a convenience wrapper over `QueryCells` kept for backward compatibility. For `ExcludeTags`, `SortBy`, `Explain`, or temporal filters, use `QueryCells` directly.
 
-| Symbol                                     | Notes                                                                                                                                                                                                  |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **[`(*Tx).SearchCells`](../../search.go)** | Wrapper over `QueryCells`. Returns `[]CellSearchResult` sorted by score; each result includes a `Coord` for use as a context-pack seed.                                                                |
-| **[`CellSearchConfig`](../../search.go)**  | `Query`, `RequireTags` (AND), `AnyTags` (OR), `MinConfidence`, `MaxConfidence`, `SourceID`, `Center`+`Radius`, `MaxResults`, `MaxScanRadius`. Forward-compatible: `Embedding []float32` addable later. |
-| **[`CellSearchResult`](../../search.go)**  | `Cell CellView` + `Score float64`.                                                                                                                                                                     |
+| Symbol                                     | Notes                                                                                                                                                                                       |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*Tx).SearchCells`](../../search.go)** | Wrapper over `QueryCells`. Returns `[]CellSearchResult` sorted by score; each result includes a `Coord` for use as a context-pack seed.                                                     |
+| **[`CellSearchConfig`](../../search.go)**  | `Query`, `RequireTags` (AND), `AnyTags` (OR), `MinConfidence`, `MaxConfidence`, `SourceID`, `Center`+`Radius`, `MaxResults`, `MaxScanRadius`, `Embedding` (ANN-accelerated seed selection). |
+| **[`CellSearchResult`](../../search.go)**  | `Cell CellView` + `Score float64`.                                                                                                                                                          |
 
 ### Content Search scoring
 
@@ -388,6 +417,8 @@ Use **`errors.Is` / `errors.As`** for stable handling.
 ## Live demos and coverage
 
 - **Conversational memory service:** [`examples/conversational_memory`](../../examples/conversational_memory/) — **`go run ./examples/conversational_memory`** seeds **`./.tmp/conversational_memory/`** (MVCC + changelog + `AfterPutCell` hook) and walks through: cell storage (templates + batch), supersession, tag analytics + co-occurrences, query patterns (`QueryCells` + `SearchCells`), MVCC time-travel, ASCII grid + ring density, filtered changelog, multi-seed context assembly, **database health check** (`HealthCheck`), **event hook telemetry** (`AfterPutCell`), **MaxValueBytes** (per-database limit printed at startup), **MVCC Snapshot Diff** (`SnapshotDiff` full range + narrow diff), **`Tx.DeleteCell`** (MVCC tombstone + snapshot isolation + idempotent re-delete), and **`DB.Compact`** (bulk write→delete→prune→compact with file size reduction). Phases 1–12.
+
+- **LLM Context Engine:** [`examples/llm_context_engine`](../../examples/llm_context_engine/) — **`go run ./examples/llm_context_engine`** (requires Ollama with `all-minilm`). Realistic LLM memory retrieval workflow: ingest 20 turns with 384-dim embeddings (`PutEmbedding`), semantic retrieval with 3 distinct queries (`SearchByEmbedding`, `QueryCells` + `Embedding`), multi-signal retrieval (embeddings + `RequireTags` + `MinConfidence` + `SourceID`), preference supersession (`MarkSupersedes` + `FilterSuperseded` in `LoadContextPackFrom`), full LLM prompt assembly pipeline, and a comparison of HexxlaDB capabilities vs stateless LLMs. 6 scenarios.
 
 ## What `examples/conversational_memory` does _not_ call (and why)
 

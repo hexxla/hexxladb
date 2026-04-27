@@ -26,6 +26,10 @@ type Header struct {
 	EncryptionKeyCheck [HeaderEncryptionKeyCheckLen]byte
 	// MaxValueBytes is the per-database maximum B+ tree value size. Zero means [DefaultMaxValueBytes].
 	MaxValueBytes uint32
+	// EmbeddingDim is the fixed vector dimension for the embed/ keyspace. Zero means embeddings disabled.
+	EmbeddingDim uint16
+	// EmbeddingMetric is the distance function for embedding search. Only valid when EmbeddingDim > 0.
+	EmbeddingMetric DistanceMetric
 }
 
 // FeatureEncryptedDataPages marks btree data pages (page_id >= 1) as encrypted on disk and in the WAL.
@@ -52,6 +56,8 @@ func decodeHeaderPage(page []byte) (Header, error) {
 	copy(h.EncryptionSalt[:], page[44:60])
 	copy(h.EncryptionKeyCheck[:], page[HeaderEncryptionKeyCheckOffset:HeaderEncryptionKeyCheckOffset+HeaderEncryptionKeyCheckLen])
 	h.MaxValueBytes = binary.BigEndian.Uint32(page[HeaderMaxValueBytesOffset : HeaderMaxValueBytesOffset+4])
+	h.EmbeddingDim = binary.BigEndian.Uint16(page[HeaderEmbeddingDimOffset : HeaderEmbeddingDimOffset+2])
+	h.EmbeddingMetric = DistanceMetric(page[HeaderEmbeddingMetricOffset])
 	switch h.FormatVersion {
 	case formatVersionV1:
 		h.CommitSeq = 0
@@ -83,6 +89,8 @@ func encodeHeaderPage(h Header) []byte {
 	}
 	copy(page[HeaderEncryptionKeyCheckOffset:HeaderEncryptionKeyCheckOffset+HeaderEncryptionKeyCheckLen], h.EncryptionKeyCheck[:])
 	binary.BigEndian.PutUint32(page[HeaderMaxValueBytesOffset:HeaderMaxValueBytesOffset+4], h.MaxValueBytes)
+	binary.BigEndian.PutUint16(page[HeaderEmbeddingDimOffset:HeaderEmbeddingDimOffset+2], h.EmbeddingDim)
+	page[HeaderEmbeddingMetricOffset] = byte(h.EmbeddingMetric)
 	return page
 }
 

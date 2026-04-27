@@ -39,4 +39,7 @@ var (
 	// ErrInvalidMaxValueBytes means Options.MaxValueBytes is not one of the accepted values
 	// (512, 1024, 2048, 4096, 8192, 16384).
 	ErrInvalidMaxValueBytes = errors.New("engine: MaxValueBytes must be 512, 1024, 2048, 4096, 8192, or 16384")
+
+	// ErrInvalidEmbeddingConfig means the embedding configuration is invalid or conflicts with the stored header.
+	ErrInvalidEmbeddingConfig = errors.New("engine: invalid embedding configuration")
 )

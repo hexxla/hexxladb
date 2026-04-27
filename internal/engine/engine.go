@@ -29,6 +29,10 @@ type Engine struct {
 	usePrimaryFdatasync bool
 	// maxValueBytes is the effective per-database value size ceiling (read from header at Open).
 	maxValueBytes uint32
+	// embeddingDim is the fixed vector dimension (0 = disabled). Immutable after creation.
+	embeddingDim uint16
+	// embeddingMetric is the distance function for embedding search.
+	embeddingMetric DistanceMetric
 	// pageBufPool is an instance-level pool of page-sized buffers.
 	pageBufPool sync.Pool
 	// wtxn is set between [Engine.BeginWriteTxn] and commit/abort. Not used concurrently.
@@ -93,13 +97,25 @@ func Open(path string, opts *Options) (*Engine, error) {
 		if opts != nil && opts.UseFormatV2 {
 			ver = formatVersionV2
 		}
+		var embDim uint16
+		var embMetric DistanceMetric
+		if opts != nil && opts.EmbeddingDim > 0 {
+			embDim = opts.EmbeddingDim
+			embMetric = opts.EmbeddingMetric
+			if !IsValidDistanceMetric(embMetric) {
+				_ = db.Close()
+				return nil, fmt.Errorf("%w: invalid distance metric %d", ErrInvalidEmbeddingConfig, embMetric)
+			}
+		}
 		hdr := Header{
-			FormatVersion: ver,
-			PageSize:      ps,
-			LastWALSeq:    0,
-			NextPageID:    1,
-			CommitSeq:     0,
-			MaxValueBytes: mvb,
+			FormatVersion:   ver,
+			PageSize:        ps,
+			LastWALSeq:      0,
+			NextPageID:      1,
+			CommitSeq:       0,
+			MaxValueBytes:   mvb,
+			EmbeddingDim:    embDim,
+			EmbeddingMetric: embMetric,
 		}
 		if opts != nil && opts.NewEncryptedDB {
 			hdr.Features |= FeatureEncryptedDataPages
@@ -263,6 +279,18 @@ func Open(path string, opts *Options) (*Engine, error) {
 		effectiveMaxVal = DefaultMaxValueBytes
 	}
 
+	// Embedding: validate consistency between opts and header on reopen.
+	if opts != nil && opts.EmbeddingDim > 0 && hdr.EmbeddingDim > 0 && opts.EmbeddingDim != hdr.EmbeddingDim {
+		_ = db.Close()
+		_ = wal.Close()
+		return nil, fmt.Errorf("%w: embedding dimension mismatch: options=%d, header=%d", ErrInvalidEmbeddingConfig, opts.EmbeddingDim, hdr.EmbeddingDim)
+	}
+	if opts != nil && opts.EmbeddingDim > 0 && hdr.EmbeddingDim > 0 && opts.EmbeddingMetric != hdr.EmbeddingMetric {
+		_ = db.Close()
+		_ = wal.Close()
+		return nil, fmt.Errorf("%w: embedding metric mismatch: options=%d, header=%d", ErrInvalidEmbeddingConfig, opts.EmbeddingMetric, hdr.EmbeddingMetric)
+	}
+
 	e := &Engine{
 		path:                path,
 		db:                  db,
@@ -274,6 +302,8 @@ func Open(path string, opts *Options) (*Engine, error) {
 		walMACKey:           walMACKey,
 		usePrimaryFdatasync: usePrimaryFdatasync,
 		maxValueBytes:       effectiveMaxVal,
+		embeddingDim:        hdr.EmbeddingDim,
+		embeddingMetric:     hdr.EmbeddingMetric,
 	}
 	e.pageBufPool = sync.Pool{
 		New: func() any {

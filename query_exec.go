@@ -20,6 +20,7 @@ const defaultQueryScanRadius = 32
 // returns matching cells ordered according to [CellQuery.SortBy].
 //
 // The planner picks the cheapest available index:
+//   - Embedding set    →  ANN via [Tx.SearchByEmbedding] (HNSW or flat scan)
 //   - RequireTags set  →  tag secondary index (most selective tag first)
 //   - SourceID set     →  source secondary index
 //   - After/Before set →  time/ week-bucket index
@@ -46,9 +47,12 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
 
 	// ── plan: choose primary scan strategy ───────────────────────────────────
 	var candidates []record.CellRecord
+	var embScores map[lattice.PackedCoord]float64 // embedding similarity per coord
 	var err error
 
 	switch {
+	case len(q.Embedding) > 0:
+		candidates, embScores, err = tx.scanByEmbedding(q.Embedding, maxResults)
 	case len(q.RequireTags) > 0:
 		candidates, err = tx.scanByTag(ctx, q.RequireTags[0], q.MaxScanRows)
 	case q.SourceID != "":
@@ -83,8 +87,15 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
 
 		score := scoreCell(queryLow, rec.Tags, rec.RawContent, rec.Provenance.SourceID, rec.Provenance.Confidence)
 
+		// Boost score with embedding similarity when embedding scan was used.
+		if embScores != nil {
+			if es, ok := embScores[rec.Key]; ok {
+				score += es // embedding similarity added to composite score
+			}
+		}
+
 		// With a non-empty query, skip cells that scored no signal beyond the confidence bonus.
-		if queryLow != "" && score <= 0.1*rec.Provenance.Confidence {
+		if queryLow != "" && embScores == nil && score <= 0.1*rec.Provenance.Confidence {
 			continue
 		}
 
@@ -198,6 +209,26 @@ func (tx *Tx) scanByTimeRange(ctx context.Context, after, before time.Time) ([]r
 		return nil, err
 	}
 	return recs, nil
+}
+
+func (tx *Tx) scanByEmbedding(vec []float32, maxResults int) ([]record.CellRecord, map[lattice.PackedCoord]float64, error) {
+	// Over-fetch 2× to leave room for post-filters to narrow down.
+	fetchK := max(maxResults*2, 20)
+	hits, err := tx.SearchByEmbedding(vec, EmbeddingSearchConfig{MaxResults: fetchK})
+	if err != nil {
+		return nil, nil, err
+	}
+	recs := make([]record.CellRecord, 0, len(hits))
+	scores := make(map[lattice.PackedCoord]float64, len(hits))
+	for _, h := range hits {
+		rec, ok, getErr := tx.GetCell(h.Coord)
+		if getErr != nil || !ok {
+			continue
+		}
+		recs = append(recs, rec)
+		scores[rec.Key] = h.Score
+	}
+	return recs, scores, nil
 }
 
 func (tx *Tx) scanByRadius(ctx context.Context, center Coord, radius int) ([]record.CellRecord, error) {

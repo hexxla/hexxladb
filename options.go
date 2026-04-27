@@ -77,4 +77,13 @@ type Options struct {
 	// GroupWALMaxBatchWait is passed to the engine group-WAL flusher as the coalescing window after
 	// the first job in a batch. Zero means a 2ms default in the engine. See [docs/hexxladb/DURABILITY.md].
 	GroupWALMaxBatchWait time.Duration
+
+	// EmbeddingDimension sets the fixed vector dimension for new databases (0 = embeddings disabled).
+	// Persisted in the file header; immutable after creation. All vectors stored via [Tx.PutEmbedding]
+	// must have exactly this length.
+	EmbeddingDimension uint16
+	// DistanceMetric sets the similarity function for embedding search.
+	// Only meaningful when EmbeddingDimension > 0. Default is [DistanceCosine].
+	// Persisted in the file header; immutable after creation.
+	DistanceMetric DistanceMetric
 }

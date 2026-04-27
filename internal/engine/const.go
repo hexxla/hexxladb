@@ -58,3 +58,10 @@ const HeaderMaxValueBytesOffset = 100
 
 // DefaultMaxValueBytes is the engine default maximum value size when Options.MaxValueBytes is zero.
 const DefaultMaxValueBytes = 8192
+
+// HeaderEmbeddingDimOffset is the byte offset of the embedding vector dimension (uint16, big-endian).
+// Zero means embeddings are disabled.
+const HeaderEmbeddingDimOffset = 104
+
+// HeaderEmbeddingMetricOffset is the byte offset of the distance metric (uint8).
+const HeaderEmbeddingMetricOffset = 106

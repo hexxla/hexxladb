@@ -70,6 +70,13 @@ var (
 	// ErrSnapshotTagLabelTooLong means the label passed to [DB.TagSnapshot] exceeds the
 	// maximum allowed length (200 bytes).
 	ErrSnapshotTagLabelTooLong = errors.New("hexxladb: snapshot tag label too long")
+
+	// ErrEmbeddingsDisabled means an embedding operation was attempted on a database opened
+	// with [Options.EmbeddingDimension] == 0 (or an older database without embedding support).
+	ErrEmbeddingsDisabled = errors.New("hexxladb: embeddings not enabled for this database")
+
+	// ErrEmbeddingDimension means the vector length does not match [DB.EmbeddingDimension].
+	ErrEmbeddingDimension = errors.New("hexxladb: vector dimension mismatch")
 )
 
 // ErrChangelogCorrupt means the logical changelog file failed validation (docs/hexxladb/CHANGEFEED.md).

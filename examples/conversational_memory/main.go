@@ -15,6 +15,8 @@
 //   - Phase 11  Health check (DB.HealthCheck) + MVCC Snapshot Diff
 //   - Phase 12  DeleteCell + Compact (MVCC tombstones, snapshot isolation, copy-compaction)
 //
+// For embedding-based semantic search, see examples/llm_context_engine.
+//
 // Usage:
 //
 //	go run ./examples/conversational_memory           # default DB at .tmp/demo/memory.db

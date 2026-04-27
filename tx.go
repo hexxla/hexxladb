@@ -232,6 +232,15 @@ func (tx *Tx) Put(key, val []byte) error {
 	return tx.db.btree.Put(key, val)
 }
 
+// getDirect reads a value by key without public API guards.
+// Used by internal subsystems (HNSW storage adapter, embeddings).
+func (tx *Tx) getDirect(key []byte) (val []byte, ok bool, err error) {
+	if !tx.writable {
+		return tx.db.btree.GetUsingRoot(tx.cachedBTreeRoot, key)
+	}
+	return tx.db.btree.Get(key)
+}
+
 // putDirect writes a key/value pair without MVCC format validation.
 // Internal primitives (PutCell, putSeamWithOp) use this because they already
 // construct correctly-formatted keys; the MVCC guard in [Tx.Put] is for

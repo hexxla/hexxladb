@@ -39,6 +39,7 @@ func Open(path string, opts *Options) (*DB, error) {
 	eopts = mergeEnginePrimaryFdatasync(eopts, opts)
 	eopts = mergeEngineGroupWAL(eopts, opts)
 	eopts = mergeEngineMaxValueBytes(eopts, opts)
+	eopts = mergeEngineEmbedding(eopts, opts)
 	eng, err := engine.Open(path, eopts)
 	if err != nil {
 		if errors.Is(err, engine.ErrCorruptHeader) || errors.Is(err, engine.ErrCorruptWAL) {
@@ -52,6 +53,9 @@ func Open(path string, opts *Options) (*DB, error) {
 		}
 		if errors.Is(err, engine.ErrInvalidPageSize) {
 			return nil, fmt.Errorf("%w: PageSize must be 4096, 8192, 16384, or 65536", ErrInvalidArgument)
+		}
+		if errors.Is(err, engine.ErrInvalidEmbeddingConfig) {
+			return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 		}
 		return nil, err
 	}
