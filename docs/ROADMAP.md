@@ -5,6 +5,7 @@ For completed work, see `TODOS.md` (Recently Completed) and `CHANGELOG.md`.
 ## Near-term
 
 - ~~**Embeddings keyspace (`embed/`)**~~ — **Done.** Flat-scan + HNSW ANN search, query engine integration via `CellQuery.Embedding` / `CellSearchConfig.Embedding`. See `CHANGELOG.md`.
+- **B+ tree leaf-page-full at high embedding counts** — HNSW nodes + embedding values overflow leaf pages when count exceeds ~500 (32d) or ~100 (128d) even at 65536 page size; likely a split-index edge case in `btree.go:leafSplitIndex`; benchmarks capped at safe sizes; blocks scaling to production embedding counts.
 - **Extract `TxWriter` interface for secondary index testing** — `cell_secondary.go` and `seam_secondary.go` must remain in `package hexxladb` (receiver methods on `*Tx` using unexported fields); extracting a `TxWriter` interface would let the secondary-index logic be unit-tested without a real DB. Low priority given contract tests now cover the public surface.
 
 ## Future

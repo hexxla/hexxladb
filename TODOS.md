@@ -4,7 +4,7 @@ Immediate next steps. Update after each session.
 
 ## Current
 
-- [ ] Embeddings keyspace (`embed/`) for ANN/hybrid retrieval
+- [ ] B+ tree leaf-page-full at high embedding counts — HNSW nodes + embedding values overflow leaf pages when count exceeds ~500 (32d) or ~100 (128d) even at 65536 page size; likely a split-index edge case in `internal/engine/btree.go:leafSplitIndex`; benchmarks capped at safe sizes for now
 
 ## Pending (next sessions)
 
@@ -13,6 +13,8 @@ Immediate next steps. Update after each session.
 ---
 
 ## Recently Completed
+
+- 2026-04-27: Embeddings keyspace complete (Phases 1-4) — flat-scan + HNSW ANN search; query engine integration via `CellQuery.Embedding` / `CellSearchConfig.Embedding`; benchmarks; docs updated (doc.go, HEXXLA_DB.md, API_REFERENCE.md, ROADMAP.md)
 
 - 2026-04-27: Content compression — always-on DEFLATE via compress/flate (Go stdlib); 5-byte `0xFE` envelope; no public API surface; 10 new engine tests
 - 2026-04-27: Overflow pages — values exceeding inline leaf threshold spill to chained overflow pages; MaxValueBytes raised to 1 MiB; 10 new engine tests; docs updated
