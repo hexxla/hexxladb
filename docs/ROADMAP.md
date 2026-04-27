@@ -1,11 +1,6 @@
 # Roadmap
 
-For completed work, see `TODOS.md` (Recently Completed) and `CHANGELOG.md`.
-
-## Completed
-
-- ~~**B+ tree leaf-page-full at high embedding counts**~~ — Fixed. Root cause: `insertIntoLeaf` update-in-place path bypassed the page-size check; HNSW node values growing as neighbors accumulate caused overflow. Fix in `internal/engine/btree.go`: size guard added to update path, `leafSplitIndex` hardened to scan to full `pageSize` boundary.
-- ~~**Embeddings keyspace (`embed/`)**~~ — Flat-scan + HNSW ANN search, query engine integration via `CellQuery.Embedding` / `CellSearchConfig.Embedding`, benchmarks, docs. See `CHANGELOG.md`.
+For completed work, see `CHANGELOG.md` and `TODOS.md` (Recently Completed).
 
 ## Near-term
 

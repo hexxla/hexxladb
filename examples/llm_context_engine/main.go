@@ -13,13 +13,16 @@
 // Requires: Ollama running locally with the all-minilm model.
 //
 //	ollama pull all-minilm
-//	go run ./examples/llm_context_engine
+//	go run ./examples/llm_context_engine       # default DB at .tmp/llm-context-engine.db
+//	go run ./examples/llm_context_engine -db /path/to/my.db
+//	make demo-llm                              # same as first form via Makefile
 package main
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -49,14 +52,21 @@ var (
 
 const lineW = 72
 
+// defaultLLMDBPath is where the LLM context engine demo database lands.
+// Kept under .tmp/ so it is gitignored and never pollutes the repo root.
+const defaultLLMDBPath = ".tmp/llm-context-engine.db"
+
 func main() {
-	if err := run(); err != nil {
+	dbPath := flag.String("db", defaultLLMDBPath,
+		"path to the HexxlaDB demo database (always created fresh on each run)")
+	flag.Parse()
+	if err := run(*dbPath); err != nil {
 		_, _ = errStyle.Fprintf(os.Stderr, "fatal: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(dbPath string) error {
 	ctx := context.Background()
 
 	// ── Pre-flight: check Ollama ────────────────────────────────
@@ -66,10 +76,8 @@ func run() error {
 		return fmt.Errorf("ollama required for this example")
 	}
 
-	// ── Open DB ─────────────────────────────────────────────────
-	dbDir := filepath.Join(".tmp", "llm-context-engine")
-	_ = os.MkdirAll(dbDir, 0o750)
-	dbPath := filepath.Join(dbDir, "memory.db")
+	// ── Open DB (always fresh — demo is self-contained) ──────────
+	_ = os.MkdirAll(filepath.Dir(dbPath), 0o750)
 	_ = os.Remove(dbPath)
 	_ = os.Remove(dbPath + "-wal")
 

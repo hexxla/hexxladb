@@ -19,7 +19,7 @@
 //
 // Usage:
 //
-//	go run ./examples/conversational_memory           # default DB at .tmp/demo/memory.db
+//	go run ./examples/conversational_memory           # default DB at .tmp/conversational-memory.db
 //	go run ./examples/conversational_memory -db /path/to/my.db
 //	make demo                                         # same as first form via Makefile
 package main
@@ -43,7 +43,7 @@ import (
 
 // defaultDBPath is where the demo database lands when no -db flag is provided.
 // Kept under .tmp/ so it is gitignored and never pollutes the repo root.
-const defaultDBPath = ".tmp/demo/memory.db"
+const defaultDBPath = ".tmp/conversational-memory.db"
 
 // ANSI color styles for beautiful output
 var (
