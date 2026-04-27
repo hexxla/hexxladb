@@ -4,12 +4,10 @@ Immediate next steps. Update after each session.
 
 ## Current
 
-_(No active work item.)_
+- [ ] `Tx.DeleteCell` + `DB.Compact` — branch `feat/delete-compact`, plan in `.windsurf/plans/delete-compact.md`
 
 ## Pending (next sessions)
 
-- [ ] `Tx.DeleteCell` — primary + secondaries + facets + edges; MVCC tombstone on v2; regression tests
-- [ ] `DB.Compact` — copy-compaction to shrink file; `AscendRange` walk → fresh BTree → atomic swap; no lattice reorg needed
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
 
 ---
