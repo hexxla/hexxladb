@@ -12,7 +12,7 @@ Both primary and WAL matter for durability: the engine appends redo records to t
 
 ### File growth (extend-only allocation)
 
-The engine uses an **extend-only** page allocator: deleted or pruned records reclaim logical space inside the B+ tree, but the primary file length does **not** shrink automatically and there is **no freelist compaction** in v1. Expect monotonic file growth under churn until you vacuum via an offline copy/migration strategy (copy into a fresh database and swap files). See [`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md) for the page/WAL layout.
+The engine uses an **extend-only** page allocator: deleted or pruned records reclaim logical space inside the B+ tree, but the primary file length does **not** shrink automatically. Expect monotonic file growth under churn until you compact via [`DB.Compact`](../../compact.go) or [`CompactTo`](../../compact.go) (see **Compaction** below). See [`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md) for the page/WAL layout.
 
 ## Backup and copy
 
@@ -42,26 +42,61 @@ For format-v2 databases (open a **new** database with [`Options.EnableMVCC`](../
 
 Quick API reference:
 
-| API | Purpose |
-|-----|---------|
-| [`DB.StatsMVCC`](../../mvcc_lifecycle.go) | `CommitSeq`, logical cell count, versioned row count |
-| [`DB.SuggestedPruneBeforeSeq`](../../mvcc_lifecycle.go) | `beforeSeq` from open-time retention policy |
-| [`DB.PruneCellVersions`](../../mvcc_lifecycle.go) | Explicit bounded prune pass |
-| [`DB.PruneCellVersionsByProfile`](../../mvcc_lifecycle.go) / [`MVCCPrunePlan`](../../mvcc_lifecycle.go) | Profile defaults (`low-latency`, `balanced`, `long-history`) |
-| [`PruneScheduler.Tick`](../../mvcc_lifecycle.go) | One bounded pass — call from your own timer; no background goroutine inside the library |
+| API                                                                                                     | Purpose                                                                                 |
+| ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| [`DB.StatsMVCC`](../../mvcc_lifecycle.go)                                                               | `CommitSeq`, logical cell count, versioned row count                                    |
+| [`DB.SuggestedPruneBeforeSeq`](../../mvcc_lifecycle.go)                                                 | `beforeSeq` from open-time retention policy                                             |
+| [`DB.PruneCellVersions`](../../mvcc_lifecycle.go)                                                       | Explicit bounded prune pass                                                             |
+| [`DB.PruneCellVersionsByProfile`](../../mvcc_lifecycle.go) / [`MVCCPrunePlan`](../../mvcc_lifecycle.go) | Profile defaults (`low-latency`, `balanced`, `long-history`)                            |
+| [`PruneScheduler.Tick`](../../mvcc_lifecycle.go)                                                        | One bounded pass — call from your own timer; no background goroutine inside the library |
 
 Recommended cadence: during low-traffic windows, loop `PruneScheduler.Tick` or `PruneCellVersions` until a pass deletes `0` rows, then re-check `StatsMVCC`.
+
+## Compaction
+
+Copy-compaction rewrites all B+ tree keys sequentially into a fresh file, reclaiming freelist gaps and pages with low fill factor. All data — including MVCC version rows and tombstones — is copied verbatim, preserving full snapshot history.
+
+### Quick reference
+
+| API                              | Purpose                                                                |
+| -------------------------------- | ---------------------------------------------------------------------- |
+| [`DB.Compact`](../../compact.go) | Compact an open database to `destPath`; holds a read lock during copy. |
+| [`CompactTo`](../../compact.go)  | Standalone: open `srcPath`, compact to `destPath`, close both.         |
+
+### Typical workflow
+
+```go
+err := db.Compact(ctx, "/tmp/compacted.db")
+db.Close()
+os.Rename("/tmp/compacted.db", originalPath)
+db, _ = hexxladb.Open(originalPath, opts)
+```
+
+### Stripping old MVCC versions
+
+`Compact` copies tombstones and old versions verbatim. To reclaim that space, prune first:
+
+```go
+db.PruneCellVersions(beforeSeq, 100_000) // remove stale versions
+db.Compact(ctx, destPath)                // rewrite without dead pages
+```
+
+### Notes
+
+- **Format preservation:** destination inherits format version, MVCC flag, `MaxValueBytes`, and encryption from the source header. Encryption credentials must be supplied via `opts` for encrypted sources.
+- **Context cancellation:** partial destination is removed on abort.
+- **Changelog:** the destination does not carry over the source changelog file. Re-enable changelog on the reopened destination if needed.
 
 ## Pre-release soak checklist
 
 Use after meaningful storage/MVCC changes or before tagging a release. Capture machine type, git SHA, and wall-clock duration in your release notes.
 
-| Step | Command                        | Pass criteria                                                                                                                           |
-| ---- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | `make ci`                      | Exits `0`; includes unit tests + race.                                                                                                  |
-| 2    | `make integration`             | Exits `0`; includes `TestIntegration_MVCC_sustainedPutCellSameKey` and `TestIntegration_MVCC_latticeAndHighChurnPrune`.                 |
-| 3    | _(Optional)_ `make stress`     | Large cell load, not MVCC churn; skip on resource-constrained CI.                                                                       |
-| 4    | Disk growth sanity             | Note DB + WAL (+ changelog if enabled) size before/after soak; bounded growth after prune per retention policy above.                   |
+| Step | Command                    | Pass criteria                                                                                                           |
+| ---- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 1    | `make ci`                  | Exits `0`; includes unit tests + race.                                                                                  |
+| 2    | `make integration`         | Exits `0`; includes `TestIntegration_MVCC_sustainedPutCellSameKey` and `TestIntegration_MVCC_latticeAndHighChurnPrune`. |
+| 3    | _(Optional)_ `make stress` | Large cell load, not MVCC churn; skip on resource-constrained CI.                                                       |
+| 4    | Disk growth sanity         | Note DB + WAL (+ changelog if enabled) size before/after soak; bounded growth after prune per retention policy above.   |
 
 Tune retention and pruning for your workload and soak longer in staging if retention windows are large.
 

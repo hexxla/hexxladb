@@ -4,7 +4,7 @@ Immediate next steps. Update after each session.
 
 ## Current
 
-- [ ] `Tx.DeleteCell` + `DB.Compact` — branch `feat/delete-compact`, plan in `.windsurf/plans/delete-compact.md`
+- [ ] Final `make ci` + merge `feat/delete-compact` to main
 
 ## Pending (next sessions)
 
@@ -14,6 +14,7 @@ Immediate next steps. Update after each session.
 
 ## Recently Completed
 
+- 2026-04-27: `Tx.DeleteCell` + `DB.Compact` implemented on `feat/delete-compact` — MVCC tombstones, overlay tracking, hex boundary (domain.Storage + adapter + app.Service), `CompactTo`, 18 tests, docs updated
 - 2026-04-27: Pushed all commits to origin/main
 - 2026-04-26: TUI audit — Bubbletea pattern fixes (`Init`, `tea.Cmd` one-shot loads, `tabActivatedMsg` lazy load, `Consuming` interface, duplicate-load guards); Lipgloss layout fixes (hard-clip `MaxHeight`, terminal-width fill, `colorBg1`→`colorBg2` card-interior styles, `barGraphBg`); lexical search input fix; tab bar height from measurement not hardcode
 - 2026-04-26: README rewrite + badges (CI, Integration, Go Reference, Go Report Card, Go version, License) + `FUNDING.yml`; logo added to header

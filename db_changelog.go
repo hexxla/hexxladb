@@ -17,6 +17,7 @@ const (
 	ChangelogOpResolveSeam = changelog.OpResolveSeam
 	ChangelogOpPutFacet    = changelog.OpPutFacet
 	ChangelogOpPutEdge     = changelog.OpPutEdge
+	ChangelogOpDeleteCell  = changelog.OpDeleteCell
 )
 
 // ReadChangelogSince returns up to limit records with Seq > afterSeq. Requires [Options.ChangelogEnabled].

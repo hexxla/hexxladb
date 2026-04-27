@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added (delete-compact)
+
+- `Tx.DeleteCell` — remove cell + secondary indexes + facets + outbound edges atomically; idempotent (missing cell returns nil)
+- MVCC tombstone support: zero-length value at `cell/<packed>/<writeSeq>` treated as deleted by visibility layer; facets tombstoned likewise
+- `tx.cellDeleted` overlay for same-tx delete→get correctness; cleared on re-put
+- `changelog.OpDeleteCell` / `ChangelogOpDeleteCell` — stable op code `6` for changefeed consumers
+- `domain.Storage.DeleteCell` port + adapter + `app.Service` delegation (hex boundary)
+- `DB.Compact` — copy-compact open database to destPath (holds read lock, preserves all data)
+- `CompactTo` — standalone copy-compaction from srcPath to destPath; propagates format version, MVCC flag, encryption, MaxValueBytes
+- Comprehensive tests for both features: v1/v2, MVCC snapshot isolation, facet/edge cleanup, same-tx overlay, encrypted compact, context cancellation, file size reduction, HealthCheck validation
+
 ### Added (tui-audit)
 
 - `cmd/tui` interactive database explorer — tabs: Dashboard, Cells, Hex Grid, Inspector, Analytics, Seams, Health, Diff; lexical search in Cells tab (`/` to open, `Enter` to execute, `Esc` to clear); Inspector with context pack assembly and explain panel; neon-on-dark colour scheme

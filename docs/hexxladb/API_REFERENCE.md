@@ -19,6 +19,8 @@ Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored 
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | **[`Open`](../../db.go)**                | Open or create a database file; applies WAL on startup.                                                                                      |
 | **[`(*DB).Close`](../../db.go)**         | Waits for in-flight transactions; idempotent for nil receiver.                                                                               |
+| **[`(*DB).Compact`](../../compact.go)**  | Copy-compact open DB to destPath (minimal-size file, preserves all data including MVCC history).                                             |
+| **[`CompactTo`](../../compact.go)**      | Standalone copy-compaction from srcPath to destPath; propagates format, encryption, MaxValueBytes.                                           |
 | **[`ErrCorruptDatabase`](../../db.go)**  | Open-time corruption (header/WAL).                                                                                                           |
 | **[`Options`](../../options.go)**        | `EnableMVCC`, `MVCCRetention`, changelog, encryption, `CellValidator`, `AfterPutCell`, `AfterPutSeam`, `MaxValueBytes`, optional page hooks. |
 | **[`(*DB).MaxValueBytes`](../../db.go)** | Returns the effective per-database max value size (bytes) from the file header.                                                              |
@@ -48,6 +50,7 @@ Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored 
 | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | **[`(*Tx).PutCell`](../../primitives.go)**        | Cell primary + secondaries (`source/`, `time/`, `tag/`).                                                          |
 | **[`(*Tx).GetCell`](../../primitives.go)**        | Decode visible cell at packed coord.                                                                              |
+| **[`(*Tx).DeleteCell`](../../delete_cell.go)**    | Remove cell + secondaries + facets + outbound edges. Idempotent. MVCC: tombstone; seams NOT removed.              |
 | **[`(*Tx).WalkRing`](../../primitives.go)**       | Visit one ring; raw bytes per coord.                                                                              |
 | **[`(*Tx).WalkRingAt`](../../primitives.go)**     | Same order; **`record.ValidAt`** filter at **`asOf`**.                                                            |
 | **[`(*Tx).LoadContext`](../../primitives.go)**    | Concentric walk; **`maxR`**, **`maxCells`**.                                                                      |
@@ -207,13 +210,13 @@ Human-friendly names for MVCC commit sequences. Tags are stored in the B+ tree u
 
 ## Logical changefeed
 
-| Symbol                                                                                                                                                         | Notes                                                    |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| **[`(*DB).ReadChangelogSince`](../../db_changelog.go)**                                                                                                        | Requires **`Options.ChangelogEnabled`**.                 |
-| **[`(*DB).ReadChangelogFiltered`](../../db_changelog.go)**                                                                                                     | Filtered read by op codes and/or key prefix.             |
-| **[`ChangelogFilter`](../../db_changelog.go)**                                                                                                                 | Filter config: **`Ops []byte`**, **`KeyPrefix []byte`**. |
-| **[`ChangelogRecord`](../../db_changelog.go)**                                                                                                                 | Typed alias of internal record.                          |
-| **`ChangelogOpPutCell`**, **`ChangelogOpPutSeam`**, **`ChangelogOpResolveSeam`** (only **`ResolveSeam`**), **`ChangelogOpPutFacet`**, **`ChangelogOpPutEdge`** | Stable op codes.                                         |
+| Symbol                                                                                                                                                             | Notes                                                    |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| **[`(*DB).ReadChangelogSince`](../../db_changelog.go)**                                                                                                            | Requires **`Options.ChangelogEnabled`**.                 |
+| **[`(*DB).ReadChangelogFiltered`](../../db_changelog.go)**                                                                                                         | Filtered read by op codes and/or key prefix.             |
+| **[`ChangelogFilter`](../../db_changelog.go)**                                                                                                                     | Filter config: **`Ops []byte`**, **`KeyPrefix []byte`**. |
+| **[`ChangelogRecord`](../../db_changelog.go)**                                                                                                                     | Typed alias of internal record.                          |
+| **`ChangelogOpPutCell`**, **`ChangelogOpPutSeam`**, **`ChangelogOpResolveSeam`**, **`ChangelogOpPutFacet`**, **`ChangelogOpPutEdge`**, **`ChangelogOpDeleteCell`** | Stable op codes.                                         |
 
 See **[CHANGEFEED.md](./CHANGEFEED.md)**.
 
