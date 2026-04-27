@@ -17,7 +17,7 @@ func TestEncryption_XTSRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plain := bytes.Repeat([]byte{0xab}, engine.PageSize)
+	plain := bytes.Repeat([]byte{0xab}, engine.DefaultPageSize)
 	cipher, err := hooks.BeforeWrite(42, append([]byte(nil), plain...))
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestEncryption_headerPageNotTransformed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plain := make([]byte, engine.PageSize)
+	plain := make([]byte, engine.DefaultPageSize)
 	out, err := hooks.BeforeWrite(0, plain)
 	if err != nil {
 		t.Fatal(err)

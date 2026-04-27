@@ -5,7 +5,7 @@ import "testing"
 func FuzzDecodeHeaderPage(f *testing.F) {
 	h := Header{
 		FormatVersion:  formatVersionV1,
-		PageSize:       uint32(PageSize),
+		PageSize:       uint32(DefaultPageSize),
 		LastWALSeq:     1,
 		NextPageID:     2,
 		BTreeRoot:      0,
@@ -16,23 +16,23 @@ func FuzzDecodeHeaderPage(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		t.Helper()
-		page := make([]byte, PageSize)
+		page := make([]byte, DefaultPageSize)
 		copy(page, data)
 		_, _ = decodeHeaderPage(page)
 	})
 }
 
 func FuzzParseAndReplayWAL(f *testing.F) {
-	payload := make([]byte, PageSize)
+	payload := make([]byte, DefaultPageSize)
 	for i := range payload {
 		payload[i] = byte(i)
 	}
-	f.Add(encodeWALRecord(1, 1, payload))
+	f.Add(encodeWALRecord(1, 1, payload, DefaultPageSize))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		t.Helper()
 		_, _ = parseAndReplayWAL(data, 0, func(_, _ uint64, _ []byte) error {
 			return nil
-		})
+		}, DefaultPageSize)
 	})
 }

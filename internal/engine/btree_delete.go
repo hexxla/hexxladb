@@ -5,8 +5,11 @@ import (
 	"fmt"
 )
 
-// minLeafKeys is the minimum key count for a non-root leaf.
-const minLeafKeys = (maxLeafEntries + 1) / 2
+// minLeafKeysForPage returns the minimum key count for a non-root leaf at the given page size.
+// This is approximately half the max entries that could fit on a page.
+func minLeafKeysForPage(pageSize int) int {
+	return int((maxLeafEntriesForPage(pageSize) + 1) / 2)
+}
 
 // Delete removes key from the B+ tree. Missing keys are ignored.
 func (t *BTree) Delete(key []byte) error {
@@ -39,7 +42,7 @@ func (t *BTree) Delete(key []byte) error {
 	}
 	ld.keys = append(ld.keys[:keyIdx], ld.keys[keyIdx+1:]...)
 	ld.vals = append(ld.vals[:keyIdx], ld.vals[keyIdx+1:]...)
-	pg, err := buildLeafPage(ld.parent, ld.next, ld.keys, ld.vals)
+	pg, err := buildLeafPage(t.pageSize(), ld.parent, ld.next, ld.keys, ld.vals)
 	if err != nil {
 		return err
 	}
@@ -71,7 +74,7 @@ func (t *BTree) Delete(key []byte) error {
 		}
 		return nil
 	}
-	if hdr.BTreeRoot == leafPID || len(ld.keys) >= minLeafKeys {
+	if hdr.BTreeRoot == leafPID || len(ld.keys) >= minLeafKeysForPage(t.pageSize()) {
 		return nil
 	}
 	newRoot, err := t.rebalanceLeaf(parentPIDs, childIdxs, leafPID, ld, hdr.BTreeRoot)
@@ -162,7 +165,7 @@ func (t *BTree) removeInternalChild(parentPID uint64, childIdx int, root uint64)
 			}
 			return newPtrs[0], nil
 		}
-		ipg, err := buildInternalPage(in.parent, newPtrs, newKeys)
+		ipg, err := buildInternalPage(t.pageSize(), in.parent, newPtrs, newKeys)
 		if err != nil {
 			return root, err
 		}
@@ -189,7 +192,7 @@ func (t *BTree) removeInternalChild(parentPID uint64, childIdx int, root uint64)
 	// "all leaves at the same depth" B+ invariant. Leaf rebalance then reads parent.ptrs[i+1]
 	// expecting a leaf and trips "not leaf" corruption (see TestIntegration_MVCC_sustainedPutCellSameKey).
 	// The cost is a thin internal node (1 ptr); subsequent inserts fill it naturally.
-	ipg, err := buildInternalPage(in.parent, newPtrs, newKeys)
+	ipg, err := buildInternalPage(t.pageSize(), in.parent, newPtrs, newKeys)
 	if err != nil {
 		return root, err
 	}
@@ -364,13 +367,13 @@ func (t *BTree) rebalanceLeaf(parentPIDs []uint64, childIdxs []int, leafPID uint
 				}
 				rightPID = ld.next
 			}
-			if len(ld.keys)+len(rd.keys) <= maxLeafEntries {
+			if leafSerializedSize(append(ld.keys, rd.keys...), append(ld.vals, rd.vals...)) <= t.pageSize() {
 				return t.mergeRightLeaf(parentPIDs, leafPID, ld, rd, rightPID, root)
 			}
-			if len(rd.keys) > minLeafKeys {
+			if len(rd.keys) > minLeafKeysForPage(t.pageSize()) {
 				return t.borrowFromRight(parentPIDs, childIdxs, leafPID, ld, rightPID, rd, root)
 			}
-			return t.mergeRightLeaf(parentPIDs, leafPID, ld, rd, rightPID, root)
+			// Neither merge nor borrow possible; leave slightly underfull (valid B+ state).
 		}
 	}
 	if len(parentPIDs) == 0 {
@@ -403,13 +406,14 @@ func (t *BTree) rebalanceLeaf(parentPIDs []uint64, childIdxs []int, leafPID uint
 	if leftd.next != leafPID {
 		return root, nil
 	}
-	if len(leftd.keys)+len(ld.keys) <= maxLeafEntries {
+	if leafSerializedSize(append(leftd.keys, ld.keys...), append(leftd.vals, ld.vals...)) <= t.pageSize() {
 		return t.mergeRightLeaf(parentPIDs, leftPID, leftd, ld, leafPID, root)
 	}
-	if len(leftd.keys) > minLeafKeys {
+	if len(leftd.keys) > minLeafKeysForPage(t.pageSize()) {
 		return t.borrowFromLeft(parentPIDs, childIdxs, leftPID, leftd, leafPID, ld, root)
 	}
-	return t.mergeRightLeaf(parentPIDs, leftPID, leftd, ld, leafPID, root)
+	// Neither merge nor borrow possible; leave slightly underfull (valid B+ state).
+	return root, nil
 }
 
 // mergeRightLeaf concatenates the right leaf into the left, drops the right page, and removes
@@ -424,7 +428,7 @@ func (t *BTree) mergeRightLeaf(_ []uint64, leftPID uint64, ld, rd *leafData, rig
 	ld.keys = append(ld.keys, rd.keys...)
 	ld.vals = append(ld.vals, rd.vals...)
 	ld.next = rd.next
-	pg, err := buildLeafPage(ld.parent, ld.next, ld.keys, ld.vals)
+	pg, err := buildLeafPage(t.pageSize(), ld.parent, ld.next, ld.keys, ld.vals)
 	if err != nil {
 		return root, err
 	}
@@ -445,11 +449,11 @@ func (t *BTree) borrowFromRight(parentPIDs []uint64, childIdxs []int, leftPID ui
 	rd.vals = rd.vals[1:]
 	ld.keys = append(ld.keys, k)
 	ld.vals = append(ld.vals, v)
-	lpg, err := buildLeafPage(ld.parent, rightPID, ld.keys, ld.vals)
+	lpg, err := buildLeafPage(t.pageSize(), ld.parent, rightPID, ld.keys, ld.vals)
 	if err != nil {
 		return root, err
 	}
-	rpg, err := buildLeafPage(rd.parent, rd.next, rd.keys, rd.vals)
+	rpg, err := buildLeafPage(t.pageSize(), rd.parent, rd.next, rd.keys, rd.vals)
 	if err != nil {
 		return root, err
 	}
@@ -475,11 +479,11 @@ func (t *BTree) borrowFromLeft(parentPIDs []uint64, childIdxs []int, leftPID uin
 	ld.vals = ld.vals[:li]
 	rd.keys = append([][]byte{k}, rd.keys...)
 	rd.vals = append([][]byte{v}, rd.vals...)
-	lpg, err := buildLeafPage(ld.parent, rightPID, ld.keys, ld.vals)
+	lpg, err := buildLeafPage(t.pageSize(), ld.parent, rightPID, ld.keys, ld.vals)
 	if err != nil {
 		return root, err
 	}
-	rpg, err := buildLeafPage(rd.parent, rd.next, rd.keys, rd.vals)
+	rpg, err := buildLeafPage(t.pageSize(), rd.parent, rd.next, rd.keys, rd.vals)
 	if err != nil {
 		return root, err
 	}
@@ -535,7 +539,7 @@ func (t *BTree) updateSeparator(parentPID uint64, keyIdx int, newSep []byte, roo
 		return root, nil
 	}
 	in.keys[keyIdx] = append([]byte(nil), newSep...)
-	ipg, err := buildInternalPage(in.parent, in.ptrs, in.keys)
+	ipg, err := buildInternalPage(t.pageSize(), in.parent, in.ptrs, in.keys)
 	if err != nil {
 		return root, err
 	}

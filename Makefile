@@ -81,6 +81,7 @@ clean:
 # Database defaults to .tmp/demo/memory.db (created on first run, reused on subsequent runs).
 # Override: make demo DEMO_DB=/absolute/or/relative/path/to/my.db
 demo:
+	@rm -rf .tmp/demo
 	@mkdir -p .tmp/demo
 	go run ./examples/conversational_memory $(if $(DEMO_DB),-db $(DEMO_DB),)
 

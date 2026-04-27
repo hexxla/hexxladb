@@ -1,7 +1,38 @@
 package engine
 
-// PageSize is the fixed on-disk page size for v1 (64 KiB).
-const PageSize = 64 << 10
+import "fmt"
+
+// DefaultPageSize is the page size for newly created databases (4 KiB).
+const DefaultPageSize = 4 << 10
+
+// LegacyPageSize is the page size used by databases created before
+// configurable page size was introduced.
+const LegacyPageSize = 64 << 10
+
+// validPageSizes lists accepted page sizes (must be power of 2, ≥4 KiB).
+var validPageSizes = [...]uint32{4096, 8192, 16384, 65536}
+
+// IsValidPageSize reports whether ps is a supported page size.
+func IsValidPageSize(ps uint32) bool {
+	for _, v := range validPageSizes {
+		if ps == v {
+			return true
+		}
+	}
+	return false
+}
+
+// resolvePageSize returns the effective page size from Options.
+// Zero means DefaultPageSize; invalid values return an error.
+func resolvePageSize(opts *Options) (uint32, error) {
+	if opts == nil || opts.PageSize == 0 {
+		return DefaultPageSize, nil
+	}
+	if !IsValidPageSize(opts.PageSize) {
+		return 0, fmt.Errorf("%w: %d", ErrInvalidPageSize, opts.PageSize)
+	}
+	return opts.PageSize, nil
+}
 
 const (
 	headerMagic      = "HEXXLADB"

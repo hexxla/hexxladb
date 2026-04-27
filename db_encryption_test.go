@@ -182,8 +182,8 @@ func TestOpen_encryptedCorruptWALDetected(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	payload := make([]byte, engine.PageSize)
-	rec := make([]byte, 8+8+4+engine.PageSize)
+	payload := make([]byte, engine.DefaultPageSize)
+	rec := make([]byte, 8+8+4+engine.DefaultPageSize)
 	binary.BigEndian.PutUint64(rec[0:8], 1)
 	binary.BigEndian.PutUint64(rec[8:16], 1)
 	binary.BigEndian.PutUint32(rec[16:20], crc32.ChecksumIEEE(payload))
@@ -209,8 +209,8 @@ func TestOpen_encryptedTruncatedWALDetected(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	payload := make([]byte, engine.PageSize)
-	rec := make([]byte, 8+8+4+engine.PageSize+32)
+	payload := make([]byte, engine.DefaultPageSize)
+	rec := make([]byte, 8+8+4+engine.DefaultPageSize+32)
 	binary.BigEndian.PutUint64(rec[0:8], 1)
 	binary.BigEndian.PutUint64(rec[8:16], 1)
 	binary.BigEndian.PutUint32(rec[16:20], crc32.ChecksumIEEE(payload))

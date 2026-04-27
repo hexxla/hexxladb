@@ -50,7 +50,7 @@ Import **`hexxladb`** as the root package; keep the stable surface (`Open`, `DB`
 
 **Key design:** Morton-packed coordinates and the prefixes in **Storage Layout** make ring enumeration and locality-preserving scans first-class—**super-hex sharding** as an operational routing layer is **not** required for v1 (reserved high bits in `PackedCoord` support future partitioning ideas; see [`docs/ROADMAP.md`](../ROADMAP.md)).
 
-**v1 minimal engine shape:** Fixed pages (**64 KiB** in the reference implementation—[`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md)); **one B+-tree** primary store + WAL for durability and crash recovery.
+**v1 minimal engine shape:** Configurable pages (**4 KiB** default, 4/8/16/64 KiB supported—[`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md)); **one B+-tree** primary store + WAL for durability and crash recovery.
 
 ## Core Data Model
 
@@ -222,7 +222,7 @@ Semantic Seed → Spatial Expansion (`walk_ring`) → Filter (validity, seams, f
 
 ## Recommended Implementation Path
 
-- **v1 (reference):** **64 KiB** pages, **WAL**, **Morton-prefixed B+-tree**, keyspace in this document; lattice ops in **`internal/lattice/`**, persistence in **`internal/engine/`**. See **[`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md)** for on-disk header and versioning.
+- **v1 (reference):** **configurable page size** (4/8/16/64 KiB; default 4 KiB), **WAL**, **Morton-prefixed B+-tree**, keyspace in this document; lattice ops in **`internal/lattice/`**, persistence in **`internal/engine/`**. See **[`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md)** for on-disk header and versioning.
 - **Later:** Optional SSTable/leveled tiers if benchmarks justify; replication, tiering, distributed front-ends—still on the same hex-native **logical** key contracts.
 
 This keeps the hexagonal lattice as the organizing principle of storage, not a translation layer over a generic database.

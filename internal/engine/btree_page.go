@@ -16,13 +16,12 @@ func uint16FromInt(n int, ctx string) (uint16, error) {
 }
 
 const (
-	btreeVersion        = 1
-	btreeKindLeaf       = 1
-	btreeKindInternal   = 2
-	btreeHeaderSize     = 64
-	maxKeyBytes         = 256
-	maxLeafEntries      = 32
-	maxInternalChildren = 32 // max keys = maxInternalChildren - 1
+	btreeVersion      = 1
+	btreeKindLeaf     = 1
+	btreeKindInternal = 2
+	btreeHeaderSize   = 64
+	maxKeyBytes       = 256
+	minKeysPerPage    = 2 // minimum entries to allow a split (bbolt pattern)
 )
 
 type leafData struct {
@@ -38,9 +37,24 @@ type internalData struct {
 	keys   [][]byte
 }
 
+// maxLeafEntriesForPage returns the upper bound on leaf entries for the given page size.
+func maxLeafEntriesForPage(pageSize int) uint16 {
+	// Minimum entry: 4 (lengths) + 1 (key) + 0 (val) = 5 bytes.
+	maxN := min((pageSize-btreeHeaderSize)/5, 65535)
+	return uint16(maxN) //nolint:gosec // capped at 65535
+}
+
+// maxInternalKeysForPage returns the upper bound on internal keys for the given page size.
+func maxInternalKeysForPage(pageSize int) uint16 {
+	// Minimum entry: 2 (keyLen) + 1 (key) + 8 (ptr) = 11, plus leading ptr0 = 8.
+	maxN := min((pageSize-btreeHeaderSize-8)/11, 65535)
+	return uint16(maxN) //nolint:gosec // capped at 65535
+}
+
 func parseLeafPage(page []byte) (*leafData, error) {
-	if len(page) != PageSize {
-		return nil, fmt.Errorf("%w: bad page len", ErrCorruptTree)
+	pageSize := len(page)
+	if !IsValidPageSize(uint32(pageSize)) { //nolint:gosec // pageSize is always positive
+		return nil, fmt.Errorf("%w: bad page len %d", ErrCorruptTree, pageSize)
 	}
 	if string(page[0:4]) != btreeNodeMagic {
 		return nil, fmt.Errorf("%w: leaf magic", ErrCorruptTree)
@@ -52,7 +66,7 @@ func parseLeafPage(page []byte) (*leafData, error) {
 		return nil, fmt.Errorf("%w: not leaf", ErrCorruptTree)
 	}
 	n := binary.BigEndian.Uint16(page[6:8])
-	if n > maxLeafEntries {
+	if n > maxLeafEntriesForPage(pageSize) {
 		return nil, fmt.Errorf("%w: leaf nkeys", ErrCorruptTree)
 	}
 	next := binary.BigEndian.Uint64(page[8:16])
@@ -84,14 +98,11 @@ func parseLeafPage(page []byte) (*leafData, error) {
 	return &leafData{next: next, parent: parent, keys: keys, vals: vals}, nil
 }
 
-func buildLeafPage(parent, next uint64, keys, vals [][]byte) ([]byte, error) {
+func buildLeafPage(pageSize int, parent, next uint64, keys, vals [][]byte) ([]byte, error) {
 	if len(keys) != len(vals) {
 		return nil, fmt.Errorf("%w: leaf kv mismatch", ErrCorruptTree)
 	}
-	if len(keys) > maxLeafEntries {
-		return nil, fmt.Errorf("%w: leaf overflow", ErrCorruptTree)
-	}
-	page := make([]byte, PageSize)
+	page := make([]byte, pageSize)
 	copy(page[0:4], btreeNodeMagic)
 	page[4] = btreeVersion
 	page[5] = btreeKindLeaf
@@ -131,8 +142,9 @@ func buildLeafPage(parent, next uint64, keys, vals [][]byte) ([]byte, error) {
 }
 
 func parseInternalPage(page []byte) (*internalData, error) {
-	if len(page) != PageSize {
-		return nil, fmt.Errorf("%w: bad page len", ErrCorruptTree)
+	pageSize := len(page)
+	if !IsValidPageSize(uint32(pageSize)) { //nolint:gosec // pageSize is always positive
+		return nil, fmt.Errorf("%w: bad page len %d", ErrCorruptTree, pageSize)
 	}
 	if string(page[0:4]) != btreeNodeMagic {
 		return nil, fmt.Errorf("%w: internal magic", ErrCorruptTree)
@@ -144,7 +156,7 @@ func parseInternalPage(page []byte) (*internalData, error) {
 		return nil, fmt.Errorf("%w: not internal", ErrCorruptTree)
 	}
 	n := binary.BigEndian.Uint16(page[6:8])
-	if n > maxInternalChildren-1 {
+	if n > maxInternalKeysForPage(pageSize) {
 		return nil, fmt.Errorf("%w: internal nkeys", ErrCorruptTree)
 	}
 	parent := binary.BigEndian.Uint64(page[16:24])
@@ -178,14 +190,11 @@ func parseInternalPage(page []byte) (*internalData, error) {
 	return &internalData{parent: parent, ptrs: ptrs, keys: keys}, nil
 }
 
-func buildInternalPage(parent uint64, ptrs []uint64, keys [][]byte) ([]byte, error) {
+func buildInternalPage(pageSize int, parent uint64, ptrs []uint64, keys [][]byte) ([]byte, error) {
 	if len(ptrs) != len(keys)+1 {
 		return nil, fmt.Errorf("%w: internal ptr/key mismatch", ErrCorruptTree)
 	}
-	if len(keys) >= maxInternalChildren {
-		return nil, fmt.Errorf("%w: internal overflow", ErrCorruptTree)
-	}
-	page := make([]byte, PageSize)
+	page := make([]byte, pageSize)
 	copy(page[0:4], btreeNodeMagic)
 	page[4] = btreeVersion
 	page[5] = btreeKindInternal

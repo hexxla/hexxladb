@@ -99,7 +99,7 @@ func (e *Engine) CommitWriteTxn() error {
 
 	for i := range txn.pending {
 		p := &txn.pending[i]
-		rec := encodeWALRecordWithMAC(p.seq, p.pageID, p.plain, e.walMACKey, e.walMACEnabled)
+		rec := encodeWALRecordWithMAC(p.seq, p.pageID, p.plain, e.walMACKey, e.walMACEnabled, e.pageSize)
 		if _, err := e.wal.Write(rec); err != nil {
 			return err
 		}
@@ -143,7 +143,7 @@ func (e *Engine) AbortWriteTxn() {
 }
 
 func (e *Engine) writePrimaryData(pageID uint64, plain []byte) error {
-	off, err := pageByteOffset(pageID)
+	off, err := pageByteOffset(pageID, e.pageSize)
 	if err != nil {
 		return err
 	}

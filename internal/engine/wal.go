@@ -7,23 +7,23 @@ import (
 	"hash/crc32"
 )
 
-// WAL record: seq(8) + page_id(8) + crc32(4) + payload(PageSize).
+// WAL record: seq(8) + page_id(8) + crc32(4) + payload(pageSize).
 const walRecordOverhead = 8 + 8 + 4
 const walRecordMACSize = 32
 
-func walRecordSize() int {
-	return walRecordOverhead + PageSize
+func walRecordSize(pageSize int) int {
+	return walRecordOverhead + pageSize
 }
 
-func encodeWALRecord(seq, pageID uint64, payload []byte) []byte {
-	return encodeWALRecordWithMAC(seq, pageID, payload, [32]byte{}, false)
+func encodeWALRecord(seq, pageID uint64, payload []byte, pageSize int) []byte {
+	return encodeWALRecordWithMAC(seq, pageID, payload, [32]byte{}, false, pageSize)
 }
 
-func encodeWALRecordWithMAC(seq, pageID uint64, payload []byte, macKey [32]byte, useMAC bool) []byte {
-	if len(payload) != PageSize {
-		panic("engine: wal payload size")
+func encodeWALRecordWithMAC(seq, pageID uint64, payload []byte, macKey [32]byte, useMAC bool, pageSize int) []byte {
+	if len(payload) != pageSize {
+		panic("engine: wal payload size mismatch")
 	}
-	size := walRecordSize()
+	size := walRecordSize(pageSize)
 	if useMAC {
 		size += walRecordMACSize
 	}
@@ -34,15 +34,15 @@ func encodeWALRecordWithMAC(seq, pageID uint64, payload []byte, macKey [32]byte,
 	copy(out[20:], payload)
 	if useMAC {
 		tag := walMAC(sumMACInput(seq, pageID, payload), macKey)
-		copy(out[20+PageSize:], tag[:])
+		copy(out[20+pageSize:], tag[:])
 	}
 	return out
 }
 
 // parseAndReplayWAL scans walData and applies records with seq > lastApplied to db.
 // Returns the highest seq value seen in the file (for header update).
-func parseAndReplayWAL(walData []byte, lastApplied uint64, apply func(seq, pageID uint64, payload []byte) error) (maxSeq uint64, err error) {
-	return parseAndReplayWALWithMAC(walData, lastApplied, apply, [32]byte{}, false)
+func parseAndReplayWAL(walData []byte, lastApplied uint64, apply func(seq, pageID uint64, payload []byte) error, pageSize int) (maxSeq uint64, err error) {
+	return parseAndReplayWALWithMAC(walData, lastApplied, apply, [32]byte{}, false, pageSize)
 }
 
 func parseAndReplayWALWithMAC(
@@ -51,8 +51,9 @@ func parseAndReplayWALWithMAC(
 	apply func(seq, pageID uint64, payload []byte) error,
 	macKey [32]byte,
 	useMAC bool,
+	pageSize int,
 ) (maxSeq uint64, err error) {
-	recSize := walRecordSize()
+	recSize := walRecordSize(pageSize)
 	if useMAC {
 		recSize += walRecordMACSize
 	}
@@ -66,11 +67,11 @@ func parseAndReplayWALWithMAC(
 		wantCRC := binary.BigEndian.Uint32(chunk[16:20])
 		payload := chunk[20:]
 		if useMAC {
-			if len(payload) < PageSize+walRecordMACSize {
+			if len(payload) < pageSize+walRecordMACSize {
 				return 0, ErrCorruptWAL
 			}
-			tagOff := 20 + PageSize
-			payloadData := payload[:PageSize]
+			tagOff := 20 + pageSize
+			payloadData := payload[:pageSize]
 			var gotTag [walRecordMACSize]byte
 			copy(gotTag[:], chunk[tagOff:tagOff+walRecordMACSize])
 			wantTag := walMAC(sumMACInput(seq, pageID, payloadData), macKey)

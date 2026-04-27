@@ -17,11 +17,11 @@ import (
 
 // WAL layout must match [internal/engine/wal.go] encodeWALRecord (seq, page_id, crc32, payload).
 func encodeTestWALRecord(seq, pageID uint64, payload []byte) []byte {
-	if len(payload) != engine.PageSize {
+	if len(payload) != engine.DefaultPageSize {
 		panic("bad page size")
 	}
 	const overhead = 8 + 8 + 4
-	out := make([]byte, overhead+engine.PageSize)
+	out := make([]byte, overhead+engine.DefaultPageSize)
 	binary.BigEndian.PutUint64(out[0:8], seq)
 	binary.BigEndian.PutUint64(out[8:16], pageID)
 	binary.BigEndian.PutUint32(out[16:20], crc32.ChecksumIEEE(payload))
@@ -128,7 +128,7 @@ func TestDB_openReplaysPendingWAL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	payload := bytes.Repeat([]byte{0x99}, engine.PageSize)
+	payload := bytes.Repeat([]byte{0x99}, engine.DefaultPageSize)
 	rec := encodeTestWALRecord(1, 1, payload)
 	wal := walPathForDB(path)
 	if err := os.WriteFile(wal, rec, 0o600); err != nil {

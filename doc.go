@@ -14,6 +14,7 @@
 // Exported entrypoints:
 //   - [Open], [Options], [DB], [DB.Close] — engine shell with durable WAL (see docs/hexxladb/DURABILITY.md).
 //     Optional logical changefeed ([Options.ChangelogEnabled], [DB.ReadChangelogSince]; see docs/hexxladb/CHANGEFEED.md).
+//     Configurable page size via [Options.PageSize] (4096/8192/16384/65536; default 4096); readable at runtime via [DB.PageSize].
 //     Per-database value size limit via [Options.MaxValueBytes] (512–16384 bytes; default 8192); readable at runtime via [DB.MaxValueBytes].
 //     MVCC on new databases via [Options.EnableMVCC] / [Options.MVCCRetention];
 //     lifecycle: [DB.StatsMVCC], [DB.PruneCellVersions], [DB.SuggestedPruneBeforeSeq], [PruneScheduler]

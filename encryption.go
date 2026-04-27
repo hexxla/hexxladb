@@ -31,7 +31,7 @@ func buildEncryptionHooks(xtsKey []byte) (*engine.PageHooks, error) {
 			if pageID == 0 {
 				return plain, nil
 			}
-			if len(plain) != engine.PageSize || engine.PageSize%16 != 0 {
+			if !engine.IsValidPageSize(uint32(len(plain))) || len(plain)%16 != 0 { //nolint:gosec // len is positive
 				return nil, engine.ErrBadPageSize
 			}
 			out := make([]byte, len(plain))
@@ -42,7 +42,7 @@ func buildEncryptionHooks(xtsKey []byte) (*engine.PageHooks, error) {
 			if pageID == 0 {
 				return data, nil
 			}
-			if len(data) != engine.PageSize || engine.PageSize%16 != 0 {
+			if !engine.IsValidPageSize(uint32(len(data))) || len(data)%16 != 0 { //nolint:gosec // len is positive
 				return nil, engine.ErrBadPageSize
 			}
 			out := make([]byte, len(data))

@@ -20,7 +20,7 @@ func TestWriteTxn_readYourWritesBeforeCommit(t *testing.T) {
 	if err := e.BeginWriteTxn(); err != nil {
 		t.Fatal(err)
 	}
-	want := bytes.Repeat([]byte{0x37}, PageSize)
+	want := bytes.Repeat([]byte{0x37}, DefaultPageSize)
 	if err := e.WritePage(1, want); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestWriteTxn_abortRevertsToDisk(t *testing.T) {
 	if err := e.BeginWriteTxn(); err != nil {
 		t.Fatal(err)
 	}
-	want := bytes.Repeat([]byte{0xee}, PageSize)
+	want := bytes.Repeat([]byte{0xee}, DefaultPageSize)
 	if err := e.WritePage(1, want); err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestWriteTxn_commitThenReopenMatches(t *testing.T) {
 	if err := e.BeginWriteTxn(); err != nil {
 		t.Fatal(err)
 	}
-	want := bytes.Repeat([]byte{0x99}, PageSize)
+	want := bytes.Repeat([]byte{0x99}, DefaultPageSize)
 	if err := e.WritePage(1, want); err != nil {
 		t.Fatal(err)
 	}
@@ -148,8 +148,8 @@ func TestWriteTxn_singleWALSyncForTwoPages(t *testing.T) {
 	if err := e.BeginWriteTxn(); err != nil {
 		t.Fatal(err)
 	}
-	p1 := bytes.Repeat([]byte{0x11}, PageSize)
-	p2 := bytes.Repeat([]byte{0x22}, PageSize)
+	p1 := bytes.Repeat([]byte{0x11}, DefaultPageSize)
+	p2 := bytes.Repeat([]byte{0x22}, DefaultPageSize)
 	if err := e.WritePage(1, p1); err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestOpen_primaryFdatasyncSurvivesReopen(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "fd.db")
-	pay := bytes.Repeat([]byte{0xbb}, PageSize)
+	pay := bytes.Repeat([]byte{0xbb}, DefaultPageSize)
 	e, err := Open(path, &Options{UsePrimaryFdatasync: true})
 	if err != nil {
 		t.Fatal(err)

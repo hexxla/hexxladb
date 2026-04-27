@@ -60,14 +60,14 @@ func decodeHeaderPage(page []byte) (Header, error) {
 	default:
 		return Header{}, fmt.Errorf("%w: version %d", ErrCorruptHeader, h.FormatVersion)
 	}
-	if h.PageSize != uint32(PageSize) {
-		return Header{}, ErrCorruptHeader
+	if !IsValidPageSize(h.PageSize) {
+		return Header{}, fmt.Errorf("%w: unsupported page size %d", ErrCorruptHeader, h.PageSize)
 	}
 	return h, nil
 }
 
 func encodeHeaderPage(h Header) []byte {
-	page := make([]byte, PageSize)
+	page := make([]byte, h.PageSize)
 	copy(page[:8], headerMagic)
 	binary.BigEndian.PutUint32(page[8:12], h.FormatVersion)
 	binary.BigEndian.PutUint32(page[12:16], h.PageSize)
@@ -86,22 +86,42 @@ func encodeHeaderPage(h Header) []byte {
 	return page
 }
 
-func readHeaderAt(r io.ReaderAt) (Header, error) {
-	buf := make([]byte, PageSize)
+// readHeaderAt reads the full header page. pageSize must be known beforehand
+// (use [bootstrapPageSize] for existing files).
+func readHeaderAt(r io.ReaderAt, pageSize int) (Header, error) {
+	buf := make([]byte, pageSize)
 	n, err := r.ReadAt(buf, 0)
 	if err != nil {
 		return Header{}, err
 	}
-	if n != PageSize {
+	if n != pageSize {
 		return Header{}, fmt.Errorf("%w: short read", ErrCorruptHeader)
 	}
 	return decodeHeaderPage(buf)
 }
 
+// bootstrapPageSize reads the 4-byte page size field (offset 12) from an
+// existing database file without reading the full header page. This is
+// necessary because the full page read requires knowing the page size first.
+func bootstrapPageSize(r io.ReaderAt) (uint32, error) {
+	var buf [16]byte
+	if _, err := r.ReadAt(buf[:], 0); err != nil {
+		return 0, fmt.Errorf("%w: cannot read header prefix", ErrCorruptHeader)
+	}
+	if !bytes.HasPrefix(buf[:], []byte(headerMagic)) {
+		return 0, ErrCorruptHeader
+	}
+	ps := binary.BigEndian.Uint32(buf[12:16])
+	if !IsValidPageSize(ps) {
+		return 0, fmt.Errorf("%w: unsupported page size %d", ErrCorruptHeader, ps)
+	}
+	return ps, nil
+}
+
 func writeHeaderAt(w io.WriterAt, h Header) error {
 	page := encodeHeaderPage(h)
-	if len(page) != PageSize {
-		panic("engine: header page size")
+	if len(page) != int(h.PageSize) {
+		panic("engine: header page size mismatch")
 	}
 	_, err := w.WriteAt(page, 0)
 	return err
@@ -115,5 +135,9 @@ func ReadHeaderFile(path string) (Header, error) {
 		return Header{}, err
 	}
 	defer func() { _ = f.Close() }()
-	return readHeaderAt(f)
+	ps, err := bootstrapPageSize(f)
+	if err != nil {
+		return Header{}, err
+	}
+	return readHeaderAt(f, int(ps))
 }
