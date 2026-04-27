@@ -12,6 +12,11 @@
 - `DB.Compact` — copy-compact open database to destPath (holds read lock, preserves all data)
 - `CompactTo` — standalone copy-compaction from srcPath to destPath; propagates format version, MVCC flag, encryption, MaxValueBytes
 - Comprehensive tests for both features: v1/v2, MVCC snapshot isolation, facet/edge cleanup, same-tx overlay, encrypted compact, context cancellation, file size reduction, HealthCheck validation
+- Demo Phase 12 in `examples/conversational_memory` — exercises DeleteCell (MVCC tombstone, ViewAt snapshot isolation, idempotent re-delete) and Compact (bulk write→delete→prune→compact with file size reduction)
+
+### Fixed (delete-compact)
+
+- `HealthCheck` on MVCC databases now correctly excludes tombstoned cells from `CellCount` — previously zero-length tombstone values were counted as live cells
 
 ### Added (tui-audit)
 

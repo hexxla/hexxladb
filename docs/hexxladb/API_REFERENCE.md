@@ -386,13 +386,15 @@ Use **`errors.Is` / `errors.As`** for stable handling.
 
 ## Live demos and coverage
 
-- **Conversational memory service:** [`examples/conversational_memory`](../../examples/conversational_memory/) — **`go run ./examples/conversational_memory`** seeds **`./.tmp/conversational_memory/`** (MVCC + changelog + `AfterPutCell` hook) and walks through: cell storage (templates + batch), supersession, tag analytics + co-occurrences, query patterns (`QueryCells` + `SearchCells`), MVCC time-travel, ASCII grid + ring density, filtered changelog, multi-seed context assembly, **database health check** (`HealthCheck`), **event hook telemetry** (`AfterPutCell`), **MaxValueBytes** (per-database limit printed at startup), and **MVCC Snapshot Diff** (`SnapshotDiff` full range + narrow diff). Phases 1–11.
+- **Conversational memory service:** [`examples/conversational_memory`](../../examples/conversational_memory/) — **`go run ./examples/conversational_memory`** seeds **`./.tmp/conversational_memory/`** (MVCC + changelog + `AfterPutCell` hook) and walks through: cell storage (templates + batch), supersession, tag analytics + co-occurrences, query patterns (`QueryCells` + `SearchCells`), MVCC time-travel, ASCII grid + ring density, filtered changelog, multi-seed context assembly, **database health check** (`HealthCheck`), **event hook telemetry** (`AfterPutCell`), **MaxValueBytes** (per-database limit printed at startup), **MVCC Snapshot Diff** (`SnapshotDiff` full range + narrow diff), **`Tx.DeleteCell`** (MVCC tombstone + snapshot isolation + idempotent re-delete), and **`DB.Compact`** (bulk write→delete→prune→compact with file size reduction). Phases 1–12.
 
 ## What `examples/conversational_memory` does _not_ call (and why)
 
 The demo is a **session-shaped production walkthrough**; it stays readable. Omitted APIs fall into a few buckets: **low-level escape hatches**, **validity-specialized variants**, **seam lifecycle / conflict sugar**, **post-assembly helpers**, **operator features**, **encryption ops**.
 
 > **Demonstrated in Phase 11 (added):** `DB.HealthCheck` + `HealthReport`, `DB.SnapshotDiff` + `SnapshotDiff`/`CellDiff`/`SeamDiff`/`SnapshotDiffConfig`, `AfterPutCellHook`/`AfterPutCellHookFunc` (wired in `Options.AfterPutCell`), `DB.MaxValueBytes()` (printed at startup). These were previously in this omissions list.
+>
+> **Demonstrated in Phase 12 (added):** `Tx.DeleteCell` (MVCC tombstone, `ViewAt` snapshot isolation, idempotent re-delete, `HealthCheck` cell count drop), `DB.Compact` (bulk write→delete→prune→compact with file size reduction, compacted DB health check).
 
 ### Raw btree: `Tx.Get`, `Tx.Put`, `Tx.AscendRange`
 
@@ -452,6 +454,10 @@ The demo is a **session-shaped production walkthrough**; it stays readable. Omit
 ### `DB.HealthCheck` / `AfterPutCellHook` / `AfterPutSeamHook` / `DB.MaxValueBytes` / `DB.SnapshotDiff`
 
 Now demonstrated in **Phase 11**. See above.
+
+### `Tx.DeleteCell` / `DB.Compact` / `CompactTo`
+
+Now demonstrated in **Phase 12**. See above.
 
 ### MVCC: `StatsMVCC`, `GroupWALStats`, `SuggestedPruneBeforeSeq`, `MVCCPrunePlan`, `PruneCellVersions*`, `PruneScheduler`
 
