@@ -4,8 +4,6 @@ Immediate next steps. Update after each session.
 
 ## Current
 
-- [ ] B+ tree leaf-page-full at high embedding counts — HNSW nodes + embedding values overflow leaf pages when count exceeds ~500 (32d) or ~100 (128d) even at 65536 page size; likely a split-index edge case in `internal/engine/btree.go:leafSplitIndex`; benchmarks capped at safe sizes for now — **active on `fix/btree-leaf-page-full`**
-
 ## Pending (next sessions)
 
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
@@ -14,6 +12,7 @@ Immediate next steps. Update after each session.
 
 ## Recently Completed
 
+- 2026-04-27: B+ tree leaf-page-full fix — root cause was `insertIntoLeaf` skipping the overflow check on the update-in-place path; HNSW node values grow as neighbors accumulate, causing the updated page to exceed `pageSize`; hardened `leafSplitIndex` to scan to `pageSize` boundary (not `pageSize/2`); regression tests `TestPutEmbedding_HighCount_32d` + `_128d` now pass (600 and 150 entries respectively)
 - 2026-04-27: `examples/llm_context_engine` — realistic LLM memory retrieval demo (6 scenarios: ingest, semantic search, multi-signal, supersession, full pipeline, comparison); embedding Phase 13 removed from conversational_memory (reverted to 12 phases)
 - 2026-04-27: Embeddings keyspace complete (Phases 1-4) — flat-scan + HNSW ANN search; query engine integration via `CellQuery.Embedding` / `CellSearchConfig.Embedding`; benchmarks; docs updated (doc.go, HEXXLA_DB.md, API_REFERENCE.md, ROADMAP.md)
 
