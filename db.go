@@ -39,6 +39,7 @@ func Open(path string, opts *Options) (*DB, error) {
 	eopts = mergeEnginePrimaryFdatasync(eopts, opts)
 	eopts = mergeEngineGroupWAL(eopts, opts)
 	eopts = mergeEngineMaxValueBytes(eopts, opts)
+	eopts = mergeEngineCompression(eopts, opts)
 	eng, err := engine.Open(path, eopts)
 	if err != nil {
 		if errors.Is(err, engine.ErrCorruptHeader) || errors.Is(err, engine.ErrCorruptWAL) {
@@ -144,6 +145,20 @@ func (db *DB) PageSize() uint32 {
 		return 0
 	}
 	return uint32(db.eng.PageSizeInt()) //nolint:gosec // PageSizeInt always returns a valid page size
+}
+
+// Compression returns the per-database compression type persisted in the file header.
+// Returns [CompressionNone] if the database is closed or compression is not enabled.
+func (db *DB) Compression() CompressionType {
+	if db == nil {
+		return CompressionNone
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.eng == nil {
+		return CompressionNone
+	}
+	return db.eng.Compression()
 }
 
 // MaxValueBytes returns the effective per-database maximum B+ tree value size in bytes.

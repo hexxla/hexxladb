@@ -29,6 +29,8 @@ type Engine struct {
 	usePrimaryFdatasync bool
 	// maxValueBytes is the effective per-database value size ceiling (read from header at Open).
 	maxValueBytes uint32
+	// compression is the per-database compression algorithm (read from header at Open).
+	compression CompressionType
 	// pageBufPool is an instance-level pool of page-sized buffers.
 	pageBufPool sync.Pool
 	// wtxn is set between [Engine.BeginWriteTxn] and commit/abort. Not used concurrently.
@@ -93,6 +95,10 @@ func Open(path string, opts *Options) (*Engine, error) {
 		if opts != nil && opts.UseFormatV2 {
 			ver = formatVersionV2
 		}
+		var ct CompressionType
+		if opts != nil {
+			ct = opts.Compression
+		}
 		hdr := Header{
 			FormatVersion: ver,
 			PageSize:      ps,
@@ -100,6 +106,7 @@ func Open(path string, opts *Options) (*Engine, error) {
 			NextPageID:    1,
 			CommitSeq:     0,
 			MaxValueBytes: mvb,
+			Compression:   ct,
 		}
 		if opts != nil && opts.NewEncryptedDB {
 			hdr.Features |= FeatureEncryptedDataPages
@@ -274,6 +281,7 @@ func Open(path string, opts *Options) (*Engine, error) {
 		walMACKey:           walMACKey,
 		usePrimaryFdatasync: usePrimaryFdatasync,
 		maxValueBytes:       effectiveMaxVal,
+		compression:         hdr.Compression,
 	}
 	e.pageBufPool = sync.Pool{
 		New: func() any {

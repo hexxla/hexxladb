@@ -192,6 +192,17 @@ func mergeEngineMaxValueBytes(eo *engine.Options, o *Options) *engine.Options {
 	return eo
 }
 
+func mergeEngineCompression(eo *engine.Options, o *Options) *engine.Options {
+	if o == nil || o.Compression == CompressionNone {
+		return eo
+	}
+	if eo == nil {
+		return &engine.Options{Compression: o.Compression}
+	}
+	eo.Compression = o.Compression
+	return eo
+}
+
 func mergeEngineGroupWAL(eo *engine.Options, o *Options) *engine.Options {
 	mw := time.Duration(0)
 	if o != nil {

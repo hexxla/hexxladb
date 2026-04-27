@@ -4,7 +4,6 @@ For completed work, see `TODOS.md` (Recently Completed) and `CHANGELOG.md`.
 
 ## Near-term
 
-- **Content Compression** — zstd/gzip transparent compression of cell values. Addresses file size bloat and obscures plaintext in unencrypted databases. Compress on write, decompress on read, controlled by `Options`.
 - **Embeddings keyspace (`embed/`)** — store vector embeddings alongside cells for ANN/hybrid retrieval; HNSW or flat-scan index in the B+ tree; `CellSearchConfig.Embedding []float32` for semantic search; existing `Query string` callers unaffected. Vital for service-layer semantic seed selection and context retrieval.
 - **Extract `TxWriter` interface for secondary index testing** — `cell_secondary.go` and `seam_secondary.go` must remain in `package hexxladb` (receiver methods on `*Tx` using unexported fields); extracting a `TxWriter` interface would let the secondary-index logic be unit-tested without a real DB. Low priority given contract tests now cover the public surface.
 

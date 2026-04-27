@@ -99,6 +99,12 @@ func (t *BTree) GetUsingRoot(root uint64, key []byte) (val []byte, ok bool, err 
 						return nil, false, err
 					}
 				}
+				if isCompressedValue(v) {
+					v, err = decompressValue(v)
+					if err != nil {
+						return nil, false, err
+					}
+				}
 				return v, true, nil
 			}
 			return nil, false, nil
@@ -137,14 +143,18 @@ func (t *BTree) Put(key, val []byte) error {
 		return ErrValueTooLarge
 	}
 
+	// Compress the value if compression is enabled. Compression runs before
+	// the overflow check so that compressible values may fit inline.
+	storeVal := compressValue(t.eng.compression, val)
+
 	// Spill to overflow pages if value exceeds the inline threshold.
-	leafVal := val
-	if len(val) > inlineThreshold(t.pageSize()) {
-		firstPage, err := t.writeOverflowChain(val)
+	leafVal := storeVal
+	if len(storeVal) > inlineThreshold(t.pageSize()) {
+		firstPage, err := t.writeOverflowChain(storeVal)
 		if err != nil {
 			return err
 		}
-		leafVal = encodeOverflowStub(uint32(len(val)), firstPage) //nolint:gosec // len(val) <= maxValueBytes (uint32)
+		leafVal = encodeOverflowStub(uint32(len(storeVal)), firstPage) //nolint:gosec // len(storeVal) bounded by maxValueBytes
 	}
 
 	hdr, err := t.eng.ReadHeader()
@@ -398,6 +408,12 @@ func (t *BTree) AscendRange(from, to []byte, fn func(k, v []byte) bool) error {
 			if isOverflowStub(v) {
 				logLen, firstPage := decodeOverflowStub(v)
 				v, err = t.readOverflowChain(firstPage, logLen)
+				if err != nil {
+					return err
+				}
+			}
+			if isCompressedValue(v) {
+				v, err = decompressValue(v)
 				if err != nil {
 					return err
 				}
