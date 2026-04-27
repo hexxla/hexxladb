@@ -21,6 +21,10 @@ func (tx *Tx) getCellVisibleRaw(key lattice.PackedCoord) (raw []byte, commitSeq 
 		}
 		return raw, 0, true, nil
 	}
+	// Same-tx delete takes priority over overlay and btree.
+	if tx.cellDeleted[key] {
+		return nil, 0, false, nil
+	}
 	if tx.cellOverlay != nil {
 		if rec, o := tx.cellOverlay[key]; o {
 			b, err := record.EncodeCell(rec)
@@ -45,6 +49,10 @@ func (tx *Tx) getCellVisibleRaw(key lattice.PackedCoord) (raw []byte, commitSeq 
 	}
 	val, seq, ok := mvcc.SelectVisible(versions, tx.readSeq)
 	if !ok {
+		return nil, 0, false, nil
+	}
+	// Zero-length value is an MVCC tombstone (cell deleted at this commit_seq).
+	if len(val) == 0 {
 		return nil, 0, false, nil
 	}
 	return val, seq, true, nil
@@ -94,6 +102,10 @@ func (tx *Tx) getFacetVisibleRaw(p lattice.PackedCoord, facetID byte) (raw []byt
 	}
 	val, _, ok := mvcc.SelectVisible(versions, tx.readSeq)
 	if !ok {
+		return nil, false, nil
+	}
+	// Zero-length value is an MVCC tombstone (facet deleted).
+	if len(val) == 0 {
 		return nil, false, nil
 	}
 	return val, true, nil

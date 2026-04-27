@@ -265,3 +265,10 @@ func (s *Storage) AscendEdgesFrom(ctx context.Context, from lattice.PackedCoord,
 		})
 	})
 }
+
+// DeleteCell implements [domain.Storage].
+func (s *Storage) DeleteCell(ctx context.Context, key lattice.PackedCoord) error {
+	return s.withUpdate(ctx, func(tx *hxdb.Tx) error {
+		return tx.DeleteCell(ctx, key)
+	})
+}

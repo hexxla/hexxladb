@@ -34,6 +34,7 @@ const (
 	OpResolveSeam = byte(3)
 	OpPutFacet    = byte(4)
 	OpPutEdge     = byte(5)
+	OpDeleteCell  = byte(6)
 )
 
 const (

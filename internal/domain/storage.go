@@ -53,4 +53,7 @@ type Storage interface {
 	LinkCells(ctx context.Context, from, to lattice.Coord, relationType string, weight float64, prov record.ProvenanceWire) error
 	GetEdge(ctx context.Context, from, to lattice.PackedCoord, relationType string) (record.EdgeRecord, bool, error)
 	AscendEdgesFrom(ctx context.Context, from lattice.PackedCoord, fn func(record.EdgeRecord) bool) error
+	// DeleteCell removes a cell and all associated data (secondary indexes, facets, outbound edges).
+	// Idempotent: deleting a non-existent cell returns nil. Seams are not removed.
+	DeleteCell(ctx context.Context, key lattice.PackedCoord) error
 }
