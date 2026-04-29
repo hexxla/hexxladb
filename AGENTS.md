@@ -39,7 +39,7 @@
 - **TODOS.md** — lightweight session state; move items to Completed as work finishes; add new discoveries to Pending
 - **CHANGELOG.md** — user-facing changes; add entries under `## [Unreleased]` for any user-visible feature, fix, or breaking change
 
-**Versioning:** Follow [`VERSIONING.md`](../VERSIONING.md) (Semantic Versioning 2.0.0). Current: `v0.1.0`.
+**Versioning:** Follow [`VERSIONING.md`](../VERSIONING.md) (Semantic Versioning 2.0.0). Current: `v0.3.0`.
 
 - Propose version bumps based on work: **minor** for features, **patch** for fixes, document breaking changes
 - During v0.y.z phase: increment minor for releases with new features, patch for fixes only
