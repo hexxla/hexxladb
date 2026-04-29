@@ -81,6 +81,8 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 | **[`(*Tx).GetEdge`](../../facets_edges.go)**             | Edge lookup by endpoints + relation type.                              |
 | **[`(*Tx).AscendEdgesFrom`](../../facets_edges.go)**     | Out-edges from a packed coord.                                         |
 | **[`(*Tx).LinkCells`](../../facets_edges.go)**           | Sugar: pack coords + **`PutEdge`**.                                    |
+| **[`FacetWalkRecord`](../../walk_export_aliases.go)**    | Type alias for **`AscendFacetsForCell`** callbacks (embedding apps avoid **`internal/record`**). |
+| **[`EdgeWalkRecord`](../../walk_export_aliases.go)**     | Type alias for **`AscendEdgesFrom`** callbacks.                                           |
 
 ---
 
@@ -158,6 +160,8 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 | **[`NewAssistantResponseCell`](../../templates.go)** | Factory for assistant-response cells with standard tags. |
 | **[`NewSystemPromptCell`](../../templates.go)**      | Factory for system-prompt cells (confidence 1.0).        |
 | **[`NewFactCell`](../../templates.go)**              | Factory for extracted-fact cells with category tag.      |
+| **[`NewProvenanceWire`](../../templates.go)**        | Provenance with **`CreatedAt`** / **`UpdatedAt`** set to now (for **`LinkCells`** / edges from outside **`hexxladb`**). |
+| **[`NewFacetDerived`](../../templates.go)**           | Facet record for **`PutFacet`** without naming **`internal/record`** facet types. |
 
 ---
 

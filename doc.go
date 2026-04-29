@@ -29,6 +29,8 @@
 //     [Tx.FindSeams], [Tx.FindSeamsAt], [Tx.LoadContext], [Tx.ResolveSeam] (see [primitives.go]);
 //     facets/edges: [Tx.PutFacet], [Tx.GetFacet], [Tx.AscendFacetsForCell],
 //     [Tx.PutEdge], [Tx.GetEdge], [Tx.AscendEdgesFrom] ([facets_edges.go]);
+//     embedding-only names: [FacetWalkRecord], [EdgeWalkRecord] ([walk_export_aliases.go]);
+//     [NewFacetDerived], [NewProvenanceWire] ([templates.go]) for callers outside this module;
 //     spec-named sugar: [Tx.MarkConflict], [Tx.UpdateFacet], [Tx.LinkCells];
 //     validity read filters: [record.ValidAt], [Tx.WalkRingAt], [Tx.LoadContextAt], [Tx.WalkRingFacets];
 //     secondary index walks: [Tx.AscendCellsBySource], [Tx.AscendCellsInTimeBucket],

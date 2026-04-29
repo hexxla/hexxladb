@@ -71,3 +71,26 @@ func NewFactCell(coord PackedCoord, content, sourceID, factType string, confiden
 		},
 	}
 }
+
+// NewProvenanceWire builds cell/edge provenance with CreatedAt and UpdatedAt set to now (UTC, Unix nanoseconds).
+// Use with [Tx.LinkCells] when the caller lives outside package hexxladb.
+func NewProvenanceWire(sourceID string, confidence float64) record.ProvenanceWire {
+	now := time.Now().UTC().UnixNano()
+	return record.ProvenanceWire{
+		SourceID:   sourceID,
+		Confidence: confidence,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+}
+
+// NewFacetDerived returns a facet record for [Tx.PutFacet] (zero DerivationHash — use PutFacet, not UpdateFacet).
+// facetID must be in the range accepted by EncodeFacet (0..5); encoding fails otherwise.
+func NewFacetDerived(coord PackedCoord, facetID byte, derivedContent string, lastRotatedUnixNanoUTC int64) record.FacetRecord {
+	return record.FacetRecord{
+		Key:            coord,
+		FacetID:        facetID,
+		DerivedContent: derivedContent,
+		LastRotated:    lastRotatedUnixNanoUTC,
+	}
+}

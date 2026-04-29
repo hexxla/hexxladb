@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Exported walk alias types for embedding apps** — `FacetWalkRecord` and `EdgeWalkRecord` in [`walk_export_aliases.go`](./walk_export_aliases.go) alias `internal/record` wire structs so MCP/adapters outside the module can type `AscendFacetsForCell` / `AscendEdgesFrom` closures without importing `internal/`.
+- **External-call helpers** — `NewProvenanceWire` (timestamps `now`) and `NewFacetDerived` for modules that cannot name `internal/record` types when calling `Tx.LinkCells` / `Tx.PutFacet`.
+
 ## [0.2.0] - 2026-04-27
 
 ### Fixed
