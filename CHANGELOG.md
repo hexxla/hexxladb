@@ -6,6 +6,10 @@
 
 - **`(*Tx).DeleteCellWithOutcome`** — Like **`DeleteCell`** but returns **`removed bool`**: **`true`** when a visible cell was tombstoned (MVCC) or hard-deleted (v1); **`false`** on idempotent no-op (`delete_cell.go`). Callers that need deletion observability should use this; **`DeleteCell`** remains a thin wrapper.
 
+### Changed
+
+- **GitHub Actions** — **`ci.yml`** and **`integration.yml`** use **`actions/checkout@v6`** and **`actions/setup-go@v6`** (Node 24–compatible action runtime; avoids Node.js 20 runner deprecation notices).
+
 ### Fixed
 
 - **HealthCheck double-counting MVCC seams** — The seam/ primary scan appended every physical row. Each **ResolveSeam** writes a new MVCC version of the same ULID, so **SeamCount** (and resolved/unresolved splits) inflated after resolution. The checker now groups versioned keys by ULID and applies [**mvcc.SelectVisible**](internal/mvcc/version_suffix_cell_key.go) at the view’s **read_seq**, matching [**getSeamVisibleRaw**](mvcc.go). Regression: **TestHealthCheck_MVCC_seam_resolve_not_double_counted**.
