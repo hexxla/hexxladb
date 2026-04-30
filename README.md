@@ -292,6 +292,7 @@ make demo-llm
 ## Projects using HexxlaDB
 
 - **[Hexxla](https://github.com/hexxla/hexxla)** — spatial LLM memory and reasoning stack
+- **[Mosaic](https://github.com/hexxla/mosaic)** — local MCP server for structured agent memory (hex lattice, hybrid retrieval, policy-governed context) on HexxlaDB
 
 ---
 

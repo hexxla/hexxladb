@@ -8,6 +8,8 @@
 
 ### Changed
 
+- **README** — **[Projects using HexxlaDB](README.md#projects-using-hexxladb)** lists **[Mosaic](https://github.com/hexxla/mosaic)** (local MCP agent-memory server).
+
 - **Integration / Makefile** — **`make integration`** passes **`-parallel=1`** like [`.github/workflows/integration.yml`](.github/workflows/integration.yml). **`crash_ordering_integration_test.go`** subprocess crash cases no longer call **`t.Parallel()`**, avoiding several concurrent **`TestIntegration_crashChild`** runs under **`go test`'s default `-parallel`** (which could thrash **`go test -race`** and appear to hang).
 
 - **README** — Centered logo image width **`240`** (was **`300`**).
