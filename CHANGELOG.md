@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`(*Tx).DeleteCellWithOutcome`** — Like **`DeleteCell`** but returns **`removed bool`**: **`true`** when a visible cell was tombstoned (MVCC) or hard-deleted (v1); **`false`** on idempotent no-op (`delete_cell.go`). Callers that need deletion observability should use this; **`DeleteCell`** remains a thin wrapper.
+
+### Fixed
+
+- **HealthCheck double-counting MVCC seams** — The seam/ primary scan appended every physical row. Each **ResolveSeam** writes a new MVCC version of the same ULID, so **SeamCount** (and resolved/unresolved splits) inflated after resolution. The checker now groups versioned keys by ULID and applies [**mvcc.SelectVisible**](internal/mvcc/version_suffix_cell_key.go) at the view’s **read_seq**, matching [**getSeamVisibleRaw**](mvcc.go). Regression: **TestHealthCheck_MVCC_seam_resolve_not_double_counted**.
+
+- **HealthCheck false positives on MVCC tag/source indexes** — [HealthCheck](health.go) used to flag every secondary key whosePackedCoord lacked a **visible head** cell. Under MVCC, [PutCell](primitives.go) keeps older `tag/` and `source/` rows per commit sequence so [ViewAt](tx.go) stays consistent; after multiple updates at one coord followed by **DeleteCell**, those historical rows are still legitimate while the primary tombstone hides the live head. The checker now parses the MVCC suffix on physical keys (via [ParseTagKeyWithSeq](internal/index/tag_key.go) / [ParseSourceKeyWithSeq](internal/index/source_key.go)), loads `cell/<coord><seq>`, and validates the decoded cell carries the indexed tag/source. Regression: **TestHealthCheck_MVCC_churn_then_delete_cleanSecondaries**.
+
 ## [0.3.0] - 2026-04-29
 
 ### Added

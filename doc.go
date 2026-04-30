@@ -25,7 +25,7 @@
 //     Bolt-style transactions; [DB.Batch] is an alias for [DB.Update]; see docs/hexxladb/TX.md.
 //   - [DB.Compact], [CompactTo] — copy-compaction to reclaim dead pages (see docs/hexxladb/OPERATIONS.md).
 //   - [Tx.Get], [Tx.Put], [Tx.AscendRange] — byte-key ordered store.
-//     Lattice primitives: [Tx.PutCell], [Tx.GetCell], [Tx.DeleteCell], [Tx.WalkRing], [Tx.PutSeam],
+//     Lattice primitives: [Tx.PutCell], [Tx.GetCell], [Tx.DeleteCell], [Tx.DeleteCellWithOutcome], [Tx.WalkRing], [Tx.PutSeam],
 //     [Tx.FindSeams], [Tx.FindSeamsAt], [Tx.LoadContext], [Tx.ResolveSeam] (see [primitives.go]);
 //     facets/edges: [Tx.PutFacet], [Tx.GetFacet], [Tx.AscendFacetsForCell],
 //     [Tx.PutEdge], [Tx.GetEdge], [Tx.AscendEdgesFrom] ([facets_edges.go]);

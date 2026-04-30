@@ -51,7 +51,7 @@ Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored 
 | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | **[`(*Tx).PutCell`](../../primitives.go)**        | Cell primary + secondaries (`source/`, `time/`, `tag/`).                                                          |
 | **[`(*Tx).GetCell`](../../primitives.go)**        | Decode visible cell at packed coord.                                                                              |
-| **[`(*Tx).DeleteCell`](../../delete_cell.go)**    | Remove cell + secondaries + facets + outbound edges. Idempotent. MVCC: tombstone; seams NOT removed.              |
+| **[`(*Tx).DeleteCell`](../../delete_cell.go)** / **[`DeleteCellWithOutcome`](../../delete_cell.go)** | Remove cell + secondaries + facets + outbound edges. Idempotent **`DeleteCell`**; **`DeleteCellWithOutcome`** returns whether a visible cell existed. MVCC: tombstone; seams NOT removed. |
 | **[`(*Tx).WalkRing`](../../primitives.go)**       | Visit one ring; raw bytes per coord.                                                                              |
 | **[`(*Tx).WalkRingAt`](../../primitives.go)**     | Same order; **`record.ValidAt`** filter at **`asOf`**.                                                            |
 | **[`(*Tx).LoadContext`](../../primitives.go)**    | Concentric walk; **`maxR`**, **`maxCells`**.                                                                      |

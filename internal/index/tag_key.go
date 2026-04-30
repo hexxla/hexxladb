@@ -103,6 +103,43 @@ func ParseTagKey(key []byte) (tag string, p lattice.PackedCoord, err error) {
 	return tag, pc, nil
 }
 
+// ParseTagKeyWithSeq parses k like [ParseTagKey] and, when k carries an MVCC version suffix after
+// the packed coord ([TagKeyWithVersion]), sets hasSeq=true and fills commitSeq from that suffix.
+// Use this for consistency checks tied to the exact primary row version referenced by tag/ indexes.
+func ParseTagKeyWithSeq(k []byte) (tag string, p lattice.PackedCoord, commitSeq uint64, hasSeq bool, err error) {
+	if !bytes.HasPrefix(k, []byte(TagPrefix)) {
+		return "", lattice.PackedCoord{}, 0, false, errors.New("index: not a tag key")
+	}
+	rest := k[len(TagPrefix):]
+	if len(rest) < 2 {
+		return "", lattice.PackedCoord{}, 0, false, errors.New("index: tag key truncated")
+	}
+	n := int(binary.BigEndian.Uint16(rest[0:2]))
+	rest = rest[2:]
+	if n > MaxTagBytes || len(rest) < n+1+PackedCoordKeyLen {
+		return "", lattice.PackedCoord{}, 0, false, errors.New("index: bad tag key layout")
+	}
+	tag = string(rest[:n])
+	rest = rest[n:]
+	if len(rest) < 1 || rest[0] != '/' {
+		return "", lattice.PackedCoord{}, 0, false, errors.New("index: tag key separator")
+	}
+	rest = rest[1:]
+	var pc lattice.PackedCoord
+	switch len(rest) {
+	case PackedCoordKeyLen:
+	case PackedCoordKeyLen + VersionSuffixLen:
+		hasSeq = true
+		commitSeq = binary.BigEndian.Uint64(rest[PackedCoordKeyLen:])
+		rest = rest[:PackedCoordKeyLen]
+	default:
+		return "", lattice.PackedCoord{}, 0, false, errors.New("index: tag key packed len")
+	}
+	pc[1] = binary.BigEndian.Uint64(rest[0:8])
+	pc[0] = binary.BigEndian.Uint64(rest[8:16])
+	return tag, pc, commitSeq, hasSeq, nil
+}
+
 // ErrTagTooLong means a tag exceeds [MaxTagBytes].
 var ErrTagTooLong = errors.New("index: tag too long for secondary key")
 

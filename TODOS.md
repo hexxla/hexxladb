@@ -6,12 +6,16 @@ Immediate next steps. Update after each session.
 
 ## Pending (next sessions)
 
+- [ ] **`BatchDeleteCells`** (or equivalent) — batched/chunked **`DeleteCell`** helper + docs/tests; reference **`docs/ROADMAP.md`** Near-term bullet
+- [ ] **Engine shell & MVCC exploration** — optional **`DB.Path()`**, partial reclaim research, **`PurgeCoord`** semantics, prune extensions; see **`docs/ROADMAP.md`** → *Engine shell & MVCC exploration*
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
 
 ---
 
 ## Recently Completed
 
+- 2026-04-29: **`docs/hexxladb/OPERATIONS.md`** — MVCC **`RetainCommitsBehindHead`** vs **`SuggestedPruneBeforeSeq`** / **`CommitSeq`** (automatic prune watermark inactive until commits exceed retention depth); operator checklist.
+- 2026-04-29: **`delete_cell.go`** — package doc: **`PruneCellVersions`** drops only non-latest rows; latest tombstone per coord stays until superseded.
 - 2026-04-29: Tagged **`v0.3.0`** — walk alias exports + **`NewProvenanceWire`** / **`NewFacetDerived`** (`CHANGELOG.md`); **`make ci`** before push
 - 2026-04-29: Branch **feature/export-walk-aliases-helpers** merged — exported **`FacetWalkRecord`** / **`EdgeWalkRecord`** ([`walk_export_aliases.go`](walk_export_aliases.go)); **`NewProvenanceWire`** / **`NewFacetDerived`** in [`templates.go`](templates.go)
 - 2026-04-27: Released v0.2.0 — embeddings/HNSW, WAL fix, B+ tree fix, llm_context_engine demo, OS-aware build system, flat .tmp/ DB paths

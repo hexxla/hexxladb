@@ -1,39 +1,35 @@
 package index_test
 
 import (
-	"bytes"
 	"testing"
 
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
-func TestSourceKey_roundTripAndOrder(t *testing.T) {
+func TestParseSourceKeyWithSeq_roundTrip(t *testing.T) {
 	t.Parallel()
-	p := lattice.PackedCoord{1, 2}
-	k1, err := index.SourceKey("aaa", p)
+	p := lattice.PackedCoord{9, 10}
+	key, err := index.SourceKeyWithVersion("mysrc", p, 1001)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, got, err := index.ParseSourceKey(k1)
+	sid, got, seq, hasSeq, err := index.ParseSourceKeyWithSeq(key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != "aaa" || got != p {
-		t.Fatalf("got id=%q p=%v", id, got)
+	if !hasSeq || seq != 1001 || sid != "mysrc" || got != p {
+		t.Fatalf("got sid=%q p=%v seq=%d hasSeq=%v", sid, got, seq, hasSeq)
 	}
-	k2, err := index.SourceKey("bbb", p)
+	base, err := index.SourceKey("bare", p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Compare(k1, k2) >= 0 {
-		t.Fatalf("aaa should sort before bbb")
-	}
-	from, to, err := index.SourceRangePrefix("gamma")
+	sid2, got2, seq2, hasSeq2, err := index.ParseSourceKeyWithSeq(base)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Compare(from, to) > 0 {
-		t.Fatal("range from/to")
+	if hasSeq2 || seq2 != 0 || sid2 != "bare" || got2 != p {
+		t.Fatalf("bare got sid=%q seq=%d hasSeq=%v", sid2, seq2, hasSeq2)
 	}
 }

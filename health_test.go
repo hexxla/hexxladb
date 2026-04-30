@@ -2,6 +2,7 @@ package hexxladb_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -251,6 +252,109 @@ func TestHealthCheck_MVCC(t *testing.T) {
 	}
 	if report.SourceIndexErrors != 0 {
 		t.Errorf("SourceIndexErrors = %d, want 0", report.SourceIndexErrors)
+	}
+}
+
+// Regression: MVCC stores one primary row per seam commit; HealthCheck must not count
+// both the initial PutSeam and a later ResolveSeam as two seams.
+func TestHealthCheck_MVCC_seam_resolve_not_double_counted(t *testing.T) {
+	t.Parallel()
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "health_mvcc_seam.db"), &hexxladb.Options{EnableMVCC: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	pkA := mustPackTest(t, hexxladb.Coord{Q: 0, R: 0})
+	pkB := mustPackTest(t, hexxladb.Coord{Q: 1, R: 0})
+	var seamID string
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		if err := tx.PutCell(ctx, hexxladb.NewFactCell(pkA, "a", "s", "t", 0.9)); err != nil {
+			return err
+		}
+		if err := tx.PutCell(ctx, hexxladb.NewFactCell(pkB, "b", "s", "t", 0.9)); err != nil {
+			return err
+		}
+		return tx.MarkConflict(hexxladb.Coord{Q: 0, R: 0}, hexxladb.Coord{Q: 1, R: 0}, "dup")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		seams, err := tx.FindSeams(ctx, hexxladb.Coord{Q: 0, R: 0}, 2, false)
+		if err != nil {
+			return err
+		}
+		if len(seams) != 1 {
+			return fmt.Errorf("FindSeams want 1 seam, got %d", len(seams))
+		}
+		seamID = seams[0].ID
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.ResolveSeam(seamID, "resolved", "fixed")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	report, err := db.HealthCheck(ctx, hexxladb.DefaultHealthCheckConfig())
+	if err != nil {
+		t.Fatalf("HealthCheck: %v", err)
+	}
+	if report.SeamCount != 1 {
+		t.Errorf("SeamCount = %d, want 1 (one logical seam; two MVCC versions)", report.SeamCount)
+	}
+	if report.SeamsResolved != 1 || report.SeamsUnresolved != 0 {
+		t.Errorf("resolved=%d unresolved=%d want 1/0", report.SeamsResolved, report.SeamsUnresolved)
+	}
+}
+
+// Regression: MVCC retains historical secondary keys per PutCell seq; deletes only strip the
+// visible version. HealthCheck must validate tag/source keys against the matching cell/<coord><seq>,
+// not only “visible head cell exists”.
+func TestHealthCheck_MVCC_churn_then_delete_cleanSecondaries(t *testing.T) {
+	t.Parallel()
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "health_mvcc_churn.db"), &hexxladb.Options{EnableMVCC: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	pk := mustPackTest(t, hexxladb.Coord{Q: 2, R: -1})
+	for i := range 4 {
+		if err := db.Update(func(tx *hexxladb.Tx) error {
+			tag := []string{"t-hist"}
+			if i%2 == 0 {
+				tag = append(tag, "t-even")
+			}
+			rec := record.CellRecord{
+				Key:        pk,
+				RawContent: "rev",
+				Provenance: record.ProvenanceWire{SourceID: "sess-churn", Confidence: 1, CreatedAt: 1, UpdatedAt: 1},
+				Tags:       tag,
+			}
+			return tx.PutCell(ctx, rec)
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.DeleteCell(ctx, pk)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := db.HealthCheck(ctx, hexxladb.DefaultHealthCheckConfig())
+	if err != nil {
+		t.Fatalf("HealthCheck: %v", err)
+	}
+	if report.TagIndexErrors != 0 {
+		t.Errorf("TagIndexErrors = %d, want 0 (historical secondaries are valid); warnings=%v", report.TagIndexErrors, report.Warnings)
+	}
+	if report.SourceIndexErrors != 0 {
+		t.Errorf("SourceIndexErrors = %d, want 0; warnings=%v", report.SourceIndexErrors, report.Warnings)
 	}
 }
 

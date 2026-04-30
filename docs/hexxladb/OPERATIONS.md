@@ -12,7 +12,37 @@ Both primary and WAL matter for durability: the engine appends redo records to t
 
 ### File growth (extend-only allocation)
 
-The engine uses an **extend-only** page allocator: deleted or pruned records reclaim logical space inside the B+ tree, but the primary file length does **not** shrink automatically. Expect monotonic file growth under churn until you compact via [`DB.Compact`](../../compact.go) or [`CompactTo`](../../compact.go) (see **Compaction** below). See [`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md) for the page/WAL layout.
+The engine uses an **extend-only** page allocator: deleted or pruned records reclaim logical space inside the B+ tree **as free space for reuse**, but the primary file length does **not** shrink automatically. Expect monotonic **file size** under churn until you compact via [`DB.Compact`](../../compact.go) or [`CompactTo`](../../compact.go) (see **Compaction** below). See [`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md) for the page/WAL layout.
+
+### Deletes, tombstones, and why the file size barely moves
+
+On **format v2 (MVCC)**, [`DeleteCell`](../../delete_cell.go) does **not** remove the cell’s primary history: it appends a **tombstone** row (zero-length value at a new `commit_seq`). That **adds** a physical btree entry and usually **grows** WAL and sometimes the primary (new pages or split pages), even while the **visible** cell count drops.
+
+So a pattern like “82 cells → delete 10 → file still **576 KiB**” is **normal**: freed space is mostly **internal reuse**, not a shorter file. To **reduce bytes on disk**:
+
+1. Optionally [**`PruneCellVersions`**](../../mvcc_lifecycle.go) to drop **old** non-latest versions (cannot remove the latest tombstone for a coord while that key still exists).
+2. Then [**`Compact`**](../../compact.go) to rewrite into a tight file (reclaims freelist/low-fill pages).
+
+Without **prune + compact**, expect similar **file** size; [`StatsMVCC`](../../mvcc_lifecycle.go).`VersionedRows` typically **increases** after deletes (one new row per successful delete).
+
+### `StatsMVCC` / `logical_cells` vs visible cell count
+
+[`DB.StatsMVCC`](../../mvcc_lifecycle.go) counts **physical** `cell/<coord><seq>` rows and **distinct coords** that still have **any** stored version (including the latest **tombstone**):
+
+- **`VersionedRows`** — total versioned primary rows (grows with puts **and** deletes).
+- **`LogicalCells`** — number of distinct coordinates that still have at least one version row (coords you deleted are **still counted** until history is pruned away from the latest tombstone case per your retention story — the latest row per coord always remains until pruned per `PruneCellVersions` rules).
+
+**Visible** cells (non-tombstone latest value) are what [`DB.HealthCheck`](../../health.go) **CellCount** reflects, or what you get from [`GetCell`](../../primitives.go) / query APIs. Do not equate **`logical_cells`** with “rows the user can see.”
+
+### Ten delete calls but visible count dropped by eight
+
+[`DeleteCell`](../../delete_cell.go) is **idempotent**: deleting a coord with **no visible cell** returns **nil** and writes nothing. So **N** delete tools calls can yield **fewer than N** visible-cell drops if:
+
+- two coords were already empty or already tombstoned,
+- coordinates were wrong (`q`,`r` typo),
+- or the client retried the same delete.
+
+Confirm with **HealthCheck `cell_count`**, or enumerate coords before/after.
 
 ## Backup and copy
 
@@ -37,6 +67,7 @@ The reference binary [`cmd/hexxladb`](../../cmd/hexxladb/main.go) uses structure
 For format-v2 databases (open a **new** database with [`Options.EnableMVCC`](../../options.go)):
 
 - [`Options.MVCCRetention.RetainCommitsBehindHead`](../../options.go) configures how much commit history to retain when deriving a suggested prune watermark. Only versions with strictly lower `commit_seq` than `(header.CommitSeq - RetainCommitsBehindHead)` may be reclaimed, and never the latest visible version per logical cell.
+- While **`CommitSeq ≤ RetainCommitsBehindHead`**, [`SuggestedPruneBeforeSeq`](../../mvcc_lifecycle.go) yields **`beforeSeq = 0`**, so [`PruneCellVersions`](../../mvcc_lifecycle.go) **`seq < beforeSeq`** matches **no** rows — **automatic prune ticks become a no-op** until commits accumulate beyond the retention depth. Embedders with short-lived MCP sessions therefore need a retention value **below** typical peak `CommitSeq` (inspect [`StatsMVCC`](../../mvcc_lifecycle.go) `.CommitSeq`) or explicit `beforeSeq`.
 - Zero (default) disables automatic suggestions; operators supply `beforeSeq` explicitly to [`PruneCellVersions`](../../mvcc_lifecycle.go).
 - Retention is in **commits**, not wall-clock. Map product SLAs to `RetainCommitsBehindHead` using your observed commits-per-interval.
 

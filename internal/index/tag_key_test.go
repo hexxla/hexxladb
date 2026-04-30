@@ -41,6 +41,33 @@ func TestTagKeyWithVersion_roundTrip(t *testing.T) {
 	}
 }
 
+func TestParseTagKeyWithSeq_roundTrip(t *testing.T) {
+	t.Parallel()
+	p := lattice.PackedCoord{7, 8}
+	key, err := index.TagKeyWithVersion("gamma", p, 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tag, got, seq, hasSeq, err := index.ParseTagKeyWithSeq(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasSeq || seq != 99 || tag != "gamma" || got != p {
+		t.Fatalf("got tag=%q p=%v seq=%d hasSeq=%v", tag, got, seq, hasSeq)
+	}
+	keyBare, err := index.TagKey("delta", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tag2, got2, seq2, hasSeq2, err := index.ParseTagKeyWithSeq(keyBare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasSeq2 || seq2 != 0 || tag2 != "delta" || got2 != p {
+		t.Fatalf("bare got tag=%q seq=%d hasSeq=%v", tag2, seq2, hasSeq2)
+	}
+}
+
 func TestTagRangePrefix_lexOrder(t *testing.T) {
 	t.Parallel()
 	lo, err := lattice.Pack(lattice.Coord{Q: 0, R: 0})

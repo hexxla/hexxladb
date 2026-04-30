@@ -120,6 +120,82 @@ func TestDeleteCell_idempotent(t *testing.T) {
 	}
 }
 
+func TestDeleteCellWithOutcome_reports_removed(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	t.Run("mvcc_miss_then_hit", func(t *testing.T) {
+		t.Parallel()
+		db := openDeleteTestDB(t, true)
+		ep, err := lattice.Pack(lattice.Coord{Q: 7, R: -2})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var emptyHit bool
+		if err := db.Update(func(tx *hexxladb.Tx) error {
+			var err error
+			emptyHit, err = tx.DeleteCellWithOutcome(ctx, ep)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if emptyHit {
+			t.Fatal("no visible cell: want removed=false")
+		}
+
+		seedCellForDelete(t, db, lattice.Coord{Q: 7, R: -2}, "body", nil, "src")
+
+		var removedLive, repeat bool
+		if err := db.Update(func(tx *hexxladb.Tx) error {
+			var err error
+			removedLive, err = tx.DeleteCellWithOutcome(ctx, ep)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if !removedLive {
+			t.Fatal("want removed=true after seeding coord")
+		}
+		if err := db.Update(func(tx *hexxladb.Tx) error {
+			var err error
+			repeat, err = tx.DeleteCellWithOutcome(ctx, ep)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if repeat {
+			t.Fatal("idempotent tombstone repeat: want removed=false")
+		}
+	})
+
+	t.Run("v1_hit_then_miss", func(t *testing.T) {
+		t.Parallel()
+		db := openDeleteTestDB(t, false)
+		p := seedCellForDelete(t, db, lattice.Coord{Q: 0, R: 5}, "v1", []string{"t"}, "src")
+		var once, twice bool
+		if err := db.Update(func(tx *hexxladb.Tx) error {
+			var err error
+			once, err = tx.DeleteCellWithOutcome(ctx, p)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if !once {
+			t.Fatal("want removed=true on first delete")
+		}
+		if err := db.Update(func(tx *hexxladb.Tx) error {
+			var err error
+			twice, err = tx.DeleteCellWithOutcome(ctx, p)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if twice {
+			t.Fatal("want removed=false on idempotent repeat")
+		}
+	})
+}
+
 // TestDeleteCell_readOnlyTx verifies delete inside View returns ErrTxReadOnly.
 func TestDeleteCell_readOnlyTx(t *testing.T) {
 	t.Parallel()

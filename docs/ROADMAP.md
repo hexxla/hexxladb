@@ -2,7 +2,14 @@
 
 For completed work, see `CHANGELOG.md` and `TODOS.md` (Recently Completed).
 
+## Documentation (operator-facing)
+
+Recent clarity-only updates (no API change): **`docs/hexxladb/OPERATIONS.md`** (MVCC retention vs **`SuggestedPruneBeforeSeq`**); **`delete_cell.go`** package doc (tombstones vs **`PruneCellVersions`**). Listed in **`TODOS.md`** Recently Completed.
+
 ## Near-term
+
+- **Bulk / batched cell delete helper** — `BatchPutCells`-style surface for deletes (e.g. chunked `DeleteCell` in one or many `Update` passes, optional progress/`ContinueOnError`, changelog semantics per row). MVCC-aware; does not imply automatic file shrink — operators still **`PruneCellVersions`** + **`Compact`** when reclaiming disk is the goal.
+  _Impact: ergonomics for “forget this session” / GDPR-style erasure without N separate transactions from callers; aligns Mosaic MCP or apps that today loop `delete_cell`._
 
 - **Extract `TxWriter` interface for secondary index testing** — `cell_secondary.go` and `seam_secondary.go` must remain in `package hexxladb` (receiver methods on `*Tx` using unexported fields); extracting a `TxWriter` interface would let the secondary-index logic be unit-tested without a real DB.
   _Impact: faster, cheaper test cycles for secondary-index changes; catches regressions without spinning up a full B+ tree; reduces barrier to contributors._
@@ -36,6 +43,17 @@ Spec exists; implementation deferred.
 
 Interesting but unvalidated. Needs user demand or benchmark data before committing.
 
+### Engine shell & MVCC exploration
+
+Research spikes; default operator guidance stays **`Compact`** + **`PruneCellVersions`** ([`OPERATIONS.md`](./hexxladb/OPERATIONS.md)) until something here graduates.
+
+- **`DB.Path()`** (ergonomics) — expose the primary file path from an opened `*DB` so embedders (health checks, optional **`os.Stat`**) do not thread path in parallel with the handle. Low risk; small API surface.
+- **Partial primary reclaim without a full `Compact` copy** — investigate freelist trimming, tail truncation after internal compaction, or OS sparse-file / punch-hole techniques. **Today extend-only allocation + offline `Compact` is intentional** (see **Out of scope** below); any faster shrink path needs durability proofs and likely stays platform-specific or remains optional.
+- **`PurgeCoord` / physical removal of latest tombstone** — design spike: optional API or policy flag that removes the last MVCC row for a coordinate when operators accept weaker **`ViewAt`** guarantees (or explicit “no snapshot before seq *S*” invariants). Must not silently break existing MVCC contracts.
+- **Alternative / extended `PruneCellVersions` semantics** — e.g. optional modes coordinated with changefeed retention, or bounded “forget coord” flows; requires RFC against current rule (**latest row per coord always retained** until superseded).
+
+---
+
 - **Hot Cell Tracking** — LRU-based access frequency tracking; frequently-retrieved cells get priority in context assembly tie-breaking.
   _Impact: context quality improves over time as the assembler learns which memories are actually useful; no manual tuning required. Overhead concerns need profiling._
 
@@ -56,6 +74,6 @@ Interesting but unvalidated. Needs user demand or benchmark data before committi
 Intentional boundaries for embedded library v1.
 
 - **Distributed replication / HA** — product-tier orchestration; HexxlaDB is embedded by design.
-- **Freelist / automatic primary file shrink** — extend-only allocator by design; use `DB.Compact` for offline file size reduction ([`OPERATIONS.md`](./hexxladb/OPERATIONS.md)).
+- **Freelist / automatic primary file shrink** — extend-only allocator by design; use `DB.Compact` for offline file size reduction ([`OPERATIONS.md`](./hexxladb/OPERATIONS.md)). *Exploration* of partial reclaim or punch-hole tricks may appear under **Future exploration → Engine shell & MVCC exploration**; they do not change this default until promoted with benchmarks and durability review.
 - **Online re-encryption** — offline rotation only ([`VERSIONING.md`](../VERSIONING.md)).
 - **Third-party KV backends (SQLite, etc.)** — Hex-native engine is the direction; abstractions over foreign storage engines add complexity without matching HexxlaDB's spatial key model.

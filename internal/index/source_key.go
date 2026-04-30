@@ -109,5 +109,41 @@ func ParseSourceKey(key []byte) (sourceID string, p lattice.PackedCoord, err err
 	return id, pc, nil
 }
 
+// ParseSourceKeyWithSeq parses k like [ParseSourceKey] and, when k includes an MVCC version suffix
+// ([SourceKeyWithVersion]), sets hasSeq=true and fills commitSeq from that suffix.
+func ParseSourceKeyWithSeq(k []byte) (sourceID string, p lattice.PackedCoord, commitSeq uint64, hasSeq bool, err error) {
+	if !bytes.HasPrefix(k, []byte(SourcePrefix)) {
+		return "", lattice.PackedCoord{}, 0, false, errors.New("index: not a source key")
+	}
+	rest := k[len(SourcePrefix):]
+	if len(rest) < 2 {
+		return "", lattice.PackedCoord{}, 0, false, errors.New("index: source key truncated")
+	}
+	n := int(binary.BigEndian.Uint16(rest[0:2]))
+	rest = rest[2:]
+	if n > MaxSourceIDBytes || len(rest) < n+1+PackedCoordKeyLen {
+		return "", lattice.PackedCoord{}, 0, false, errors.New("index: bad source key layout")
+	}
+	id := string(rest[:n])
+	rest = rest[n:]
+	if len(rest) < 1 || rest[0] != '/' {
+		return "", lattice.PackedCoord{}, 0, false, errors.New("index: source key separator")
+	}
+	rest = rest[1:]
+	var pc lattice.PackedCoord
+	switch len(rest) {
+	case PackedCoordKeyLen:
+	case PackedCoordKeyLen + VersionSuffixLen:
+		hasSeq = true
+		commitSeq = binary.BigEndian.Uint64(rest[PackedCoordKeyLen:])
+		rest = rest[:PackedCoordKeyLen]
+	default:
+		return "", lattice.PackedCoord{}, 0, false, errors.New("index: source key packed len")
+	}
+	pc[1] = binary.BigEndian.Uint64(rest[0:8])
+	pc[0] = binary.BigEndian.Uint64(rest[8:16])
+	return id, pc, commitSeq, hasSeq, nil
+}
+
 // ErrSourceIDTooLong means SourceID exceeds [MaxSourceIDBytes].
 var ErrSourceIDTooLong = errors.New("index: source_id too long for secondary key")

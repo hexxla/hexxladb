@@ -86,7 +86,12 @@ func (db *DB) MVCCPrunePlan(profile MVCCPruneProfile) (beforeSeq uint64, maxDele
 	return bs, maxDelete, true, nil
 }
 
-// MVCCStats summarizes current MVCC storage shape (cell versions only).
+// MVCCStats summarizes physical MVCC cell rows (keys under cell/ with version suffix).
+//
+// LogicalCells is the count of distinct packed coordinates that still have at least one
+// stored version row — including coords whose latest version is a delete tombstone — not
+// “visible live cells.” Visible counts come from [DB.HealthCheck] CellCount or [Tx.GetCell].
+// VersionedRows grows with every put and every delete (tombstone writes a new version).
 type MVCCStats struct {
 	CommitSeq     uint64
 	VersionedRows int64
@@ -105,7 +110,7 @@ const (
 	MVCCPruneLongHistory MVCCPruneProfile = "long-history"
 )
 
-// StatsMVCC returns MVCC counters for versioned cell rows.
+// StatsMVCC returns MVCC counters for versioned cell primary rows (see [MVCCStats]).
 func (db *DB) StatsMVCC() (MVCCStats, error) {
 	if db == nil {
 		return MVCCStats{}, ErrDatabaseClosed
