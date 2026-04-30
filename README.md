@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/images/hexxladb_logo_shadow.svg" alt="HexxlaDB" width="300">
+<img src="assets/images/hexxladb_logo_shadow.svg" alt="HexxlaDB" width="240">
 
 # HexxlaDB
 
