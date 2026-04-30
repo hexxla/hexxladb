@@ -16,7 +16,7 @@ EXE     = $(if $(filter windows,$(GOOS)),.exe,)
 
 help:
 	@echo "make ci              Full pipeline (same as GitHub Actions: ./scripts/ci.sh)"
-	@echo "make integration     Optional slower tests (go test -tags=integration -race ./...)"
+	@echo "make integration     Optional slower tests (go test -tags=integration -race -parallel=1 ./...)"
 	@echo "make stress          Optional very large cell-count tests (TMPDIR defaults to ./.tmp; not CI)"
 	@echo "make bench           Run all benchmarks across all packages (not in CI)"
 	@echo "make bench-api       Run API-level benchmarks only — the ones shown in README (faster; not in CI)"
@@ -54,7 +54,7 @@ ci:
 
 # Optional durability/stress tests (not run in default CI). See CONTRIBUTING.md.
 integration:
-	go test -count=1 -race -tags=integration ./...
+	go test -count=1 -race -parallel=1 -tags=integration ./...
 
 # Extreme scale (100k+ cells by default; minutes, large disk). TMPDIR defaults to repo ./.tmp (override if needed). See CONTRIBUTING.md.
 stress:

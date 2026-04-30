@@ -46,7 +46,7 @@ Shortcuts:
 | `make fmt`          | `gofmt -w` on module `.go` files                                                                                                                                                |
 | `make clean`        | Remove `bin/` (from `make build`)                                                                                                                                               |
 | `make help`         | List Makefile targets                                                                                                                                                           |
-| `make integration`  | Optional **`//go:build integration`** tests (`-race`); not part of default CI. GitHub Actions runs the same on a [weekly + manual](.github/workflows/integration.yml) schedule. |
+| `make integration`  | Optional **`//go:build integration`** tests (`-race -parallel=1`); not part of default CI. **`parallel=1`** keeps subprocess [**crash / SIGKILL** tests](crash_ordering_integration_test.go) serial — without it, **`t.Parallel`** scale tests plus five concurrent crash children can thrash **`-race`** and look stuck. Matches [`.github/workflows/integration.yml`](.github/workflows/integration.yml). |
 | `make stress`       | Optional **`//go:build stress`** tests (very large `PutCell` counts; **`TMPDIR`** defaults to repo `./.tmp`; **not** CI)                                                        |
 | `make bench`        | Benchmarks (`go test -bench=. -benchmem ./...`); **not** run in default CI                                                                                                      |
 | `make bench-stress` | Longer **`BenchmarkAPI_*`** (preload 512 / 2k / 10k per sub-bench); **not** in CI                                                                                               |
@@ -72,6 +72,8 @@ Technical backlog, explicit non-goals, and **documented vs implemented** audit n
 | [`internal/adapters`](internal/adapters) | Add **`in/`** / **`out/`** packages when you add transports or infrastructure (see [`internal/adapters/README.md`](internal/adapters/README.md)). |
 
 Prefer **table-driven** tests and **`t.Parallel()`** where data is independent. **Durability / heavier tests** use **`//go:build integration`** (see [`db_durability_test.go`](db_durability_test.go) vs [`durability_integration_test.go`](durability_integration_test.go)); run them with **`make integration`**. Default **`make ci`** does **not** include the integration tag so PRs stay fast.
+
+**Crash ordering (`SIGKILL`):** [`crash_ordering_integration_test.go`](crash_ordering_integration_test.go) spawns **`TestIntegration_crashChild`** subprocesses blocked on named barriers (`HEXXLADB_TEST_CRASH_AT`). Use **`make integration`** or **`go test -race -parallel=1 -tags=integration ./...`** (not a high **`go test -parallel`**) locally so these do not overlap each other.
 
 **Scale integration:** [`scale_integration_test.go`](scale_integration_test.go) writes **~10k** `PutCell` rows ( **~1k** when **`go test -short`** is set) plus secondary index checks and reopen verification. Expect **seconds** of runtime and **tens of MB** temp disk under `-race`; run before release or when changing the btree / secondaries.
 

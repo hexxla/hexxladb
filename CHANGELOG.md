@@ -8,6 +8,8 @@
 
 ### Changed
 
+- **Integration / Makefile** — **`make integration`** passes **`-parallel=1`** like [`.github/workflows/integration.yml`](.github/workflows/integration.yml). **`crash_ordering_integration_test.go`** subprocess crash cases no longer call **`t.Parallel()`**, avoiding several concurrent **`TestIntegration_crashChild`** runs under **`go test`'s default `-parallel`** (which could thrash **`go test -race`** and appear to hang).
+
 - **README** — Centered logo image width **`240`** (was **`300`**).
 
 - **GitHub Actions** — **`ci.yml`** and **`integration.yml`** use **`actions/checkout@v6`** and **`actions/setup-go@v6`** (Node 24–compatible action runtime; avoids Node.js 20 runner deprecation notices).

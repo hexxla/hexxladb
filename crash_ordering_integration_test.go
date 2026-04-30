@@ -55,9 +55,11 @@ func TestIntegration_groupCommitPhasesAfterSigKill(t *testing.T) {
 		"group_primary_synced",
 		"group_header_written",
 	}
+	// Do not use t.Parallel here: each case execs a subprocess that blocks in crashtest.At until
+	// SIGKILL. Running them concurrently (default go test -parallel) under -race overwhelms the
+	// machine and looks like a hang after repeated "=== RUN   TestIntegration_crashChild" lines.
 	for _, phase := range phases {
 		t.Run(phase, func(t *testing.T) {
-			t.Parallel()
 			dir := t.TempDir()
 			path := filepath.Join(dir, "crash.db")
 			ready := filepath.Join(dir, "ready")
