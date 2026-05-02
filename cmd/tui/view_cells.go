@@ -191,17 +191,19 @@ func (v *cellsView) View() string {
 
 	w := max(60, v.width-4)
 
-	// ── visible window: reserve title(1)+scrollbar(1)+searchbar(1-2)+help(1) = 5 lines
+	// ── visible window: reserve title(1)+scrollInfo(1)+searchbar(1-2)+help(1) = 4-5 lines
 	extraLines := 4
 	if v.searching || v.query != "" {
 		extraLines = 5
 	}
 	visH := max(3, v.height-extraLines)
-	start := 0
-	if v.cursor >= visH {
-		start = v.cursor - visH + 1
-	}
+
+	// Viewport: keep cursor visible, centered when possible
+	start := max(0, v.cursor-visH/2)
 	end := min(start+visH, total)
+	if end-start < visH && start > 0 {
+		start = max(0, end-visH)
+	}
 
 	// ── column widths
 	coordW := 10
@@ -296,7 +298,10 @@ func (v *cellsView) View() string {
 	if bar := v.renderSearchBar(); bar != "" {
 		parts = append(parts, bar)
 	}
-	parts = append(parts, t.Render(), styleHelp.Render("  "+help))
+	tableRender := t.Render()
+	// Clip table to viewport height to prevent overflow
+	tableRender = lipgloss.NewStyle().MaxHeight(visH).Render(tableRender)
+	parts = append(parts, tableRender, styleHelp.Render("  "+help))
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 

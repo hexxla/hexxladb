@@ -6,27 +6,46 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Neon-on-dark palette — all colors optimised for dark terminals.
+// Terminal palette based on ollamon reference - uses standard terminal colors
+// for better compatibility and semantic naming.
 var (
-	// Core accent colors
-	colorPurple = lipgloss.Color("#9D50FF") // primary accent
-	colorCyan   = lipgloss.Color("#00D7FF") // secondary accent / data
-	colorGreen  = lipgloss.Color("#00FF9C") // success / included
-	colorPink   = lipgloss.Color("#FF6ACB") // warning / superseded
-	colorOrange = lipgloss.Color("#FF9E4F") // caution / seam
-	colorRed    = lipgloss.Color("#FF4F6A") // error / evicted
-	colorYellow = lipgloss.Color("#EDFF82") // highlight / tags
+	// Semantic style names following ollamon pattern
+	AppBg       = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("252"))
+	Header      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("25")).Padding(0, 1)
+	Subtle      = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	Title       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229"))
+	Section     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("117"))
+	Box         = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("61")).Padding(0, 1)
+	Highlight   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("221"))
+	Accent      = lipgloss.NewStyle().Foreground(lipgloss.Color("81"))
+	OK          = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	Warn        = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	Err         = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	Dim         = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	Filter      = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("166")).Padding(0, 1)
+	LogLine     = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	Help        = lipgloss.NewStyle().Foreground(lipgloss.Color("251")).Background(lipgloss.Color("237")).Padding(0, 1)
+	MetricLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("110"))
+
+	// Legacy color names for backward compatibility (will phase out)
+	colorPurple = lipgloss.Color("61")  // primary accent
+	colorCyan   = lipgloss.Color("81")  // secondary accent / data
+	colorGreen  = lipgloss.Color("42")  // success / included
+	colorPink   = lipgloss.Color("213") // warning / superseded
+	colorOrange = lipgloss.Color("214") // caution / seam
+	colorRed    = lipgloss.Color("196") // error / evicted
+	colorYellow = lipgloss.Color("229") // highlight / tags
 
 	// Backgrounds
-	colorBg0 = lipgloss.Color("#0D0D14") // near-black base
-	colorBg1 = lipgloss.Color("#13131E") // panel bg
-	colorBg2 = lipgloss.Color("#1C1C2E") // card / row bg
-	colorBg3 = lipgloss.Color("#252540") // selected row bg
+	colorBg0 = lipgloss.Color("235") // near-black base
+	colorBg1 = lipgloss.Color("236") // panel bg
+	colorBg2 = lipgloss.Color("237") // card / row bg
+	colorBg3 = lipgloss.Color("238") // selected row bg
 
 	// Text
-	colorText0 = lipgloss.Color("#FAFAFA") // primary
-	colorText1 = lipgloss.Color("#B0B8D0") // secondary
-	colorText2 = lipgloss.Color("#5A6080") // dim / muted
+	colorText0 = lipgloss.Color("252") // primary
+	colorText1 = lipgloss.Color("245") // secondary
+	colorText2 = lipgloss.Color("243") // dim / muted
 
 	// Tab border — active tab has open bottom to merge with content
 	activeTabBorder = lipgloss.Border{
@@ -213,4 +232,57 @@ func repeatStr(s string, n int) string {
 		out = append(out, s...)
 	}
 	return string(out)
+}
+
+// contentWidth returns a safe width for content, with fallback to 80.
+// Prevents division by zero on tiny terminals.
+func contentWidth(w int) int {
+	if w > 4 {
+		return w
+	}
+	return 80
+}
+
+// twoColumnWidths splits total width into two columns.
+// For < 100 chars: simple 50/50 split.
+// For >= 100 chars: left = total/2 - 1, right = total - left (1-char gap).
+func twoColumnWidths(total int) (left, right int) {
+	if total < 100 {
+		return total / 2, total - total/2
+	}
+	left = total/2 - 1
+	right = total - left
+	return left, right
+}
+
+// colorizePercent applies semantic coloring based on value thresholds:
+// ≥ 85%: Err style (red) - critical state
+// ≥ 70%: Warn style (orange) - warning state
+// < 70%: OK style (green) - healthy state
+func colorizePercent(percent int, s string) string {
+	if percent >= 85 {
+		return Err.Render(s)
+	}
+	if percent >= 70 {
+		return Warn.Render(s)
+	}
+	return OK.Render(s)
+}
+
+// percentBar renders a percentage as a filled/empty character bar.
+// Uses colorizePercent for semantic coloring.
+func percentBar(percent int, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	fill := percent * width / 100
+	if fill < 1 && percent > 0 {
+		fill = 1
+	}
+	if fill > width {
+		fill = width
+	}
+	filled := repeatStr("█", fill)
+	empty := repeatStr("░", width-fill)
+	return colorizePercent(percent, filled) + Dim.Render(empty)
 }

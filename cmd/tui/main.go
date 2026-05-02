@@ -185,8 +185,8 @@ func (m model) renderTabBar() string {
 	gapW := max(0, m.width-lipgloss.Width(row))
 	// Gap fills horizontally; height must match the tab row so bottom-edge aligns.
 	gap := lipgloss.NewStyle().
-		Background(colorBg0).
-		Foreground(colorText2).
+		Background(AppBg.GetBackground()).
+		Foreground(Subtle.GetForeground()).
 		Width(gapW).
 		Height(rowH).
 		AlignVertical(lipgloss.Bottom).
@@ -198,16 +198,16 @@ func (m model) renderContent() string {
 	tabH := lipgloss.Height(m.renderTabBar())
 	statusH := 1
 	contentH := max(1, m.height-tabH-statusH)
-	contentW := m.width
+	contentW := contentWidth(m.width)
 
 	inner := ""
 	if m.current >= 0 && m.current < len(m.tabs) {
 		inner = m.tabs[m.current].View()
 	}
 
-	// MaxHeight hard-clips so content can never push tabs off screen.
-	// Place fills the full terminal-width × contentH canvas with colorBg1.
-	clipped := lipgloss.NewStyle().MaxHeight(contentH).Render(inner)
+	// MaxHeight and Height together ensure content never pushes tabs off screen.
+	// Height sets explicit height, MaxHeight clips overflow.
+	clipped := lipgloss.NewStyle().MaxHeight(contentH).Height(contentH).Render(inner)
 	return lipgloss.NewStyle().Width(contentW).Background(colorBg1).Render(
 		lipgloss.Place(
 			contentW, contentH,
@@ -220,9 +220,9 @@ func (m model) renderContent() string {
 
 func (m model) renderStatusBar() string {
 	stats, _ := m.db.StatsMVCC()
-	mvcc := styleGood.Render("MVCC on")
+	mvcc := OK.Render("MVCC on")
 	if stats.CommitSeq == 0 {
-		mvcc = styleDim.Render("MVCC off")
+		mvcc = Dim.Render("MVCC off")
 	}
 
 	left := styleStatusLeft.Render(" ◈ HexxlaDB ")

@@ -116,11 +116,13 @@ func (v *seamsView) View() string {
 
 	w := max(60, v.width-6)
 	visH := max(3, v.height-8)
-	start := 0
-	if v.cursor >= visH {
-		start = v.cursor - visH + 1
-	}
+
+	// Viewport: keep cursor visible, centered when possible
+	start := max(0, v.cursor-visH/2)
 	end := min(start+visH, len(v.seams))
+	if end-start < visH && start > 0 {
+		start = max(0, end-visH)
+	}
 
 	seamTypeColor := func(st string) lipgloss.Color {
 		switch st {

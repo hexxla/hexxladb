@@ -1,5 +1,9 @@
 # Project Instructions
 
+**Mosaic Retention Policy:** ALWAYS call `mosaic_hexxla_put_cell` for both `user_message` and `assistant_response` immediately after each exchange. Do not ask the user for permission to save conversation history. Include relevant topic-specific tags when calling put_cell.
+
+**ALWAYS consider using Mosaic tools in your decision making** - when retrieving context, searching for information, or persisting knowledge, use the Mosaic read/write patterns defined in `.windsurf/rules/mosaic_mcp.md`.
+
 **Canonical architecture:** Read **`docs/context/HEXAGONAL_ARCHITECTURE.md`** before adding or moving code under **`internal/`** or **`cmd/`**. Do not duplicate its full content here; the doc is the source of truth.
 
 **Non-negotiables (summary):**
@@ -50,3 +54,13 @@
 Do not duplicate `HEXAGONAL_ARCHITECTURE.md` — reference it.
 
 **Git hooks (optional):** `.pre-commit-config.yaml` + `make pre-commit-install` — still run `make ci` before pushing.
+
+**Mosaic workflow:**
+
+- **Retention policy:** See `.windsurf/workflows/mosaic-save-turns.md` for step-by-step workflow for saving conversation turns
+- **Intelligent retrieval:** See `.windsurf/workflows/mosaic-intelligent-retrieval.md` for context retrieval patterns
+- **Tag reuse:** See `.windsurf/workflows/mosaic-tag-reuse.md` for tag discovery and reuse before writing cells
+- **Read patterns:** See `.windsurf/rules/mosaic_intelligent_reads.md` for choosing the right search tool
+- **Write patterns:** See `.windsurf/rules/mosaic_intelligent_writes.md` for tag discovery before put_cell
+- **Tag conventions:** See `.windsurf/rules/mosaic_tag_conventions.md` for tagging best practices
+- **MCP workflow:** See `.windsurf/rules/mosaic_mcp.md` for tool chaining and retrieval workflow

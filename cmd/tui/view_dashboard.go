@@ -47,19 +47,23 @@ func (v *dashboardView) View() string {
 		tags, err = tx.TagCounts(ctx)
 		return err
 	})
-	w := max(40, v.width-6)
-	colW := max(20, (w-4)/2)
+	w := contentWidth(v.width - 6)
+	leftW, rightW := twoColumnWidths(w)
+
+	// Reserve space for title(2), status(1), help(1) = 4 lines
+	maxContentH := max(5, v.height-4)
 
 	// ── title ───────────────────────────────────────────────────────────────
 	title := viewTitle("◈ HexxlaDB Explorer", w)
-	subtitle := styleDim.Render("  Spatial LLM Memory Database")
+	subtitle := Subtle.Render("  Spatial LLM Memory Database")
 
 	// ── stat cards ──────────────────────────────────────────────────────────
 	mvccEnabled := stats.CommitSeq > 0
 
 	statCard := func(label, value string, clr lipgloss.Color) string {
-		return styleCard.BorderForeground(clr).Width(colW).Render(
-			styleCardDim.Render(label) + "\n" +
+		colW := max(20, (w-4)/4)
+		return Box.BorderForeground(clr).Width(colW).Render(
+			Dim.Render(label) + "\n" +
 				lipgloss.NewStyle().Foreground(clr).Background(colorBg2).Bold(true).Render(value),
 		)
 	}
@@ -114,17 +118,16 @@ func (v *dashboardView) View() string {
 			lipgloss.JoinHorizontal(lipgloss.Left,
 				lipgloss.NewStyle().Width(22).Foreground(colorYellow).Background(colorBg2).Render(truncStr(t.Tag, 20)),
 				bar,
-				styleCardDim.Render(fmt.Sprintf("  %d", t.Count)),
+				Dim.Render(fmt.Sprintf("  %d", t.Count)),
 			) + "\n",
 		)
 	}
 	if tagLines.Len() == 0 {
-		tagLines.WriteString(styleCardDim.Render("  no tags yet"))
+		tagLines.WriteString(Dim.Render("  no tags yet"))
 	}
 
-	halfw := (w - 1) / 2
-	tagsBox := styleCard.Width(halfw).Render(
-		styleCardHeader.Render("Top Tags") + "\n" + tagLines.String(),
+	tagsBox := Box.Width(leftW).Render(
+		Section.Render("Top Tags") + "\n" + tagLines.String(),
 	)
 
 	// ── keybindings card ────────────────────────────────────────────────────
@@ -142,18 +145,19 @@ func (v *dashboardView) View() string {
 	for _, b := range bindings {
 		kbLines.WriteString(
 			lipgloss.JoinHorizontal(lipgloss.Left,
-				styleCardKey.Width(18).Render(b.key),
-				styleCardDim.Render(b.desc),
+				MetricLabel.Width(18).Render(b.key),
+				Dim.Render(b.desc),
 			) + "\n",
 		)
 	}
-	kbBox := styleCard.BorderForeground(colorText2).Width(w - halfw - 1).Render(
-		styleCardHeader.Render("Keybindings") + "\n" + kbLines.String(),
+	kbBox := Box.BorderForeground(colorText2).Width(rightW).Render(
+		Section.Render("Keybindings") + "\n" + kbLines.String(),
 	)
 
 	infoRow := lipgloss.JoinHorizontal(lipgloss.Top, tagsBox, " ", kbBox)
 
-	return lipgloss.JoinVertical(lipgloss.Left,
+	// Build full content then clip to max height
+	fullContent := lipgloss.JoinVertical(lipgloss.Left,
 		title,
 		subtitle,
 		"",
@@ -163,4 +167,7 @@ func (v *dashboardView) View() string {
 		"",
 		infoRow,
 	)
+	clippedContent := lipgloss.NewStyle().MaxHeight(maxContentH).Render(fullContent)
+
+	return clippedContent
 }

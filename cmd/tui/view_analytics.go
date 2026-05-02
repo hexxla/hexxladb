@@ -87,22 +87,16 @@ func (v *analyticsView) View() string {
 		return styleLoading.Render("  ⟳  Loading analytics…")
 	}
 	d := v.data
-	w := max(40, v.width-6)
-	colW := max(20, (w-4)/2)
+	w := contentWidth(v.width - 6)
+	leftW, rightW := twoColumnWidths(w)
 
 	// ── MVCC stats card ───────────────────────────────────────────────────────
-	mvccCard := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorPurple).
-		Background(colorBg2).
-		Padding(0, 2).
-		Width(colW).
-		Render(
-			styleCardHeader.Render("MVCC") + "\n" +
-				kvLine("Commit Seq", fmt.Sprintf("%d", d.mvccStats.CommitSeq)) + "\n" +
-				kvLine("Cells", fmt.Sprintf("%d", d.cellCount)) + "\n" +
-				kvLine("Seams", fmt.Sprintf("%d", d.seamCount)),
-		)
+	mvccCard := Box.BorderForeground(colorPurple).Width(leftW).Render(
+		Section.Render("MVCC") + "\n" +
+			kvLine("Commit Seq", fmt.Sprintf("%d", d.mvccStats.CommitSeq)) + "\n" +
+			kvLine("Cells", fmt.Sprintf("%d", d.cellCount)) + "\n" +
+			kvLine("Seams", fmt.Sprintf("%d", d.seamCount)),
+	)
 
 	// ── ring density ──────────────────────────────────────────────────────────
 	var ringLines strings.Builder
@@ -114,20 +108,15 @@ func (v *analyticsView) View() string {
 		occupied := barGraphBg(rd.Occupied, rd.Total, 16, colorCyan, colorBg2)
 		ringLines.WriteString(
 			lipgloss.JoinHorizontal(lipgloss.Left,
-				styleCardDim.Render(fmt.Sprintf("  ring %d  ", rd.Ring)),
+				Dim.Render(fmt.Sprintf("  ring %d  ", rd.Ring)),
 				occupied,
 				barGraphBg(rd.Total-rd.Occupied, rd.Total, 16, colorBg3, colorBg2),
-				styleCardDim.Render(fmt.Sprintf("  %d/%d (%d%%)", rd.Occupied, rd.Total, pct)),
+				Dim.Render(fmt.Sprintf("  %d/%d (%d%%)", rd.Occupied, rd.Total, pct)),
 			) + "\n",
 		)
 	}
-	ringCard := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorCyan).
-		Background(colorBg2).
-		Padding(0, 1).
-		Width(colW).
-		Render(styleCardHeader.Render("Ring Density (origin r=5)") + "\n" + ringLines.String())
+	ringCard := Box.BorderForeground(colorCyan).Width(rightW).Render(
+		Section.Render("Ring Density (origin r=5)") + "\n" + ringLines.String())
 
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, mvccCard, "  ", ringCard)
 
@@ -151,17 +140,12 @@ func (v *analyticsView) View() string {
 			lipgloss.JoinHorizontal(lipgloss.Left,
 				lipgloss.NewStyle().Width(24).Foreground(colorYellow).Background(colorBg2).Render(truncStr(t.Tag, 22)),
 				bar,
-				styleCardDim.Render(fmt.Sprintf("  %d", t.Count)),
+				Dim.Render(fmt.Sprintf("  %d", t.Count)),
 			) + "\n",
 		)
 	}
-	tagCard := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorYellow).
-		Background(colorBg2).
-		Padding(0, 2).
-		Width(colW).
-		Render(styleCardHeader.Render("Tag Counts (top 15)") + "\n" + tagLines.String())
+	tagCard := Box.BorderForeground(colorYellow).Width(leftW).Render(
+		Section.Render("Tag Counts (top 15)") + "\n" + tagLines.String())
 
 	// ── co-occurrences ─────────────────────────────────────────────────────────
 	var pairLines strings.Builder
@@ -173,22 +157,17 @@ func (v *analyticsView) View() string {
 		pairLines.WriteString(
 			lipgloss.JoinHorizontal(lipgloss.Left,
 				styleTag.Render(truncStr(p.A, 12)),
-				styleCardDim.Render(" + "),
+				Dim.Render(" + "),
 				styleTag.Render(truncStr(p.B, 12)),
-				styleCardDim.Render(fmt.Sprintf("  %d", p.Count)),
+				Dim.Render(fmt.Sprintf("  %d", p.Count)),
 			) + "\n",
 		)
 	}
 	if pairLines.Len() == 0 {
-		pairLines.WriteString(styleCardDim.Render("  (need ≥2 co-occurrences)"))
+		pairLines.WriteString(Dim.Render("  (need ≥2 co-occurrences)"))
 	}
-	pairCard := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorOrange).
-		Background(colorBg2).
-		Padding(0, 2).
-		Width(colW).
-		Render(styleCardHeader.Render("Tag Co-occurrences (min 2)") + "\n" + pairLines.String())
+	pairCard := Box.BorderForeground(colorOrange).Width(rightW).Render(
+		Section.Render("Tag Co-occurrences (min 2)") + "\n" + pairLines.String())
 
 	midRow := lipgloss.JoinHorizontal(lipgloss.Top, tagCard, "  ", pairCard)
 
@@ -201,13 +180,13 @@ func (v *analyticsView) View() string {
 		"",
 		midRow,
 		"",
-		styleHelp.Render("  "+help),
+		Help.Render("  "+help),
 	)
 }
 
 func kvLine(label, value string) string {
 	return lipgloss.JoinHorizontal(lipgloss.Left,
-		styleCardKey.Width(14).Render(label+":"),
-		styleCardValue.Render(value),
+		MetricLabel.Width(14).Render(label+":"),
+		Dim.Render(value),
 	)
 }

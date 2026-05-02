@@ -96,8 +96,11 @@ func (v *embeddingsView) View() string {
 	}
 
 	d := v.data
-	w := max(40, v.width-6)
-	colW := max(20, (w-4)/2)
+	w := contentWidth(v.width - 6)
+	colW := max(20, (w-4)/4)
+
+	// Reserve space for title(1), help(1) = 2 lines
+	maxContentH := max(3, v.height-2)
 
 	// ── stat cards ──────────────────────────────────────────────────────────
 	statCard := func(label, value string, clr lipgloss.Color) string {
@@ -150,26 +153,25 @@ func (v *embeddingsView) View() string {
 	if !d.hnswEnabled {
 		infoText = "HNSW graph not yet built (requires ~50+ embeddings). Search uses flat scan."
 	}
-	infoPanel := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(infoClr).
-		Background(colorBg2).
-		Padding(0, 2).
-		Width(colW*2 + 2).
-		Render(styleCardHeader.Render("Index Status") + "\n" +
-			styleCardDim.Render(infoText))
+	infoPanel := Box.BorderForeground(infoClr).Width(w).Render(
+		Section.Render("Index Status") + "\n" +
+			Dim.Render(infoText))
 
 	help := helpItem("r", "refresh")
 
-	return lipgloss.JoinVertical(lipgloss.Left,
+	// Build full content then clip to max height
+	fullContent := lipgloss.JoinVertical(lipgloss.Left,
 		viewTitle("◈ Embeddings", v.width),
 		"",
 		row1,
 		"",
 		infoPanel,
 		"",
-		styleHelp.Render("  "+help),
+		Help.Render("  "+help),
 	)
+	clippedContent := lipgloss.NewStyle().MaxHeight(maxContentH).Render(fullContent)
+
+	return clippedContent
 }
 
 // txHNSWStorage is a minimal storage adapter for checking HNSW meta existence.
