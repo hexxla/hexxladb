@@ -57,49 +57,58 @@ func resolveSupersession(ctx context.Context, tx TxReader, coord lattice.Coord) 
 		if err != nil {
 			return coord, false, err
 		}
-		var next *lattice.Coord
-		for _, s := range seams {
-			if s.SeamType != SeamTypeSupersedes {
-				continue
-			}
-			cellA, errA := lattice.Unpack(s.CellA)
-			if errA != nil {
-				continue
-			}
-			if cellA != current {
-				continue
-			}
-			cellB, errB := lattice.Unpack(s.CellB)
-			if errB != nil {
-				continue
-			}
-			if _, seen := visited[cellB]; seen {
-				// Cycle: treat original as superseded with no live successor.
-				return lattice.Coord{}, true, nil
-			}
-			next = &cellB
-			superseded = true
-			break
+		next, cycle := findSupersessionTarget(seams, current, visited)
+		if cycle {
+			return lattice.Coord{}, true, nil
 		}
 		if next == nil {
-			if !superseded {
-				return coord, false, nil
-			}
-			// Chain terminus: check if current has a live cell.
-			pk, packErr := lattice.Pack(current)
-			if packErr != nil {
-				return lattice.Coord{}, true, nil
-			}
-			_, ok, getErr := tx.GetCell(pk)
-			if getErr != nil || !ok {
-				return lattice.Coord{}, true, nil
-			}
-			return current, true, nil
+			return resolveChainTerminus(tx, coord, current, superseded)
 		}
+		superseded = true
 		current = *next
 	}
 	// Depth exceeded: treat as superseded with no live successor.
 	return lattice.Coord{}, true, nil
+}
+
+// findSupersessionTarget scans seams for a SeamTypeSupersedes link from current.
+// Returns (target, false) on success, (nil, false) when no link exists, or (nil, true) on cycle.
+func findSupersessionTarget(seams []record.SeamRecord, current lattice.Coord, visited map[lattice.Coord]struct{}) (target *lattice.Coord, cycle bool) {
+	for _, s := range seams {
+		if s.SeamType != SeamTypeSupersedes {
+			continue
+		}
+		cellA, errA := lattice.Unpack(s.CellA)
+		if errA != nil || cellA != current {
+			continue
+		}
+		cellB, errB := lattice.Unpack(s.CellB)
+		if errB != nil {
+			continue
+		}
+		if _, seen := visited[cellB]; seen {
+			return nil, true
+		}
+		return &cellB, false
+	}
+	return nil, false
+}
+
+// resolveChainTerminus handles the end of a supersession chain: if never superseded
+// returns the original coord unchanged; otherwise checks if the terminal cell exists.
+func resolveChainTerminus(tx TxReader, orig, current lattice.Coord, superseded bool) (lattice.Coord, bool, error) {
+	if !superseded {
+		return orig, false, nil
+	}
+	pk, packErr := lattice.Pack(current)
+	if packErr != nil {
+		return lattice.Coord{}, true, nil
+	}
+	_, ok, getErr := tx.GetCell(pk)
+	if getErr != nil || !ok {
+		return lattice.Coord{}, true, nil
+	}
+	return current, true, nil
 }
 
 // collectCandidates scans rings outward from center, assembling up to capCells

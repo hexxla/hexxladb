@@ -198,35 +198,8 @@ func (tx *Tx) putSeamWithOp(ctx context.Context, rec record.SeamRecord, clogOp b
 	if err != nil {
 		return err
 	}
-	// MVCC does not remove seam-source/seam-time keys on overwrite: entries are versioned by
-	// commit_seq and must remain for [ViewAt] scans; pruning reclaims superseded versions.
-	if tx.db.useMVCC {
-		old, _, ok, err := tx.visibleSeamAndSeq(rec.ID)
-		if err != nil {
-			return err
-		}
-		if ok {
-			elo, ehi := record.CanonicalCellPair(old.CellA, old.CellB)
-			nlo, nhi := record.CanonicalCellPair(rec.CellA, rec.CellB)
-			if elo != nlo || ehi != nhi {
-				return ErrSeamEndpointMismatch
-			}
-		}
-	} else if raw, ok, err := tx.Get(pk); err != nil {
+	if err := tx.validateAndPrepareSeamOverwrite(pk, rec); err != nil {
 		return err
-	} else if ok {
-		old, err := record.DecodeSeam(raw)
-		if err != nil {
-			return err
-		}
-		elo, ehi := record.CanonicalCellPair(old.CellA, old.CellB)
-		nlo, nhi := record.CanonicalCellPair(rec.CellA, rec.CellB)
-		if elo != nlo || ehi != nhi {
-			return ErrSeamEndpointMismatch
-		}
-		if err := tx.removeSeamSecondaryIndex(old, 0); err != nil {
-			return err
-		}
 	}
 	data, err := record.EncodeSeam(rec)
 	if err != nil {
@@ -260,6 +233,48 @@ func (tx *Tx) putSeamWithOp(ctx context.Context, rec record.SeamRecord, clogOp b
 	tx.noteChangelog(clogOp, pk, data)
 	if h := tx.db.afterPutSeam; h != nil {
 		return h.AfterPutSeam(ctx, rec)
+	}
+	return nil
+}
+
+// validateAndPrepareSeamOverwrite checks endpoint consistency for an existing seam and
+// removes stale secondary indexes in non-MVCC mode.
+func (tx *Tx) validateAndPrepareSeamOverwrite(pk []byte, rec record.SeamRecord) error {
+	// MVCC does not remove seam-source/seam-time keys on overwrite: entries are versioned by
+	// commit_seq and must remain for [ViewAt] scans; pruning reclaims superseded versions.
+	if tx.db.useMVCC {
+		old, _, ok, err := tx.visibleSeamAndSeq(rec.ID)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return checkSeamEndpoints(old, rec)
+		}
+		return nil
+	}
+	raw, ok, err := tx.Get(pk)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	old, err := record.DecodeSeam(raw)
+	if err != nil {
+		return err
+	}
+	if err := checkSeamEndpoints(old, rec); err != nil {
+		return err
+	}
+	return tx.removeSeamSecondaryIndex(old, 0)
+}
+
+// checkSeamEndpoints returns ErrSeamEndpointMismatch if old and updated records disagree on endpoints.
+func checkSeamEndpoints(old, updated record.SeamRecord) error {
+	elo, ehi := record.CanonicalCellPair(old.CellA, old.CellB)
+	nlo, nhi := record.CanonicalCellPair(updated.CellA, updated.CellB)
+	if elo != nlo || ehi != nhi {
+		return ErrSeamEndpointMismatch
 	}
 	return nil
 }
@@ -624,24 +639,33 @@ func (tx *Tx) WalkRingFacets(ctx context.Context, center lattice.Coord, ring int
 		if asOf != nil && !record.ValidAt(rec.Validity, asOf.UTC().UnixNano()) {
 			continue
 		}
-		var facets []record.FacetRecord
-		for id := byte(0); id <= index.MaxFacetID; id++ {
-			if mask&(1<<id) == 0 {
-				continue
-			}
-			fr, have, err := tx.GetFacet(p, id)
-			if err != nil {
-				return err
-			}
-			if have {
-				facets = append(facets, fr)
-			}
+		facets, err := tx.collectFacetsForMask(p, mask)
+		if err != nil {
+			return err
 		}
 		if !fn(c, rec, facets) {
 			break
 		}
 	}
 	return nil
+}
+
+// collectFacetsForMask collects facet records for all bits set in mask.
+func (tx *Tx) collectFacetsForMask(p lattice.PackedCoord, mask uint8) ([]record.FacetRecord, error) {
+	var facets []record.FacetRecord
+	for id := byte(0); id <= index.MaxFacetID; id++ {
+		if mask&(1<<id) == 0 {
+			continue
+		}
+		fr, have, err := tx.GetFacet(p, id)
+		if err != nil {
+			return nil, err
+		}
+		if have {
+			facets = append(facets, fr)
+		}
+	}
+	return facets, nil
 }
 
 // ResolveSeam updates resolution fields on the visible seam for id.
