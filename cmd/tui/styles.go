@@ -90,12 +90,6 @@ var (
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(colorText2)
 
-	styleCard = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorText2).
-			Background(colorBg2).
-			Padding(0, 2)
-
 	// Status bar segments
 	styleStatusLeft = lipgloss.NewStyle().
 			Background(colorPurple).
@@ -132,14 +126,6 @@ var (
 			Foreground(colorYellow).
 			Background(lipgloss.Color("#2A2600")).
 			Padding(0, 1)
-
-	styleGood = lipgloss.NewStyle().
-			Foreground(colorGreen).
-			Background(colorBg1)
-
-	styleWarn = lipgloss.NewStyle().
-			Foreground(colorOrange).
-			Background(colorBg1)
 
 	styleBad = lipgloss.NewStyle().
 			Foreground(colorRed).
@@ -253,36 +239,4 @@ func twoColumnWidths(total int) (left, right int) {
 	left = total/2 - 1
 	right = total - left
 	return left, right
-}
-
-// colorizePercent applies semantic coloring based on value thresholds:
-// ≥ 85%: Err style (red) - critical state
-// ≥ 70%: Warn style (orange) - warning state
-// < 70%: OK style (green) - healthy state
-func colorizePercent(percent int, s string) string {
-	if percent >= 85 {
-		return Err.Render(s)
-	}
-	if percent >= 70 {
-		return Warn.Render(s)
-	}
-	return OK.Render(s)
-}
-
-// percentBar renders a percentage as a filled/empty character bar.
-// Uses colorizePercent for semantic coloring.
-func percentBar(percent int, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	fill := percent * width / 100
-	if fill < 1 && percent > 0 {
-		fill = 1
-	}
-	if fill > width {
-		fill = width
-	}
-	filled := repeatStr("█", fill)
-	empty := repeatStr("░", width-fill)
-	return colorizePercent(percent, filled) + Dim.Render(empty)
 }
