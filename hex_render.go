@@ -28,79 +28,82 @@ func RenderHexGrid(ctx context.Context, center Coord, maxR int, labelFn func(Coo
 	if maxR > MaxRenderRadius {
 		maxR = MaxRenderRadius
 	}
-	const cellW = 7 // width per cell including spacing
 
-	// Collect all coords with their offset positions.
-	// Offset layout: even-r with center at (0,0).
-	type pos struct {
-		col, row int
-		label    string
+	cells, bounds, cancelled := collectHexPositions(ctx, center, maxR, labelFn)
+	if cancelled {
+		return ""
 	}
-	var cells []pos
-	minCol, maxCol := 0, 0
-	minRow, maxRow := 0, 0
+	return renderGridLines(cells, bounds)
+}
 
+// hexPos is a labelled cell with its offset-grid position.
+type hexPos struct {
+	col, row int
+	label    string
+}
+
+// hexBounds tracks the min/max column and row extents.
+type hexBounds struct {
+	minCol, maxCol, minRow, maxRow int
+}
+
+// collectHexPositions gathers labelled positions and their bounding box.
+func collectHexPositions(ctx context.Context, center Coord, maxR int, labelFn func(Coord) string) ([]hexPos, hexBounds, bool) {
 	coords := WalkRings(nil, center, maxR)
+	cells := make([]hexPos, 0, len(coords))
+	var b hexBounds
 	for _, c := range coords {
 		if ctx != nil {
 			if err := ctx.Err(); err != nil {
-				return ""
+				return nil, b, true
 			}
 		}
-		// Relative axial coords from center.
 		dq := c.Q - center.Q
 		dr := c.R - center.R
-		// Convert axial to offset grid position for ASCII rendering.
-		// col = dq + dr/2 (shifted), row = dr.
 		col := dq + dr/2
 		row := dr
 
-		label := ""
+		label := "."
 		if labelFn != nil {
 			label = labelFn(c)
-		} else {
-			label = "."
 		}
 		if len(label) > 5 {
 			label = label[:5]
 		}
-		cells = append(cells, pos{col: col, row: row, label: label})
-		if col < minCol {
-			minCol = col
+		cells = append(cells, hexPos{col: col, row: row, label: label})
+		if col < b.minCol {
+			b.minCol = col
 		}
-		if col > maxCol {
-			maxCol = col
+		if col > b.maxCol {
+			b.maxCol = col
 		}
-		if row < minRow {
-			minRow = row
+		if row < b.minRow {
+			b.minRow = row
 		}
-		if row > maxRow {
-			maxRow = row
+		if row > b.maxRow {
+			b.maxRow = row
 		}
 	}
+	return cells, b, false
+}
 
-	// Build grid lines.
-	gridW := (maxCol - minCol + 1)
-	gridH := (maxRow - minRow + 1)
-	// Each row: indent (for hex stagger) + cells.
-	lines := make([]string, gridH)
+// renderGridLines converts hex positions into an ASCII grid string.
+func renderGridLines(cells []hexPos, b hexBounds) string {
+	const cellW = 7
+
+	gridW := b.maxCol - b.minCol + 1
+	gridH := b.maxRow - b.minRow + 1
 	grid := make([][]string, gridH)
 	for i := range grid {
 		grid[i] = make([]string, gridW)
-		for j := range grid[i] {
-			grid[i][j] = ""
-		}
 	}
-
 	for _, c := range cells {
-		gi := c.row - minRow
-		gj := c.col - minCol
-		grid[gi][gj] = c.label
+		grid[c.row-b.minRow][c.col-b.minCol] = c.label
 	}
 
+	lines := make([]string, gridH)
 	for i := range grid {
-		actualRow := i + minRow
-		// Hex stagger: odd rows get half-cell indent.
+		actualRow := i + b.minRow
 		indent := ""
 		if actualRow%2 != 0 {
 			indent = strings.Repeat(" ", cellW/2)
@@ -117,7 +120,6 @@ func RenderHexGrid(ctx context.Context, center Coord, maxR int, labelFn func(Coo
 		}
 		lines[i] = indent + strings.Join(parts, "")
 	}
-
 	return strings.Join(lines, "\n")
 }
 

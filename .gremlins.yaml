@@ -1,0 +1,52 @@
+# Gremlins mutation testing configuration for HexxlaDB.
+# https://github.com/go-gremlins/gremlins
+#
+# Run: make mutation-test (full) or make mutation-test-dry (analysis only)
+# Override target: make mutation-test TARGET=./internal/lattice
+
+silent: false
+unleash:
+  integration: false
+  dry-run: false
+  tags: ""
+  output: ""
+  diff: ""
+  output-statuses: ""
+  workers: 0
+  test-cpu: 0
+  # The default coefficient (5) is far too low for packages whose tests take >10ms.
+  # 100 gives reliable results: a 50ms baseline becomes 5s timeout per mutant.
+  timeout-coefficient: 100
+  threshold:
+    # Enforce minimum quality gates; fail CI if below these.
+    # Start conservative — raise as test suites improve.
+    efficacy: 0
+    mutant-coverage: 0
+  exclude-files:
+    - ".*_test\\.go"
+    - "doc\\.go"
+    - ".*_example_test\\.go"
+
+mutants:
+  arithmetic-base:
+    enabled: true
+  conditionals-boundary:
+    enabled: true
+  conditionals-negation:
+    enabled: true
+  increment-decrement:
+    enabled: true
+  invert-assignments:
+    enabled: false
+  invert-bitwise:
+    enabled: false
+  invert-bwassign:
+    enabled: false
+  invert-negatives:
+    enabled: true
+  invert-logical:
+    enabled: false
+  invert-loopctrl:
+    enabled: false
+  remove-self-assignments:
+    enabled: false

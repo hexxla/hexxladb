@@ -57,12 +57,33 @@ func (tx *Tx) SearchByEmbedding(vec []float32, cfg EmbeddingSearchConfig) ([]Emb
 		return results, nil
 	}
 
-	// Flat-scan fallback: collect all embeddings from the embed/ keyspace.
-	type candidate struct {
-		coord lattice.PackedCoord
-		vec   []float32
+	// Flat-scan fallback.
+	return tx.flatScanEmbeddings(vec, maxResults, cfg.MinScore, metric)
+}
+
+// flatScanCandidate pairs a coordinate with its embedding vector.
+type flatScanCandidate struct {
+	coord lattice.PackedCoord
+	vec   []float32
+}
+
+// flatScanEmbeddings collects all embeddings and scores them in parallel.
+func (tx *Tx) flatScanEmbeddings(vec []float32, maxResults int, minScore float64, metric engine.DistanceMetric) ([]EmbeddingSearchResult, error) {
+	candidates, err := tx.collectEmbeddingCandidates()
+	if err != nil {
+		return nil, err
 	}
-	var candidates []candidate
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+
+	hits := flatScanParallelScore(candidates, vec, maxResults, minScore, metric)
+	return heapToResults(hits, maxResults), nil
+}
+
+// collectEmbeddingCandidates scans the embed/ keyspace and returns all stored vectors.
+func (tx *Tx) collectEmbeddingCandidates() ([]flatScanCandidate, error) {
+	var candidates []flatScanCandidate
 	from := []byte(index.EmbedPrefix)
 	to := index.EmbedKeyEnd()
 	err := tx.db.btree.AscendRange(from, to, func(k, v []byte) bool {
@@ -73,7 +94,7 @@ func (tx *Tx) SearchByEmbedding(vec []float32, cfg EmbeddingSearchConfig) ([]Emb
 		if parseErr != nil {
 			return true // skip malformed
 		}
-		candidates = append(candidates, candidate{
+		candidates = append(candidates, flatScanCandidate{
 			coord: coord,
 			vec:   decodeFloat32s(v),
 		})
@@ -82,17 +103,15 @@ func (tx *Tx) SearchByEmbedding(vec []float32, cfg EmbeddingSearchConfig) ([]Emb
 	if err != nil {
 		return nil, err
 	}
+	return candidates, nil
+}
 
-	if len(candidates) == 0 {
-		return nil, nil
-	}
-
-	// Phase 2: compute distances in parallel using goroutines.
+// flatScanParallelScore computes similarity in parallel using worker goroutines,
+// each maintaining a local top-K min-heap, then merges results.
+func flatScanParallelScore(candidates []flatScanCandidate, vec []float32, maxResults int, minScore float64, metric engine.DistanceMetric) searchMinHeap {
 	numWorkers := max(min(runtime.NumCPU(), len(candidates)), 1)
-
-	// Each worker produces its own local top-K, then we merge.
 	chunkSize := (len(candidates) + numWorkers - 1) / numWorkers
-	results := make([][]searchHit, numWorkers)
+	workerResults := make([][]searchHit, numWorkers)
 
 	var wg sync.WaitGroup
 	for w := range numWorkers {
@@ -102,47 +121,54 @@ func (tx *Tx) SearchByEmbedding(vec []float32, cfg EmbeddingSearchConfig) ([]Emb
 			continue
 		}
 		wg.Add(1)
-		go func(workerIdx int, chunk []candidate) {
+		go func(workerIdx int, chunk []flatScanCandidate) {
 			defer wg.Done()
 			var localHeap searchMinHeap
 			for _, c := range chunk {
 				s := engine.Similarity(vec, c.vec, metric)
-				if cfg.MinScore != 0 && s < cfg.MinScore {
+				if minScore != 0 && s < minScore {
 					continue
 				}
-				hit := searchHit{coord: c.coord, score: s}
-				if localHeap.Len() < maxResults {
-					heap.Push(&localHeap, hit)
-				} else if s > localHeap[0].score {
-					localHeap[0] = hit
-					heap.Fix(&localHeap, 0)
-				}
+				pushOrReplace(&localHeap, searchHit{coord: c.coord, score: s}, maxResults)
 			}
-			results[workerIdx] = []searchHit(localHeap)
+			workerResults[workerIdx] = []searchHit(localHeap)
 		}(w, candidates[start:end])
 	}
 	wg.Wait()
 
-	// Merge worker results into a final top-K.
+	return mergeSearchHits(workerResults, maxResults)
+}
+
+// mergeSearchHits merges per-worker hit slices into a single top-K min-heap.
+func mergeSearchHits(workerResults [][]searchHit, maxResults int) searchMinHeap {
 	var finalHeap searchMinHeap
-	for _, wr := range results {
+	for _, wr := range workerResults {
 		for _, item := range wr {
-			if finalHeap.Len() < maxResults {
-				heap.Push(&finalHeap, item)
-			} else if item.score > finalHeap[0].score {
-				finalHeap[0] = item
-				heap.Fix(&finalHeap, 0)
-			}
+			pushOrReplace(&finalHeap, item, maxResults)
 		}
 	}
+	return finalHeap
+}
 
-	// Extract results in descending score order.
-	out := make([]EmbeddingSearchResult, finalHeap.Len())
+// pushOrReplace pushes hit onto the heap if under capacity, or replaces the
+// minimum if hit.score is better.
+func pushOrReplace(h *searchMinHeap, hit searchHit, maxSize int) {
+	if h.Len() < maxSize {
+		heap.Push(h, hit)
+	} else if hit.score > (*h)[0].score {
+		(*h)[0] = hit
+		heap.Fix(h, 0)
+	}
+}
+
+// heapToResults extracts results from a min-heap in descending score order.
+func heapToResults(h searchMinHeap, _ int) []EmbeddingSearchResult {
+	out := make([]EmbeddingSearchResult, h.Len())
 	for i := len(out) - 1; i >= 0; i-- {
-		item := heap.Pop(&finalHeap).(searchHit) //nolint:forcetypeassert // heap invariant guarantees searchHit
+		item := heap.Pop(&h).(searchHit) //nolint:forcetypeassert // heap invariant guarantees searchHit
 		out[i] = EmbeddingSearchResult{Coord: item.coord, Score: item.score}
 	}
-	return out, nil
+	return out
 }
 
 // searchHNSW attempts HNSW search. Returns (results, true, nil) if graph exists,

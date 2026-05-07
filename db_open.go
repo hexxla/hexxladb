@@ -54,63 +54,24 @@ func buildEngineOptions(path string, opts *Options) (*engine.Options, error) {
 		if err != nil {
 			return nil, err
 		}
-		hooks, err := buildEncryptionHooks(xtsKey)
-		if err != nil {
-			return nil, err
-		}
-		_, statErr := os.Stat(path)
-		isNew := statErr != nil && os.IsNotExist(statErr)
-		if statErr != nil && !os.IsNotExist(statErr) {
-			return nil, statErr
-		}
-		if isNew {
-			var salt [16]byte
-			if _, err := rand.Read(salt[:]); err != nil {
-				return nil, err
-			}
-			check := deriveEncryptionKeyCheck(xtsKey, salt)
-			return engineOptsWithMVCC(&engine.Options{
-				Hooks:                    hooks,
-				NewEncryptedDB:           true,
-				EncryptionSalt:           salt,
-				EncryptionKeyCheck:       check,
-				ExpectEncryptionKeyCheck: true,
-				WALMACKey:                deriveWALMACKey(xtsKey),
-				EnableWALMAC:             true,
-			}, opts), nil
-		}
-		hdr, err := engine.ReadHeaderFile(path)
-		if err != nil {
-			return nil, err
-		}
-		if hdr.Features&engine.FeatureEncryptedDataPages == 0 {
-			return nil, ErrDatabaseNotEncrypted
-		}
-		return engineOptsWithMVCC(&engine.Options{
-			Hooks:                    hooks,
-			EncryptionKeyCheck:       deriveEncryptionKeyCheck(xtsKey, hdr.EncryptionSalt),
-			ExpectEncryptionKeyCheck: true,
-			WALMACKey:                deriveWALMACKey(xtsKey),
-			EnableWALMAC:             true,
-		}, opts), nil
+		return buildEncryptedEngineOpts(path, opts, xtsKey)
 	}
+	return buildPassphraseEngineOpts(path, opts)
+}
 
-	// Passphrase
-	_, statErr := os.Stat(path)
-	isNew := statErr != nil && os.IsNotExist(statErr)
-	if statErr != nil && !os.IsNotExist(statErr) {
-		return nil, statErr
+// buildPassphraseEngineOpts handles the passphrase-based encryption path.
+// For new databases, it generates a salt; for existing ones, it reads the salt from the header.
+func buildPassphraseEngineOpts(path string, opts *Options) (*engine.Options, error) {
+	isNew, err := isDatabaseNew(path)
+	if err != nil {
+		return nil, err
 	}
 	if isNew {
 		var salt [16]byte
 		if _, err := rand.Read(salt[:]); err != nil {
 			return nil, err
 		}
-		raw, err := DeriveKeyFromPassphrase(opts.Passphrase, salt[:])
-		if err != nil {
-			return nil, err
-		}
-		xtsKey, err := deriveXTSKeyMaterial(raw, nil, []byte(hkdfInfoXTS))
+		xtsKey, err := derivePassphraseXTSKey(opts.Passphrase, salt[:])
 		if err != nil {
 			return nil, err
 		}
@@ -118,18 +79,16 @@ func buildEngineOptions(path string, opts *Options) (*engine.Options, error) {
 		if err != nil {
 			return nil, err
 		}
-		check := deriveEncryptionKeyCheck(xtsKey, salt)
 		return engineOptsWithMVCC(&engine.Options{
 			Hooks:                    hooks,
 			NewEncryptedDB:           true,
 			EncryptionSalt:           salt,
-			EncryptionKeyCheck:       check,
+			EncryptionKeyCheck:       deriveEncryptionKeyCheck(xtsKey, salt),
 			ExpectEncryptionKeyCheck: true,
 			WALMACKey:                deriveWALMACKey(xtsKey),
 			EnableWALMAC:             true,
 		}, opts), nil
 	}
-
 	hdr, err := engine.ReadHeaderFile(path)
 	if err != nil {
 		return nil, err
@@ -137,17 +96,87 @@ func buildEngineOptions(path string, opts *Options) (*engine.Options, error) {
 	if hdr.Features&engine.FeatureEncryptedDataPages == 0 {
 		return nil, ErrDatabaseNotEncrypted
 	}
-	raw, err := DeriveKeyFromPassphrase(opts.Passphrase, hdr.EncryptionSalt[:])
-	if err != nil {
-		return nil, err
-	}
-	xtsKey, err := deriveXTSKeyMaterial(raw, nil, []byte(hkdfInfoXTS))
+	xtsKey, err := derivePassphraseXTSKey(opts.Passphrase, hdr.EncryptionSalt[:])
 	if err != nil {
 		return nil, err
 	}
 	hooks, err := buildEncryptionHooks(xtsKey)
 	if err != nil {
 		return nil, err
+	}
+	return engineOptsWithMVCC(&engine.Options{
+		Hooks:                    hooks,
+		EncryptionKeyCheck:       deriveEncryptionKeyCheck(xtsKey, hdr.EncryptionSalt),
+		ExpectEncryptionKeyCheck: true,
+		WALMACKey:                deriveWALMACKey(xtsKey),
+		EnableWALMAC:             true,
+	}, opts), nil
+}
+
+// derivePassphraseXTSKey derives XTS key material from a passphrase and salt.
+func derivePassphraseXTSKey(passphrase string, salt []byte) ([]byte, error) {
+	raw, err := DeriveKeyFromPassphrase(passphrase, salt)
+	if err != nil {
+		return nil, err
+	}
+	return deriveXTSKeyMaterial(raw, nil, []byte(hkdfInfoXTS))
+}
+
+// isDatabaseNew checks whether the database file at path exists.
+// Returns true if the file does not exist, false if it does, or an error for other stat failures.
+func isDatabaseNew(path string) (bool, error) {
+	_, statErr := os.Stat(path)
+	if statErr == nil {
+		return false, nil
+	}
+	if os.IsNotExist(statErr) {
+		return true, nil
+	}
+	return false, statErr
+}
+
+// buildEncryptedEngineOpts constructs engine.Options for an encrypted database
+// using the derived XTS key material.
+func buildEncryptedEngineOpts(path string, opts *Options, xtsKey []byte) (*engine.Options, error) {
+	hooks, err := buildEncryptionHooks(xtsKey)
+	if err != nil {
+		return nil, err
+	}
+	isNew, err := isDatabaseNew(path)
+	if err != nil {
+		return nil, err
+	}
+	if isNew {
+		return buildNewEncryptedDB(opts, xtsKey, hooks)
+	}
+	return buildExistingEncryptedDB(path, opts, xtsKey, hooks)
+}
+
+// buildNewEncryptedDB creates engine.Options for a brand-new encrypted database.
+func buildNewEncryptedDB(opts *Options, xtsKey []byte, hooks *engine.PageHooks) (*engine.Options, error) {
+	var salt [16]byte
+	if _, err := rand.Read(salt[:]); err != nil {
+		return nil, err
+	}
+	return engineOptsWithMVCC(&engine.Options{
+		Hooks:                    hooks,
+		NewEncryptedDB:           true,
+		EncryptionSalt:           salt,
+		EncryptionKeyCheck:       deriveEncryptionKeyCheck(xtsKey, salt),
+		ExpectEncryptionKeyCheck: true,
+		WALMACKey:                deriveWALMACKey(xtsKey),
+		EnableWALMAC:             true,
+	}, opts), nil
+}
+
+// buildExistingEncryptedDB creates engine.Options for reopening an existing encrypted database.
+func buildExistingEncryptedDB(path string, opts *Options, xtsKey []byte, hooks *engine.PageHooks) (*engine.Options, error) {
+	hdr, err := engine.ReadHeaderFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if hdr.Features&engine.FeatureEncryptedDataPages == 0 {
+		return nil, ErrDatabaseNotEncrypted
 	}
 	return engineOptsWithMVCC(&engine.Options{
 		Hooks:                    hooks,

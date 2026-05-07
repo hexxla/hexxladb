@@ -52,17 +52,36 @@ func RotateEncryptionWithOptions(path string, currentOpts, newOpts *Options, rop
 		}
 		onProgress = ropts.OnProgress
 	}
-	type row struct{ k, v []byte }
+	if err := rotateCopyData(src, dst, batchSize, onProgress); err != nil {
+		return err
+	}
+	if err := dst.Close(); err != nil {
+		return err
+	}
+	dst = nil
+	if err := src.Close(); err != nil {
+		return err
+	}
+	src = nil
+
+	return rotateSwapFiles(path, tmpPath)
+}
+
+// rotateRow is a key/value pair captured during rotation.
+type rotateRow struct{ k, v []byte }
+
+// rotateCopyData performs the batched logical copy from src to dst.
+func rotateCopyData(src, dst *DB, batchSize int, onProgress func(int64)) error {
 	var from []byte
 	var copied int64
 	for {
-		batch := make([]row, 0, batchSize)
+		batch := make([]rotateRow, 0, batchSize)
 		if err := src.View(func(tx *Tx) error {
 			return tx.AscendRange(from, nil, func(k, v []byte) bool {
 				if from != nil && bytes.Equal(k, from) {
 					return true
 				}
-				batch = append(batch, row{
+				batch = append(batch, rotateRow{
 					k: append([]byte(nil), k...),
 					v: append([]byte(nil), v...),
 				})
@@ -72,7 +91,7 @@ func RotateEncryptionWithOptions(path string, currentOpts, newOpts *Options, rop
 			return err
 		}
 		if len(batch) == 0 {
-			break
+			return nil
 		}
 		if err := dst.Update(func(tx *Tx) error {
 			for i := range batch {
@@ -90,15 +109,10 @@ func RotateEncryptionWithOptions(path string, currentOpts, newOpts *Options, rop
 		}
 		from = batch[len(batch)-1].k
 	}
-	if err := dst.Close(); err != nil {
-		return err
-	}
-	dst = nil
-	if err := src.Close(); err != nil {
-		return err
-	}
-	src = nil
+}
 
+// rotateSwapFiles atomically replaces the original DB file with the rotated tmp file.
+func rotateSwapFiles(path, tmpPath string) error {
 	backupPath := path + ".rotate.bak"
 	_ = os.Remove(backupPath)
 	if err := os.Rename(path, backupPath); err != nil {

@@ -139,58 +139,85 @@ func (e *Engine) applyGroupBatch(jobs []*groupJob) {
 	if len(jobs) >= 2 {
 		e.groupWALStatsBatchesWith2OrMoreJobs.Add(1)
 	}
-	var firstErr error
-	fail := func(err error) {
-		if firstErr == nil {
-			firstErr = err
-		}
+
+	if err := e.applyGroupBatchPipeline(jobs); err != nil {
+		// Broadcast error to all waiters and revert overlay state.
 		for _, j := range jobs {
 			j.done <- err
 		}
-		// Revert in-memory state for any pages not yet on primary.
 		for _, j := range jobs {
 			for i := range j.pending {
 				e.removeGroupOverlay(j.pending[i].pageID)
 			}
 		}
 		e.clearGroupUnflushed()
+		return
 	}
 
+	for _, j := range jobs {
+		j.done <- nil
+	}
+}
+
+// applyGroupBatchPipeline executes the WAL-write → primary-write → header-update → truncate
+// sequence. Returns nil on success or the first error encountered.
+func (e *Engine) applyGroupBatchPipeline(jobs []*groupJob) error {
+	if err := e.groupWriteWAL(jobs); err != nil {
+		return err
+	}
+	crashtest.At("group_wal_appended")
+	if err := e.wal.Sync(); err != nil {
+		return err
+	}
+	e.groupWALStatsWalSynces.Add(1)
+	crashtest.At("group_wal_synced")
+
+	if err := e.groupWritePrimary(jobs); err != nil {
+		return err
+	}
+	crashtest.At("group_primary_written")
+	if err := e.syncPrimary(); err != nil {
+		return err
+	}
+	crashtest.At("group_primary_synced")
+
+	if err := e.groupFinalizeHeader(jobs); err != nil {
+		return err
+	}
+
+	return e.groupTruncateWAL()
+}
+
+// groupWriteWAL appends WAL records for all jobs.
+func (e *Engine) groupWriteWAL(jobs []*groupJob) error {
 	for _, job := range jobs {
 		for i := range job.pending {
 			p := &job.pending[i]
 			rec := encodeWALRecordWithMAC(p.seq, p.pageID, p.plain, e.walMACKey, e.walMACEnabled, e.pageSize)
 			if _, err := e.wal.Write(rec); err != nil {
-				fail(err)
-				return
+				return err
 			}
 		}
 	}
-	crashtest.At("group_wal_appended")
-	if err := e.wal.Sync(); err != nil {
-		fail(err)
-		return
-	}
-	e.groupWALStatsWalSynces.Add(1)
-	crashtest.At("group_wal_synced")
+	return nil
+}
 
+// groupWritePrimary applies pending pages to the primary file and removes overlay entries.
+func (e *Engine) groupWritePrimary(jobs []*groupJob) error {
 	for _, job := range jobs {
 		for i := range job.pending {
 			p := &job.pending[i]
 			if err := e.writePrimaryData(p.pageID, p.plain); err != nil {
-				fail(err)
-				return
+				return err
 			}
 			e.removeGroupOverlay(p.pageID)
 		}
 	}
-	crashtest.At("group_primary_written")
-	if err := e.syncPrimary(); err != nil {
-		fail(err)
-		return
-	}
-	crashtest.At("group_primary_synced")
+	return nil
+}
 
+// groupFinalizeHeader writes the final header with updated LastWALSeq, syncs, and clears staging.
+func (e *Engine) groupFinalizeHeader(jobs []*groupJob) error {
 	var lastRedoSeq uint64
 	for _, job := range jobs {
 		for i := range job.pending {
@@ -202,34 +229,26 @@ func (e *Engine) applyGroupBatch(jobs []*groupJob) {
 	final := jobs[len(jobs)-1].hdr
 	final.LastWALSeq = lastRedoSeq
 	if err := writeHeaderAt(e.db, final); err != nil {
-		fail(err)
-		return
+		return err
 	}
 	crashtest.At("group_header_written")
 	if err := e.syncPrimary(); err != nil {
-		fail(err)
-		return
+		return err
 	}
 	e.lastSeq = lastRedoSeq
 	e.clearGroupUnflushed()
+	return nil
+}
 
-	// Truncate WAL: primary is durable, redo records no longer needed.
+// groupTruncateWAL truncates and syncs the WAL after primary is durable.
+func (e *Engine) groupTruncateWAL() error {
 	if err := e.wal.Truncate(0); err != nil {
-		fail(err)
-		return
+		return err
 	}
 	if _, err := e.wal.Seek(0, io.SeekStart); err != nil {
-		fail(err)
-		return
+		return err
 	}
-	if err := e.wal.Sync(); err != nil {
-		fail(err)
-		return
-	}
-
-	for _, j := range jobs {
-		j.done <- nil
-	}
+	return e.wal.Sync()
 }
 
 // commitWriteTxnGrouped finishes a write transaction via the group-WAL pipeline. [Engine.wtxn] is

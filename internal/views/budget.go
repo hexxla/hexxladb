@@ -57,49 +57,58 @@ func resolveSupersession(ctx context.Context, tx TxReader, coord lattice.Coord) 
 		if err != nil {
 			return coord, false, err
 		}
-		var next *lattice.Coord
-		for _, s := range seams {
-			if s.SeamType != SeamTypeSupersedes {
-				continue
-			}
-			cellA, errA := lattice.Unpack(s.CellA)
-			if errA != nil {
-				continue
-			}
-			if cellA != current {
-				continue
-			}
-			cellB, errB := lattice.Unpack(s.CellB)
-			if errB != nil {
-				continue
-			}
-			if _, seen := visited[cellB]; seen {
-				// Cycle: treat original as superseded with no live successor.
-				return lattice.Coord{}, true, nil
-			}
-			next = &cellB
-			superseded = true
-			break
+		next, cycle := findSupersessionTarget(seams, current, visited)
+		if cycle {
+			return lattice.Coord{}, true, nil
 		}
 		if next == nil {
-			if !superseded {
-				return coord, false, nil
-			}
-			// Chain terminus: check if current has a live cell.
-			pk, packErr := lattice.Pack(current)
-			if packErr != nil {
-				return lattice.Coord{}, true, nil
-			}
-			_, ok, getErr := tx.GetCell(pk)
-			if getErr != nil || !ok {
-				return lattice.Coord{}, true, nil
-			}
-			return current, true, nil
+			return resolveChainTerminus(tx, coord, current, superseded)
 		}
+		superseded = true
 		current = *next
 	}
 	// Depth exceeded: treat as superseded with no live successor.
 	return lattice.Coord{}, true, nil
+}
+
+// findSupersessionTarget scans seams for a SeamTypeSupersedes link from current.
+// Returns (target, false) on success, (nil, false) when no link exists, or (nil, true) on cycle.
+func findSupersessionTarget(seams []record.SeamRecord, current lattice.Coord, visited map[lattice.Coord]struct{}) (target *lattice.Coord, cycle bool) {
+	for _, s := range seams {
+		if s.SeamType != SeamTypeSupersedes {
+			continue
+		}
+		cellA, errA := lattice.Unpack(s.CellA)
+		if errA != nil || cellA != current {
+			continue
+		}
+		cellB, errB := lattice.Unpack(s.CellB)
+		if errB != nil {
+			continue
+		}
+		if _, seen := visited[cellB]; seen {
+			return nil, true
+		}
+		return &cellB, false
+	}
+	return nil, false
+}
+
+// resolveChainTerminus handles the end of a supersession chain: if never superseded
+// returns the original coord unchanged; otherwise checks if the terminal cell exists.
+func resolveChainTerminus(tx TxReader, orig, current lattice.Coord, superseded bool) (lattice.Coord, bool, error) {
+	if !superseded {
+		return orig, false, nil
+	}
+	pk, packErr := lattice.Pack(current)
+	if packErr != nil {
+		return lattice.Coord{}, true, nil
+	}
+	_, ok, getErr := tx.GetCell(pk)
+	if getErr != nil || !ok {
+		return lattice.Coord{}, true, nil
+	}
+	return current, true, nil
 }
 
 // collectCandidates scans rings outward from center, assembling up to capCells
@@ -109,65 +118,99 @@ func collectCandidates(ctx context.Context, tx TxReader, center lattice.Coord, m
 	// Ring area = 3r²+3r+1 (exact cell count for radius r). Pre-size items, seen,
 	// and the per-ring coordinate buffer to avoid repeated heap allocations.
 	ringArea := min(3*maxR*maxR+3*maxR+1, capCells)
-	items := make([]scoredCandidate, 0, ringArea)
-	var explanations []CellExplanation
-	seen := make(map[lattice.Coord]struct{}, ringArea)
+	coll := candidateCollector{
+		items: make([]scoredCandidate, 0, ringArea),
+		seen:  make(map[lattice.Coord]struct{}, ringArea),
+		cfg:   cfg,
+		opts:  opts,
+		cap:   capCells,
+	}
 	ringBuf := make([]lattice.Coord, 0, 6*maxR+1) // max ring perimeter
 	for ring := range maxR + 1 {
 		ringBuf = lattice.RingInto(ringBuf[:0], center, ring)
 		for _, c := range ringBuf {
-			if len(items) >= capCells {
-				return items, explanations, nil
+			if len(coll.items) >= capCells {
+				return coll.items, coll.explanations, nil
 			}
-			target := c
-			var originalCoord *lattice.Coord
-			if cfg.FilterSuperseded {
-				resolved, wasSuperseded, err := resolveSupersession(ctx, tx, c)
-				if err != nil {
-					return nil, nil, err
-				}
-				if wasSuperseded {
-					if resolved == (lattice.Coord{}) {
-						if cfg.Explain {
-							explanations = append(explanations, CellExplanation{
-								Coord:  c,
-								Ring:   ring,
-								Reason: "superseded",
-							})
-						}
-						continue
-					}
-					origC := c
-					originalCoord = &origC
-					target = resolved
-				}
-			}
-			if _, already := seen[target]; already {
-				continue
-			}
-			v, err := AssembleCellView(ctx, tx, target, nil, opts)
-			if err != nil {
-				if errors.Is(err, ErrCellNotFound) {
-					continue
-				}
+			if err := coll.processCoord(ctx, tx, c, ring); err != nil {
 				return nil, nil, err
 			}
-			if originalCoord != nil {
-				v.SupersededFrom = originalCoord
-				if cfg.Explain {
-					explanations = append(explanations, CellExplanation{
-						Coord:        *originalCoord,
-						Ring:         ring,
-						Reason:       "superseded",
-						SupersededBy: &target,
-					})
-				}
-			}
-			seen[target] = struct{}{}
-			items = append(items, scoredCandidate{ring: ring, view: v, originalCoord: originalCoord})
 		}
 	}
-	return items, explanations, nil
+	return coll.items, coll.explanations, nil
+}
+
+// candidateCollector accumulates scored candidates during ring scans.
+type candidateCollector struct {
+	items        []scoredCandidate
+	explanations []CellExplanation
+	seen         map[lattice.Coord]struct{}
+	cfg          LoadContextBudgetConfig
+	opts         AssembleCellViewOpts
+	cap          int
+}
+
+// processCoord resolves supersession, assembles the cell view, and adds it.
+func (cc *candidateCollector) processCoord(ctx context.Context, tx TxReader, c lattice.Coord, ring int) error {
+	target, originalCoord, skip, err := cc.resolveTarget(ctx, tx, c, ring)
+	if err != nil {
+		return err
+	}
+	if skip {
+		return nil
+	}
+	if _, already := cc.seen[target]; already {
+		return nil
+	}
+	v, err := AssembleCellView(ctx, tx, target, nil, cc.opts)
+	if err != nil {
+		if errors.Is(err, ErrCellNotFound) {
+			return nil
+		}
+		return err
+	}
+	if originalCoord != nil {
+		v.SupersededFrom = originalCoord
+		if cc.cfg.Explain {
+			cc.explanations = append(cc.explanations, CellExplanation{
+				Coord:        *originalCoord,
+				Ring:         ring,
+				Reason:       "superseded",
+				SupersededBy: &target,
+			})
+		}
+	}
+	cc.seen[target] = struct{}{}
+	cc.items = append(cc.items, scoredCandidate{ring: ring, view: v, originalCoord: originalCoord})
+	return nil
+}
+
+// resolveTarget determines the effective target coord for a candidate, handling
+// supersession. Returns the target, optional original coord pointer, whether to
+// skip this candidate, and any error.
+func (cc *candidateCollector) resolveTarget(ctx context.Context, tx TxReader, c lattice.Coord, ring int) (target lattice.Coord, original *lattice.Coord, skip bool, err error) {
+	if !cc.cfg.FilterSuperseded {
+		return c, nil, false, nil
+	}
+	resolved, wasSuperseded, err := resolveSupersession(ctx, tx, c)
+	if err != nil {
+		return lattice.Coord{}, nil, false, err
+	}
+	if !wasSuperseded {
+		return c, nil, false, nil
+	}
+	if resolved == (lattice.Coord{}) {
+		if cc.cfg.Explain {
+			cc.explanations = append(cc.explanations, CellExplanation{
+				Coord:  c,
+				Ring:   ring,
+				Reason: "superseded",
+			})
+		}
+		return lattice.Coord{}, nil, true, nil
+	}
+	origC := c
+	return resolved, &origC, false, nil
 }
 
 // LoadContextWithBudgeting walks rings from center, builds [CellView] values,
@@ -202,33 +245,32 @@ func LoadContextWithBudgeting(ctx context.Context, tx TxReader, center lattice.C
 	}
 
 	candidatesScanned := len(items)
-	evicted := 0
-	explanations := supersededExplanations
+	items, evicted, evictExplanations := evictOverBudget(items, maxTokens, budgeter, cfg)
+	explanations := append(supersededExplanations, evictExplanations...) //nolint:gocritic // intentional append to separate slice
 
+	pack := buildContextPack(items, explanations, candidatesScanned, evicted, budgeter, cfg)
+
+	if cfg.IncludeSeams {
+		if err := attachSeams(ctx, tx, center, maxR, cfg, &pack); err != nil {
+			return ContextPack{}, err
+		}
+	}
+	return pack, nil
+}
+
+// evictOverBudget removes the lowest-confidence cell from the outermost ring
+// until total tokens fit within maxTokens. Returns the surviving items, eviction
+// count, and any explanations generated.
+func evictOverBudget(items []scoredCandidate, maxTokens int, budgeter TokenBudgeter, cfg LoadContextBudgetConfig) ([]scoredCandidate, int, []CellExplanation) {
 	total := 0
 	for i := range items {
 		total += CellViewTokens(budgeter, items[i].view, cfg.IncludeFacetText)
 	}
 
+	var explanations []CellExplanation
+	evicted := 0
 	for total > maxTokens && len(items) > 0 {
-		maxRing := -1
-		for i := range items {
-			if items[i].ring > maxRing {
-				maxRing = items[i].ring
-			}
-		}
-		drop := -1
-		var minConf float64
-		for i := range items {
-			if items[i].ring != maxRing {
-				continue
-			}
-			c := items[i].view.Provenance.Confidence
-			if drop < 0 || c < minConf {
-				drop = i
-				minConf = c
-			}
-		}
+		drop := findEvictionTarget(items)
 		if drop < 0 {
 			break
 		}
@@ -245,7 +287,35 @@ func LoadContextWithBudgeting(ctx context.Context, tx TxReader, center lattice.C
 		items = append(items[:drop], items[drop+1:]...)
 		evicted++
 	}
+	return items, evicted, explanations
+}
 
+// findEvictionTarget returns the index of the lowest-confidence candidate at
+// the outermost ring, or -1 if no candidates remain.
+func findEvictionTarget(items []scoredCandidate) int {
+	maxRing := -1
+	for i := range items {
+		if items[i].ring > maxRing {
+			maxRing = items[i].ring
+		}
+	}
+	drop := -1
+	var minConf float64
+	for i := range items {
+		if items[i].ring != maxRing {
+			continue
+		}
+		c := items[i].view.Provenance.Confidence
+		if drop < 0 || c < minConf {
+			drop = i
+			minConf = c
+		}
+	}
+	return drop
+}
+
+// buildContextPack assembles the final ContextPack from surviving items.
+func buildContextPack(items []scoredCandidate, explanations []CellExplanation, candidatesScanned, evicted int, budgeter TokenBudgeter, cfg LoadContextBudgetConfig) ContextPack {
 	maxRingUsed := 0
 	for i := range items {
 		if items[i].ring > maxRingUsed {
@@ -279,22 +349,24 @@ func LoadContextWithBudgeting(ctx context.Context, tx TxReader, center lattice.C
 	for i := range out {
 		pack.TotalTokens += CellViewTokens(budgeter, out[i], cfg.IncludeFacetText)
 	}
+	return pack
+}
 
-	if cfg.IncludeSeams {
-		r := cfg.SeamRadius
-		if r < 0 {
-			return ContextPack{}, ErrInvalidArgument
-		}
-		if r == 0 {
-			r = maxR
-		}
-		seams, err := tx.FindSeams(ctx, center, r, false)
-		if err != nil {
-			return ContextPack{}, err
-		}
-		pack.Seams = seams
+// attachSeams loads seams for the context pack.
+func attachSeams(ctx context.Context, tx TxReader, center lattice.Coord, maxR int, cfg LoadContextBudgetConfig, pack *ContextPack) error {
+	r := cfg.SeamRadius
+	if r < 0 {
+		return ErrInvalidArgument
 	}
-	return pack, nil
+	if r == 0 {
+		r = maxR
+	}
+	seams, err := tx.FindSeams(ctx, center, r, false)
+	if err != nil {
+		return err
+	}
+	pack.Seams = seams
+	return nil
 }
 
 // LoadContextPack is an alias for [LoadContextWithBudgeting] matching the

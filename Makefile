@@ -236,15 +236,21 @@ ci-full:
 	@./scripts/ci/ci.sh
 
 # Mutation testing with Gremlins — full run (slow, thorough)
-# Override target: make mutation-test TARGET=internal/domain
+# Override target: make mutation-test TARGET=./internal/lattice
+# Without TARGET, runs all configured packages via the CI script.
 mutation-test:
 	@if ! command -v gremlins >/dev/null 2>&1; then \
 		echo "error: gremlins not found. Install with:"; \
 		echo "  go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0"; \
 		exit 1; \
 	fi
-	@echo "==> Running Gremlins mutation testing (full run)..."
-	gremlins unleash --tags=integration $(or $(TARGET),internal/domain)
+ifdef TARGET
+	@echo "==> Running Gremlins mutation testing: $(TARGET)"
+	gremlins unleash $(TARGET)
+else
+	@echo "==> Running Gremlins mutation testing (all targets, full)..."
+	GREMLINS_FULL=1 ./scripts/ci/pre-push/06-gremlins.sh
+endif
 
 # Mutation testing dry-run (fast, same as CI pre-push)
 mutation-test-dry:
@@ -254,4 +260,4 @@ mutation-test-dry:
 		exit 1; \
 	fi
 	@echo "==> Running Gremlins mutation testing (dry-run)..."
-	gremlins unleash --dry-run --tags=integration $(or $(TARGET),internal/domain)
+	./scripts/ci/pre-push/06-gremlins.sh
