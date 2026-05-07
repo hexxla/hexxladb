@@ -76,87 +76,106 @@ func (v *cellsView) Update(msg tea.Msg) (view, tea.Cmd) {
 		v.loading = false
 		v.cursor = 0
 		return v, nil
-
 	case tea.KeyMsg:
 		if v.searching {
-			switch msg.Type {
-			case tea.KeyEsc:
-				v.searching = false
-				v.query = ""
-				v.searchHits = nil
-				v.searchErr = nil
-				v.loading = true
-				v.cells = nil
-				db := v.db
-				return v, func() tea.Msg { return cellsLoadedMsg{cells: loadCells(db, 200)} }
-			case tea.KeyEnter:
-				v.searching = false
-				v.loading = true
-				v.searchHits = nil
-				v.searchErr = nil
-				q := v.query
-				db := v.db
-				if v.searchMode == "embedding" {
-					return v, func() tea.Msg { return searchByEmbedding(db, q, 200) }
-				}
-				return v, func() tea.Msg { return searchHitsLoadedMsg{hits: searchCells(db, q, 200)} }
-			case tea.KeyBackspace, tea.KeyDelete:
-				if v.query != "" {
-					v.query = v.query[:len(v.query)-1]
-				}
-			default:
-				if msg.Type == tea.KeyRunes {
-					v.query += string(msg.Runes)
-				} else if s := msg.String(); len(s) == 1 && s[0] >= 32 {
-					v.query += s
-				}
-			}
-			return v, nil
+			return v.handleSearchKeyMsg(msg)
 		}
-		switch msg.String() {
-		case "up", "k":
-			if v.cursor > 0 {
-				v.cursor--
-			}
-		case "down", "j":
-			if v.cursor < v.totalRows()-1 {
-				v.cursor++
-			}
-		case "g":
-			v.cursor = 0
-		case "G":
-			if v.totalRows() > 0 {
-				v.cursor = v.totalRows() - 1
-			}
-		case "enter":
-			if v.cursor < v.totalRows() {
-				c, _ := v.rowCell(v.cursor)
-				return v, func() tea.Msg { return inspectCellMsg{coord: c.Coord} }
-			}
-		case "/":
-			v.searching = true
-			v.query = ""
-			return v, nil
-		case "e":
-			if v.searchMode == "lexical" {
-				v.searchMode = "embedding"
-			} else {
-				v.searchMode = "lexical"
-			}
-			return v, nil
-		case "r":
-			v.loading = true
-			v.cells = nil
-			v.searchHits = nil
-			v.searchErr = nil
-			v.query = ""
-			v.searching = false
-			db := v.db
-			return v, func() tea.Msg { return cellsLoadedMsg{cells: loadCells(db, 200)} }
+		return v.handleNavKeyMsg(msg)
+	}
+	return v, nil
+}
+
+// handleSearchKeyMsg processes key input while the search bar is active.
+func (v *cellsView) handleSearchKeyMsg(msg tea.KeyMsg) (view, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		v.searching = false
+		v.query = ""
+		v.searchHits = nil
+		v.searchErr = nil
+		v.loading = true
+		v.cells = nil
+		db := v.db
+		return v, func() tea.Msg { return cellsLoadedMsg{cells: loadCells(db, 200)} }
+	case tea.KeyEnter:
+		return v.executeSearch()
+	case tea.KeyBackspace, tea.KeyDelete:
+		if v.query != "" {
+			v.query = v.query[:len(v.query)-1]
+		}
+	default:
+		if msg.Type == tea.KeyRunes {
+			v.query += string(msg.Runes)
+		} else if s := msg.String(); len(s) == 1 && s[0] >= 32 {
+			v.query += s
 		}
 	}
-
 	return v, nil
+}
+
+// executeSearch submits the current query for lexical or embedding search.
+func (v *cellsView) executeSearch() (view, tea.Cmd) {
+	v.searching = false
+	v.loading = true
+	v.searchHits = nil
+	v.searchErr = nil
+	q := v.query
+	db := v.db
+	if v.searchMode == "embedding" {
+		return v, func() tea.Msg { return searchByEmbedding(db, q, 200) }
+	}
+	return v, func() tea.Msg { return searchHitsLoadedMsg{hits: searchCells(db, q, 200)} }
+}
+
+// handleNavKeyMsg processes key input for navigation/actions outside search mode.
+func (v *cellsView) handleNavKeyMsg(msg tea.KeyMsg) (view, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if v.cursor > 0 {
+			v.cursor--
+		}
+	case "down", "j":
+		if v.cursor < v.totalRows()-1 {
+			v.cursor++
+		}
+	case "g":
+		v.cursor = 0
+	case "G":
+		if v.totalRows() > 0 {
+			v.cursor = v.totalRows() - 1
+		}
+	case "enter":
+		if v.cursor < v.totalRows() {
+			c, _ := v.rowCell(v.cursor)
+			return v, func() tea.Msg { return inspectCellMsg{coord: c.Coord} }
+		}
+	case "/":
+		v.searching = true
+		v.query = ""
+		return v, nil
+	case "e":
+		if v.searchMode == "lexical" {
+			v.searchMode = "embedding"
+		} else {
+			v.searchMode = "lexical"
+		}
+		return v, nil
+	case "r":
+		return v.resetToBrowse()
+	}
+	return v, nil
+}
+
+// resetToBrowse clears search state and reloads all cells.
+func (v *cellsView) resetToBrowse() (view, tea.Cmd) {
+	v.loading = true
+	v.cells = nil
+	v.searchHits = nil
+	v.searchErr = nil
+	v.query = ""
+	v.searching = false
+	db := v.db
+	return v, func() tea.Msg { return cellsLoadedMsg{cells: loadCells(db, 200)} }
 }
 
 func (v *cellsView) View() string {
