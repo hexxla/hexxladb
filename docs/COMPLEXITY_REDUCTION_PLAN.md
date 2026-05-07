@@ -15,36 +15,43 @@
 
 ---
 
-## Current State (post-refactoring round 1)
+## Current State (post-refactoring round 2)
 
-**Before:** 244 violations, 138 functions, 8 CRAP violations
-**After:** 243 violations, 141 functions, 4 CRAP violations
+**Initial:** 244 violations, 138 functions, 8 CRAP violations
+**After round 1:** 243 violations, 141 functions, 4 CRAP violations
+**After round 2:** 234 violations, 138 functions, 3 CRAP violations (examples/tests only)
 
-Key improvements from round 1:
+All production code CRAP violations eliminated. Remaining 3 are in examples and test files.
+
+### Round 1 improvements:
 
 - `health.go` `HealthCheck`: Cyclo 57→14, Cog 163→27 ✅
-- `internal/engine/engine.go` `Open`: Cyclo 62→15, Cog 81→(eliminated from top) ✅
+- `internal/engine/engine.go` `Open`: Cyclo 62→15 ✅
 - `internal/hnsw/graph.go` `Insert`: Cyclo 44→15, Cog 93→16 ✅
-- `db_open.go` `buildEngineOptions`: Cyclo 35→14, Cog 47→(eliminated from top) ✅
-- `internal/hnsw/graph.go` `Search`: Cyclo 22→14 (reused `greedyDescend`) ✅
+- `db_open.go` `buildEngineOptions`: Cyclo 35→14 ✅
 
-Note: Total violation count stayed similar because extracted helpers each contribute
-smaller violations, but the _maximum per-function_ complexity dropped dramatically.
+### Round 2 improvements:
+
+- `internal/hnsw/graph.go` `removeNode`: Cyclo 24→~8, Cog 55→~15 ✅
+- `primitives.go` `findSeams`: Cyclo 23→~10, Cog 55→16 ✅
+- `internal/views/budget.go` `collectCandidates`: Cog 45→~12 ✅
+- `internal/views/budget.go` `LoadContextWithBudgeting`: Cyclo 30→~10, Cog 44→~14 ✅
+- `cmd/tui/view_cells.go` `(*cellsView).Update`: Cyclo 31→14, Cog 43→~12 ✅
+- `embedding_search.go` `SearchByEmbedding`: Cyclo 25→~10, Cog 38→~12 ✅
 
 ---
 
-## Priority 1: Remaining CRAP Score Violations (4 functions)
+## Priority 1: Remaining CRAP Score Violations (3 functions — examples/tests only)
 
 **CRAP = (cyclomatic² × (1 - coverage/100)³) + cyclomatic**
 
-| #   | File                                               | Function              | CRAP | Cyclo | Status         |
-| --- | -------------------------------------------------- | --------------------- | ---- | ----- | -------------- |
-| 1   | `examples/conversational_memory/main.go`           | `run`                 | 114  | 114   | Pending (demo) |
-| 2   | `internal/domain/storagecontract/contract_test.go` | `RunAll`              | 96   | 96    | Pending (test) |
-| 3   | `examples/llm_context_engine/main.go`              | `run`                 | 49   | 49    | Pending (demo) |
-| 4   | `cmd/tui/view_cells.go`                            | `(*cellsView).Update` | 31   | 31    | **Next**       |
+| #   | File                                               | Function | CRAP | Cyclo | Status         |
+| --- | -------------------------------------------------- | -------- | ---- | ----- | -------------- |
+| 1   | `examples/conversational_memory/main.go`           | `run`    | 114  | 114   | Pending (demo) |
+| 2   | `internal/domain/storagecontract/contract_test.go` | `RunAll` | 96   | 96    | Pending (test) |
+| 3   | `examples/llm_context_engine/main.go`              | `run`    | 49   | 49    | Pending (demo) |
 
-### Completed (round 1):
+### Completed (rounds 1+2):
 
 - ~~`internal/engine/engine.go` `Open` — CRAP 62~~ → Cyclo 15 ✅
 - ~~`health.go` `HealthCheck` — CRAP 57~~ → Cyclo 14 ✅
@@ -55,65 +62,75 @@ smaller violations, but the _maximum per-function_ complexity dropped dramatical
 
 ## Priority 2: Next Refactoring Candidates (non-test, non-example production code)
 
-### Tier A: Cognitive >40 + Cyclomatic >20 (highest impact)
+### Tier A: Cognitive >35 (highest remaining impact)
 
-| #   | File                           | Function                   | Cyclo | Cog | Strategy                    |
-| --- | ------------------------------ | -------------------------- | ----- | --- | --------------------------- |
-| 1   | `internal/hnsw/graph.go`       | `removeNode`               | 24    | 55  | Extract link-repair helpers |
-| 2   | `primitives.go`                | `findSeams`                | 23    | 55  | Extract scan + filter logic |
-| 3   | `internal/views/budget.go`     | `collectCandidates`        | 14    | 45  | Extract scoring/filter      |
-| 4   | `internal/views/budget.go`     | `LoadContextWithBudgeting` | 30    | 44  | Extract phase helpers       |
-| 5   | `cmd/tui/view_cells.go`        | `(*cellsView).Update`      | 31    | 43  | Extract msg handlers        |
-| 6   | `internal/engine/engine.go`    | `readPagePooled`           | 22    | 39  | Extract decrypt/decompress  |
-| 7   | `embedding_search.go`          | `SearchByEmbedding`        | 25    | 38  | Extract flat-scan path      |
-| 8   | `internal/engine/group_wal.go` | `applyGroupBatch`          | 24    | 37  | Extract apply/notify phases |
+| #   | File                              | Function                      | Cyclo | Cog | Strategy                    |
+| --- | --------------------------------- | ----------------------------- | ----- | --- | --------------------------- |
+| 1   | `internal/engine/btree_delete.go` | `rebalanceLeaf`               | 24    | 49  | Extract merge/redistribute  |
+| 2   | `internal/engine/engine.go`       | `readPagePooled`              | 22    | 39  | Extract decrypt/decompress  |
+| 3   | `internal/engine/group_wal.go`    | `applyGroupBatch`             | 24    | 37  | Extract apply/notify phases |
+| 4   | `rotation.go`                     | `RotateEncryptionWithOptions` | 22    | 36  | Extract rewrite/verify      |
+| 5   | `internal/views/views.go`         | `AssembleCellView`            | 22    | 36  | Extract assembly steps      |
+| 6   | `cmd/tui/view_cells.go`           | `View`                        | 25    | 36  | Extract render sections     |
 
-### Tier B: Cognitive 30-39 (moderate impact)
+### Tier B: Cognitive 30-34 (moderate impact)
 
-| #   | File                       | Function                      | Cyclo | Cog | Strategy                |
-| --- | -------------------------- | ----------------------------- | ----- | --- | ----------------------- |
-| 9   | `cmd/tui/view_cells.go`    | `View`                        | 25    | 36  | Extract render sections |
-| 10  | `internal/views/views.go`  | `AssembleCellView`            | 22    | 36  | Extract assembly steps  |
-| 11  | `rotation.go`              | `RotateEncryptionWithOptions` | 22    | 36  | Extract rewrite/verify  |
-| 12  | `internal/engine/btree.go` | `GetUsingRoot`                | 14    | 34  | Extract page navigation |
-| 13  | `internal/engine/btree.go` | `AscendRange`                 | 17    | 34  | Extract cursor logic    |
-| 14  | `internal/views/budget.go` | `resolveSupersession`         | 15    | 34  | Extract walk/mark       |
-| 15  | `hex_render.go`            | `RenderHexGrid`               | 19    | 34  | Extract row/cell render |
-| 16  | `primitives.go`            | `putSeamWithOp`               | 24    | 31  | Extract index updates   |
-| 17  | `primitives.go`            | `WalkRingFacets`              | 19    | 31  | Extract facet iteration |
+| #   | File                       | Function              | Cyclo | Cog | Strategy                |
+| --- | -------------------------- | --------------------- | ----- | --- | ----------------------- |
+| 7   | `internal/engine/btree.go` | `GetUsingRoot`        | 14    | 34  | Extract page navigation |
+| 8   | `internal/engine/btree.go` | `AscendRange`         | 17    | 34  | Extract cursor logic    |
+| 9   | `internal/views/budget.go` | `resolveSupersession` | 15    | 34  | Extract walk/mark       |
+| 10  | `hex_render.go`            | `RenderHexGrid`       | 19    | 34  | Extract row/cell render |
+| 11  | `primitives.go`            | `putSeamWithOp`       | 24    | 31  | Extract index updates   |
+| 12  | `primitives.go`            | `WalkRingFacets`      | 19    | 31  | Extract facet iteration |
 
-### Tier C: B-Tree internals (algorithmic — handle with care)
+### Tier C: Cognitive 25-29 (lower impact, high cyclomatic)
 
-| #   | File                              | Function              | Cyclo | Cog | Strategy                    |
-| --- | --------------------------------- | --------------------- | ----- | --- | --------------------------- |
-| 18  | `internal/engine/btree_delete.go` | `rebalanceLeaf`       | 24    | 49  | Extract merge/redistribute  |
-| 19  | `internal/engine/btree_delete.go` | `Delete`              | 23    | 26  | Extract leaf/internal cases |
-| 20  | `internal/engine/btree_delete.go` | `removeInternalChild` | 16    | 23  | Extract sibling logic       |
+| #   | File                              | Function            | Cyclo | Cog | Strategy                    |
+| --- | --------------------------------- | ------------------- | ----- | --- | --------------------------- |
+| 13  | `mvcc_lifecycle.go`               | `PruneCellVersions` | 21    | 29  | Extract scan/prune phases   |
+| 14  | `embedding_reindex.go`            | `ReindexEmbeddings` | 17    | 29  | Extract reindex steps       |
+| 15  | `query_exec.go`                   | `applyPredicates`   | 23    | 28  | Extract predicate matchers  |
+| 16  | `primitives.go`                   | `PutCell`           | 20    | 28  | Extract MVCC/non-MVCC paths |
+| 17  | `batch_put.go`                    | `BatchPutCells`     | 15    | 28  | Extract batch orchestration |
+| 18  | `internal/hnsw/graph.go`          | `searchLayer`       | 16    | 28  | Extract neighbor expansion  |
+| 19  | `internal/engine/btree_delete.go` | `Delete`            | 23    | 26  | Extract leaf/internal cases |
+| 20  | `db.go`                           | `Open`              | 21    | 26  | Extract validation steps    |
+| 21  | `query_exec.go`                   | `QueryCells`        | 23    | 25  | Extract planning/execution  |
+
+### Completed (round 2) — formerly Tier A:
+
+- ~~`internal/hnsw/graph.go` `removeNode` — Cog 55~~ ✅
+- ~~`primitives.go` `findSeams` — Cog 55~~ ✅
+- ~~`internal/views/budget.go` `collectCandidates` — Cog 45~~ ✅
+- ~~`internal/views/budget.go` `LoadContextWithBudgeting` — Cog 44~~ ✅
+- ~~`cmd/tui/view_cells.go` `Update` — Cog 43~~ ✅
+- ~~`embedding_search.go` `SearchByEmbedding` — Cog 38~~ ✅
 
 ---
 
-## Priority 3: Remaining Cyclomatic >15 (production code only)
+## Priority 3: Lower Cognitive (15-24) Production Functions
 
-| File                          | Function               | Cyclo | Cog |
-| ----------------------------- | ---------------------- | ----- | --- |
-| `query_exec.go`               | `applyPredicates`      | 23    | 28  |
-| `query_exec.go`               | `QueryCells`           | 23    | 25  |
-| `db.go`                       | `Open`                 | 21    | 26  |
-| `mvcc_lifecycle.go`           | `PruneCellVersions`    | 21    | 29  |
-| `primitives.go`               | `PutCell`              | 20    | 28  |
-| `tx.go`                       | `(*DB).Update`         | 18    | 23  |
-| `internal/engine/writetxn.go` | `CommitWriteTxn`       | 18    | 21  |
-| `embedding_reindex.go`        | `ReindexEmbeddings`    | 17    | 29  |
-| `internal/engine/btree.go`    | `AscendRange`          | 17    | 34  |
-| `cmd/tui/view_seams.go`       | `(*seamsView).View`    | 17    | 20  |
-| `internal/hnsw/graph.go`      | `searchLayer`          | 16    | 28  |
-| `internal/record/seam.go`     | `decodeSeamPayloadV1`  | 16    | —   |
-| `internal/engine/btree.go`    | `insertIntoLeaf`       | 16    | 24  |
-| `query_exec.go`               | `scanByTimeRange`      | 15    | 22  |
-| `seam_secondary.go`           | `AscendSeamsBySource`  | 15    | 22  |
-| `mvcc.go`                     | `getCellVisibleRaw`    | 15    | 19  |
-| `internal/views/budget.go`    | `LoadMultiContextPack` | 15    | 24  |
-| `internal/views/budget.go`    | `resolveSupersession`  | 15    | 34  |
+These have cyclomatic 15-21 and cognitive 15-24. Address incrementally:
+
+| File                           | Function                   | Cyclo | Cog |
+| ------------------------------ | -------------------------- | ----- | --- |
+| `tx.go`                        | `(*DB).Update`             | 18    | 23  |
+| `internal/engine/writetxn.go`  | `CommitWriteTxn`           | 18    | 21  |
+| `seam_secondary.go`            | `AscendSeamsBySource`      | 15    | 22  |
+| `query_exec.go`                | `scanByTimeRange`          | 15    | 22  |
+| `internal/engine/wal.go`       | `parseAndReplayWALWithMAC` | 15    | 22  |
+| `cmd/tui/view_seams.go`        | `(*seamsView).View`        | 17    | 20  |
+| `facets_edges.go`              | `AscendFacetsForCell`      | 14    | 20  |
+| `cell_secondary.go`            | `AscendCellsByTag`         | 14    | 20  |
+| `cell_secondary.go`            | `AscendCellsBySource`      | 14    | 20  |
+| `internal/engine/group_wal.go` | `runGroupWALFlusher`       | 14    | 20  |
+| `mvcc.go`                      | `getCellVisibleRaw`        | 15    | 19  |
+| `bulk_io.go`                   | `ExportCellsJSON`          | 14    | 19  |
+| `seam_secondary.go`            | `AscendSeamsInTimeBucket`  | 13    | 19  |
+| `cell_secondary.go`            | `AscendDistinctTags`       | 14    | 19  |
+
+**Strategy:** Incremental cleanup during normal development.
 
 ---
 
