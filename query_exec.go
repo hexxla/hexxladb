@@ -232,13 +232,13 @@ func (tx *Tx) scanByEmbedding(vec []float32, maxResults int) ([]record.CellRecor
 }
 
 func (tx *Tx) scanByRadius(ctx context.Context, center Coord, radius int) ([]record.CellRecord, error) {
-	coords := WalkRings(nil, center, radius)
-	recs := make([]record.CellRecord, 0, len(coords))
-	for _, c := range coords {
+	packed := lattice.WalkRingsPacked(center, radius)
+	recs := make([]record.CellRecord, 0, len(packed))
+	for _, p := range packed {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		rec, ok, err := tx.GetCell(mustPack(c))
+		rec, ok, err := tx.GetCell(p)
 		if err != nil {
 			return nil, err
 		}
