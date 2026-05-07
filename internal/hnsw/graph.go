@@ -49,20 +49,7 @@ func (g *Graph) Insert(coord lattice.PackedCoord, vec []float32) error {
 		return err
 	}
 	if !hasMeta {
-		// First insert — initialize graph with this node as entry point.
-		meta = &Meta{M: DefaultM, EfC: DefaultEfConstruction, MaxLayer: 0, Count: 1}
-		node := &Node{
-			Coord:     coord,
-			MaxLayer:  0,
-			Neighbors: [][]lattice.PackedCoord{{}},
-		}
-		if err := g.s.PutHNSWNode(node); err != nil {
-			return err
-		}
-		if err := g.s.PutHNSWEntry(coord); err != nil {
-			return err
-		}
-		return g.s.PutHNSWMeta(meta)
+		return g.initSingleNodeGraph(coord, &Meta{M: DefaultM, EfC: DefaultEfConstruction, MaxLayer: 0, Count: 1})
 	}
 
 	entryCoord, hasEntry, err := g.s.GetHNSWEntry()
@@ -70,66 +57,23 @@ func (g *Graph) Insert(coord lattice.PackedCoord, vec []float32) error {
 		return err
 	}
 	if !hasEntry {
-		// Shouldn't happen if meta exists, but handle gracefully.
 		meta.Count = 1
 		meta.MaxLayer = 0
-		node := &Node{Coord: coord, MaxLayer: 0, Neighbors: [][]lattice.PackedCoord{{}}}
-		if err := g.s.PutHNSWNode(node); err != nil {
-			return err
-		}
-		if err := g.s.PutHNSWEntry(coord); err != nil {
-			return err
-		}
-		return g.s.PutHNSWMeta(meta)
+		return g.initSingleNodeGraph(coord, meta)
 	}
 
-	// Check if node already exists (update case).
-	if existing, ok, err := g.s.GetHNSWNode(coord); err != nil {
+	// Handle update case: remove existing node first.
+	entryCoord, meta, err = g.handleExistingNode(coord, entryCoord, meta)
+	if err != nil {
 		return err
-	} else if ok {
-		// Node exists — remove it first, then re-insert.
-		if err := g.removeNode(existing, meta, entryCoord); err != nil {
-			return err
-		}
-		// Refresh entry point after removal.
-		if entryCoord == coord {
-			entryCoord, hasEntry, err = g.s.GetHNSWEntry()
-			if err != nil {
-				return err
-			}
-			if !hasEntry {
-				// Graph became empty after removing the node.
-				meta.Count = 1
-				meta.MaxLayer = 0
-				node := &Node{Coord: coord, MaxLayer: 0, Neighbors: [][]lattice.PackedCoord{{}}}
-				if err := g.s.PutHNSWNode(node); err != nil {
-					return err
-				}
-				if err := g.s.PutHNSWEntry(coord); err != nil {
-					return err
-				}
-				return g.s.PutHNSWMeta(meta)
-			}
-		}
-		// Refresh meta.
-		meta, _, err = g.s.GetHNSWMeta()
-		if err != nil {
-			return err
-		}
+	}
+	if meta == nil {
+		// Graph became empty after removing existing; re-initialize.
+		return g.initSingleNodeGraph(coord, &Meta{M: DefaultM, EfC: DefaultEfConstruction, MaxLayer: 0, Count: 1})
 	}
 
-	mL := 1.0 / math.Log(float64(meta.M))
-	nodeLayer := uint8(min(int(-math.Log(rand.Float64())*mL), 255)) //nolint:gosec // G115
-
-	mMax0 := meta.M * 2
-	mMax := meta.M
-
-	// Build neighbor lists for the new node.
-	layers := make([][]lattice.PackedCoord, int(nodeLayer)+1)
-	for i := range layers {
-		layers[i] = nil
-	}
-	newNode := &Node{Coord: coord, MaxLayer: nodeLayer, Neighbors: layers}
+	nodeLayer := g.randomLayer(meta.M)
+	newNode := &Node{Coord: coord, MaxLayer: nodeLayer, Neighbors: make([][]lattice.PackedCoord, int(nodeLayer)+1)}
 
 	entryVec, ok, err := g.s.GetEmbeddingVec(entryCoord)
 	if err != nil {
@@ -145,15 +89,89 @@ func (g *Graph) Insert(coord lattice.PackedCoord, vec []float32) error {
 	}
 
 	// Phase 1: Greedy descent from top layer to nodeLayer+1.
-	ep := entryCoord
-	epDist := engine.Similarity(vec, entryVec, g.metric)
-	for lc := int(meta.MaxLayer); lc > int(nodeLayer); lc-- {
+	ep, _, err := g.greedyDescend(vec, entryCoord, entryVec, int(meta.MaxLayer), int(nodeLayer)+1)
+	if err != nil {
+		return err
+	}
+
+	// Phase 2: At insertion layer and below, search + connect.
+	if err := g.insertConnectLayers(coord, vec, ep, newNode, meta); err != nil {
+		return err
+	}
+
+	if err := g.s.PutHNSWNode(newNode); err != nil {
+		return err
+	}
+
+	if nodeLayer > meta.MaxLayer {
+		meta.MaxLayer = nodeLayer
+		if err := g.s.PutHNSWEntry(coord); err != nil {
+			return err
+		}
+	}
+	meta.Count++
+	return g.s.PutHNSWMeta(meta)
+}
+
+// initSingleNodeGraph stores a single node as the entry point and persists meta.
+func (g *Graph) initSingleNodeGraph(coord lattice.PackedCoord, meta *Meta) error {
+	node := &Node{Coord: coord, MaxLayer: 0, Neighbors: [][]lattice.PackedCoord{{}}}
+	if err := g.s.PutHNSWNode(node); err != nil {
+		return err
+	}
+	if err := g.s.PutHNSWEntry(coord); err != nil {
+		return err
+	}
+	return g.s.PutHNSWMeta(meta)
+}
+
+// handleExistingNode removes an existing node at coord if present.
+// Returns the (possibly updated) entry coord and meta. If the graph becomes empty,
+// meta is returned as nil.
+func (g *Graph) handleExistingNode(coord, entryCoord lattice.PackedCoord, meta *Meta) (lattice.PackedCoord, *Meta, error) {
+	existing, ok, err := g.s.GetHNSWNode(coord)
+	if err != nil {
+		return entryCoord, meta, err
+	}
+	if !ok {
+		return entryCoord, meta, nil
+	}
+	if err := g.removeNode(existing, meta, entryCoord); err != nil {
+		return entryCoord, nil, err
+	}
+	if entryCoord == coord {
+		entryCoord, ok, err = g.s.GetHNSWEntry()
+		if err != nil {
+			return entryCoord, nil, err
+		}
+		if !ok {
+			return entryCoord, nil, nil // graph empty
+		}
+	}
+	meta, _, err = g.s.GetHNSWMeta()
+	if err != nil {
+		return entryCoord, nil, err
+	}
+	return entryCoord, meta, nil
+}
+
+// randomLayer generates a random layer for a new node using the HNSW distribution.
+func (g *Graph) randomLayer(m uint16) uint8 {
+	mL := 1.0 / math.Log(float64(m))
+	return uint8(min(int(-math.Log(rand.Float64())*mL), 255)) //nolint:gosec // G115
+}
+
+// greedyDescend performs greedy traversal from startLayer down to stopLayer (exclusive).
+// Returns the best entry point and its distance to vec.
+func (g *Graph) greedyDescend(vec []float32, ep lattice.PackedCoord, epVec []float32, startLayer, stopLayer int) (lattice.PackedCoord, float64, error) {
+	epDist := engine.Similarity(vec, epVec, g.metric)
+	for lc := startLayer; lc >= stopLayer; lc-- {
 		changed := true
 		for changed {
 			changed = false
 			epNode, epOk, epErr := g.s.GetHNSWNode(ep)
 			if epErr != nil {
-				return epErr
+				return ep, epDist, epErr
 			}
 			if !epOk || lc >= len(epNode.Neighbors) {
 				break
@@ -161,7 +179,7 @@ func (g *Graph) Insert(coord lattice.PackedCoord, vec []float32) error {
 			for _, nbr := range epNode.Neighbors[lc] {
 				nbrVec, nOk, nErr := g.s.GetEmbeddingVec(nbr)
 				if nErr != nil {
-					return nErr
+					return ep, epDist, nErr
 				}
 				if !nOk {
 					continue
@@ -175,71 +193,63 @@ func (g *Graph) Insert(coord lattice.PackedCoord, vec []float32) error {
 			}
 		}
 	}
+	return ep, epDist, nil
+}
 
-	// Phase 2: At insertion layer and below, search + connect.
-	for lc := min(int(nodeLayer), int(meta.MaxLayer)); lc >= 0; lc-- {
-		efC := int(meta.EfC)
-		candidates := g.searchLayer(vec, ep, efC, lc)
+// insertConnectLayers handles Phase 2 of HNSW insertion: search + bidirectional connect
+// at each layer from min(nodeLayer, maxLayer) down to 0.
+func (g *Graph) insertConnectLayers(coord lattice.PackedCoord, vec []float32, ep lattice.PackedCoord, newNode *Node, meta *Meta) error {
+	mMax0 := meta.M * 2
+	mMax := meta.M
 
-		// Select M best neighbors.
-		var limit uint16
+	for lc := min(int(newNode.MaxLayer), int(meta.MaxLayer)); lc >= 0; lc-- {
+		candidates := g.searchLayer(vec, ep, int(meta.EfC), lc)
+
+		limit := mMax
 		if lc == 0 {
 			limit = mMax0
-		} else {
-			limit = mMax
 		}
 		selected := g.selectNeighbors(candidates, int(limit))
 
-		// Set the neighbor list for this layer on the new node.
 		nbrCoords := make([]lattice.PackedCoord, len(selected))
 		for i, s := range selected {
 			nbrCoords[i] = s.coord
 		}
 		newNode.Neighbors[lc] = nbrCoords
 
-		// Bidirectional links: add coord to each neighbor's list.
-		for _, sel := range selected {
-			nbrNode, nOk, nErr := g.s.GetHNSWNode(sel.coord)
-			if nErr != nil {
-				return nErr
-			}
-			if !nOk {
-				continue
-			}
-			// Ensure neighbor has enough layers.
-			for len(nbrNode.Neighbors) <= lc {
-				nbrNode.Neighbors = append(nbrNode.Neighbors, nil)
-			}
-			nbrNode.Neighbors[lc] = append(nbrNode.Neighbors[lc], coord)
-
-			// Prune if over capacity.
-			if uint16(len(nbrNode.Neighbors[lc])) > limit { //nolint:gosec // bounded by uint16
-				nbrNode.Neighbors[lc] = g.pruneNeighbors(sel.coord, nbrNode.Neighbors[lc], int(limit), lc)
-			}
-			if err := g.s.PutHNSWNode(nbrNode); err != nil {
-				return err
-			}
+		if err := g.connectBidirectional(coord, selected, lc, limit); err != nil {
+			return err
 		}
 
-		// Update entry point for next layer down.
 		if len(candidates) > 0 {
 			ep = candidates[0].coord
 		}
 	}
+	return nil
+}
 
-	if err := g.s.PutHNSWNode(newNode); err != nil {
-		return err
-	}
-
-	// Update entry point if new node has higher layer.
-	if nodeLayer > meta.MaxLayer {
-		meta.MaxLayer = nodeLayer
-		if err := g.s.PutHNSWEntry(coord); err != nil {
+// connectBidirectional adds coord to each selected neighbor's list and prunes if needed.
+func (g *Graph) connectBidirectional(coord lattice.PackedCoord, selected []scored, layer int, limit uint16) error {
+	for _, sel := range selected {
+		nbrNode, nOk, nErr := g.s.GetHNSWNode(sel.coord)
+		if nErr != nil {
+			return nErr
+		}
+		if !nOk {
+			continue
+		}
+		for len(nbrNode.Neighbors) <= layer {
+			nbrNode.Neighbors = append(nbrNode.Neighbors, nil)
+		}
+		nbrNode.Neighbors[layer] = append(nbrNode.Neighbors[layer], coord)
+		if uint16(len(nbrNode.Neighbors[layer])) > limit { //nolint:gosec // bounded by uint16
+			nbrNode.Neighbors[layer] = g.pruneNeighbors(sel.coord, nbrNode.Neighbors[layer], int(limit), layer)
+		}
+		if err := g.s.PutHNSWNode(nbrNode); err != nil {
 			return err
 		}
 	}
-	meta.Count++
-	return g.s.PutHNSWMeta(meta)
+	return nil
 }
 
 // Search returns the top-K nearest neighbors to vec using HNSW graph traversal.
@@ -278,41 +288,14 @@ func (g *Graph) Search(vec []float32, k, efSearch int) ([]SearchResult, error) {
 	}
 
 	// Greedy descent from top layer to layer 1.
-	ep := entryCoord
-	epDist := engine.Similarity(vec, entryVec, g.metric)
-	for lc := int(meta.MaxLayer); lc > 0; lc-- {
-		changed := true
-		for changed {
-			changed = false
-			epNode, epOk, epErr := g.s.GetHNSWNode(ep)
-			if epErr != nil {
-				return nil, epErr
-			}
-			if !epOk || lc >= len(epNode.Neighbors) {
-				break
-			}
-			for _, nbr := range epNode.Neighbors[lc] {
-				nbrVec, nOk, nErr := g.s.GetEmbeddingVec(nbr)
-				if nErr != nil {
-					return nil, nErr
-				}
-				if !nOk {
-					continue
-				}
-				d := engine.Similarity(vec, nbrVec, g.metric)
-				if d > epDist {
-					ep = nbr
-					epDist = d
-					changed = true
-				}
-			}
-		}
+	ep, _, err := g.greedyDescend(vec, entryCoord, entryVec, int(meta.MaxLayer), 1)
+	if err != nil {
+		return nil, err
 	}
 
 	// Layer 0: beam search.
 	candidates := g.searchLayer(vec, ep, efSearch, 0)
 
-	// Return top-K.
 	if len(candidates) > k {
 		candidates = candidates[:k]
 	}

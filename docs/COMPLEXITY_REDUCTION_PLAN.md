@@ -3,6 +3,7 @@
 **Branch:** `refactor/complexity-reduction`
 **Date:** 2026-05-07
 **Thresholds:** (from template, kept as-is for good code quality)
+
 - Domain: cyclomatic 5, cognitive 10
 - App: cyclomatic 10, cognitive 15
 - Adapters In: cyclomatic 15, cognitive 20
@@ -13,6 +14,7 @@
 - CRAP threshold: 30
 
 **Current state:** 244 violations across 1096 functions (22% violation rate)
+
 - 138 functions with violations
 - 8 CRAP violations (>30)
 - 99 cognitive complexity violations (>15)
@@ -23,9 +25,10 @@
 ## Priority 1: CRAP Score Violations (8 functions)
 
 **CRAP = (cyclomatic² × (1 - coverage/100)³) + cyclomatic**
-*These are complex AND poorly tested — dangerous to change*
+_These are complex AND poorly tested — dangerous to change_
 
 ### P1.1: Examples (Lower Priority - Demo Code)
+
 1. `examples/conversational_memory/main.go` — `run` — CRAP 114, Cyclo 30, Coverage 114%
    - **Strategy:** Extract helper functions, reduce nesting, simplify demo logic
    - **Estimated effort:** 1-2 hours
@@ -35,11 +38,13 @@
    - **Estimated effort:** 1-2 hours
 
 ### P1.2: Tests (High Priority - Test Quality)
+
 3. `internal/domain/storagecontract/contract_test.go` — `RunAll` — CRAP 96, Cyclo 30, Coverage 96%
    - **Strategy:** Use table-driven tests, extract setup/teardown helpers
    - **Estimated effort:** 2-3 hours
 
 ### P1.3: Core Engine/DB (Highest Priority - Core Logic)
+
 4. `internal/engine/engine.go` — `Open` — CRAP 62, Cyclo 30, Coverage 62%
    - **Strategy:** Extract option builders, separate initialization steps
    - **Estimated effort:** 3-4 hours
@@ -49,16 +54,19 @@
    - **Estimated effort:** 2-3 hours
 
 ### P1.4: HNSW Graph (High Priority - Core Algorithm)
+
 6. `internal/hnsw/graph.go` — `(*Graph).Insert` — CRAP 44, Cyclo 30, Coverage 44%
    - **Strategy:** Extract neighbor selection, graph maintenance helpers
    - **Estimated effort:** 4-6 hours
 
 ### P1.5: DB Configuration (Medium Priority)
+
 7. `db_open.go` — `buildEngineOptions` — CRAP 35, Cyclo 30, Coverage 35%
    - **Strategy:** Extract option builders, use functional options pattern
    - **Estimated effort:** 2-3 hours
 
 ### P1.6: TUI (Medium Priority - UI Code)
+
 8. `cmd/tui/view_cells.go` — `(*cellsView).Update` — CRAP 31, Cyclo 30, Coverage 31%
    - **Strategy:** Extract update logic, separate view rendering
    - **Estimated effort:** 2-3 hours
@@ -67,9 +75,10 @@
 
 ## Priority 2: Cognitive Complexity Violations >50
 
-*These are the hardest to understand and maintain*
+_These are the hardest to understand and maintain_
 
 ### P2.1: Tests (9 functions)
+
 1. `internal/domain/storagecontract/contract_test.go` — `RunAll` — 194
 2. `scale_integration_test.go` — `TestIntegration_putManyCells_survivesReopen` — 49
 3. `stress_integration_test.go` — `TestStress_putManyCells_survivesReopen` — 48
@@ -83,18 +92,21 @@
 **Strategy for tests:** Use table-driven patterns, extract setup/teardown, reduce nested loops
 
 ### P2.2: Examples (2 functions)
+
 10. `examples/conversational_memory/main.go` — `run` — 167
 11. `examples/llm_context_engine/main.go` — `run` — 92
 
 **Strategy for examples:** Extract helper functions, simplify demo logic
 
 ### P2.3: Core Engine/DB (2 functions)
+
 12. `health.go` — `(*DB).HealthCheck` — 163
 13. `internal/engine/engine.go` — `Open` — 81
 
 **Strategy:** Extract check functions, separate initialization steps, early returns
 
 ### P2.4: HNSW Graph (3 functions)
+
 14. `internal/hnsw/graph.go` — `(*Graph).Insert` — 93
 15. `internal/hnsw/graph.go` — `(*Graph).removeNode` — 55
 16. `internal/hnsw/graph.go` — `(*Graph).searchLayer` — 28
@@ -102,23 +114,27 @@
 **Strategy:** Extract neighbor selection, graph maintenance, layer search helpers
 
 ### P2.5: Primitives/Query (2 functions)
+
 17. `primitives.go` — `(*Tx).findSeams` — 55
 18. `embedding_search.go` — `(*Tx).SearchByEmbedding` — 38
 
 **Strategy:** Extract query builders, reduce nesting, early returns
 
 ### P2.6: B-Tree (2 functions)
+
 19. `internal/engine/btree_delete.go` — `(*BTree).rebalanceLeaf` — 49
 20. `internal/engine/btree_delete.go` — `(*BTree).Delete` — 26
 
 **Strategy:** Extract rebalancing logic, separate case handlers
 
 ### P2.7: DB Configuration (1 function)
+
 21. `db_open.go` — `buildEngineOptions` — 47
 
 **Strategy:** Extract option builders, use functional options pattern
 
 ### P2.8: Views/Budget (4 functions)
+
 22. `internal/views/budget.go` — `collectCandidates` — 45
 23. `internal/views/budget.go` — `LoadContextWithBudgeting` — 44
 24. `internal/views/budget.go` — `resolveSupersession` — 34
@@ -127,12 +143,14 @@
 **Strategy:** Extract budget calculation helpers, reduce nesting
 
 ### P2.9: TUI (2 functions)
+
 26. `cmd/tui/view_cells.go` — `(*cellsView).Update` — 43
 27. `cmd/tui/view_cells.go` — `(*cellsView).View` — 36
 
 **Strategy:** Extract update logic, separate view rendering
 
 ### P2.10: Other Core Functions (13 functions)
+
 28. `internal/engine/engine.go` — `(*Engine).readPagePooled` — 39
 29. `internal/engine/engine.go` — `(*Engine).applyGroupBatch` — 37
 30. `internal/views/views.go` — `AssembleCellView` — 36
@@ -153,9 +171,10 @@
 
 ## Priority 3: Cyclomatic Complexity Violations >20
 
-*Functions with too many branching paths*
+_Functions with too many branching paths_
 
 ### P3.1: Highest Cyclomatic (>50)
+
 1. `examples/conversational_memory/main.go` — `run` — 114
 2. `internal/domain/storagecontract/contract_test.go` — `RunAll` — 96
 3. `internal/engine/engine.go` — `Open` — 62
@@ -211,7 +230,7 @@
 
 ## Priority 4: Remaining Cyclomatic Complexity (11-15)
 
-*Lower priority but should be addressed for consistency*
+_Lower priority but should be addressed for consistency_
 
 - 89 functions with cyclomatic 11-15
 - Many are test functions, TUI views, and internal engine methods
@@ -222,42 +241,49 @@
 ## Refactoring Strategies by File Type
 
 ### Test Files (`*_test.go`)
+
 - Use table-driven test patterns
 - Extract setup/teardown into helper functions
 - Reduce nested loops and conditionals
 - Use `t.Helper()` for test helpers
 
 ### Core Engine Files (`internal/engine/`)
+
 - Extract option builders (functional options pattern)
 - Separate initialization steps
 - Extract page management helpers
 - Reduce nesting with early returns
 
 ### HNSW Graph (`internal/hnsw/graph.go`)
+
 - Extract neighbor selection logic
 - Separate graph maintenance operations
 - Extract layer search helpers
 - Use small, focused functions
 
 ### Primitives/Query (`primitives.go`, `query_exec.go`)
+
 - Extract query builders
 - Reduce nesting in predicate application
 - Use early returns for error cases
 - Extract scan helpers
 
 ### TUI (`cmd/tui/`)
+
 - Extract view update logic
 - Separate rendering from business logic
 - Extract message handlers
 - Use component-based architecture
 
 ### DB Configuration (`db_open.go`, `db.go`)
+
 - Use functional options pattern
 - Extract option builders
 - Separate initialization steps
 - Reduce configuration complexity
 
 ### Views/Budget (`internal/views/`)
+
 - Extract budget calculation helpers
 - Reduce nesting in candidate collection
 - Extract resolution logic

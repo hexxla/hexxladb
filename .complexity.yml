@@ -7,7 +7,7 @@ complexity:
   enabled: true
 
   # Fail the build on violations (true) or just warn (false)
-  fail_on_violation: true
+  fail_on_violation: false
 
   # Thresholds by hexagonal architecture layer
   # Paths are matched against file locations

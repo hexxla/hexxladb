@@ -78,80 +78,10 @@ func Open(path string, opts *Options) (*Engine, error) {
 		return nil, err
 	}
 
-	// Bootstrap page size: for new files, use opts; for existing files, read from header.
-	var effectivePageSize int
-	if st.Size() == 0 {
-		ps, psErr := resolvePageSize(opts)
-		if psErr != nil {
-			_ = db.Close()
-			return nil, psErr
-		}
-		effectivePageSize = int(ps)
-
-		mvb, mvbErr := resolveMaxValueBytes(opts)
-		if mvbErr != nil {
-			_ = db.Close()
-			return nil, mvbErr
-		}
-		ver := formatVersionV1
-		if opts != nil && opts.UseFormatV2 {
-			ver = formatVersionV2
-		}
-		var embDim uint16
-		var embMetric DistanceMetric
-		if opts != nil && opts.EmbeddingDim > 0 {
-			embDim = opts.EmbeddingDim
-			embMetric = opts.EmbeddingMetric
-			if !IsValidDistanceMetric(embMetric) {
-				_ = db.Close()
-				return nil, fmt.Errorf("%w: invalid distance metric %d", ErrInvalidEmbeddingConfig, embMetric)
-			}
-		}
-		hdr := Header{
-			FormatVersion:   ver,
-			PageSize:        ps,
-			LastWALSeq:      0,
-			NextPageID:      1,
-			CommitSeq:       0,
-			MaxValueBytes:   mvb,
-			EmbeddingDim:    embDim,
-			EmbeddingMetric: embMetric,
-		}
-		if opts != nil && opts.NewEncryptedDB {
-			hdr.Features |= FeatureEncryptedDataPages
-			if opts.EnableWALMAC {
-				hdr.Features |= FeatureWALKeyedMAC
-			}
-			if opts.EncryptionSalt == ([16]byte{}) {
-				if _, err := rand.Read(hdr.EncryptionSalt[:]); err != nil {
-					_ = db.Close()
-					return nil, err
-				}
-			} else {
-				hdr.EncryptionSalt = opts.EncryptionSalt
-			}
-			hdr.EncryptionKeyCheck = opts.EncryptionKeyCheck
-		}
-		if err := writeHeaderAt(db, hdr); err != nil {
-			_ = db.Close()
-			return nil, err
-		}
-		if err := syncFilePrimary(db, usePrimaryFdatasync); err != nil {
-			_ = db.Close()
-			return nil, err
-		}
-	} else {
-		// Existing file: bootstrap page size from the header prefix.
-		ps, psErr := bootstrapPageSize(db)
-		if psErr != nil {
-			_ = db.Close()
-			return nil, psErr
-		}
-		effectivePageSize = int(ps)
-		if st.Size() < int64(effectivePageSize) {
-			_ = db.Close()
-			return nil, ErrCorruptHeader
-		}
+	effectivePageSize, err := openBootstrapPageSize(db, st, opts, usePrimaryFdatasync)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 
 	hdr, err := readHeaderAt(db, effectivePageSize)
@@ -159,11 +89,9 @@ func Open(path string, opts *Options) (*Engine, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	if opts != nil && opts.ExpectEncryptionKeyCheck && hdr.Features&FeatureEncryptedDataPages != 0 {
-		if hdr.EncryptionKeyCheck != ([HeaderEncryptionKeyCheckLen]byte{}) && hdr.EncryptionKeyCheck != opts.EncryptionKeyCheck {
-			_ = db.Close()
-			return nil, ErrBadEncryptionKey
-		}
+	if err := openValidateEncryptionKey(opts, hdr); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 
 	walPath := WalPath(path)
@@ -174,121 +102,24 @@ func Open(path string, opts *Options) (*Engine, error) {
 		return nil, err
 	}
 
-	// Replay the full WAL. A fixed 1 GiB read cap truncated large sessions and made
-	// replay fail with ErrCorruptWAL (partial tail). Cap allocation at 16 GiB instead.
-	const maxWALReplayBytes = 16 << 30
-	walInfo, err := wal.Stat()
-	if err != nil {
-		_ = db.Close()
-		_ = wal.Close()
-		return nil, err
-	}
-	if walInfo.Size() > maxWALReplayBytes {
-		_ = db.Close()
-		_ = wal.Close()
-		return nil, fmt.Errorf("%w: WAL size %d exceeds max replay size", ErrCorruptWAL, walInfo.Size())
-	}
-	if _, err := wal.Seek(0, io.SeekStart); err != nil {
-		_ = db.Close()
-		_ = wal.Close()
-		return nil, err
-	}
-	walData := make([]byte, walInfo.Size())
-	if len(walData) > 0 {
-		if _, err := io.ReadFull(wal, walData); err != nil {
-			_ = db.Close()
-			_ = wal.Close()
-			return nil, err
-		}
-	}
-
-	apply := func(_ uint64, pageID uint64, payload []byte) error {
-		off, err := pageByteOffset(pageID, effectivePageSize)
-		if err != nil {
-			return err
-		}
-		_, err = db.WriteAt(payload, off)
-		return err
-	}
-
-	walMACEnabled := hdr.Features&FeatureWALKeyedMAC != 0
-	var walMACKey [32]byte
-	if walMACEnabled {
-		if opts == nil || !opts.EnableWALMAC {
-			_ = db.Close()
-			_ = wal.Close()
-			return nil, ErrBadEncryptionKey
-		}
-		walMACKey = opts.WALMACKey
-	}
-	maxSeq, err := parseAndReplayWALWithMAC(walData, hdr.LastWALSeq, apply, walMACKey, walMACEnabled, effectivePageSize)
+	newLast, walMACEnabled, walMACKey, err := openReplayWAL(db, wal, &hdr, opts, effectivePageSize, usePrimaryFdatasync)
 	if err != nil {
 		_ = db.Close()
 		_ = wal.Close()
 		return nil, err
 	}
 
-	newLast := max(hdr.LastWALSeq, maxSeq)
-	if newLast != hdr.LastWALSeq {
-		hdr.LastWALSeq = newLast
-		if err := writeHeaderAt(db, hdr); err != nil {
-			_ = db.Close()
-			_ = wal.Close()
-			return nil, err
-		}
-		if err := syncFilePrimary(db, usePrimaryFdatasync); err != nil {
-			_ = db.Close()
-			_ = wal.Close()
-			return nil, err
-		}
-	}
-
-	if err := wal.Truncate(0); err != nil {
-		_ = db.Close()
-		_ = wal.Close()
-		return nil, err
-	}
-	if _, err := wal.Seek(0, io.SeekStart); err != nil {
-		_ = db.Close()
-		_ = wal.Close()
-		return nil, err
-	}
-	if err := wal.Sync(); err != nil {
+	effectiveMaxVal, err := openFinalizeHeader(db, &hdr, opts)
+	if err != nil {
 		_ = db.Close()
 		_ = wal.Close()
 		return nil, err
 	}
 
-	if opts != nil && opts.MaxValueBytes != 0 && opts.MaxValueBytes != hdr.MaxValueBytes {
-		// Caller explicitly set a limit that differs from the stored header — validate and persist.
-		mvb, mvbErr := resolveMaxValueBytes(opts)
-		if mvbErr != nil {
-			_ = db.Close()
-			_ = wal.Close()
-			return nil, mvbErr
-		}
-		hdr.MaxValueBytes = mvb
-		if err := writeHeaderAt(db, hdr); err != nil {
-			_ = db.Close()
-			_ = wal.Close()
-			return nil, err
-		}
-	}
-	effectiveMaxVal := hdr.MaxValueBytes
-	if effectiveMaxVal == 0 {
-		effectiveMaxVal = DefaultMaxValueBytes
-	}
-
-	// Embedding: validate consistency between opts and header on reopen.
-	if opts != nil && opts.EmbeddingDim > 0 && hdr.EmbeddingDim > 0 && opts.EmbeddingDim != hdr.EmbeddingDim {
+	if err := openValidateEmbedding(opts, hdr); err != nil {
 		_ = db.Close()
 		_ = wal.Close()
-		return nil, fmt.Errorf("%w: embedding dimension mismatch: options=%d, header=%d", ErrInvalidEmbeddingConfig, opts.EmbeddingDim, hdr.EmbeddingDim)
-	}
-	if opts != nil && opts.EmbeddingDim > 0 && hdr.EmbeddingDim > 0 && opts.EmbeddingMetric != hdr.EmbeddingMetric {
-		_ = db.Close()
-		_ = wal.Close()
-		return nil, fmt.Errorf("%w: embedding metric mismatch: options=%d, header=%d", ErrInvalidEmbeddingConfig, opts.EmbeddingMetric, hdr.EmbeddingMetric)
+		return nil, err
 	}
 
 	e := &Engine{
@@ -319,6 +150,215 @@ func Open(path string, opts *Options) (*Engine, error) {
 		e.startGroupWALFlusher()
 	}
 	return e, nil
+}
+
+// openBootstrapPageSize determines the effective page size — either from opts for new files,
+// or from the existing header prefix.
+func openBootstrapPageSize(db *os.File, st os.FileInfo, opts *Options, usePrimaryFdatasync bool) (int, error) {
+	if st.Size() == 0 {
+		return openInitNewDB(db, opts, usePrimaryFdatasync)
+	}
+	ps, err := bootstrapPageSize(db)
+	if err != nil {
+		return 0, err
+	}
+	if st.Size() < int64(ps) {
+		return 0, ErrCorruptHeader
+	}
+	return int(ps), nil
+}
+
+// openInitNewDB writes the initial header for a brand-new database and returns the page size.
+func openInitNewDB(db *os.File, opts *Options, usePrimaryFdatasync bool) (int, error) {
+	ps, err := resolvePageSize(opts)
+	if err != nil {
+		return 0, err
+	}
+	mvb, err := resolveMaxValueBytes(opts)
+	if err != nil {
+		return 0, err
+	}
+	ver := formatVersionV1
+	if opts != nil && opts.UseFormatV2 {
+		ver = formatVersionV2
+	}
+	var embDim uint16
+	var embMetric DistanceMetric
+	if opts != nil && opts.EmbeddingDim > 0 {
+		embDim = opts.EmbeddingDim
+		embMetric = opts.EmbeddingMetric
+		if !IsValidDistanceMetric(embMetric) {
+			return 0, fmt.Errorf("%w: invalid distance metric %d", ErrInvalidEmbeddingConfig, embMetric)
+		}
+	}
+	hdr := Header{
+		FormatVersion:   ver,
+		PageSize:        ps,
+		LastWALSeq:      0,
+		NextPageID:      1,
+		CommitSeq:       0,
+		MaxValueBytes:   mvb,
+		EmbeddingDim:    embDim,
+		EmbeddingMetric: embMetric,
+	}
+	if opts != nil && opts.NewEncryptedDB {
+		if err := openApplyEncryptionToHeader(&hdr, opts); err != nil {
+			return 0, err
+		}
+	}
+	if err := writeHeaderAt(db, hdr); err != nil {
+		return 0, err
+	}
+	if err := syncFilePrimary(db, usePrimaryFdatasync); err != nil {
+		return 0, err
+	}
+	return int(ps), nil
+}
+
+// openApplyEncryptionToHeader sets encryption features and salt on a new header.
+func openApplyEncryptionToHeader(hdr *Header, opts *Options) error {
+	hdr.Features |= FeatureEncryptedDataPages
+	if opts.EnableWALMAC {
+		hdr.Features |= FeatureWALKeyedMAC
+	}
+	if opts.EncryptionSalt == ([16]byte{}) {
+		if _, err := rand.Read(hdr.EncryptionSalt[:]); err != nil {
+			return err
+		}
+	} else {
+		hdr.EncryptionSalt = opts.EncryptionSalt
+	}
+	hdr.EncryptionKeyCheck = opts.EncryptionKeyCheck
+	return nil
+}
+
+// openValidateEncryptionKey checks if the encryption key matches the stored key check.
+func openValidateEncryptionKey(opts *Options, hdr Header) error {
+	if opts == nil || !opts.ExpectEncryptionKeyCheck {
+		return nil
+	}
+	if hdr.Features&FeatureEncryptedDataPages == 0 {
+		return nil
+	}
+	if hdr.EncryptionKeyCheck != ([HeaderEncryptionKeyCheckLen]byte{}) && hdr.EncryptionKeyCheck != opts.EncryptionKeyCheck {
+		return ErrBadEncryptionKey
+	}
+	return nil
+}
+
+// openReplayWAL reads and replays the WAL, then truncates it.
+// Returns the new last WAL sequence, MAC config, and any error.
+func openReplayWAL(db, wal *os.File, hdr *Header, opts *Options, pageSize int, usePrimaryFdatasync bool) (lastSeq uint64, macEnabled bool, macKey [32]byte, err error) {
+	const maxWALReplayBytes = 16 << 30
+
+	walInfo, statErr := wal.Stat()
+	if statErr != nil {
+		return 0, false, macKey, statErr
+	}
+	if walInfo.Size() > maxWALReplayBytes {
+		return 0, false, macKey, fmt.Errorf("%w: WAL size %d exceeds max replay size", ErrCorruptWAL, walInfo.Size())
+	}
+
+	walData, readErr := openReadWALData(wal, walInfo.Size())
+	if readErr != nil {
+		return 0, false, macKey, readErr
+	}
+
+	apply := func(_ uint64, pageID uint64, payload []byte) error {
+		off, offErr := pageByteOffset(pageID, pageSize)
+		if offErr != nil {
+			return offErr
+		}
+		_, offErr = db.WriteAt(payload, off)
+		return offErr
+	}
+
+	macEnabled = hdr.Features&FeatureWALKeyedMAC != 0
+	if macEnabled {
+		if opts == nil || !opts.EnableWALMAC {
+			return 0, false, macKey, ErrBadEncryptionKey
+		}
+		macKey = opts.WALMACKey
+	}
+
+	maxSeq, replayErr := parseAndReplayWALWithMAC(walData, hdr.LastWALSeq, apply, macKey, macEnabled, pageSize)
+	if replayErr != nil {
+		return 0, false, macKey, replayErr
+	}
+
+	lastSeq = max(hdr.LastWALSeq, maxSeq)
+	if lastSeq != hdr.LastWALSeq {
+		hdr.LastWALSeq = lastSeq
+		if wErr := writeHeaderAt(db, *hdr); wErr != nil {
+			return 0, false, macKey, wErr
+		}
+		if sErr := syncFilePrimary(db, usePrimaryFdatasync); sErr != nil {
+			return 0, false, macKey, sErr
+		}
+	}
+
+	if tErr := openTruncateWAL(wal); tErr != nil {
+		return 0, false, macKey, tErr
+	}
+	return lastSeq, macEnabled, macKey, nil
+}
+
+// openReadWALData reads all WAL bytes from the beginning.
+func openReadWALData(wal *os.File, size int64) ([]byte, error) {
+	if _, err := wal.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	walData := make([]byte, size)
+	if len(walData) > 0 {
+		if _, err := io.ReadFull(wal, walData); err != nil {
+			return nil, err
+		}
+	}
+	return walData, nil
+}
+
+// openTruncateWAL truncates and syncs the WAL file after replay.
+func openTruncateWAL(wal *os.File) error {
+	if err := wal.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := wal.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	return wal.Sync()
+}
+
+// openFinalizeHeader updates MaxValueBytes in the header if needed and returns effective max.
+func openFinalizeHeader(db *os.File, hdr *Header, opts *Options) (uint32, error) {
+	if opts != nil && opts.MaxValueBytes != 0 && opts.MaxValueBytes != hdr.MaxValueBytes {
+		mvb, err := resolveMaxValueBytes(opts)
+		if err != nil {
+			return 0, err
+		}
+		hdr.MaxValueBytes = mvb
+		if err := writeHeaderAt(db, *hdr); err != nil {
+			return 0, err
+		}
+	}
+	effective := hdr.MaxValueBytes
+	if effective == 0 {
+		effective = DefaultMaxValueBytes
+	}
+	return effective, nil
+}
+
+// openValidateEmbedding checks embedding config consistency between opts and header on reopen.
+func openValidateEmbedding(opts *Options, hdr Header) error {
+	if opts == nil || opts.EmbeddingDim == 0 || hdr.EmbeddingDim == 0 {
+		return nil
+	}
+	if opts.EmbeddingDim != hdr.EmbeddingDim {
+		return fmt.Errorf("%w: embedding dimension mismatch: options=%d, header=%d", ErrInvalidEmbeddingConfig, opts.EmbeddingDim, hdr.EmbeddingDim)
+	}
+	if opts.EmbeddingMetric != hdr.EmbeddingMetric {
+		return fmt.Errorf("%w: embedding metric mismatch: options=%d, header=%d", ErrInvalidEmbeddingConfig, opts.EmbeddingMetric, hdr.EmbeddingMetric)
+	}
+	return nil
 }
 
 // Close releases file handles.
