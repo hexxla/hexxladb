@@ -340,8 +340,38 @@ func (g *Graph) Delete(coord lattice.PackedCoord) error {
 func (g *Graph) removeNode(node *Node, meta *Meta, entryCoord lattice.PackedCoord) error {
 	coord := node.Coord
 
-	// Remove coord from all neighbors' lists.
+	if err := g.repairNeighborLinks(node, meta); err != nil {
+		return err
+	}
+
+	if err := g.s.DeleteHNSWNode(coord); err != nil {
+		return err
+	}
+
+	meta.Count--
+	if meta.Count == 0 {
+		meta.MaxLayer = 0
+		if err := g.s.DeleteHNSWEntry(); err != nil {
+			return err
+		}
+		return g.s.PutHNSWMeta(meta)
+	}
+
+	if coord == entryCoord {
+		if err := g.promoteNewEntryPoint(node, meta); err != nil {
+			return err
+		}
+	}
+
+	return g.s.PutHNSWMeta(meta)
+}
+
+// repairNeighborLinks removes coord from all neighbor lists and repairs connections
+// by linking former co-neighbors together where capacity allows.
+func (g *Graph) repairNeighborLinks(node *Node, meta *Meta) error {
+	coord := node.Coord
 	for lc, nbrList := range node.Neighbors {
+		limit := g.layerLimit(meta, lc)
 		for _, nbr := range nbrList {
 			nbrNode, nOk, nErr := g.s.GetHNSWNode(nbr)
 			if nErr != nil {
@@ -351,78 +381,66 @@ func (g *Graph) removeNode(node *Node, meta *Meta, entryCoord lattice.PackedCoor
 				continue
 			}
 			nbrNode.Neighbors[lc] = removeCoord(nbrNode.Neighbors[lc], coord)
-
-			// Repair: try to connect this neighbor to former co-neighbors.
-			for _, coNbr := range nbrList {
-				if coNbr == nbr || coNbr == coord {
-					continue
-				}
-				if containsCoord(nbrNode.Neighbors[lc], coNbr) {
-					continue
-				}
-				var limit uint16
-				if lc == 0 {
-					limit = meta.M * 2
-				} else {
-					limit = meta.M
-				}
-				if uint16(len(nbrNode.Neighbors[lc])) < limit { //nolint:gosec // bounded
-					nbrNode.Neighbors[lc] = append(nbrNode.Neighbors[lc], coNbr)
-				}
-			}
+			g.repairWithCoNeighbors(nbrNode, lc, nbrList, coord, nbr, limit)
 			if err := g.s.PutHNSWNode(nbrNode); err != nil {
 				return err
 			}
 		}
 	}
+	return nil
+}
 
-	// Delete the node itself.
-	if err := g.s.DeleteHNSWNode(coord); err != nil {
-		return err
+// repairWithCoNeighbors adds former co-neighbors of the removed node to nbrNode
+// at layer lc, up to the capacity limit.
+func (g *Graph) repairWithCoNeighbors(nbrNode *Node, lc int, nbrList []lattice.PackedCoord, removedCoord, self lattice.PackedCoord, limit uint16) {
+	for _, coNbr := range nbrList {
+		if coNbr == self || coNbr == removedCoord {
+			continue
+		}
+		if containsCoord(nbrNode.Neighbors[lc], coNbr) {
+			continue
+		}
+		if uint16(len(nbrNode.Neighbors[lc])) < limit { //nolint:gosec // bounded
+			nbrNode.Neighbors[lc] = append(nbrNode.Neighbors[lc], coNbr)
+		}
 	}
+}
 
-	meta.Count--
-	if meta.Count == 0 {
-		// Graph is now empty.
+// layerLimit returns the maximum neighbor count for the given layer.
+func (g *Graph) layerLimit(meta *Meta, lc int) uint16 {
+	if lc == 0 {
+		return meta.M * 2
+	}
+	return meta.M
+}
+
+// promoteNewEntryPoint selects a neighbor of the removed node as the new entry point.
+func (g *Graph) promoteNewEntryPoint(node *Node, meta *Meta) error {
+	newEntry, found := g.findBestNeighborForEntry(node)
+	if !found {
 		meta.MaxLayer = 0
-		if err := g.s.DeleteHNSWEntry(); err != nil {
-			return err
-		}
-		return g.s.PutHNSWMeta(meta)
+		return nil
 	}
+	newEntryNode, nOk, nErr := g.s.GetHNSWNode(newEntry)
+	if nErr != nil {
+		return nErr
+	}
+	if nOk {
+		meta.MaxLayer = newEntryNode.MaxLayer
+	} else {
+		meta.MaxLayer = 0
+	}
+	return g.s.PutHNSWEntry(newEntry)
+}
 
-	// If we deleted the entry point, promote a neighbor.
-	if coord == entryCoord {
-		// Pick the first neighbor at the highest layer.
-		var newEntry lattice.PackedCoord
-		found := false
-		for lc := int(node.MaxLayer); lc >= 0 && !found; lc-- {
-			for _, nbr := range node.Neighbors[lc] {
-				newEntry = nbr
-				found = true
-				break
-			}
-		}
-		if !found {
-			// Shouldn't happen with count > 0; fall back to first existing node's layer.
-			meta.MaxLayer = 0
-		} else {
-			newEntryNode, nOk, nErr := g.s.GetHNSWNode(newEntry)
-			if nErr != nil {
-				return nErr
-			}
-			if nOk {
-				meta.MaxLayer = newEntryNode.MaxLayer
-			} else {
-				meta.MaxLayer = 0
-			}
-			if err := g.s.PutHNSWEntry(newEntry); err != nil {
-				return err
-			}
+// findBestNeighborForEntry picks the first neighbor at the highest layer of node.
+func (g *Graph) findBestNeighborForEntry(node *Node) (lattice.PackedCoord, bool) {
+	for lc := int(node.MaxLayer); lc >= 0; lc-- {
+		if len(node.Neighbors[lc]) > 0 {
+			return node.Neighbors[lc][0], true
 		}
 	}
-
-	return g.s.PutHNSWMeta(meta)
+	return lattice.PackedCoord{}, false
 }
 
 // searchLayer runs ef-bounded greedy search at the given layer starting from ep.

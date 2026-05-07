@@ -378,79 +378,80 @@ func (tx *Tx) findSeams(ctx context.Context, center lattice.Coord, radius int, u
 	// Pre-flight: if the seam-by-cells index is entirely empty, return immediately.
 	// This saves 2×(3r²+3r+1) AscendRange calls (74 at r=3, 182 at r=5) when no
 	// seams have ever been written to this database.
-	var hasAnySeam bool
-	if err := tx.db.btree.AscendRange([]byte(index.SeamByCellsPrefix), index.SeamByCellsScanUpperBound(), func(_, _ []byte) bool {
-		hasAnySeam = true
-		return false
-	}); err != nil {
+	if empty, err := tx.seamIndexEmpty(); err != nil {
 		return nil, err
-	}
-	if !hasAnySeam {
+	} else if empty {
 		return nil, nil
 	}
 
 	var out []record.SeamRecord
 	seen := make(map[string]struct{})
-	var scanErr error
 	for ring := range radius + 1 {
 		for _, c := range lattice.Ring(center, ring) {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			p, err := lattice.Pack(c)
-			if err != nil {
+			if err := tx.scanSeamsForCoord(ctx, c, center, radius, unresolvedOnly, asOf, &out, seen); err != nil {
 				return nil, err
-			}
-			from, to := index.SeamByCellsRangeLoFixed(p)
-			if err := tx.db.btree.AscendRange(from, to, func(k, _ []byte) bool {
-				if err := ctx.Err(); err != nil {
-					scanErr = err
-					return false
-				}
-				_, _, id, err := index.ParseSeamByCellsKey(k)
-				if err != nil {
-					scanErr = err
-					return false
-				}
-				if err := tx.collectSeamFind(&out, seen, id, center, radius, unresolvedOnly, asOf); err != nil {
-					scanErr = err
-					return false
-				}
-				return true
-			}); err != nil {
-				return nil, err
-			}
-			if scanErr != nil {
-				return nil, scanErr
-			}
-			from2, to2, ok := index.SeamByCellsRangeHiFixedLoLess(p)
-			if !ok {
-				continue
-			}
-			if err := tx.db.btree.AscendRange(from2, to2, func(k, _ []byte) bool {
-				if err := ctx.Err(); err != nil {
-					scanErr = err
-					return false
-				}
-				_, _, id, err := index.ParseSeamByCellsKey(k)
-				if err != nil {
-					scanErr = err
-					return false
-				}
-				if err := tx.collectSeamFind(&out, seen, id, center, radius, unresolvedOnly, asOf); err != nil {
-					scanErr = err
-					return false
-				}
-				return true
-			}); err != nil {
-				return nil, err
-			}
-			if scanErr != nil {
-				return nil, scanErr
 			}
 		}
 	}
 	return out, nil
+}
+
+// seamIndexEmpty returns true if the seam-by-cells index has no entries.
+func (tx *Tx) seamIndexEmpty() (bool, error) {
+	var hasAny bool
+	if err := tx.db.btree.AscendRange([]byte(index.SeamByCellsPrefix), index.SeamByCellsScanUpperBound(), func(_, _ []byte) bool {
+		hasAny = true
+		return false
+	}); err != nil {
+		return false, err
+	}
+	return !hasAny, nil
+}
+
+// scanSeamsForCoord scans both index ranges (Lo-fixed and Hi-fixed-Lo-less) for a single
+// coordinate and collects matching seams into out.
+func (tx *Tx) scanSeamsForCoord(ctx context.Context, c, center lattice.Coord, radius int, unresolvedOnly bool, asOf *time.Time, out *[]record.SeamRecord, seen map[string]struct{}) error {
+	p, err := lattice.Pack(c)
+	if err != nil {
+		return err
+	}
+	from, to := index.SeamByCellsRangeLoFixed(p)
+	if err := tx.scanSeamRange(ctx, from, to, center, radius, unresolvedOnly, asOf, out, seen); err != nil {
+		return err
+	}
+	from2, to2, ok := index.SeamByCellsRangeHiFixedLoLess(p)
+	if !ok {
+		return nil
+	}
+	return tx.scanSeamRange(ctx, from2, to2, center, radius, unresolvedOnly, asOf, out, seen)
+}
+
+// scanSeamRange performs a single AscendRange over a seam-by-cells key range,
+// collecting matching seams into out.
+func (tx *Tx) scanSeamRange(ctx context.Context, from, to []byte, center lattice.Coord, radius int, unresolvedOnly bool, asOf *time.Time, out *[]record.SeamRecord, seen map[string]struct{}) error {
+	var scanErr error
+	if err := tx.db.btree.AscendRange(from, to, func(k, _ []byte) bool {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			scanErr = ctxErr
+			return false
+		}
+		_, _, id, parseErr := index.ParseSeamByCellsKey(k)
+		if parseErr != nil {
+			scanErr = parseErr
+			return false
+		}
+		if collectErr := tx.collectSeamFind(out, seen, id, center, radius, unresolvedOnly, asOf); collectErr != nil {
+			scanErr = collectErr
+			return false
+		}
+		return true
+	}); err != nil {
+		return err
+	}
+	return scanErr
 }
 
 func (tx *Tx) collectSeamFind(out *[]record.SeamRecord, seen map[string]struct{}, id string, center lattice.Coord, radius int, unresolvedOnly bool, asOf *time.Time) error {
