@@ -335,52 +335,85 @@ func (t *BTree) pickLeafParentForSiblingWalk(parentPIDs []uint64, leafPID uint64
 
 func (t *BTree) rebalanceLeaf(parentPIDs []uint64, childIdxs []int, leafPID uint64, ld *leafData, root uint64) (uint64, error) {
 	// Right neighbor: parent's ptr order is canonical. Prefer path parent, then on-disk parent.
-	if parentPID, perr := t.pickLeafParentForSiblingWalk(parentPIDs, leafPID, ld); perr == nil {
-		rightPID, _, _, hasRight, err := t.rightLeafInParent(parentPID, leafPID)
-		if err != nil {
-			return root, fmt.Errorf("right sibling: %w", err)
-		}
-		if hasRight {
-			rp, releaseRP, err := t.eng.readPagePooled(rightPID)
-			if err != nil {
-				return root, err
-			}
-			rightKind := rp[5]
-			rd, err := parseLeafPage(rp)
-			releaseRP()
-			// In rare cases the parent's i+1 pointer can disagree with the leaf's next link (e.g. after
-			// structural mutations); prefer a valid leaf for merge/borrow. See pickLeafParentForSiblingWalk.
-			if err != nil || rightKind != btreeKindLeaf {
-				if ld.next == 0 || ld.next == rightPID {
-					if err != nil {
-						return root, fmt.Errorf("parse right sibling at %d: %w", rightPID, err)
-					}
-					return root, fmt.Errorf("%w: right ptr %d in parent of %d is not a leaf (kind %d)", ErrCorruptTree, rightPID, leafPID, rightKind)
-				}
-				rp2, rel2, err := t.eng.readPagePooled(ld.next)
-				if err != nil {
-					return root, err
-				}
-				if rp2[5] != btreeKindLeaf {
-					rel2()
-					return root, fmt.Errorf("%w: right ptr %d and next %d are not leaves (parent of leaf %d)", ErrCorruptTree, rightPID, ld.next, leafPID)
-				}
-				rd, err = parseLeafPage(rp2)
-				rel2()
-				if err != nil {
-					return root, err
-				}
-				rightPID = ld.next
-			}
-			if leafSerializedSize(append(ld.keys, rd.keys...), append(ld.vals, rd.vals...)) <= t.pageSize() {
-				return t.mergeRightLeaf(parentPIDs, leafPID, ld, rd, rightPID, root)
-			}
-			if len(rd.keys) > minLeafKeysForPage(t.pageSize()) {
-				return t.borrowFromRight(parentPIDs, childIdxs, leafPID, ld, rightPID, rd, root)
-			}
-			// Neither merge nor borrow possible; leave slightly underfull (valid B+ state).
-		}
+	if newRoot, done, err := t.tryRightSiblingRebalance(parentPIDs, childIdxs, leafPID, ld, root); err != nil {
+		return root, err
+	} else if done {
+		return newRoot, nil
 	}
+	// Left neighbor fallback.
+	return t.tryLeftSiblingRebalance(parentPIDs, childIdxs, leafPID, ld, root)
+}
+
+// tryRightSiblingRebalance attempts to merge or borrow from the right sibling.
+// Returns (newRoot, true, nil) if rebalancing was performed, (root, false, nil) if
+// no right sibling was usable, or (root, false, err) on failure.
+func (t *BTree) tryRightSiblingRebalance(parentPIDs []uint64, childIdxs []int, leafPID uint64, ld *leafData, root uint64) (newRoot uint64, done bool, err error) {
+	parentPID, perr := t.pickLeafParentForSiblingWalk(parentPIDs, leafPID, ld)
+	if perr != nil {
+		return root, false, nil
+	}
+	rightPID, _, _, hasRight, err := t.rightLeafInParent(parentPID, leafPID)
+	if err != nil {
+		return root, false, fmt.Errorf("right sibling: %w", err)
+	}
+	if !hasRight {
+		return root, false, nil
+	}
+	rightPID, rd, err := t.resolveRightLeaf(rightPID, leafPID, ld)
+	if err != nil {
+		return root, false, err
+	}
+	if leafSerializedSize(append(ld.keys, rd.keys...), append(ld.vals, rd.vals...)) <= t.pageSize() {
+		newRoot, err := t.mergeRightLeaf(parentPIDs, leafPID, ld, rd, rightPID, root)
+		return newRoot, true, err
+	}
+	if len(rd.keys) > minLeafKeysForPage(t.pageSize()) {
+		newRoot, err := t.borrowFromRight(parentPIDs, childIdxs, leafPID, ld, rightPID, rd, root)
+		return newRoot, true, err
+	}
+	// Neither merge nor borrow possible; leave slightly underfull (valid B+ state).
+	return root, false, nil
+}
+
+// resolveRightLeaf reads the right sibling page. In rare cases the parent's i+1 pointer
+// can disagree with the leaf's next link; when that happens, fall back to ld.next.
+func (t *BTree) resolveRightLeaf(rightPID, leafPID uint64, ld *leafData) (resolvedPID uint64, rd *leafData, err error) {
+	rp, releaseRP, err := t.eng.readPagePooled(rightPID)
+	if err != nil {
+		return 0, nil, err
+	}
+	rightKind := rp[5]
+	var parseErr error
+	rd, parseErr = parseLeafPage(rp)
+	releaseRP()
+	if parseErr == nil && rightKind == btreeKindLeaf {
+		return rightPID, rd, nil
+	}
+	// Parent pointer disagrees — try ld.next as fallback.
+	if ld.next == 0 || ld.next == rightPID {
+		if parseErr != nil {
+			return 0, nil, fmt.Errorf("parse right sibling at %d: %w", rightPID, parseErr)
+		}
+		return 0, nil, fmt.Errorf("%w: right ptr %d in parent of %d is not a leaf (kind %d)", ErrCorruptTree, rightPID, leafPID, rightKind)
+	}
+	rp2, rel2, err := t.eng.readPagePooled(ld.next)
+	if err != nil {
+		return 0, nil, err
+	}
+	if rp2[5] != btreeKindLeaf {
+		rel2()
+		return 0, nil, fmt.Errorf("%w: right ptr %d and next %d are not leaves (parent of leaf %d)", ErrCorruptTree, rightPID, ld.next, leafPID)
+	}
+	rd, err = parseLeafPage(rp2)
+	rel2()
+	if err != nil {
+		return 0, nil, err
+	}
+	return ld.next, rd, nil
+}
+
+// tryLeftSiblingRebalance attempts to merge or borrow from the left sibling.
+func (t *BTree) tryLeftSiblingRebalance(parentPIDs []uint64, childIdxs []int, leafPID uint64, ld *leafData, root uint64) (uint64, error) {
 	if len(parentPIDs) == 0 {
 		return root, nil
 	}

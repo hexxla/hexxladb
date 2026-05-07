@@ -428,35 +428,10 @@ func (e *Engine) readPagePooled(pageID uint64) (data []byte, release func(), err
 	// In-memory view of a single write transaction.
 	if e.wtxn != nil {
 		if pageID == 0 {
-			page := encodeHeaderPage(e.wtxn.hdr)
-			bp := e.pageBufPool.Get().(*[]byte)
-			buf := (*bp)[:e.pageSize]
-			copy(buf, page)
-			out, err := e.hooks.transformRead(0, buf)
-			if err != nil {
-				e.pageBufPool.Put(bp)
-				return nil, releaseNothing, err
-			}
-			if sliceSameBase(out, buf) {
-				return out, func() { e.pageBufPool.Put(bp) }, nil
-			}
-			e.pageBufPool.Put(bp)
-			return out, releaseNothing, nil
+			return e.pooledTransformRead(0, encodeHeaderPage(e.wtxn.hdr))
 		}
 		if plain, ok := e.wtxn.dirty[pageID]; ok {
-			bp := e.pageBufPool.Get().(*[]byte)
-			buf := (*bp)[:e.pageSize]
-			copy(buf, plain)
-			out, err := e.hooks.transformRead(pageID, buf)
-			if err != nil {
-				e.pageBufPool.Put(bp)
-				return nil, releaseNothing, err
-			}
-			if sliceSameBase(out, buf) {
-				return out, func() { e.pageBufPool.Put(bp) }, nil
-			}
-			e.pageBufPool.Put(bp)
-			return out, releaseNothing, nil
+			return e.pooledTransformRead(pageID, plain)
 		}
 	}
 
@@ -469,19 +444,7 @@ func (e *Engine) readPagePooled(pageID uint64) (data []byte, release func(), err
 		plain, ok := e.groupOverlay[pageID]
 		e.groupOverlayMu.RUnlock()
 		if ok {
-			bp := e.pageBufPool.Get().(*[]byte)
-			buf := (*bp)[:e.pageSize]
-			copy(buf, plain)
-			out, err := e.hooks.transformRead(pageID, buf)
-			if err != nil {
-				e.pageBufPool.Put(bp)
-				return nil, releaseNothing, err
-			}
-			if sliceSameBase(out, buf) {
-				return out, func() { e.pageBufPool.Put(bp) }, nil
-			}
-			e.pageBufPool.Put(bp)
-			return out, releaseNothing, nil
+			return e.pooledTransformRead(pageID, plain)
 		}
 	}
 
@@ -491,22 +454,32 @@ func (e *Engine) readPagePooled(pageID uint64) (data []byte, release func(), err
 		if err != nil {
 			return nil, releaseNothing, err
 		}
-		page := encodeHeaderPage(vh)
-		bp := e.pageBufPool.Get().(*[]byte)
-		buf := (*bp)[:e.pageSize]
-		copy(buf, page)
-		out, err := e.hooks.transformRead(0, buf)
-		if err != nil {
-			e.pageBufPool.Put(bp)
-			return nil, releaseNothing, err
-		}
-		if sliceSameBase(out, buf) {
-			return out, func() { e.pageBufPool.Put(bp) }, nil
-		}
-		e.pageBufPool.Put(bp)
-		return out, releaseNothing, nil
+		return e.pooledTransformRead(0, encodeHeaderPage(vh))
 	}
 
+	return e.readPageFromDisk(pageID)
+}
+
+// pooledTransformRead copies src into a pooled buffer, applies transformRead, and
+// returns the result with an appropriate release function.
+func (e *Engine) pooledTransformRead(pageID uint64, src []byte) (data []byte, release func(), err error) {
+	bp := e.pageBufPool.Get().(*[]byte)
+	buf := (*bp)[:e.pageSize]
+	copy(buf, src)
+	out, err := e.hooks.transformRead(pageID, buf)
+	if err != nil {
+		e.pageBufPool.Put(bp)
+		return nil, releaseNothing, err
+	}
+	if sliceSameBase(out, buf) {
+		return out, func() { e.pageBufPool.Put(bp) }, nil
+	}
+	e.pageBufPool.Put(bp)
+	return out, releaseNothing, nil
+}
+
+// readPageFromDisk reads a data page directly from the primary file.
+func (e *Engine) readPageFromDisk(pageID uint64) (data []byte, release func(), err error) {
 	bp := e.pageBufPool.Get().(*[]byte)
 	buf := (*bp)[:e.pageSize]
 

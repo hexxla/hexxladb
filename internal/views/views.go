@@ -208,54 +208,72 @@ func AssembleCellView(ctx context.Context, tx TxReader, coord lattice.Coord, asO
 		}
 	}
 	if opts.IncludeFacets {
-		if err := tx.AscendFacetsForCell(packed, func(fr record.FacetRecord) bool {
-			out.Facets = append(out.Facets, facetViewFromRecord(fr))
-			return true
-		}); err != nil {
+		if err := assembleFacets(tx, packed, &out); err != nil {
 			return CellView{}, err
 		}
 	}
 	if opts.IncludeEdges {
-		if err := tx.AscendEdgesFrom(packed, func(er record.EdgeRecord) bool {
-			to, err := lattice.Unpack(er.To)
-			if err != nil {
-				return true
-			}
-			out.Edges = append(out.Edges, EdgeView{To: to, RelationType: er.RelationType, Weight: er.Weight})
-			return true
-		}); err != nil {
+		if err := assembleEdges(tx, packed, &out); err != nil {
 			return CellView{}, err
 		}
 	}
 	if opts.IncludeSeams {
-		radius := opts.SeamSearchRadius
-		if radius < 0 {
-			return CellView{}, ErrInvalidArgument
-		}
-		seams, err := tx.FindSeams(ctx, coord, radius, opts.UnresolvedSeamsOnly)
-		if err != nil {
+		if err := assembleSeams(ctx, tx, coord, opts, &out); err != nil {
 			return CellView{}, err
-		}
-		for _, s := range seams {
-			a, err := lattice.Unpack(s.CellA)
-			if err != nil {
-				continue
-			}
-			b, err := lattice.Unpack(s.CellB)
-			if err != nil {
-				continue
-			}
-			if a != coord && b != coord {
-				continue
-			}
-			out.Seams = append(out.Seams, SeamRef{
-				ID:               s.ID,
-				SeamType:         s.SeamType,
-				ResolutionStatus: s.ResolutionStatus,
-			})
 		}
 	}
 	return out, nil
+}
+
+// assembleFacets populates out.Facets from the transaction.
+func assembleFacets(tx TxReader, packed lattice.PackedCoord, out *CellView) error {
+	return tx.AscendFacetsForCell(packed, func(fr record.FacetRecord) bool {
+		out.Facets = append(out.Facets, facetViewFromRecord(fr))
+		return true
+	})
+}
+
+// assembleEdges populates out.Edges from the transaction.
+func assembleEdges(tx TxReader, packed lattice.PackedCoord, out *CellView) error {
+	return tx.AscendEdgesFrom(packed, func(er record.EdgeRecord) bool {
+		to, err := lattice.Unpack(er.To)
+		if err != nil {
+			return true
+		}
+		out.Edges = append(out.Edges, EdgeView{To: to, RelationType: er.RelationType, Weight: er.Weight})
+		return true
+	})
+}
+
+// assembleSeams populates out.Seams with seams incident to coord.
+func assembleSeams(ctx context.Context, tx TxReader, coord lattice.Coord, opts AssembleCellViewOpts, out *CellView) error {
+	radius := opts.SeamSearchRadius
+	if radius < 0 {
+		return ErrInvalidArgument
+	}
+	seams, err := tx.FindSeams(ctx, coord, radius, opts.UnresolvedSeamsOnly)
+	if err != nil {
+		return err
+	}
+	for _, s := range seams {
+		a, aErr := lattice.Unpack(s.CellA)
+		if aErr != nil {
+			continue
+		}
+		b, bErr := lattice.Unpack(s.CellB)
+		if bErr != nil {
+			continue
+		}
+		if a != coord && b != coord {
+			continue
+		}
+		out.Seams = append(out.Seams, SeamRef{
+			ID:               s.ID,
+			SeamType:         s.SeamType,
+			ResolutionStatus: s.ResolutionStatus,
+		})
+	}
+	return nil
 }
 
 func facetViewFromRecord(fr record.FacetRecord) FacetView {
