@@ -1,41 +1,64 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(make *)",
+      "Bash(go *)",
+      "Read(internal/**)",
+      "Read(docs/**)"
+    ],
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/*.key)",
+      "Read(**/*.pem)"
+    ]
+  },
   "hooks": {
-    "PostToolUse": [
+    "pre_read_code": [
       {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/format-go.sh"
-          },
-          {
-            "type": "command",
-            "command": ".claude/hooks/scan-secrets-edited.sh"
-          }
-        ]
+        "command": ".claude/hooks/pre-read.sh",
+        "show_output": false
       }
     ],
-    "PreToolUse": [
+    "post_read_code": [
       {
-        "matcher": "Bash",
-        "if": "command =~ (curl|wget|sudo |^rm|kubectl delete|docker push)",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/guard-shell.sh"
-          }
-        ]
+        "command": ".claude/hooks/post-read-code.sh",
+        "show_output": false
       }
     ],
-    "UserPromptSubmit": [
+    "pre_write_code": [
       {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/scan-prompt-secrets.sh"
-          }
-        ]
+        "command": ".claude/hooks/pre-write.sh",
+        "show_output": false
+      }
+    ],
+    "post_write_code": [
+      {
+        "command": ".claude/hooks/post-write-code.sh",
+        "show_output": false
+      }
+    ],
+    "pre_run_command": [
+      {
+        "command": ".claude/hooks/pre-run-command.sh",
+        "show_output": false
+      }
+    ],
+    "post_run_command": [
+      {
+        "command": ".claude/hooks/post-run-command.sh",
+        "show_output": false
+      }
+    ],
+    "pre_mcp_tool_use": [
+      {
+        "command": ".claude/hooks/pre-mcp-tool-use.sh",
+        "show_output": false
+      }
+    ],
+    "post_mcp_tool_use": [
+      {
+        "command": ".claude/hooks/post-mcp-tool-use.sh",
+        "show_output": false
       }
     ]
   }

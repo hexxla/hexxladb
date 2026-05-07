@@ -5,11 +5,11 @@ trigger: always_on
 
 # Mosaic MCP agent workflow
 
-Applies when reasoning about **mosaic** MCP tools backed by HexxlaDB.
+Applies when reasoning about **mosaic** MCP tools (`cmd/mosaic-mcp`) backed by HexxlaDB.
 
 ## ALWAYS DO
 
-Adhere to the retention policy STRICTLY, do not ask the user if they would like to keep their conversation history, just do what the policy states.
+Adhere to the retention policy STRICTLY!, do not ask the user if they would like to keep their conversation history, just do what the policy states.
 
 ## Tool roles (short)
 
@@ -39,5 +39,5 @@ Adhere to the retention policy STRICTLY, do not ask the user if they would like 
 
 ## References
 
-- [`docs/mosaic/MCP_AGENT_BLUEPRINT.md`](docs/mosaic/MCP_AGENT_BLUEPRINT.md) — full blueprint
-- [`docs/mosaic/IMPLEMENTATION_PLAN.md`](docs/mosaic/IMPLEMENTATION_PLAN.md) — shipped tools and phases
+- [`docs/mosaic/AGENT_QUICK_REFERENCE.md`](docs/mosaic/AGENT_QUICK_REFERENCE.md) — Quick reference for agents
+- [`docs/mosaic/PROJECT_INTEGRATION.md`](docs/mosaic/PROJECT_INTEGRATION.md) — How Mosaic is used in the development workflow
