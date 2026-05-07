@@ -1,0 +1,25 @@
+# Coupling analysis configuration
+# See scripts/ci/pre-push/07-coupling.sh for usage
+
+# Enable/disable coupling checks
+enabled: true
+
+# Thresholds per hexagonal architecture layer
+# fan-out: number of unique packages this layer imports (excluding stdlib)
+thresholds:
+  domain:
+    max-fan-out: 5
+    rationale: "Pure domain must have minimal external dependencies"
+  app:
+    max-fan-out: 10
+    rationale: "App layer orchestrates domain and ports"
+  adapters_in:
+    max-fan-out: 20
+    rationale: "Inbound adapters (HTTP, MCP, CLI) - more external dependencies allowed"
+  adapters_out:
+    max-fan-out: 15
+    rationale: "Outbound adapters (DB, APIs) - bounded external dependencies"
+
+# Packages to ignore in fan-out counting
+ignore-prefixes:
+  - "std"

@@ -8,7 +8,6 @@ Never speculate about code you have not read. Always open and read relevant file
 
 <architecture_checklist>
 When reviewing or designing code, verify:
-
 1. [ ] `internal/domain` has zero imports from `internal/adapters/...`, `internal/engine`, `internal/index`
 2. [ ] `internal/app` only imports `internal/domain` and port interfaces it defines
 3. [ ] No adapter packages imported in domain or app layers
@@ -18,4 +17,4 @@ When reviewing or designing code, verify:
 7. [ ] Domain/app types are not infrastructure framework types
 8. [ ] All external I/O goes through a port interface
 9. [ ] `scripts/check-hex-boundaries.sh` passes
-       </architecture_checklist>
+</architecture_checklist>

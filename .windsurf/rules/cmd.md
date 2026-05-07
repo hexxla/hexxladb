@@ -1,8 +1,0 @@
----
-name: cmd-rules
-description: Rules for CLI entrypoints and wiring under cmd/
----
-
-- **`main` stays thin:** load config, construct logging, **`hexxladb.Open`** (or other roots), **`defer` closes**, build **`internal/app`** with injected interfaces, then run your process (exit, or long-running servers with optional signal shutdown). No business rules in `main`.
-- **`cmd/hexxladb/main.go`** is the canonical **example wiring** for consumers embedding HexxlaDB—copy/adapt it; document changes if the pattern diverges.
-- **Binary vs directory:** one deployable per `cmd/<name>/`; this repo uses **`cmd/hexxladb`** for the example composition root (distinct from **`internal/app`**, the application _layer_).

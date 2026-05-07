@@ -1,4 +1,3 @@
-# Mirrors scripts/ci.sh — run locally before push: make ci
 name: CI
 
 on:
@@ -8,22 +7,88 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   ci:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
 
-      - uses: actions/setup-go@v6
+    strategy:
+      matrix:
+        go-version: ["1.26.2"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: ${{ matrix.go-version }}
           cache: true
+
+      - name: Cache Go tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/bin/goimports
+            ~/go/bin/golangci-lint
+            ~/go/bin/gocyclo
+            ~/go/bin/gocognit
+            ~/go/bin/gremlins
+            ~/go/bin/goda
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-tools-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-tools-${{ matrix.go-version }}-
+
+      - name: Install goimports
+        run: go install golang.org/x/tools/cmd/goimports@latest
 
       - name: Install golangci-lint
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 
-      - name: Run CI script
+      - name: Install complexity tools
+        run: |
+          go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
+          go install github.com/uudashr/gocognit/cmd/gocognit@latest
+
+      - name: Install gremlins
+        run: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
+
+      - name: Install goda
+        run: go install github.com/loov/goda@latest
+
+      - name: Dependency Review
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v4
+
+      - name: Run CI checks
         env:
           CI: "true"
+          GOLANGCI_LINT_TIMEOUT: "5m"
         run: ./scripts/ci.sh
+
+      - name: Run complexity and mutation analysis
+        run: |
+          ./scripts/ci/pre-push/05-complexity.sh
+          ./scripts/ci/pre-push/06-gremlins.sh
+          ./scripts/ci/pre-push/07-coupling.sh
+
+      - name: Generate coverage
+        run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.out
+          fail_ci_if_error: false
+          flags: unittests
+          name: codecov-${{ matrix.go-version }}
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.go-version }}
+          path: coverage.out
+          retention-days: 7
