@@ -15,11 +15,12 @@
 
 ---
 
-## Current State (post-refactoring round 2)
+## Current State (post-refactoring round 3)
 
 **Initial:** 244 violations, 138 functions, 8 CRAP violations
 **After round 1:** 243 violations, 141 functions, 4 CRAP violations
 **After round 2:** 234 violations, 138 functions, 3 CRAP violations (examples/tests only)
+**After round 3:** 224 violations, 133 functions, 3 CRAP violations (examples/tests only)
 
 All production code CRAP violations eliminated. Remaining 3 are in examples and test files.
 
@@ -38,6 +39,19 @@ All production code CRAP violations eliminated. Remaining 3 are in examples and 
 - `internal/views/budget.go` `LoadContextWithBudgeting`: Cyclo 30→~10, Cog 44→~14 ✅
 - `cmd/tui/view_cells.go` `(*cellsView).Update`: Cyclo 31→14, Cog 43→~12 ✅
 - `embedding_search.go` `SearchByEmbedding`: Cyclo 25→~10, Cog 38→~12 ✅
+
+### Round 3 improvements:
+
+- `internal/engine/btree_delete.go` `rebalanceLeaf`: Cog 49→~15 ✅
+- `internal/engine/engine.go` `readPagePooled`: Cog 39→~10 ✅
+- `internal/engine/group_wal.go` `applyGroupBatch`: Cog 37→~8 ✅
+- `rotation.go` `RotateEncryptionWithOptions`: Cog 36→~14 ✅
+- `internal/views/views.go` `AssembleCellView`: Cog 36→~12 ✅
+- `cmd/tui/view_cells.go` `View`: Cog 36→~17 ✅
+- `internal/views/budget.go` `resolveSupersession`: Cog 34→~10 ✅
+- `hex_render.go` `RenderHexGrid`: Cog 34→~10 ✅
+- `primitives.go` `putSeamWithOp`: Cog 31→~12 ✅
+- `primitives.go` `WalkRingFacets`: Cog 31→~15 ✅
 
 ---
 
