@@ -2,7 +2,8 @@
 	pre-commit-install pre-commit-run pre-commit-update run \
 	build build-tui build-demo build-demo-llm build-examples build-all \
 	build-linux build-darwin build-windows \
-	demo demo-llm demo-all seed tui
+	demo demo-llm demo-all seed tui \
+	llm-setup mutation-test mutation-test-dry
 
 # Detect host OS and architecture for output directory naming.
 GOOS   ?= $(shell go env GOOS)
@@ -43,6 +44,10 @@ help:
 	@echo "make tui             Launch TUI explorer (seeds DB first if absent)"
 	@echo "                     Override: make tui TUI_DB=/path/to/my.db"
 	@echo "make pre-commit-*    Optional Git hooks (see CONTRIBUTING.md)"
+	@echo "make llm-setup       Regenerate .windsurf/, .cursor/, .claude/ etc. from scripts/llm/platforms/"
+	@echo "make mutation-test   Full Gremlins mutation testing (slow, thorough)"
+	@echo "                     Override target: make mutation-test TARGET=internal/domain"
+	@echo "make mutation-test-dry  Fast mutation dry-run (CI mode)"
 
 # Benchmark temp directory (defaults to repo-local ./.tmp; override with TMPDIR=/path).
 bench-tmp:
@@ -196,3 +201,28 @@ lint:
 
 mod-tidy:
 	go mod tidy
+
+# LLM Tool Setup — generates .windsurf/, .cursor/, .claude/, etc. from scripts/llm/platforms/*/config.yaml
+llm-setup:
+	@./scripts/llm/llm-setup.sh
+
+# Mutation testing with Gremlins — full run (slow, thorough)
+# Override target: make mutation-test TARGET=internal/domain
+mutation-test:
+	@if ! command -v gremlins >/dev/null 2>&1; then \
+		echo "error: gremlins not found. Install with:"; \
+		echo "  go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0"; \
+		exit 1; \
+	fi
+	@echo "==> Running Gremlins mutation testing (full run)..."
+	gremlins unleash --tags=integration $(or $(TARGET),internal/domain)
+
+# Mutation testing dry-run (fast, same as CI pre-push)
+mutation-test-dry:
+	@if ! command -v gremlins >/dev/null 2>&1; then \
+		echo "error: gremlins not found. Install with:"; \
+		echo "  go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0"; \
+		exit 1; \
+	fi
+	@echo "==> Running Gremlins mutation testing (dry-run)..."
+	gremlins unleash --dry-run --tags=integration $(or $(TARGET),internal/domain)
