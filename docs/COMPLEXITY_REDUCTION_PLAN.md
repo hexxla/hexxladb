@@ -1,7 +1,7 @@
 # Complexity Reduction Plan for hexxladb
 
 **Branch:** `refactor/complexity-reduction`
-**Date:** 2026-05-07
+**Date:** 2026-05-07 (last updated: 2026-05-07)
 **Thresholds:** (from template, kept as-is for good code quality)
 
 - Domain: cyclomatic 5, cognitive 10
@@ -13,239 +13,128 @@
 - Default: cyclomatic 10, cognitive 15
 - CRAP threshold: 30
 
-**Current state:** 244 violations across 1096 functions (22% violation rate)
+---
 
-- 138 functions with violations
-- 8 CRAP violations (>30)
-- 99 cognitive complexity violations (>15)
-- 137 cyclomatic complexity violations (>10)
+## Current State (post-refactoring round 1)
+
+**Before:** 244 violations, 138 functions, 8 CRAP violations
+**After:** 243 violations, 141 functions, 4 CRAP violations
+
+Key improvements from round 1:
+
+- `health.go` `HealthCheck`: Cyclo 57→14, Cog 163→27 ✅
+- `internal/engine/engine.go` `Open`: Cyclo 62→15, Cog 81→(eliminated from top) ✅
+- `internal/hnsw/graph.go` `Insert`: Cyclo 44→15, Cog 93→16 ✅
+- `db_open.go` `buildEngineOptions`: Cyclo 35→14, Cog 47→(eliminated from top) ✅
+- `internal/hnsw/graph.go` `Search`: Cyclo 22→14 (reused `greedyDescend`) ✅
+
+Note: Total violation count stayed similar because extracted helpers each contribute
+smaller violations, but the _maximum per-function_ complexity dropped dramatically.
 
 ---
 
-## Priority 1: CRAP Score Violations (8 functions)
+## Priority 1: Remaining CRAP Score Violations (4 functions)
 
 **CRAP = (cyclomatic² × (1 - coverage/100)³) + cyclomatic**
-_These are complex AND poorly tested — dangerous to change_
 
-### P1.1: Examples (Lower Priority - Demo Code)
+| #   | File                                               | Function              | CRAP | Cyclo | Status         |
+| --- | -------------------------------------------------- | --------------------- | ---- | ----- | -------------- |
+| 1   | `examples/conversational_memory/main.go`           | `run`                 | 114  | 114   | Pending (demo) |
+| 2   | `internal/domain/storagecontract/contract_test.go` | `RunAll`              | 96   | 96    | Pending (test) |
+| 3   | `examples/llm_context_engine/main.go`              | `run`                 | 49   | 49    | Pending (demo) |
+| 4   | `cmd/tui/view_cells.go`                            | `(*cellsView).Update` | 31   | 31    | **Next**       |
 
-1. `examples/conversational_memory/main.go` — `run` — CRAP 114, Cyclo 30, Coverage 114%
-   - **Strategy:** Extract helper functions, reduce nesting, simplify demo logic
-   - **Estimated effort:** 1-2 hours
+### Completed (round 1):
 
-2. `examples/llm_context_engine/main.go` — `run` — CRAP 49, Cyclo 30, Coverage 49%
-   - **Strategy:** Extract helper functions, reduce nesting, simplify demo logic
-   - **Estimated effort:** 1-2 hours
-
-### P1.2: Tests (High Priority - Test Quality)
-
-3. `internal/domain/storagecontract/contract_test.go` — `RunAll` — CRAP 96, Cyclo 30, Coverage 96%
-   - **Strategy:** Use table-driven tests, extract setup/teardown helpers
-   - **Estimated effort:** 2-3 hours
-
-### P1.3: Core Engine/DB (Highest Priority - Core Logic)
-
-4. `internal/engine/engine.go` — `Open` — CRAP 62, Cyclo 30, Coverage 62%
-   - **Strategy:** Extract option builders, separate initialization steps
-   - **Estimated effort:** 3-4 hours
-
-5. `health.go` — `(*DB).HealthCheck` — CRAP 57, Cyclo 30, Coverage 57%
-   - **Strategy:** Extract check functions, reduce nesting, early returns
-   - **Estimated effort:** 2-3 hours
-
-### P1.4: HNSW Graph (High Priority - Core Algorithm)
-
-6. `internal/hnsw/graph.go` — `(*Graph).Insert` — CRAP 44, Cyclo 30, Coverage 44%
-   - **Strategy:** Extract neighbor selection, graph maintenance helpers
-   - **Estimated effort:** 4-6 hours
-
-### P1.5: DB Configuration (Medium Priority)
-
-7. `db_open.go` — `buildEngineOptions` — CRAP 35, Cyclo 30, Coverage 35%
-   - **Strategy:** Extract option builders, use functional options pattern
-   - **Estimated effort:** 2-3 hours
-
-### P1.6: TUI (Medium Priority - UI Code)
-
-8. `cmd/tui/view_cells.go` — `(*cellsView).Update` — CRAP 31, Cyclo 30, Coverage 31%
-   - **Strategy:** Extract update logic, separate view rendering
-   - **Estimated effort:** 2-3 hours
+- ~~`internal/engine/engine.go` `Open` — CRAP 62~~ → Cyclo 15 ✅
+- ~~`health.go` `HealthCheck` — CRAP 57~~ → Cyclo 14 ✅
+- ~~`internal/hnsw/graph.go` `Insert` — CRAP 44~~ → Cyclo 15 ✅
+- ~~`db_open.go` `buildEngineOptions` — CRAP 35~~ → Cyclo 14 ✅
 
 ---
 
-## Priority 2: Cognitive Complexity Violations >50
+## Priority 2: Next Refactoring Candidates (non-test, non-example production code)
 
-_These are the hardest to understand and maintain_
+### Tier A: Cognitive >40 + Cyclomatic >20 (highest impact)
 
-### P2.1: Tests (9 functions)
+| #   | File                           | Function                   | Cyclo | Cog | Strategy                    |
+| --- | ------------------------------ | -------------------------- | ----- | --- | --------------------------- |
+| 1   | `internal/hnsw/graph.go`       | `removeNode`               | 24    | 55  | Extract link-repair helpers |
+| 2   | `primitives.go`                | `findSeams`                | 23    | 55  | Extract scan + filter logic |
+| 3   | `internal/views/budget.go`     | `collectCandidates`        | 14    | 45  | Extract scoring/filter      |
+| 4   | `internal/views/budget.go`     | `LoadContextWithBudgeting` | 30    | 44  | Extract phase helpers       |
+| 5   | `cmd/tui/view_cells.go`        | `(*cellsView).Update`      | 31    | 43  | Extract msg handlers        |
+| 6   | `internal/engine/engine.go`    | `readPagePooled`           | 22    | 39  | Extract decrypt/decompress  |
+| 7   | `embedding_search.go`          | `SearchByEmbedding`        | 25    | 38  | Extract flat-scan path      |
+| 8   | `internal/engine/group_wal.go` | `applyGroupBatch`          | 24    | 37  | Extract apply/notify phases |
 
-1. `internal/domain/storagecontract/contract_test.go` — `RunAll` — 194
-2. `scale_integration_test.go` — `TestIntegration_putManyCells_survivesReopen` — 49
-3. `stress_integration_test.go` — `TestStress_putManyCells_survivesReopen` — 48
-4. `internal/engine/pagesize_test.go` — `TestParametricPageSize_putGetDelete` — 46
-5. `mvcc_lattice_prune_integration_test.go` — `TestIntegration_MVCC_latticeAndHighChurnPrune` — 45
-6. `internal/engine/btree_test.go` — `TestBTree_hexxladbLatticeChurnPruneShape` — 32
-7. `embedding_test.go` — `TestQueryCells_EmbeddingWithTagFilter` — 24
-8. `internal/mvcc/version_suffix_cell_key_test.go` — `TestCellPhysicalKeyWithVersionSuffix_twoCommitsVisibleByReadSeq` — 24
-9. `internal/engine/pagesize_test.go` — `TestParametricPageSize_reopenPreservesPageSize` — 22
+### Tier B: Cognitive 30-39 (moderate impact)
 
-**Strategy for tests:** Use table-driven patterns, extract setup/teardown, reduce nested loops
+| #   | File                       | Function                      | Cyclo | Cog | Strategy                |
+| --- | -------------------------- | ----------------------------- | ----- | --- | ----------------------- |
+| 9   | `cmd/tui/view_cells.go`    | `View`                        | 25    | 36  | Extract render sections |
+| 10  | `internal/views/views.go`  | `AssembleCellView`            | 22    | 36  | Extract assembly steps  |
+| 11  | `rotation.go`              | `RotateEncryptionWithOptions` | 22    | 36  | Extract rewrite/verify  |
+| 12  | `internal/engine/btree.go` | `GetUsingRoot`                | 14    | 34  | Extract page navigation |
+| 13  | `internal/engine/btree.go` | `AscendRange`                 | 17    | 34  | Extract cursor logic    |
+| 14  | `internal/views/budget.go` | `resolveSupersession`         | 15    | 34  | Extract walk/mark       |
+| 15  | `hex_render.go`            | `RenderHexGrid`               | 19    | 34  | Extract row/cell render |
+| 16  | `primitives.go`            | `putSeamWithOp`               | 24    | 31  | Extract index updates   |
+| 17  | `primitives.go`            | `WalkRingFacets`              | 19    | 31  | Extract facet iteration |
 
-### P2.2: Examples (2 functions)
+### Tier C: B-Tree internals (algorithmic — handle with care)
 
-10. `examples/conversational_memory/main.go` — `run` — 167
-11. `examples/llm_context_engine/main.go` — `run` — 92
-
-**Strategy for examples:** Extract helper functions, simplify demo logic
-
-### P2.3: Core Engine/DB (2 functions)
-
-12. `health.go` — `(*DB).HealthCheck` — 163
-13. `internal/engine/engine.go` — `Open` — 81
-
-**Strategy:** Extract check functions, separate initialization steps, early returns
-
-### P2.4: HNSW Graph (3 functions)
-
-14. `internal/hnsw/graph.go` — `(*Graph).Insert` — 93
-15. `internal/hnsw/graph.go` — `(*Graph).removeNode` — 55
-16. `internal/hnsw/graph.go` — `(*Graph).searchLayer` — 28
-
-**Strategy:** Extract neighbor selection, graph maintenance, layer search helpers
-
-### P2.5: Primitives/Query (2 functions)
-
-17. `primitives.go` — `(*Tx).findSeams` — 55
-18. `embedding_search.go` — `(*Tx).SearchByEmbedding` — 38
-
-**Strategy:** Extract query builders, reduce nesting, early returns
-
-### P2.6: B-Tree (2 functions)
-
-19. `internal/engine/btree_delete.go` — `(*BTree).rebalanceLeaf` — 49
-20. `internal/engine/btree_delete.go` — `(*BTree).Delete` — 26
-
-**Strategy:** Extract rebalancing logic, separate case handlers
-
-### P2.7: DB Configuration (1 function)
-
-21. `db_open.go` — `buildEngineOptions` — 47
-
-**Strategy:** Extract option builders, use functional options pattern
-
-### P2.8: Views/Budget (4 functions)
-
-22. `internal/views/budget.go` — `collectCandidates` — 45
-23. `internal/views/budget.go` — `LoadContextWithBudgeting` — 44
-24. `internal/views/budget.go` — `resolveSupersession` — 34
-25. `internal/views/budget.go` — `LoadMultiContextPack` — 24
-
-**Strategy:** Extract budget calculation helpers, reduce nesting
-
-### P2.9: TUI (2 functions)
-
-26. `cmd/tui/view_cells.go` — `(*cellsView).Update` — 43
-27. `cmd/tui/view_cells.go` — `(*cellsView).View` — 36
-
-**Strategy:** Extract update logic, separate view rendering
-
-### P2.10: Other Core Functions (13 functions)
-
-28. `internal/engine/engine.go` — `(*Engine).readPagePooled` — 39
-29. `internal/engine/engine.go` — `(*Engine).applyGroupBatch` — 37
-30. `internal/views/views.go` — `AssembleCellView` — 36
-31. `rotation.go` — `RotateEncryptionWithOptions` — 36
-32. `hex_render.go` — `RenderHexGrid` — 34
-33. `internal/engine/btree.go` — `(*BTree).AscendRange` — 34
-34. `internal/engine/btree.go` — `(*BTree).GetUsingRoot` — 34
-35. `primitives.go` — `(*Tx).WalkRingFacets` — 31
-36. `primitives.go` — `(*Tx).putSeamWithOp` — 31
-37. `api_bench_test.go` — `BenchmarkAPI_QueryCells` — 29
-38. `embedding_reindex.go` — `(*Tx).ReindexEmbeddings` — 29
-39. `mvcc_lifecycle.go` — `(*DB).PruneCellVersions` — 29
-40. `primitives.go` — `(*Tx).PutCell` — 28
-
-**Strategy:** Extract helper functions, reduce nesting, early returns
+| #   | File                              | Function              | Cyclo | Cog | Strategy                    |
+| --- | --------------------------------- | --------------------- | ----- | --- | --------------------------- |
+| 18  | `internal/engine/btree_delete.go` | `rebalanceLeaf`       | 24    | 49  | Extract merge/redistribute  |
+| 19  | `internal/engine/btree_delete.go` | `Delete`              | 23    | 26  | Extract leaf/internal cases |
+| 20  | `internal/engine/btree_delete.go` | `removeInternalChild` | 16    | 23  | Extract sibling logic       |
 
 ---
 
-## Priority 3: Cyclomatic Complexity Violations >20
+## Priority 3: Remaining Cyclomatic >15 (production code only)
 
-_Functions with too many branching paths_
-
-### P3.1: Highest Cyclomatic (>50)
-
-1. `examples/conversational_memory/main.go` — `run` — 114
-2. `internal/domain/storagecontract/contract_test.go` — `RunAll` — 96
-3. `internal/engine/engine.go` — `Open` — 62
-4. `health.go` — `(*DB).HealthCheck` — 57
-5. `examples/llm_context_engine/main.go` — `run` — 49
-6. `internal/hnsw/graph.go` — `(*Graph).Insert` — 44
-7. `db_open.go` — `buildEngineOptions` — 35
-8. `cmd/tui/view_cells.go` — `(*cellsView).Update` — 31
-9. `internal/views/budget.go` — `LoadContextWithBudgeting` — 30
-10. `scale_integration_test.go` — `TestIntegration_putManyCells_survivesReopen` — 28
-11. `mvcc_lattice_prune_integration_test.go` — `TestIntegration_MVCC_latticeAndHighChurnPrune` — 27
-12. `stress_integration_test.go` — `TestStress_putManyCells_survivesReopen` — 27
-13. `embedding_search.go` — `(*Tx).SearchByEmbedding` — 25
-14. `cmd/tui/view_cells.go` — `(*cellsView).View` — 25
-15. `primitives.go` — `(*Tx).putSeamWithOp` — 24
-16. `internal/hnsw/graph.go` — `(*Graph).removeNode` — 24
-17. `internal/engine/btree_delete.go` — `(*BTree).rebalanceLeaf` — 24
-18. `internal/engine/group_wal.go` — `(*Engine).applyGroupBatch` — 24
-19. `internal/engine/btree_test.go` — `TestBTree_hexxladbLatticeChurnPruneShape` — 24
-20. `query_exec.go` — `applyPredicates` — 23
-21. `query_exec.go` — `(*Tx).QueryCells` — 23
-22. `primitives.go` — `(*Tx).findSeams` — 23
-23. `internal/engine/btree_delete.go` — `(*BTree).Delete` — 23
-24. `rotation.go` — `RotateEncryptionWithOptions` — 22
-25. `mvcc_churn_integration_test.go` — `TestIntegration_MVCC_sustainedPutCellSameKey` — 22
-26. `internal/hnsw/graph.go` — `(*Graph).Search` — 22
-27. `internal/views/views.go` — `AssembleCellView` — 22
-28. `internal/engine/engine.go` — `(*Engine).readPagePooled` — 22
-29. `db.go` — `Open` — 21
-30. `mvcc_lifecycle.go` — `(*DB).PruneCellVersions` — 21
-31. `primitives.go` — `(*Tx).PutCell` — 20
-32. `secondary_indexes_test.go` — `TestPutCell_secondaryIndexes` — 20
-33. `primitives.go` — `(*Tx).WalkRingFacets` — 19
-34. `hex_render.go` — `RenderHexGrid` — 19
-35. `internal/record/record_test.go` — `cellEqual` — 19
-36. `tx.go` — `(*DB).Update` — 18
-37. `internal/engine/writetxn.go` — `(*Engine).CommitWriteTxn` — 18
-38. `internal/engine/pagesize_test.go` — `TestParametricPageSize_putGetDelete` — 18
-39. `embedding_reindex.go` — `(*Tx).ReindexEmbeddings` — 17
-40. `cmd/tui/view_seams.go` — `(*seamsView).View` — 17
-41. `internal/engine/btree.go` — `(*BTree).AscendRange` — 17
-42. `mvcc_test.go` — `TestMVCC_StatsAndPruneCellVersions` — 16
-43. `seam_secondary_test.go` — `TestTx_PutSeam_secondaryIndexes` — 16
-44. `internal/hnsw/graph.go` — `(*Graph).searchLayer` — 16
-45. `internal/mvcc/version_suffix_cell_key_test.go` — `TestCellPhysicalKeyWithVersionSuffix_twoCommitsVisibleByReadSeq` — 16
-46. `internal/record/seam.go` — `decodeSeamPayloadV1` — 16
-47. `internal/engine/btree.go` — `(*BTree).insertIntoLeaf` — 16
-48. `internal/engine/btree_delete.go` — `(*BTree).removeInternalChild` — 16
-
-**Strategy:** Extract helper functions, use early returns, reduce nested conditionals
+| File                          | Function               | Cyclo | Cog |
+| ----------------------------- | ---------------------- | ----- | --- |
+| `query_exec.go`               | `applyPredicates`      | 23    | 28  |
+| `query_exec.go`               | `QueryCells`           | 23    | 25  |
+| `db.go`                       | `Open`                 | 21    | 26  |
+| `mvcc_lifecycle.go`           | `PruneCellVersions`    | 21    | 29  |
+| `primitives.go`               | `PutCell`              | 20    | 28  |
+| `tx.go`                       | `(*DB).Update`         | 18    | 23  |
+| `internal/engine/writetxn.go` | `CommitWriteTxn`       | 18    | 21  |
+| `embedding_reindex.go`        | `ReindexEmbeddings`    | 17    | 29  |
+| `internal/engine/btree.go`    | `AscendRange`          | 17    | 34  |
+| `cmd/tui/view_seams.go`       | `(*seamsView).View`    | 17    | 20  |
+| `internal/hnsw/graph.go`      | `searchLayer`          | 16    | 28  |
+| `internal/record/seam.go`     | `decodeSeamPayloadV1`  | 16    | —   |
+| `internal/engine/btree.go`    | `insertIntoLeaf`       | 16    | 24  |
+| `query_exec.go`               | `scanByTimeRange`      | 15    | 22  |
+| `seam_secondary.go`           | `AscendSeamsBySource`  | 15    | 22  |
+| `mvcc.go`                     | `getCellVisibleRaw`    | 15    | 19  |
+| `internal/views/budget.go`    | `LoadMultiContextPack` | 15    | 24  |
+| `internal/views/budget.go`    | `resolveSupersession`  | 15    | 34  |
 
 ---
 
-## Priority 4: Remaining Cyclomatic Complexity (11-15)
+## Priority 4: Test/Example Functions (lower priority)
 
-_Lower priority but should be addressed for consistency_
+These are complex but don't affect production code quality:
 
-- 89 functions with cyclomatic 11-15
-- Many are test functions, TUI views, and internal engine methods
-- **Strategy:** Incremental cleanup during normal development
+| File                                               | Function | Cyclo | Cog   |
+| -------------------------------------------------- | -------- | ----- | ----- |
+| `examples/conversational_memory/main.go`           | `run`    | 114   | 167   |
+| `internal/domain/storagecontract/contract_test.go` | `RunAll` | 96    | 194   |
+| `examples/llm_context_engine/main.go`              | `run`    | 49    | 92    |
+| `scale_integration_test.go`                        | various  | 28    | 49    |
+| `stress_integration_test.go`                       | various  | 27    | 48    |
+| Many `*_test.go` functions                         | various  | 11-24 | 15-46 |
+
+**Strategy:** Table-driven tests, extract helpers, reduce during normal maintenance.
 
 ---
 
 ## Refactoring Strategies by File Type
-
-### Test Files (`*_test.go`)
-
-- Use table-driven test patterns
-- Extract setup/teardown into helper functions
-- Reduce nested loops and conditionals
-- Use `t.Helper()` for test helpers
 
 ### Core Engine Files (`internal/engine/`)
 
@@ -289,28 +178,30 @@ _Lower priority but should be addressed for consistency_
 - Extract resolution logic
 - Use early returns
 
+### B-Tree (`internal/engine/btree*.go`)
+
+- Handle with care — algorithmic correctness critical
+- Extract rebalancing case handlers
+- Extract merge/redistribute into focused helpers
+- Ensure comprehensive test coverage before changes
+
 ---
 
 ## Progress Tracking
 
-- [ ] P1.1: Examples (2 functions)
-- [ ] P1.2: Tests (1 function)
-- [ ] P1.3: Core Engine/DB (2 functions)
-- [ ] P1.4: HNSW Graph (1 function)
-- [ ] P1.5: DB Configuration (1 function)
-- [ ] P1.6: TUI (1 function)
-- [ ] P2.1: Tests (9 functions)
-- [ ] P2.2: Examples (2 functions)
-- [ ] P2.3: Core Engine/DB (2 functions)
-- [ ] P2.4: HNSW Graph (3 functions)
-- [ ] P2.5: Primitives/Query (2 functions)
-- [ ] P2.6: B-Tree (2 functions)
-- [ ] P2.7: DB Configuration (1 function)
-- [ ] P2.8: Views/Budget (4 functions)
-- [ ] P2.9: TUI (2 functions)
-- [ ] P2.10: Other Core Functions (13 functions)
-- [ ] P3: Cyclomatic >20 (48 functions)
-- [ ] P4: Cyclomatic 11-15 (89 functions)
+- [x] P1.3: `health.go` `HealthCheck` — Cyclo 57→14 ✅
+- [x] P1.3: `internal/engine/engine.go` `Open` — Cyclo 62→15 ✅
+- [x] P1.4: `internal/hnsw/graph.go` `Insert` — Cyclo 44→15 ✅
+- [x] P1.5: `db_open.go` `buildEngineOptions` — Cyclo 35→14 ✅
+- [ ] P1.6: `cmd/tui/view_cells.go` `(*cellsView).Update` — CRAP 31
+- [ ] P2 Tier A: `removeNode`, `findSeams`, `collectCandidates`, `LoadContextWithBudgeting`
+- [ ] P2 Tier A: `readPagePooled`, `SearchByEmbedding`, `applyGroupBatch`
+- [ ] P2 Tier B: Views, rotation, btree traversal, primitives
+- [ ] P2 Tier C: B-Tree deletion internals
+- [ ] P3: Remaining cyclomatic >15 (18 production functions)
+- [ ] P4: Test/example functions (lower priority)
+- [ ] P1.1: Examples (2 functions — deferred)
+- [ ] P1.2: Tests (1 function — deferred)
 
 ---
 
@@ -318,6 +209,8 @@ _Lower priority but should be addressed for consistency_
 
 - **fail_on_violation** is currently `false` in `.complexity.yml` — violations will be reported but won't block CI
 - Once all violations are addressed, set `fail_on_violation: true` to enforce thresholds going forward
-- Focus on Priority 1 (CRAP) and Priority 2 (cognitive >50) first for maximum impact
+- Focus on Tier A (cognitive >40, production code) for maximum impact
+- B-Tree refactoring requires extra caution due to algorithmic correctness requirements
 - Test and example files can be addressed with less rigor than core logic
 - New code should adhere to thresholds from the start
+- Extracted helpers may individually still violate thresholds but at much lower severity
