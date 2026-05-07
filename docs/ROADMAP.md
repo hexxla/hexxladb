@@ -49,7 +49,7 @@ Research spikes; default operator guidance stays **`Compact`** + **`PruneCellVer
 
 - **`DB.Path()`** (ergonomics) — expose the primary file path from an opened `*DB` so embedders (health checks, optional **`os.Stat`**) do not thread path in parallel with the handle. Low risk; small API surface.
 - **Partial primary reclaim without a full `Compact` copy** — investigate freelist trimming, tail truncation after internal compaction, or OS sparse-file / punch-hole techniques. **Today extend-only allocation + offline `Compact` is intentional** (see **Out of scope** below); any faster shrink path needs durability proofs and likely stays platform-specific or remains optional.
-- **`PurgeCoord` / physical removal of latest tombstone** — design spike: optional API or policy flag that removes the last MVCC row for a coordinate when operators accept weaker **`ViewAt`** guarantees (or explicit “no snapshot before seq *S*” invariants). Must not silently break existing MVCC contracts.
+- **`PurgeCoord` / physical removal of latest tombstone** — design spike: optional API or policy flag that removes the last MVCC row for a coordinate when operators accept weaker **`ViewAt`** guarantees (or explicit “no snapshot before seq _S_” invariants). Must not silently break existing MVCC contracts.
 - **Alternative / extended `PruneCellVersions` semantics** — e.g. optional modes coordinated with changefeed retention, or bounded “forget coord” flows; requires RFC against current rule (**latest row per coord always retained** until superseded).
 
 ---
@@ -66,14 +66,13 @@ Research spikes; default operator guidance stays **`Compact`** + **`PruneCellVer
 - **Facet Diff/Compare** — diff two facet versions for a cell to see exactly what changed between commits.
   _Impact: enables audit trails for annotations and summaries; agents can present "what changed in my understanding of X since yesterday" explanations to users._
 
-- **Shortest Path Between Cells** — BFS/Dijkstra over the edge graph between two coordinates.
-  _Impact: enables "how did we get from belief A to belief B?" reasoning chains; useful for explainability and for agents that need to trace causal links between memories._
+- **~~Shortest Path Between Cells~~** — ✅ Done. `FindEdgePath` (A\*), `WalkEdges` (BFS), `LoadContextByEdges`. See API reference.
 
 ## Out of Scope
 
 Intentional boundaries for embedded library v1.
 
 - **Distributed replication / HA** — product-tier orchestration; HexxlaDB is embedded by design.
-- **Freelist / automatic primary file shrink** — extend-only allocator by design; use `DB.Compact` for offline file size reduction ([`OPERATIONS.md`](./hexxladb/OPERATIONS.md)). *Exploration* of partial reclaim or punch-hole tricks may appear under **Future exploration → Engine shell & MVCC exploration**; they do not change this default until promoted with benchmarks and durability review.
+- **Freelist / automatic primary file shrink** — extend-only allocator by design; use `DB.Compact` for offline file size reduction ([`OPERATIONS.md`](./hexxladb/OPERATIONS.md)). _Exploration_ of partial reclaim or punch-hole tricks may appear under **Future exploration → Engine shell & MVCC exploration**; they do not change this default until promoted with benchmarks and durability review.
 - **Online re-encryption** — offline rotation only ([`VERSIONING.md`](../VERSIONING.md)).
 - **Third-party KV backends (SQLite, etc.)** — Hex-native engine is the direction; abstractions over foreign storage engines add complexity without matching HexxlaDB's spatial key model.

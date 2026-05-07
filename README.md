@@ -189,6 +189,8 @@ db.Update(func(tx *hexxladb.Tx) error {
 | Supersession chains                |    ✓     |     —      |     —     |       —        |
 | Token-budgeted context assembly    |    ✓     |     —      |     —     |       —        |
 | Spatial locality (ring walks)      |    ✓     |     —      |     —     |       —        |
+| Visibility filtering (FOV)         |    ✓     |     —      |     —     |       —        |
+| Graph pathfinding (A\*, BFS)       |    ✓     |     —      |     ✓     |       —        |
 | MVCC time-travel                   |    ✓     |     —      |     —     |    partial     |
 | Reproducible prompt construction   |    ✓     |     —      |     —     |       —        |
 | Provenance + confidence per memory |    ✓     |     —      |     —     |       —        |
@@ -206,6 +208,7 @@ HexxlaDB is purpose-built: HNSW vector search, Morton-ordered spatial keys, cont
 - **HNSW embedding search** — store vectors alongside cells; approximate nearest-neighbor retrieval with flat-scan fallback for small datasets
 - **Hybrid queries** — combine embedding similarity with tag filters, confidence thresholds, source IDs, temporal ranges, and spatial predicates in one call
 - **Hex-native spatial keys** — Morton-ordered `(q, r)` coordinates; ring walks are prefix scans that scale with ring area, not database size
+- **Spatial algorithms** — pathfinding over edges (A\*, BFS, Dijkstra), multi-resolution LOD context, Voronoi partitioning for fair multi-seed budget distribution, and field-of-view visibility filtering that skips occluded cells behind empty regions
 - **Token-budgeted context assembly** — `LoadContextPackFrom` evicts low-confidence outer-ring cells first; spatial locality preserves semantic coherence
 - **Contradiction tracking** — `MarkConflict` stores seams that surface disagreements; `IncludeSeams` injects them into context so models can reason about conflicts
 - **Supersession chains** — `MarkSupersedes` records preference evolution; `FilterSuperseded` automatically replaces stale cells with their successors
@@ -228,6 +231,9 @@ Full reference: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.m
 | `PutEmbedding` / `SearchByEmbedding`      | Store a vector; HNSW nearest-neighbor search                                |
 | `QueryCells`                              | Hybrid search: embeddings + tags + confidence + source + temporal + spatial |
 | `LoadContextPack` / `LoadContextPackFrom` | Token-budgeted context assembly with supersession filtering                 |
+| `LoadContextFOV`                          | Visibility-filtered context — skip cells occluded behind empty regions      |
+| `LoadContextLOD` / `LoadContextVoronoi`   | Multi-resolution and Voronoi-partitioned context loading                    |
+| `FindEdgePath` / `WalkEdges`              | A\* shortest path and BFS reachability over cell edges                      |
 | `MarkConflict` / `MarkSupersedes`         | Record contradictions or preference changes                                 |
 | `FindSeams`                               | Retrieve contradiction/supersession markers                                 |
 | `SearchCells`                             | Lexical ranked search across content, tags, and source IDs                  |
