@@ -187,27 +187,38 @@ func (v *cellsView) View() string {
 	isSearch := v.searchHits != nil
 
 	if total == 0 {
-		if isSearch {
-			if v.searchErr != nil {
-				return lipgloss.JoinVertical(lipgloss.Left,
-					v.renderSearchBar(),
-					"",
-					styleBad.Render("  ✗  Search error: "+v.searchErr.Error()),
-					"",
-					styleHelp.Render("  "+helpItem("/", "new search")+"  "+helpItem("r", "browse all")),
-				)
-			}
-			return lipgloss.JoinVertical(lipgloss.Left,
-				v.renderSearchBar(),
-				"",
-				styleDim.Render("  No results for "+styleBad.Render(v.query)+"."),
-				"",
-				styleHelp.Render("  "+helpItem("/", "new search")+"  "+helpItem("r", "browse all")),
-			)
-		}
-		return styleDim.Render("  No cells found in database.")
+		return v.renderEmptyState(isSearch)
 	}
 
+	return v.renderCellTable(total, isSearch)
+}
+
+// renderEmptyState returns the view when no rows are available.
+func (v *cellsView) renderEmptyState(isSearch bool) string {
+	if !isSearch {
+		return styleDim.Render("  No cells found in database.")
+	}
+	searchHelp := styleHelp.Render("  " + helpItem("/", "new search") + "  " + helpItem("r", "browse all"))
+	if v.searchErr != nil {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			v.renderSearchBar(),
+			"",
+			styleBad.Render("  ✗  Search error: "+v.searchErr.Error()),
+			"",
+			searchHelp,
+		)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		v.renderSearchBar(),
+		"",
+		styleDim.Render("  No results for "+styleBad.Render(v.query)+"."),
+		"",
+		searchHelp,
+	)
+}
+
+// renderCellTable renders the main cell table with headers, rows, and footer.
+func (v *cellsView) renderCellTable(total int, isSearch bool) string {
 	w := max(60, v.width-4)
 
 	// ── visible window: reserve title(1)+scrollInfo(1)+searchbar(1-2)+help(1) = 4-5 lines
@@ -227,7 +238,6 @@ func (v *cellsView) View() string {
 	// ── column widths
 	coordW := 10
 	tagsW := 20
-	scoreW := 6 // used in search mode instead of conf
 	confW := 6
 	contentW := max(10, w-coordW-tagsW-confW-10)
 
@@ -237,42 +247,13 @@ func (v *cellsView) View() string {
 	} else {
 		headers = []string{" ", "COORD", "CONTENT", "TAGS", "CONF"}
 	}
-	_ = scoreW
 
 	t := table.New().
 		Border(lipgloss.NormalBorder()).
 		BorderStyle(lipgloss.NewStyle().Foreground(colorText2)).
 		Headers(headers...).
 		Width(w).
-		StyleFunc(func(row, col int) lipgloss.Style {
-			if row == table.HeaderRow {
-				return lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Bold(true).Padding(0, 1)
-			}
-			actualIdx := start + row
-			base := lipgloss.NewStyle().Padding(0, 1).Background(colorBg1)
-			switch {
-			case actualIdx == v.cursor:
-				base = base.Background(colorBg3).Foreground(colorCyan).Bold(true)
-			case row%2 == 0:
-				base = base.Foreground(colorText1)
-			default:
-				base = base.Foreground(colorText0)
-			}
-			switch col {
-			case 2: // content
-				if actualIdx != v.cursor {
-					return base.Foreground(colorText0)
-				}
-			case 3: // tags
-				return base.Foreground(colorYellow)
-			case 4: // conf/score
-				if isSearch {
-					return base.Foreground(colorPurple)
-				}
-				return base.Foreground(colorGreen)
-			}
-			return base
-		})
+		StyleFunc(v.cellTableStyleFunc(start, isSearch))
 
 	for i := start; i < end; i++ {
 		c, score := v.rowCell(i)
@@ -322,6 +303,39 @@ func (v *cellsView) View() string {
 	tableRender = lipgloss.NewStyle().MaxHeight(visH).Render(tableRender)
 	parts = append(parts, tableRender, styleHelp.Render("  "+help))
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// cellTableStyleFunc returns the StyleFunc for the cell table, parameterised by scroll start and mode.
+func (v *cellsView) cellTableStyleFunc(start int, isSearch bool) func(row, col int) lipgloss.Style {
+	return func(row, col int) lipgloss.Style {
+		if row == table.HeaderRow {
+			return lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Bold(true).Padding(0, 1)
+		}
+		actualIdx := start + row
+		base := lipgloss.NewStyle().Padding(0, 1).Background(colorBg1)
+		switch {
+		case actualIdx == v.cursor:
+			base = base.Background(colorBg3).Foreground(colorCyan).Bold(true)
+		case row%2 == 0:
+			base = base.Foreground(colorText1)
+		default:
+			base = base.Foreground(colorText0)
+		}
+		switch col {
+		case 2: // content
+			if actualIdx != v.cursor {
+				return base.Foreground(colorText0)
+			}
+		case 3: // tags
+			return base.Foreground(colorYellow)
+		case 4: // conf/score
+			if isSearch {
+				return base.Foreground(colorPurple)
+			}
+			return base.Foreground(colorGreen)
+		}
+		return base
+	}
 }
 
 func (v *cellsView) renderSearchBar() string {
