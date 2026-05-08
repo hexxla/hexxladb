@@ -125,7 +125,8 @@ func (tx *Tx) SearchCells(ctx context.Context, cfg CellSearchConfig) ([]CellSear
 // whitespace so that multi-word queries score each token independently and
 // sum contributions. A cell matching all tokens scores higher than one
 // matching only some.
-func scoreCell(queryLow string, tags []string, content, sourceID string, confidence float64) float64 {
+// tagsLow must be pre-lowercased by the caller (scoreRecord does this once per record).
+func scoreCell(queryLow string, tagsLow []string, content, sourceID string, confidence float64) float64 {
 	score := 0.1 * confidence // baseline confidence bonus (applied once)
 
 	if queryLow == "" {
@@ -135,12 +136,6 @@ func scoreCell(queryLow string, tags []string, content, sourceID string, confide
 	tokens := strings.Fields(queryLow)
 	contentLow := strings.ToLower(content)
 	sourceIDLow := strings.ToLower(sourceID)
-
-	// Pre-lowercase tags once.
-	tagsLow := make([]string, len(tags))
-	for i, t := range tags {
-		tagsLow[i] = strings.ToLower(t)
-	}
 
 	for _, tok := range tokens {
 		// Tag scoring: each tag scores at most once per token (exact beats prefix).

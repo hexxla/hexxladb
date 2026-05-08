@@ -11,6 +11,11 @@ import (
 // compactCtxCheckInterval is how many keys between context cancellation checks during compaction.
 const compactCtxCheckInterval = 1024
 
+// compactBatchSize is the number of keys copied per write transaction in compactCopy.
+// Keeping this bounded caps WAL burst per commit and prevents holding the write lock
+// for the entire duration of a large compact.
+const compactBatchSize = 4096
+
 // removeDBFiles removes a database file and its associated WAL.
 func removeDBFiles(path string) {
 	_ = os.Remove(path)
@@ -44,8 +49,17 @@ func CompactTo(ctx context.Context, srcPath, destPath string, opts *Options) err
 	}
 	destOpts := compactDestOpts(srcHdr, opts)
 
-	// Open source.
-	src, err := Open(srcPath, opts)
+	// Open source with cache disabled: sequential read-once scan gets zero cache benefit
+	// but would fill the 4 MiB shard pool, evicting useful hot pages.
+	srcOpts := opts
+	if srcOpts == nil {
+		srcOpts = &Options{PageCacheSize: -1}
+	} else {
+		cloned := *srcOpts
+		cloned.PageCacheSize = -1
+		srcOpts = &cloned
+	}
+	src, err := Open(srcPath, srcOpts)
 	if err != nil {
 		return fmt.Errorf("compact: open source: %w", err)
 	}
@@ -123,33 +137,50 @@ func compactDestOpts(hdr engine.Header, srcOpts *Options) *Options {
 	return o
 }
 
-// compactCopy performs the actual key-by-key copy from src to dest.
+// compactCopy performs the key-by-key copy from src to dest in batches of
+// [compactBatchSize] keys per write transaction. Batching caps WAL burst per
+// commit and prevents holding the write lock for the full duration of a large compact.
 func compactCopy(ctx context.Context, src, dest *DB) error {
-	var copyErr error
-	err := src.View(func(srcTx *Tx) error {
-		return dest.Update(func(destTx *Tx) error {
-			var n int
-			return srcTx.AscendRange(nil, nil, func(k, v []byte) bool {
-				n++
-				if n%compactCtxCheckInterval == 0 {
+	// Collect all keys from a single stable snapshot of src.
+	type kv struct{ k, v []byte }
+	var pairs []kv
+	if err := src.View(func(srcTx *Tx) error {
+		return srcTx.AscendRange(nil, nil, func(k, v []byte) bool {
+			pairs = append(pairs, kv{
+				k: append([]byte(nil), k...),
+				v: append([]byte(nil), v...),
+			})
+			return true
+		})
+	}); err != nil {
+		return fmt.Errorf("compact: scan src: %w", err)
+	}
+
+	// Write in batches so each commit is bounded in WAL size.
+	for len(pairs) > 0 {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("compact: copy: %w", err)
+		}
+		batch := pairs
+		if len(batch) > compactBatchSize {
+			batch = pairs[:compactBatchSize]
+		}
+		pairs = pairs[len(batch):]
+		if err := dest.Update(func(destTx *Tx) error {
+			for i, p := range batch {
+				if i%compactCtxCheckInterval == 0 {
 					if err := ctx.Err(); err != nil {
-						copyErr = err
-						return false
+						return err
 					}
 				}
-				if err := destTx.putDirect(k, v); err != nil {
-					copyErr = err
-					return false
+				if err := destTx.putDirect(p.k, p.v); err != nil {
+					return err
 				}
-				return true
-			})
-		})
-	})
-	if copyErr != nil {
-		return fmt.Errorf("compact: copy: %w", copyErr)
-	}
-	if err != nil {
-		return fmt.Errorf("compact: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return fmt.Errorf("compact: copy batch: %w", err)
+		}
 	}
 	return nil
 }

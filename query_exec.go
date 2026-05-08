@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -124,7 +123,13 @@ func (tx *Tx) scoreRecord(q CellQuery, rec record.CellRecord, queryLow string, e
 		return CellQueryResult{}, false
 	}
 
-	score := scoreCell(queryLow, rec.Tags, rec.RawContent, rec.Provenance.SourceID, rec.Provenance.Confidence)
+	// Pre-lowercase tags once per record so scoreCell does not allocate per-call.
+	tagsLow := make([]string, len(rec.Tags))
+	for i, t := range rec.Tags {
+		tagsLow[i] = strings.ToLower(t)
+	}
+
+	score := scoreCell(queryLow, tagsLow, rec.RawContent, rec.Provenance.SourceID, rec.Provenance.Confidence)
 
 	if embScores != nil {
 		if es, ok := embScores[rec.Key]; ok {
@@ -369,29 +374,51 @@ func hexDistance(a, b Coord) int {
 func sortResults(results []CellQueryResult, order SortOrder) {
 	switch order {
 	case SortByConfidence:
-		sort.Slice(results, func(i, j int) bool {
-			return results[i].Cell.Provenance.Confidence > results[j].Cell.Provenance.Confidence
+		slices.SortFunc(results, func(a, b CellQueryResult) int {
+			ac, bc := a.Cell.Provenance.Confidence, b.Cell.Provenance.Confidence
+			if ac > bc {
+				return -1
+			}
+			if ac < bc {
+				return 1
+			}
+			return 0
 		})
 	case SortByRecency:
-		sort.Slice(results, func(i, j int) bool {
-			vi := validFromNanos(results[i].Cell)
-			vj := validFromNanos(results[j].Cell)
-			return vi > vj
+		slices.SortFunc(results, func(a, b CellQueryResult) int {
+			vi, vj := validFromNanos(a.Cell), validFromNanos(b.Cell)
+			if vi > vj {
+				return -1
+			}
+			if vi < vj {
+				return 1
+			}
+			return 0
 		})
 	case SortByCoord:
-		sort.Slice(results, func(i, j int) bool {
-			ci, cj := results[i].Cell.Coord, results[j].Cell.Coord
+		slices.SortFunc(results, func(a, b CellQueryResult) int {
+			ci, cj := a.Cell.Coord, b.Cell.Coord
 			if ci.Q != cj.Q {
-				return ci.Q < cj.Q
+				return ci.Q - cj.Q
 			}
-			return ci.R < cj.R
+			return ci.R - cj.R
 		})
 	default: // SortByScore
-		sort.Slice(results, func(i, j int) bool {
-			if results[i].Score != results[j].Score {
-				return results[i].Score > results[j].Score
+		slices.SortFunc(results, func(a, b CellQueryResult) int {
+			if a.Score != b.Score {
+				if a.Score > b.Score {
+					return -1
+				}
+				return 1
 			}
-			return results[i].Cell.Provenance.Confidence > results[j].Cell.Provenance.Confidence
+			ac, bc := a.Cell.Provenance.Confidence, b.Cell.Provenance.Confidence
+			if ac > bc {
+				return -1
+			}
+			if ac < bc {
+				return 1
+			}
+			return 0
 		})
 	}
 }

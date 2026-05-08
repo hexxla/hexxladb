@@ -123,10 +123,7 @@ func (db *DB) Update(fn func(*Tx) error) error {
 		}
 	}()
 
-	hdr, err := db.eng.ReadHeader()
-	if err != nil {
-		return err
-	}
+	ch := db.cachedHdr.Load()
 	var tx *Tx
 	var metaTimelineKey []byte
 	if db.useMVCC {
@@ -134,7 +131,7 @@ func (db *DB) Update(fn func(*Tx) error) error {
 		tx = &Tx{
 			db:          db,
 			writable:    true,
-			readSeq:     hdr.CommitSeq,
+			readSeq:     ch.commitSeq,
 			writeSeq:    wseq,
 			cellOverlay: make(map[lattice.PackedCoord]record.CellRecord),
 		}
@@ -175,17 +172,22 @@ func (db *DB) Update(fn func(*Tx) error) error {
 			return fmt.Errorf("%w: changelog append: %w", ErrCommitFinalization, err)
 		}
 	}
-	if db.useMVCC {
-		if err := db.eng.UpdateHeader(func(h *engine.Header) {
-			h.CommitSeq = tx.writeSeq
-		}); err != nil {
-			return fmt.Errorf("%w: header update: %w", ErrCommitFinalization, err)
-		}
-	}
 	// Refresh the cached header so the next View sees the updated BTreeRoot and CommitSeq
-	// without a pread(page0). This is safe: we still hold db.mu.Lock().
-	if fhdr, fErr := db.eng.ReadHeader(); fErr == nil {
-		db.storeCachedHeader(fhdr.CommitSeq, fhdr.BTreeRoot)
+	// without a pread(page0). For MVCC DBs we use UpdateHeaderGet to set CommitSeq and
+	// retrieve the resulting header in one call (no second ReadHeader pread). For non-MVCC
+	// we call ReadHeader once. Both paths hold db.mu.Lock().
+	if db.useMVCC {
+		if fhdr, fErr := db.eng.UpdateHeaderGet(func(h *engine.Header) {
+			h.CommitSeq = tx.writeSeq
+		}); fErr == nil {
+			db.storeCachedHeader(fhdr.CommitSeq, fhdr.BTreeRoot)
+		} else {
+			return fmt.Errorf("%w: header update: %w", ErrCommitFinalization, fErr)
+		}
+	} else {
+		if fhdr, fErr := db.eng.ReadHeader(); fErr == nil {
+			db.storeCachedHeader(fhdr.CommitSeq, fhdr.BTreeRoot)
+		}
 	}
 	return nil
 }
@@ -268,6 +270,9 @@ func (tx *Tx) AscendRange(from, to []byte, fn func(k, v []byte) bool) error {
 	if e == nil {
 		return ErrDatabaseClosed
 	}
+	if !tx.writable && tx.cachedBTreeRoot != 0 {
+		return tx.db.btree.AscendRangeFromRoot(tx.cachedBTreeRoot, from, to, fn)
+	}
 	return tx.db.btree.AscendRange(from, to, fn)
 }
 
@@ -289,16 +294,17 @@ func (tx *Tx) noteChangelog(op byte, key, encoded []byte) {
 
 func (db *DB) resolveReadSeqAtOrBeforeUnixNano(unixNano int64) (uint64, error) {
 	from, to := index.CommitTimeScanBounds(unixNano)
+	ch := db.cachedHdr.Load()
+	// Descend from the upper bound so the first hit is the largest commit ≤ asOf.
+	// This is O(log N) instead of O(commits before asOf) with a forward scan.
 	var readSeq uint64
-	err := db.btree.AscendRange(from, to, func(k, _ []byte) bool {
+	err := db.btree.DescendRangeFromRoot(ch.btreeRoot, from, to, func(k, _ []byte) bool {
 		_, seq, ok := index.ParseCommitTimeKey(k)
 		if !ok {
 			return true
 		}
-		if seq > readSeq {
-			readSeq = seq
-		}
-		return true
+		readSeq = seq
+		return false // stop at the first (largest) match
 	})
 	if err != nil {
 		return 0, err

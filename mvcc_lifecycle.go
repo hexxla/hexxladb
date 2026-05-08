@@ -98,6 +98,11 @@ type MVCCStats struct {
 	CommitSeq     uint64
 	VersionedRows int64
 	LogicalCells  int64
+	// WastedBytes is the cumulative logical byte size of overflow-page chains freed
+	// since the database was opened. These pages are dead space on disk until the next
+	// [CompactTo]. The counter is in-memory only and resets to zero on reopen.
+	// A non-zero value is a signal to schedule compaction.
+	WastedBytes uint64
 }
 
 // MVCCPruneProfile defines operational defaults for stale-version pruning cadence.
@@ -126,8 +131,9 @@ func (db *DB) StatsMVCC() (MVCCStats, error) {
 	if !db.useMVCC {
 		return MVCCStats{CommitSeq: ch.commitSeq}, nil
 	}
-	seen := make(map[lattice.PackedCoord]struct{})
-	var rows int64
+	var rows, logicalCells int64
+	var prevCoord lattice.PackedCoord
+	var hasPrev bool
 	if err := db.btree.AscendRange([]byte(index.CellPrefix), nil, func(k, _ []byte) bool {
 		if !bytes.HasPrefix(k, []byte(index.CellPrefix)) {
 			return false
@@ -137,7 +143,11 @@ func (db *DB) StatsMVCC() (MVCCStats, error) {
 			return true
 		}
 		rows++
-		seen[p] = struct{}{}
+		if !hasPrev || p != prevCoord {
+			logicalCells++
+			prevCoord = p
+			hasPrev = true
+		}
 		return true
 	}); err != nil {
 		return MVCCStats{}, err
@@ -145,7 +155,8 @@ func (db *DB) StatsMVCC() (MVCCStats, error) {
 	return MVCCStats{
 		CommitSeq:     ch.commitSeq,
 		VersionedRows: rows,
-		LogicalCells:  int64(len(seen)),
+		LogicalCells:  logicalCells,
+		WastedBytes:   db.eng.WastedBytes(),
 	}, nil
 }
 
