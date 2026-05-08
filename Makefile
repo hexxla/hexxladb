@@ -1,6 +1,6 @@
 .PHONY: help ci integration stress bench bench-api bench-stress fuzz test vet fmt lint mod-tidy govulncheck clean bench-tmp \
-	pre-commit-install pre-commit-run pre-commit-update run \
-	build build-tui build-demo build-demo-llm build-examples build-all \
+	pre-commit-install pre-commit-run pre-commit-update \
+	build build-cli build-tui build-demo build-demo-llm build-examples build-all \
 	build-linux build-darwin build-windows \
 	demo demo-llm demo-spatial demo-all seed tui \
 	llm-setup mutation-test mutation-test-dry ci-full \
@@ -28,14 +28,14 @@ help:
 	@echo "make lint            golangci-lint (binary on PATH)"
 	@echo "make govulncheck     Vulnerability scan only (also runs inside make ci)"
 	@echo "make mod-tidy        go mod tidy"
-	@echo "make build           Build cmd/tui + both demos for host OS → bin/<os>-<arch>/"
+	@echo "make build           Build CLI + TUI + demos for host OS → bin/<os>-<arch>/"
+	@echo "make build-cli       Build cmd/hexxladb operator CLI only"
 	@echo "make build-all       Cross-compile for linux/darwin/windows (amd64)"
 	@echo "make build-linux     Cross-compile all targets for linux/amd64"
 	@echo "make build-darwin    Cross-compile all targets for darwin/amd64"
 	@echo "make build-windows   Cross-compile all targets for windows/amd64"
 	@echo "                     Override arch: make build-linux GOARCH=arm64"
 	@echo "make clean           Remove bin/"
-	@echo "make run             Run cmd/tui (go run, no compile)"
 	@echo "make demo            Run conversational_memory demo (DB .tmp/conversational-memory.db, cleaned each run)"
 	@echo "                     Override: make demo DEMO_DB=/path/to/my.db"
 	@echo "make demo-llm        Run llm_context_engine demo (DB .tmp/llm-context-engine.db, needs Ollama)"
@@ -95,13 +95,14 @@ fuzz:
 	go test ./internal/engine -fuzz=FuzzDecodeHeaderPage -fuzztime=2s
 	go test ./internal/engine -fuzz=FuzzParseAndReplayWAL -fuzztime=2s
 
-# Run the TUI directly via go run (no compile step).
-run:
-	go run ./cmd/tui -path $(or $(TUI_DB),.tmp/conversational-memory.db)
-
 # ── Build targets ─────────────────────────────────────────────────────────────
 # All binaries land in bin/<os>-<arch>/ and are gitignored.
 # Set GOOS/GOARCH to cross-compile: make build GOOS=linux GOARCH=arm64
+
+build-cli:
+	@mkdir -p $(BINDIR)
+	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o $(BINDIR)/hexxladb$(EXE) ./cmd/hexxladb
+	@echo "  → $(BINDIR)/hexxladb$(EXE)"
 
 build-tui:
 	@mkdir -p $(BINDIR)
@@ -121,7 +122,7 @@ build-demo-llm:
 build-examples: build-demo build-demo-llm
 
 # Build everything for the host OS/arch.
-build: build-tui build-examples
+build: build-cli build-tui build-examples
 	@echo "==> Built all targets for $(GOOS)/$(GOARCH)"
 
 # Cross-compile helpers — override GOARCH if needed (e.g. make build-linux GOARCH=arm64).
