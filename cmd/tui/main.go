@@ -121,7 +121,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "q":
 				return m, tea.Quit
-			case "1", "2", "3", "4", "5", "6", "7", "8":
+			case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 				idx := int(msg.String()[0] - '1')
 				if idx >= 0 && idx < len(m.tabs) {
 					return m.switchTab(idx)
@@ -227,7 +227,7 @@ func (m model) renderStatusBar() string {
 
 	left := styleStatusLeft.Render(" ◈ HexxlaDB ")
 	mid := styleStatusMid.Render(fmt.Sprintf(" %s  seq:%d  %s ", truncStr(m.dbPath, 40), stats.CommitSeq, mvcc))
-	keys := styleStatusRight.Render(" 1-8 tabs · Tab cycle · q quit ")
+	keys := styleStatusRight.Render(" 1-9 tabs · Tab cycle · q quit ")
 
 	midW := max(0, m.width-lipgloss.Width(left)-lipgloss.Width(keys))
 	mid = styleStatusMid.Width(midW).Render(mid)

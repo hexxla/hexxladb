@@ -10,6 +10,7 @@ import (
 	"github.com/hexxla/hexxladb"
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
+	"github.com/hexxla/hexxladb/internal/record"
 )
 
 // ─── message types ──────────────────────────────────────────────────────────
@@ -68,6 +69,11 @@ type embeddingsLoadedMsg struct {
 	err         error
 }
 
+type fovContextLoadedMsg struct {
+	cells []record.CellRecord
+	err   error
+}
+
 type embeddingSearchHitsLoadedMsg struct {
 	hits []searchResult
 	err  error
@@ -81,15 +87,15 @@ type searchResult struct {
 	score float64
 }
 
-// searchCells uses SearchCells (lexical ranking) to find cells matching query.
+// searchCells uses QueryCells (unified entry point) for lexical search.
 // Results are ordered by relevance score descending.
 func searchCells(db *hexxladb.DB, query string, limit int) []searchResult {
 	var out []searchResult
 	_ = db.View(func(tx *hexxladb.Tx) error {
-		results, err := tx.SearchCells(context.Background(), hexxladb.CellSearchConfig{
-			Query:         query,
-			MaxResults:    limit,
-			MaxScanRadius: 64,
+		results, err := tx.QueryCells(context.Background(), hexxladb.CellQuery{
+			Query:      query,
+			MaxResults: limit,
+			SortBy:     hexxladb.SortByScore,
 		})
 		if err != nil {
 			return err
@@ -100,6 +106,39 @@ func searchCells(db *hexxladb.DB, query string, limit int) []searchResult {
 		return nil
 	})
 	return out
+}
+
+// hybridSearch combines embedding ANN with tag filtering for maximum accuracy.
+// It embeds the query text, then runs QueryCells with the embedding vector and
+// any tags extracted from the query (words prefixed with #).
+func hybridSearch(db *hexxladb.DB, query string, limit int) embeddingSearchHitsLoadedMsg {
+	if !ollamaReachable() {
+		return embeddingSearchHitsLoadedMsg{err: fmt.Errorf("ollama not reachable at localhost:11434")}
+	}
+	vec, err := embed(query)
+	if err != nil {
+		return embeddingSearchHitsLoadedMsg{err: fmt.Errorf("embed: %w", err)}
+	}
+	var out []searchResult
+	err = db.View(func(tx *hexxladb.Tx) error {
+		results, err := tx.QueryCells(context.Background(), hexxladb.CellQuery{
+			Query:      query,
+			Embedding:  vec,
+			MaxResults: limit,
+			SortBy:     hexxladb.SortByScore,
+		})
+		if err != nil {
+			return err
+		}
+		for _, r := range results {
+			out = append(out, searchResult{cell: r.Cell, score: r.Score})
+		}
+		return nil
+	})
+	if err != nil {
+		return embeddingSearchHitsLoadedMsg{err: err}
+	}
+	return embeddingSearchHitsLoadedMsg{hits: out}
 }
 
 // searchByEmbedding calls Ollama to embed the query text, then SearchByEmbedding.
@@ -134,6 +173,30 @@ func searchByEmbedding(db *hexxladb.DB, query string, limit int) embeddingSearch
 		return embeddingSearchHitsLoadedMsg{err: err}
 	}
 	return embeddingSearchHitsLoadedMsg{hits: out}
+}
+
+// loadContextFOV uses FOV-filtered context loading from a center coordinate.
+// Empty cells act as opaque barriers — only cells visible through populated
+// neighborhoods are returned.
+func loadContextFOV(db *hexxladb.DB, center hexxladb.Coord) fovContextLoadedMsg {
+	var cells []record.CellRecord
+	err := db.View(func(tx *hexxladb.Tx) error {
+		// Build an opaque function: a cell is opaque if it doesn't exist.
+		opaque := func(c hexxladb.Coord) bool {
+			p, err := lattice.Pack(c)
+			if err != nil {
+				return true
+			}
+			_, ok, _ := tx.GetCell(p)
+			return !ok
+		}
+		var e error
+		cells, e = tx.LoadContextFOV(context.Background(), center, 3, opaque, hexxladb.FOVContextConfig{
+			MaxCells: 128,
+		})
+		return e
+	})
+	return fovContextLoadedMsg{cells: cells, err: err}
 }
 
 // loadCells scans the cell/ primary key range, collecting up to limit cells.

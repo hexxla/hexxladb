@@ -68,7 +68,7 @@ func (v *dashboardView) View() string {
 		)
 	}
 
-	embedStr := "off"
+	embedStr := "none yet"
 	embedClr := colorText2
 	if embedDim > 0 {
 		embedStr = fmt.Sprintf("%dd", embedDim)
@@ -133,11 +133,14 @@ func (v *dashboardView) View() string {
 	// ── keybindings card ────────────────────────────────────────────────────
 	bindings := []struct{ key, desc string }{
 		{"Tab / Shift+Tab", "cycle tabs"},
-		{"1-8", "jump to tab"},
+		{"1-9", "jump to tab"},
 		{"↑↓/jk", "navigate list"},
 		{"Enter", "inspect cell"},
 		{"/", "search cells (Cells tab)"},
-		{"c", "context pack (Inspector)"},
+		{"e", "cycle: lexical → semantic → hybrid"},
+		{"c", "radial context pack (Inspector)"},
+		{"f", "FOV context (Inspector)"},
+		{"v", "toggle FOV overlay (Hex Grid)"},
 		{"r", "refresh current tab"},
 		{"q / Ctrl+C", "quit"},
 	}
