@@ -2,25 +2,55 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-08
+
 ### Added
 
-- **`(*Tx).DeleteCellWithOutcome`** — Like **`DeleteCell`** but returns **`removed bool`**: **`true`** when a visible cell was tombstoned (MVCC) or hard-deleted (v1); **`false`** on idempotent no-op (`delete_cell.go`). Callers that need deletion observability should use this; **`DeleteCell`** remains a thin wrapper.
+- **Spatial algorithms** — Six new public `Tx` methods for advanced context loading and graph traversal:
+  - **`LoadContextFOV`** — Field-of-view context loading with LOS-based hex ray casting. Empty cells act as opaque barriers, spending budget only on semantically reachable cells.
+  - **`LoadContextLOD`** — Level-of-detail context loading. Full density near the center, progressively sparser at outer rings.
+  - **`LoadContextVoronoi`** — Voronoi-partitioned multi-seed context. Each seed gets a non-overlapping, fair share of the budget.
+  - **`FindEdgePath`** — A\* shortest path over edges between cells. Edge weights are traversal costs.
+  - **`WalkEdges`** — BFS reachability over edges within a hop limit.
+  - **`LoadContextByEdges`** — Context assembly via edge traversal instead of spatial ring walk.
+
+- **`internal/pathfind`** package — A\*, Dijkstra, BFS, priority queue for graph-based pathfinding.
+
+- **`internal/lattice`** additions — `FOVHexCoords`, `LODRingCoords`, `VoronoiPartition`, `WalkRingsPacked` for spatial math.
+
+- **Embedding auto-detect** — `EmbeddingDimension: 0` (the default) now means "auto-detect on first `PutEmbedding`" instead of "disabled". The dimension and metric are persisted to the file header atomically on first use. All subsequent vectors must match.
+
+- **`Engine.SetEmbeddingConfig`** — New internal method to persist embedding dimension and metric to the header at runtime.
+
+- **`docs/hexxladb/CONFIGURATION.md`** — Comprehensive guide to all `Options` fields, common configurations, and immutable vs mutable fields.
+
+- **`examples/spatial_algorithms`** — New demo exercising FOV, LOD, Voronoi, pathfinding, and edge-based context loading.
+
+- **`(*Tx).DeleteCellWithOutcome`** — Like **`DeleteCell`** but returns **`removed bool`**: **`true`** when a visible cell was tombstoned (MVCC) or hard-deleted (v1); **`false`** on idempotent no-op (`delete_cell.go`).
+
+- **Mutation testing** — `make mutation-test` via gremlins for `internal/lattice`, `internal/record`, `internal/changelog`.
 
 ### Changed
 
-- **README** — **[Projects using HexxlaDB](README.md#projects-using-hexxladb)** lists **[Mosaic](https://github.com/hexxla/mosaic)** (local MCP agent-memory server).
+- **Embedding operations with `dim=0`** — `GetEmbedding`, `DeleteEmbedding`, `SearchByEmbedding`, and `ReindexEmbeddings` now return empty/nil when no embeddings have been stored yet, instead of returning `ErrEmbeddingsDisabled`. This is a **soft breaking change** for code that matched on `ErrEmbeddingsDisabled`.
 
-- **Integration / Makefile** — **`make integration`** passes **`-parallel=1`** like [`.github/workflows/integration.yml`](.github/workflows/integration.yml). **`crash_ordering_integration_test.go`** subprocess crash cases no longer call **`t.Parallel()`**, avoiding several concurrent **`TestIntegration_crashChild`** runs under **`go test`'s default `-parallel`** (which could thrash **`go test -race`** and appear to hang).
+- **`ErrEmbeddingsDisabled`** — Deprecated. Still exported for backward compatibility but no longer returned by standard embedding operations.
 
-- **README** — Centered logo image width **`240`** (was **`300`**).
+- **`Options.EmbeddingDimension` doc** — Updated to reflect auto-detection: 0 means "auto-detect", not "disabled".
 
-- **GitHub Actions** — **`ci.yml`** and **`integration.yml`** use **`actions/checkout@v6`** and **`actions/setup-go@v6`** (Node 24–compatible action runtime; avoids Node.js 20 runner deprecation notices).
+- **TUI** — Dashboard shows "none yet" instead of "off" for embeddings; embeddings tab shows "No Embeddings Stored" instead of error panel.
+
+- **`examples/llm_context_engine`** — Removed explicit `EmbeddingDimension` from `Open` options (auto-detected from Ollama).
+
+- **README** — Simplified quick-start `Open` example; added `CONFIGURATION.md` link; listed Mosaic project.
+
+- **Complexity refactoring** — Reduced cognitive/cyclomatic complexity across ~10 files including `SearchByEmbedding`, `AssembleCellView`, `rebalanceLeaf`, `readPagePooled`.
 
 ### Fixed
 
-- **HealthCheck double-counting MVCC seams** — The seam/ primary scan appended every physical row. Each **ResolveSeam** writes a new MVCC version of the same ULID, so **SeamCount** (and resolved/unresolved splits) inflated after resolution. The checker now groups versioned keys by ULID and applies [**mvcc.SelectVisible**](internal/mvcc/version_suffix_cell_key.go) at the view’s **read_seq**, matching [**getSeamVisibleRaw**](mvcc.go). Regression: **TestHealthCheck_MVCC_seam_resolve_not_double_counted**.
+- **HealthCheck double-counting MVCC seams** — The checker now groups versioned keys by ULID and applies `mvcc.SelectVisible` at the view's read_seq.
 
-- **HealthCheck false positives on MVCC tag/source indexes** — [HealthCheck](health.go) used to flag every secondary key whosePackedCoord lacked a **visible head** cell. Under MVCC, [PutCell](primitives.go) keeps older `tag/` and `source/` rows per commit sequence so [ViewAt](tx.go) stays consistent; after multiple updates at one coord followed by **DeleteCell**, those historical rows are still legitimate while the primary tombstone hides the live head. The checker now parses the MVCC suffix on physical keys (via [ParseTagKeyWithSeq](internal/index/tag_key.go) / [ParseSourceKeyWithSeq](internal/index/source_key.go)), loads `cell/<coord><seq>`, and validates the decoded cell carries the indexed tag/source. Regression: **TestHealthCheck_MVCC_churn_then_delete_cleanSecondaries**.
+- **HealthCheck false positives on MVCC tag/source indexes** — The checker now parses MVCC suffixes on physical keys and validates the decoded cell carries the indexed tag/source.
 
 ## [0.3.0] - 2026-04-29
 
