@@ -15,7 +15,8 @@ const (
 	DistanceL2 DistanceMetric = engine.DistanceL2
 )
 
-// EmbeddingDimension returns the fixed vector dimension for this database (0 = embeddings disabled).
+// EmbeddingDimension returns the fixed vector dimension for this database.
+// Returns 0 if no embeddings have been stored yet (dimension auto-detected on first [Tx.PutEmbedding]).
 func (db *DB) EmbeddingDimension() uint16 {
 	return db.eng.EmbeddingDim()
 }

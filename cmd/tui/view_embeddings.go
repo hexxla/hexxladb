@@ -56,8 +56,7 @@ func (v *embeddingsView) loadCmd() tea.Cmd {
 		msg.dimension = db.EmbeddingDimension()
 		msg.metric = db.EmbeddingMetric()
 		if msg.dimension == 0 {
-			msg.err = fmt.Errorf("embeddings not enabled")
-			return msg
+			return msg // not an error — just not configured
 		}
 
 		// Check HNSW graph existence via storage adapter
@@ -97,6 +96,23 @@ func (v *embeddingsView) View() string {
 
 	d := v.data
 	w := contentWidth(v.width - 6)
+
+	if d.dimension == 0 {
+		emptyPanel := Box.BorderForeground(colorText2).Width(w).Render(
+			Section.Render("No Embeddings Stored") + "\n\n" +
+				Dim.Render("No vectors have been stored in this database yet.") + "\n" +
+				Dim.Render("The dimension will be auto-detected from the first PutEmbedding call."))
+
+		help := helpItem("r", "refresh")
+		return lipgloss.JoinVertical(lipgloss.Left,
+			viewTitle("◈ Embeddings", v.width),
+			"",
+			emptyPanel,
+			"",
+			Help.Render("  "+help),
+		)
+	}
+
 	colW := max(20, (w-4)/4)
 
 	// Reserve space for title(1), help(1) = 2 lines

@@ -29,7 +29,7 @@ type EmbeddingSearchResult struct {
 
 // SearchByEmbedding finds the cells whose embeddings are most similar to vec.
 // Uses HNSW graph when available, falling back to flat scan over the embed/ keyspace.
-// The database must have been opened with a non-zero [Options.EmbeddingDimension].
+// Returns empty results if no embeddings have been stored yet (dimension not configured).
 func (tx *Tx) SearchByEmbedding(vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, error) {
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
@@ -39,7 +39,7 @@ func (tx *Tx) SearchByEmbedding(vec []float32, cfg EmbeddingSearchConfig) ([]Emb
 	}
 	dim := tx.db.eng.EmbeddingDim()
 	if dim == 0 {
-		return nil, ErrEmbeddingsDisabled
+		return nil, nil // no embeddings stored yet
 	}
 	if uint16(len(vec)) != dim { //nolint:gosec // len(vec) bounded by uint16 max
 		return nil, fmt.Errorf("%w: want %d, got %d", ErrEmbeddingDimension, dim, len(vec))

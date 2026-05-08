@@ -82,10 +82,8 @@ func run(dbPath string) error {
 	_ = os.Remove(dbPath + "-wal")
 
 	db, err := hexxladb.Open(dbPath, &hexxladb.Options{
-		EnableMVCC:         true,
-		EmbeddingDimension: 384,
-		DistanceMetric:     hexxladb.DistanceCosine,
-		PageSize:           65536,
+		EnableMVCC: true,
+		PageSize:   65536,
 	})
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
@@ -645,6 +643,86 @@ func run(dbPath string) error {
 		fmt.Println()
 	}
 
+	// ================================================================
+	// SCENARIO 7: FOV-Filtered Retrieval
+	// ================================================================
+	//
+	// LoadContextFOV uses line-of-sight ray casting on the hex grid.
+	// Empty cells act as opaque barriers — only cells the "observer" can
+	// see through populated neighborhoods are returned. This is smarter
+	// than blind radial loading for sparse grids where large empty gaps
+	// would waste the context budget on unreachable cells.
+
+	printSection("Scenario 7: FOV-Filtered Context Loading")
+	printNote("Visibility-based retrieval — only cells with clear line-of-sight from center are loaded.")
+	printNote("Empty grid positions block vision, so occluded cells are skipped.")
+	fmt.Println()
+
+	// Use the first cell as the FOV center
+	fovCenter := lattice.Coord{Q: 2, R: 1} // center of our 6-column grid
+
+	// Standard radial loading for comparison
+	var radialCount int
+	_ = db.View(func(tx *hexxladb.Tx) error {
+		packed := lattice.WalkRingsPacked(fovCenter, 3)
+		for _, p := range packed {
+			_, ok, _ := tx.GetCell(p)
+			if ok {
+				radialCount++
+			}
+		}
+		return nil
+	})
+
+	// FOV-filtered loading — empty cells are opaque barriers
+	var fovCells []record.CellRecord
+	err = db.View(func(tx *hexxladb.Tx) error {
+		opaque := func(c lattice.Coord) bool {
+			p, pErr := lattice.Pack(c)
+			if pErr != nil {
+				return true
+			}
+			_, ok, _ := tx.GetCell(p)
+			return !ok // treat empty cells as opaque barriers
+		}
+		var e error
+		fovCells, e = tx.LoadContextFOV(ctx, fovCenter, 3, opaque, hexxladb.FOVContextConfig{
+			MaxCells: 64,
+		})
+		return e
+	})
+	if err != nil {
+		return fmt.Errorf("fov context: %w", err)
+	}
+
+	printStep(fmt.Sprintf("Center: (%d,%d), radius: 3", fovCenter.Q, fovCenter.R))
+	printMetric("Radial cells (blind r=3)", radialCount)
+	printMetric("FOV cells (visible only)", len(fovCells))
+	if radialCount > len(fovCells) {
+		printMetric("Cells saved by FOV", radialCount-len(fovCells))
+	}
+	fmt.Println()
+
+	_, _ = dimStyle.Println("  Visible cells (with content):")
+	for i, rec := range fovCells {
+		if i >= 8 {
+			_, _ = dimStyle.Printf("    ⋯  (%d more cells)\n", len(fovCells)-8)
+			break
+		}
+		c, _ := lattice.Unpack(rec.Key)
+		dist := fovCenter.Distance(c)
+		_, _ = dimStyle.Printf("    [%d] (%d,%d) dist=%d conf=%.1f ",
+			i+1, c.Q, c.R, dist, rec.Provenance.Confidence)
+		_, _ = dataStyle.Printf("%s\n", trunc(rec.RawContent, 45))
+	}
+	fmt.Println()
+
+	_, _ = dimStyle.Println("  Why FOV matters for LLM context:")
+	_, _ = dimStyle.Println("    • Sparse grids: empty regions block LOS, preventing budget waste")
+	_, _ = dimStyle.Println("    • Dense clusters: FOV naturally loads the connected neighborhood")
+	_, _ = dimStyle.Println("    • Custom opacity: mark cells as opaque based on tags, confidence, etc.")
+	fmt.Println()
+
 	// ── Completion ──────────────────────────────────────────────
 	_, _ = sepStyle.Println(strings.Repeat("═", lineW))
 	_, _ = okStyle.Printf("  ✓  LLM Context Engine demo complete\n")
@@ -652,7 +730,7 @@ func run(dbPath string) error {
 	fmt.Println()
 	_, _ = dimStyle.Printf("  Database: %s\n", dbPath)
 	_, _ = dimStyle.Printf("  Turns:    %d stored with 384-dim embeddings\n", len(turns))
-	_, _ = dimStyle.Printf("  Queries:  %d semantic, %d multi-signal, 1 full pipeline\n",
+	_, _ = dimStyle.Printf("  Queries:  %d semantic, %d multi-signal, 1 full pipeline, 1 FOV\n",
 		len(userQueries), len(retrievals))
 	fmt.Println()
 

@@ -3,6 +3,7 @@ package hexxladb_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"path/filepath"
 	"testing"
@@ -135,22 +136,133 @@ func TestEmbedding_DimensionMismatch(t *testing.T) {
 	}
 }
 
-func TestEmbedding_DisabledDB(t *testing.T) {
+func TestEmbedding_AutoDetectDimension(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "no_emb.db")
-	db, err := hexxladb.Open(path, nil) // no embedding dim
+	path := filepath.Join(dir, "auto_emb.db")
+	db, err := hexxladb.Open(path, nil) // no embedding dim configured
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
+	if db.EmbeddingDimension() != 0 {
+		t.Fatalf("expected 0 before any PutEmbedding, got %d", db.EmbeddingDimension())
+	}
+
+	// Read ops should return empty, not error, when dim=0
+	coord := mustPackEmb(t, 1, 2)
+	err = db.View(func(tx *hexxladb.Tx) error {
+		_, ok, err := tx.GetEmbedding(coord)
+		if err != nil {
+			return fmt.Errorf("GetEmbedding: %w", err)
+		}
+		if ok {
+			return fmt.Errorf("expected not found before any PutEmbedding")
+		}
+		results, err := tx.SearchByEmbedding([]float32{1, 2, 3}, hexxladb.EmbeddingSearchConfig{MaxResults: 5})
+		if err != nil {
+			return fmt.Errorf("SearchByEmbedding: %w", err)
+		}
+		if len(results) != 0 {
+			return fmt.Errorf("expected 0 results, got %d", len(results))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// First PutEmbedding auto-detects dimension
+	vec := []float32{1.0, 2.0, 3.0}
+	err = db.Update(func(tx *hexxladb.Tx) error {
+		return tx.PutEmbedding(coord, vec)
+	})
+	if err != nil {
+		t.Fatalf("PutEmbedding (auto-detect): %v", err)
+	}
+
+	if db.EmbeddingDimension() != 3 {
+		t.Fatalf("expected dimension 3 after auto-detect, got %d", db.EmbeddingDimension())
+	}
+
+	// Wrong dimension should still fail
+	err = db.Update(func(tx *hexxladb.Tx) error {
+		coord2 := mustPackEmb(t, 3, 4)
+		return tx.PutEmbedding(coord2, []float32{1, 2}) // wrong dim
+	})
+	if !errors.Is(err, hexxladb.ErrEmbeddingDimension) {
+		t.Fatalf("expected ErrEmbeddingDimension, got %v", err)
+	}
+
+	// Verify embedding persisted
+	err = db.View(func(tx *hexxladb.Tx) error {
+		got, ok, err := tx.GetEmbedding(coord)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("embedding not found")
+		}
+		if len(got) != 3 {
+			return fmt.Errorf("wrong dim: %d", len(got))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEmbedding_AutoDetectPersistsAcrossReopen(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "reopen_emb.db")
+
+	// Open without dim, store an embedding
+	db, err := hexxladb.Open(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	coord := mustPackEmb(t, 1, 2)
 	err = db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutEmbedding(coord, []float32{1, 2, 3})
+		return tx.PutEmbedding(coord, []float32{1, 2, 3, 4})
 	})
-	if !errors.Is(err, hexxladb.ErrEmbeddingsDisabled) {
-		t.Fatalf("expected ErrEmbeddingsDisabled, got %v", err)
+	if err != nil {
+		t.Fatalf("PutEmbedding: %v", err)
+	}
+	if db.EmbeddingDimension() != 4 {
+		t.Fatalf("expected 4, got %d", db.EmbeddingDimension())
+	}
+	_ = db.Close()
+
+	// Reopen — dimension should be read from header
+	db2, err := hexxladb.Open(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db2.Close() })
+
+	if db2.EmbeddingDimension() != 4 {
+		t.Fatalf("after reopen: expected 4, got %d", db2.EmbeddingDimension())
+	}
+
+	// Should be able to read it back
+	err = db2.View(func(tx *hexxladb.Tx) error {
+		got, ok, err := tx.GetEmbedding(coord)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("embedding not found after reopen")
+		}
+		if len(got) != 4 {
+			return fmt.Errorf("wrong dim after reopen: %d", len(got))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

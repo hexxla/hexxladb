@@ -47,23 +47,23 @@ Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored 
 
 ## Cells, seams, rings, context (primitives)
 
-| Symbol                                            | Notes                                                                                                             |
-| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **[`(*Tx).PutCell`](../../primitives.go)**        | Cell primary + secondaries (`source/`, `time/`, `tag/`).                                                          |
-| **[`(*Tx).GetCell`](../../primitives.go)**        | Decode visible cell at packed coord.                                                                              |
+| Symbol                                                                                               | Notes                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*Tx).PutCell`](../../primitives.go)**                                                           | Cell primary + secondaries (`source/`, `time/`, `tag/`).                                                                                                                                  |
+| **[`(*Tx).GetCell`](../../primitives.go)**                                                           | Decode visible cell at packed coord.                                                                                                                                                      |
 | **[`(*Tx).DeleteCell`](../../delete_cell.go)** / **[`DeleteCellWithOutcome`](../../delete_cell.go)** | Remove cell + secondaries + facets + outbound edges. Idempotent **`DeleteCell`**; **`DeleteCellWithOutcome`** returns whether a visible cell existed. MVCC: tombstone; seams NOT removed. |
-| **[`(*Tx).WalkRing`](../../primitives.go)**       | Visit one ring; raw bytes per coord.                                                                              |
-| **[`(*Tx).WalkRingAt`](../../primitives.go)**     | Same order; **`record.ValidAt`** filter at **`asOf`**.                                                            |
-| **[`(*Tx).LoadContext`](../../primitives.go)**    | Concentric walk; **`maxR`**, **`maxCells`**.                                                                      |
-| **[`(*Tx).LoadContextAt`](../../primitives.go)**  | Same as **`LoadContext`** + validity filter.                                                                      |
-| **[`(*Tx).WalkRingFacets`](../../primitives.go)** | Facet_mask ring walk; optional validity on cell.                                                                  |
-| **[`(*Tx).PutSeam`](../../primitives.go)**        | Seam primary + **`seam-by-cells/`** + seam secondaries.                                                           |
-| **[`(*Tx).FindSeams`](../../primitives.go)**      | Query ball using seam index + primaries.                                                                          |
-| **[`(*Tx).FindSeamsAt`](../../primitives.go)**    | **`FindSeams`** + seam validity filter.                                                                           |
-| **[`(*Tx).MarkConflict`](../../primitives.go)**   | Spec sugar: ULID seam **`mark_conflict`**.                                                                        |
-| **[`(*Tx).MarkSupersedes`](../../primitives.go)** | Record directional supersession: superseder replaces superseded; used by **`FilterSuperseded`** context assembly. |
-| **[`(*Tx).ResolveSeam`](../../primitives.go)**    | Update resolution fields on **`seam/<ulid>`**.                                                                    |
-| **`SeamTypeConflict`**, **`SeamTypeSupersedes`**  | Canonical seam type string constants (**`"mark_conflict"`**, **`"supersedes"`**).                                 |
+| **[`(*Tx).WalkRing`](../../primitives.go)**                                                          | Visit one ring; raw bytes per coord.                                                                                                                                                      |
+| **[`(*Tx).WalkRingAt`](../../primitives.go)**                                                        | Same order; **`record.ValidAt`** filter at **`asOf`**.                                                                                                                                    |
+| **[`(*Tx).LoadContext`](../../primitives.go)**                                                       | Concentric walk; **`maxR`**, **`maxCells`**.                                                                                                                                              |
+| **[`(*Tx).LoadContextAt`](../../primitives.go)**                                                     | Same as **`LoadContext`** + validity filter.                                                                                                                                              |
+| **[`(*Tx).WalkRingFacets`](../../primitives.go)**                                                    | Facet_mask ring walk; optional validity on cell.                                                                                                                                          |
+| **[`(*Tx).PutSeam`](../../primitives.go)**                                                           | Seam primary + **`seam-by-cells/`** + seam secondaries.                                                                                                                                   |
+| **[`(*Tx).FindSeams`](../../primitives.go)**                                                         | Query ball using seam index + primaries.                                                                                                                                                  |
+| **[`(*Tx).FindSeamsAt`](../../primitives.go)**                                                       | **`FindSeams`** + seam validity filter.                                                                                                                                                   |
+| **[`(*Tx).MarkConflict`](../../primitives.go)**                                                      | Spec sugar: ULID seam **`mark_conflict`**.                                                                                                                                                |
+| **[`(*Tx).MarkSupersedes`](../../primitives.go)**                                                    | Record directional supersession: superseder replaces superseded; used by **`FilterSuperseded`** context assembly.                                                                         |
+| **[`(*Tx).ResolveSeam`](../../primitives.go)**                                                       | Update resolution fields on **`seam/<ulid>`**.                                                                                                                                            |
+| **`SeamTypeConflict`**, **`SeamTypeSupersedes`**                                                     | Canonical seam type string constants (**`"mark_conflict"`**, **`"supersedes"`**).                                                                                                         |
 
 Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](../../internal/record/validity.go)); external code often reaches it via **`Tx`** helpers above rather than importing **`internal/record`** from outside this module.
 
@@ -71,18 +71,18 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 
 ## Facets and edges
 
-| Symbol                                                   | Notes                                                                  |
-| -------------------------------------------------------- | ---------------------------------------------------------------------- |
-| **[`(*Tx).PutFacet`](../../facets_edges.go)**            | Upsert facet record (derivation discipline as per spec).               |
-| **[`(*Tx).UpdateFacet`](../../facets_edges.go)**         | Requires derivation hash match; else **`ErrFacetDerivationMismatch`**. |
-| **[`(*Tx).GetFacet`](../../facets_edges.go)**            | Lookup by packed coord + facet id.                                     |
-| **[`(*Tx).AscendFacetsForCell`](../../facets_edges.go)** | All facets at a cell key.                                              |
-| **[`(*Tx).PutEdge`](../../facets_edges.go)**             | Directed edge primary.                                                 |
-| **[`(*Tx).GetEdge`](../../facets_edges.go)**             | Edge lookup by endpoints + relation type.                              |
-| **[`(*Tx).AscendEdgesFrom`](../../facets_edges.go)**     | Out-edges from a packed coord.                                         |
-| **[`(*Tx).LinkCells`](../../facets_edges.go)**           | Sugar: pack coords + **`PutEdge`**.                                    |
+| Symbol                                                   | Notes                                                                                            |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| **[`(*Tx).PutFacet`](../../facets_edges.go)**            | Upsert facet record (derivation discipline as per spec).                                         |
+| **[`(*Tx).UpdateFacet`](../../facets_edges.go)**         | Requires derivation hash match; else **`ErrFacetDerivationMismatch`**.                           |
+| **[`(*Tx).GetFacet`](../../facets_edges.go)**            | Lookup by packed coord + facet id.                                                               |
+| **[`(*Tx).AscendFacetsForCell`](../../facets_edges.go)** | All facets at a cell key.                                                                        |
+| **[`(*Tx).PutEdge`](../../facets_edges.go)**             | Directed edge primary.                                                                           |
+| **[`(*Tx).GetEdge`](../../facets_edges.go)**             | Edge lookup by endpoints + relation type.                                                        |
+| **[`(*Tx).AscendEdgesFrom`](../../facets_edges.go)**     | Out-edges from a packed coord.                                                                   |
+| **[`(*Tx).LinkCells`](../../facets_edges.go)**           | Sugar: pack coords + **`PutEdge`**.                                                              |
 | **[`FacetWalkRecord`](../../walk_export_aliases.go)**    | Type alias for **`AscendFacetsForCell`** callbacks (embedding apps avoid **`internal/record`**). |
-| **[`EdgeWalkRecord`](../../walk_export_aliases.go)**     | Type alias for **`AscendEdgesFrom`** callbacks.                                           |
+| **[`EdgeWalkRecord`](../../walk_export_aliases.go)**     | Type alias for **`AscendEdgesFrom`** callbacks.                                                  |
 
 ---
 
@@ -125,26 +125,26 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 
 ## Embeddings (vector search)
 
-| Symbol                                                      | Notes                                                                                                 |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| **[`Options.EmbeddingDimension`](../../options.go)**        | Fixed vector dimension for new databases (0 = disabled). Immutable after creation.                    |
-| **[`Options.DistanceMetric`](../../options.go)**            | Similarity function: **`DistanceCosine`** (default), **`DistanceDotProduct`**, **`DistanceL2`**.      |
-| **[`DistanceMetric`](../../embedding.go)**                  | Type alias for the distance metric constants.                                                         |
-| **[`DistanceCosine`](../../embedding.go)**                  | Cosine similarity. Range [-1, 1]; higher = more similar.                                              |
-| **[`DistanceDotProduct`](../../embedding.go)**              | Raw dot product. Assumes normalized vectors.                                                          |
-| **[`DistanceL2`](../../embedding.go)**                      | Euclidean distance, inverted for ranking.                                                             |
-| **[`(*DB).EmbeddingDimension`](../../embedding.go)**        | Returns the configured vector dimension (0 = disabled).                                               |
-| **[`(*DB).EmbeddingMetric`](../../embedding.go)**           | Returns the configured distance metric.                                                               |
-| **[`(*Tx).PutEmbedding`](../../tx_embedding.go)**           | Store a vector embedding for a cell coordinate. Dimension must match.                                 |
-| **[`(*Tx).GetEmbedding`](../../tx_embedding.go)**           | Retrieve the vector embedding for a cell coordinate.                                                  |
-| **[`(*Tx).DeleteEmbedding`](../../tx_embedding.go)**        | Remove an embedding. Idempotent.                                                                      |
-| **[`(*Tx).SearchByEmbedding`](../../embedding_search.go)**  | HNSW-accelerated nearest-neighbor search (flat-scan fallback). Returns top-K results sorted by score. |
-| **[`(*Tx).ReindexEmbeddings`](../../embedding_reindex.go)** | Bulk recompute all embeddings via a user-supplied function. Intended for model changes.               |
-| **[`EmbeddingSearchConfig`](../../embedding_search.go)**    | Search config: `MaxResults` (default 10), `MinScore` threshold.                                       |
-| **[`EmbeddingSearchResult`](../../embedding_search.go)**    | Coord + score pair.                                                                                   |
-| **[`EmbeddingFunc`](../../embedding_reindex.go)**           | Callback type for **`ReindexEmbeddings`**: `(ctx, CellRecord) → ([]float32, error)`.                  |
-| **[`ErrEmbeddingsDisabled`](../../errors.go)**              | Embedding operation on a database with dimension 0.                                                   |
-| **[`ErrEmbeddingDimension`](../../errors.go)**              | Vector length does not match **`EmbeddingDimension`**.                                                |
+| Symbol                                                      | Notes                                                                                                      |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| **[`Options.EmbeddingDimension`](../../options.go)**        | Optional pre-set vector dimension. Auto-detected from first **`PutEmbedding`** when 0. Immutable once set. |
+| **[`Options.DistanceMetric`](../../options.go)**            | Similarity function: **`DistanceCosine`** (default), **`DistanceDotProduct`**, **`DistanceL2`**.           |
+| **[`DistanceMetric`](../../embedding.go)**                  | Type alias for the distance metric constants.                                                              |
+| **[`DistanceCosine`](../../embedding.go)**                  | Cosine similarity. Range [-1, 1]; higher = more similar.                                                   |
+| **[`DistanceDotProduct`](../../embedding.go)**              | Raw dot product. Assumes normalized vectors.                                                               |
+| **[`DistanceL2`](../../embedding.go)**                      | Euclidean distance, inverted for ranking.                                                                  |
+| **[`(*DB).EmbeddingDimension`](../../embedding.go)**        | Returns the vector dimension (0 = no embeddings stored yet).                                               |
+| **[`(*DB).EmbeddingMetric`](../../embedding.go)**           | Returns the configured distance metric.                                                                    |
+| **[`(*Tx).PutEmbedding`](../../tx_embedding.go)**           | Store a vector embedding for a cell coordinate. Dimension must match.                                      |
+| **[`(*Tx).GetEmbedding`](../../tx_embedding.go)**           | Retrieve the vector embedding for a cell coordinate.                                                       |
+| **[`(*Tx).DeleteEmbedding`](../../tx_embedding.go)**        | Remove an embedding. Idempotent.                                                                           |
+| **[`(*Tx).SearchByEmbedding`](../../embedding_search.go)**  | HNSW-accelerated nearest-neighbor search (flat-scan fallback). Returns top-K results sorted by score.      |
+| **[`(*Tx).ReindexEmbeddings`](../../embedding_reindex.go)** | Bulk recompute all embeddings via a user-supplied function. Intended for model changes.                    |
+| **[`EmbeddingSearchConfig`](../../embedding_search.go)**    | Search config: `MaxResults` (default 10), `MinScore` threshold.                                            |
+| **[`EmbeddingSearchResult`](../../embedding_search.go)**    | Coord + score pair.                                                                                        |
+| **[`EmbeddingFunc`](../../embedding_reindex.go)**           | Callback type for **`ReindexEmbeddings`**: `(ctx, CellRecord) → ([]float32, error)`.                       |
+| **[`ErrEmbeddingsDisabled`](../../errors.go)**              | Deprecated. Dimension is now auto-detected; no longer returned by standard ops.                            |
+| **[`ErrEmbeddingDimension`](../../errors.go)**              | Vector length does not match **`EmbeddingDimension`**.                                                     |
 
 **`DeleteCell`** cascades to remove the cell's embedding and HNSW node automatically.
 
@@ -154,14 +154,14 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 
 ## Cell templates
 
-| Symbol                                               | Notes                                                    |
-| ---------------------------------------------------- | -------------------------------------------------------- |
-| **[`NewUserMessageCell`](../../templates.go)**       | Factory for user-message cells with standard tags.       |
-| **[`NewAssistantResponseCell`](../../templates.go)** | Factory for assistant-response cells with standard tags. |
-| **[`NewSystemPromptCell`](../../templates.go)**      | Factory for system-prompt cells (confidence 1.0).        |
-| **[`NewFactCell`](../../templates.go)**              | Factory for extracted-fact cells with category tag.      |
+| Symbol                                               | Notes                                                                                                                   |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **[`NewUserMessageCell`](../../templates.go)**       | Factory for user-message cells with standard tags.                                                                      |
+| **[`NewAssistantResponseCell`](../../templates.go)** | Factory for assistant-response cells with standard tags.                                                                |
+| **[`NewSystemPromptCell`](../../templates.go)**      | Factory for system-prompt cells (confidence 1.0).                                                                       |
+| **[`NewFactCell`](../../templates.go)**              | Factory for extracted-fact cells with category tag.                                                                     |
 | **[`NewProvenanceWire`](../../templates.go)**        | Provenance with **`CreatedAt`** / **`UpdatedAt`** set to now (for **`LinkCells`** / edges from outside **`hexxladb`**). |
-| **[`NewFacetDerived`](../../templates.go)**           | Facet record for **`PutFacet`** without naming **`internal/record`** facet types. |
+| **[`NewFacetDerived`](../../templates.go)**          | Facet record for **`PutFacet`** without naming **`internal/record`** facet types.                                       |
 
 ---
 
@@ -208,6 +208,19 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 | **[`Ring`](../../coord_export.go)**, **[`WalkRings`](../../coord_export.go)**                                         | Same order as **`LoadContext`**. |
 
 Methods on **`Coord`** / **`PackedCoord`** (e.g. **`Distance`**, **`Neighbors`**) live on re-exported types — see **`internal/lattice`**.
+
+### Internal lattice algorithms (not re-exported)
+
+Used by the public context-loading APIs above; listed here for completeness.
+
+| Package             | Function                                      | Used by                  |
+| ------------------- | --------------------------------------------- | ------------------------ |
+| `internal/lattice`  | `FieldOfView(origin, maxR, opaque) → []Coord` | `Tx.LoadContextFOV`      |
+| `internal/lattice`  | `HexLine(a, b) → []Coord`                     | `FieldOfView` (LOS rays) |
+| `internal/lattice`  | `Voronoi(seeds, maxR) → map[Coord]int`        | `Tx.LoadContextVoronoi`  |
+| `internal/lattice`  | `CoarsenCoord`, `RefineCoord`, `CoarsenMulti` | `Tx.LoadContextLOD`      |
+| `internal/lattice`  | `WalkRingsPacked`, `WalkRingsCoordPacked`     | `scanByRadius`           |
+| `internal/pathfind` | `AStar`, `Dijkstra`, `BFS`                    | `Tx.FindEdgePath` etc.   |
 
 ---
 
@@ -334,6 +347,114 @@ SearchCells(query) → []CellSearchResult → extract .Cell.Coord → LoadContex
 ```
 
 Token budget across seeds: each seed expands independently (ring walk, `FilterSuperseded`), cells merge into one pool, pool re-ranked by `Confidence` descending, greedy fill to `MaxTokens`.
+
+---
+
+## Pathfinding over edges
+
+Graph traversal across the cell-edge topology. Algorithms live in `internal/pathfind`; public API on `*Tx`.
+
+| Symbol                                                  | Notes                                                                                                                                  |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*Tx).FindEdgePath`](../../pathfind_api.go)**       | A\* shortest path between two coords over out-edges. Optional `filter` restricts relation types. Returns `[]Coord` path or nil.        |
+| **[`(*Tx).WalkEdges`](../../pathfind_api.go)**          | BFS/Dijkstra reachability walk from a coord. Returns all coords reachable within `maxHops` hops over filtered edges.                   |
+| **[`(*Tx).LoadContextByEdges`](../../pathfind_api.go)** | Walk edges from `center` (BFS), then fetch cells for all reached coords. `maxCells` caps output. Combines graph traversal + cell load. |
+
+### Pathfinding pipeline
+
+```text
+SearchCells(query) → top result → FindEdgePath(result.Coord, target) → path of coords
+                                  WalkEdges(result.Coord, maxHops=3, filter="follow-up") → reachable set
+                                  LoadContextByEdges(result.Coord, filter, maxHops, maxCells) → []CellRecord
+```
+
+---
+
+## LOD (multi-resolution) context
+
+Load nearby cells at full resolution, outer cells at coarsened resolution. Reduces I/O for large radii by mapping outer-ring coordinates to coarser parent cells.
+
+| Symbol                                             | Notes                                                                                                         |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| **[`(*Tx).LoadContextLOD`](../../lod_context.go)** | Load rings `[0..fineR]` at full resolution, `[fineR+1..maxR]` at coarsened resolution. `factor` controls LOD. |
+| **[`LODContextConfig`](../../lod_context.go)**     | `FineRings` (default 2), `CoarsenFactor` (default 3), `MaxCells` (default 256).                               |
+
+Lattice primitives in `internal/lattice`: `CoarsenCoord`, `RefineCoord`, `CoarsenMulti`, `floorDiv`.
+
+---
+
+## Voronoi partitioning (multi-seed context)
+
+Non-overlapping partitioning of hex space around multiple seeds. Unlike `LoadMultiContextPack` (which merges overlapping radial neighborhoods), Voronoi assigns each coordinate to **exactly one** seed via multi-source BFS — giving each seed a fair, non-overlapping share of the context budget.
+
+| Symbol                                                     | Notes                                                                                                        |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| **[`(*Tx).LoadContextVoronoi`](../../voronoi_context.go)** | Partition hex space around seeds, load cells per region. Returns `map[int][]CellRecord` keyed by seed index. |
+| **[`VoronoiContextConfig`](../../voronoi_context.go)**     | `MaxRadius` (default 4), `MaxCellsPerSeed` (default 64).                                                     |
+
+Lattice primitives in `internal/lattice`: `Voronoi(seeds, maxRadius)`, `VoronoiRegion(cells, seedIdx)`.
+
+### When to use Voronoi vs LoadMultiContextPack
+
+| Concern             | `LoadMultiContextPack`                      | `LoadContextVoronoi`                                      |
+| ------------------- | ------------------------------------------- | --------------------------------------------------------- |
+| Overlap             | Seeds share cells (dedup optional)          | No overlap — each hex assigned to exactly one seed        |
+| Budget distribution | Shared pool, confidence-ranked              | Per-seed cap — each region gets a fair independent budget |
+| Use case            | "Merge everything relevant into one prompt" | "Give each topic its own context slice"                   |
+
+---
+
+## Field of View (visibility-filtered context)
+
+Load only cells **visible** from a center via line-of-sight, skipping cells occluded behind opaque barriers. This improves retrieval accuracy on sparse grids by spending the context budget only on cells connected through a populated neighborhood.
+
+| Symbol                                             | Notes                                                                                                                      |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*Tx).LoadContextFOV`](../../fov_context.go)** | Load cells visible from `center` within `maxR`, filtering by LOS. `opaque` predicate determines which coords block vision. |
+| **[`FOVContextConfig`](../../fov_context.go)**     | `MaxCells` (default 256).                                                                                                  |
+
+Lattice primitives in `internal/lattice`: `FieldOfView(origin, maxR, opaque)`, `HexLine(a, b)`, `checkLOS`, `cubeRound`, `cubeLerp`.
+
+### How FOV improves retrieval accuracy
+
+Standard radial context loading (`LoadContext`, `LoadContextPack`) treats the hex grid as uniformly reachable — every cell within radius is a candidate. On **sparse grids** (where many coordinates have no stored cell), or grids with **logical boundaries** (topic changes, empty regions, deleted cells), this wastes the context budget on coordinates that are semantically disconnected from the center.
+
+FOV filtering solves this by treating empty/deleted cells as "opaque" — cells behind them are not loaded. The result:
+
+- **Budget efficiency** — tokens spent only on cells reachable through populated neighborhoods
+- **Topic isolation** — empty regions naturally act as boundaries, preventing context bleed between unrelated topics
+- **Sparse grid performance** — on a grid that is 20% populated, FOV can reduce candidates by 40-60%
+
+### Combining FOV with embeddings search
+
+The recommended pipeline for high-accuracy retrieval:
+
+```text
+1. QueryCells(embedding=queryVec)  → top-K seed coords (semantic similarity)
+2. For each seed:
+   LoadContextFOV(seed, maxR=4, opaque=isEmpty)  → visibility-filtered neighborhood
+3. Or: LoadContextVoronoi(seeds, cfg)  → partitioned neighborhoods
+4. Assemble into prompt with token budgeting
+```
+
+The `opaque` function is application-defined. Common patterns:
+
+| Pattern                  | `opaque` returns true when…                    | Effect                                                 |
+| ------------------------ | ---------------------------------------------- | ------------------------------------------------------ |
+| **Empty-cell gating**    | No cell exists at the coordinate               | Empty space blocks context propagation                 |
+| **Topic boundaries**     | Cell has a different primary tag than the seed | Context stays within topic                             |
+| **Confidence threshold** | Cell confidence < 0.3                          | Low-confidence cells act as barriers                   |
+| **Temporal cutoff**      | Cell is older than a threshold                 | Stale regions block propagation to even-staler content |
+
+---
+
+## Hex line drawing
+
+| Symbol                                                  | Notes                                                                                                           |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **`lattice.HexLine(a, b)`** (`internal/lattice/fov.go`) | Cube-coordinate linear interpolation + rounding (Red Blob Games algorithm). Returns all hex coords on the line. |
+
+Not re-exported at root level; access via `internal/lattice` (module-private) or indirectly through `LoadContextFOV`.
 
 ---
 

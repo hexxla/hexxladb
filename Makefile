@@ -2,7 +2,7 @@
 	pre-commit-install pre-commit-run pre-commit-update run \
 	build build-tui build-demo build-demo-llm build-examples build-all \
 	build-linux build-darwin build-windows \
-	demo demo-llm demo-all seed tui \
+	demo demo-llm demo-spatial demo-all seed tui \
 	llm-setup mutation-test mutation-test-dry ci-full \
 	clean-llm clean-llm-all clean-llm-windsurf clean-llm-cursor clean-llm-claude clean-llm-continue clean-llm-codex
 
@@ -40,7 +40,8 @@ help:
 	@echo "                     Override: make demo DEMO_DB=/path/to/my.db"
 	@echo "make demo-llm        Run llm_context_engine demo (DB .tmp/llm-context-engine.db, needs Ollama)"
 	@echo "                     Override: make demo-llm LLM_DB=/path/to/my.db"
-	@echo "make demo-all        Run both demos in sequence"
+	@echo "make demo-spatial    Run spatial_algorithms demo (FOV, LOD, Voronoi, pathfinding)"
+	@echo "make demo-all        Run all demos in sequence"
 	@echo "make seed            Seed conversational-memory DB if absent — idempotent"
 	@echo "make tui             Launch TUI explorer (seeds DB first if absent)"
 	@echo "                     Override: make tui TUI_DB=/path/to/my.db"
@@ -157,8 +158,16 @@ demo-llm:
 	@rm -f .tmp/llm-context-engine.db .tmp/llm-context-engine.db-wal
 	go run ./examples/llm_context_engine $(if $(LLM_DB),-db $(LLM_DB),)
 
-# Run both demos in sequence.
-demo-all: demo demo-llm
+# Run the spatial_algorithms demo.
+# No external dependencies needed — runs a self-contained DB.
+# DB is always cleaned before each run.
+demo-spatial:
+	@mkdir -p .tmp
+	@rm -f .tmp/spatial-algorithms.db .tmp/spatial-algorithms.db-wal
+	go run ./examples/spatial_algorithms $(if $(SPATIAL_DB),-db $(SPATIAL_DB),)
+
+# Run all demos in sequence.
+demo-all: demo demo-llm demo-spatial
 
 # Seed the conversational-memory DB if it does not already exist (idempotent).
 # The conversational_memory example handles reuse: if the DB is present it skips re-seeding.

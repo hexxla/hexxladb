@@ -19,7 +19,7 @@ type cellsView struct {
 	loading    bool
 	searching  bool   // search bar is open (typing)
 	query      string // last executed query (shown when results are displayed)
-	searchMode string // "lexical" or "embedding"
+	searchMode string // "lexical", "embedding", or "hybrid"
 	searchErr  error  // error from last search
 	width      int
 	height     int
@@ -113,7 +113,7 @@ func (v *cellsView) handleSearchKeyMsg(msg tea.KeyMsg) (view, tea.Cmd) {
 	return v, nil
 }
 
-// executeSearch submits the current query for lexical or embedding search.
+// executeSearch submits the current query for lexical, embedding, or hybrid search.
 func (v *cellsView) executeSearch() (view, tea.Cmd) {
 	v.searching = false
 	v.loading = true
@@ -121,10 +121,14 @@ func (v *cellsView) executeSearch() (view, tea.Cmd) {
 	v.searchErr = nil
 	q := v.query
 	db := v.db
-	if v.searchMode == "embedding" {
+	switch v.searchMode {
+	case "embedding":
 		return v, func() tea.Msg { return searchByEmbedding(db, q, 200) }
+	case "hybrid":
+		return v, func() tea.Msg { return hybridSearch(db, q, 200) }
+	default:
+		return v, func() tea.Msg { return searchHitsLoadedMsg{hits: searchCells(db, q, 200)} }
 	}
-	return v, func() tea.Msg { return searchHitsLoadedMsg{hits: searchCells(db, q, 200)} }
 }
 
 // handleNavKeyMsg processes key input for navigation/actions outside search mode.
@@ -154,9 +158,12 @@ func (v *cellsView) handleNavKeyMsg(msg tea.KeyMsg) (view, tea.Cmd) {
 		v.query = ""
 		return v, nil
 	case "e":
-		if v.searchMode == "lexical" {
+		switch v.searchMode {
+		case "lexical":
 			v.searchMode = "embedding"
-		} else {
+		case "embedding":
+			v.searchMode = "hybrid"
+		default:
 			v.searchMode = "lexical"
 		}
 		return v, nil
@@ -279,10 +286,7 @@ func (v *cellsView) renderCellTable(total int, isSearch bool) string {
 	}
 	title := "◈ Cells"
 	if isSearch {
-		modeStr := "lexical"
-		if v.searchMode == "embedding" {
-			modeStr = "semantic"
-		}
+		modeStr := searchModeLabel(v.searchMode)
 		title = fmt.Sprintf("◈ Cells  ⌕ %q [%s] — %d results", v.query, modeStr, total)
 	}
 	scrollInfo := styleDim.Render(fmt.Sprintf("  %d/%d  (%d%%)", v.cursor+1, total, pct))
@@ -291,7 +295,7 @@ func (v *cellsView) renderCellTable(total int, isSearch bool) string {
 		helpItem("g/G", "top/bottom") + "  " +
 		helpItem("Enter", "inspect") + "  " +
 		helpItem("/", "search") + "  " +
-		helpItem("e", "toggle mode") + "  " +
+		helpItem("e", "cycle: lex→sem→hybrid") + "  " +
 		helpItem("r", "browse all")
 
 	parts := []string{viewTitle(title, v.width), scrollInfo}
@@ -338,14 +342,32 @@ func (v *cellsView) cellTableStyleFunc(start int, isSearch bool) func(row, col i
 	}
 }
 
+func searchModeLabel(mode string) string {
+	switch mode {
+	case "embedding":
+		return "semantic"
+	case "hybrid":
+		return "hybrid"
+	default:
+		return "lexical"
+	}
+}
+
+func searchModeColor(mode string) lipgloss.Color {
+	switch mode {
+	case "embedding":
+		return colorPink
+	case "hybrid":
+		return colorGreen
+	default:
+		return colorCyan
+	}
+}
+
 func (v *cellsView) renderSearchBar() string {
 	if v.searching {
-		modeStr := "lexical"
-		modeClr := colorCyan
-		if v.searchMode == "embedding" {
-			modeStr = "semantic"
-			modeClr = colorPink
-		}
+		modeStr := searchModeLabel(v.searchMode)
+		modeClr := searchModeColor(v.searchMode)
 		return lipgloss.NewStyle().Foreground(colorCyan).Background(colorBg1).Render("  ⌕  ") +
 			lipgloss.NewStyle().Foreground(modeClr).Background(colorBg1).Render("["+modeStr+"] ") +
 			lipgloss.NewStyle().Foreground(colorText0).Background(colorBg1).Bold(true).Render(v.query) +
@@ -353,12 +375,8 @@ func (v *cellsView) renderSearchBar() string {
 			styleDim.Render("  Enter=search  Esc=clear")
 	}
 	if v.query != "" && v.searchHits != nil {
-		modeStr := "lexical"
-		modeClr := colorYellow
-		if v.searchMode == "embedding" {
-			modeStr = "semantic"
-			modeClr = colorPink
-		}
+		modeStr := searchModeLabel(v.searchMode)
+		modeClr := searchModeColor(v.searchMode)
 		return styleDim.Render("  ⎔  ") +
 			lipgloss.NewStyle().Foreground(modeClr).Background(colorBg1).Render("["+modeStr+"] ") +
 			lipgloss.NewStyle().Foreground(colorYellow).Background(colorBg1).Render(v.query) +

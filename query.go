@@ -106,7 +106,8 @@ type CellQuery struct {
 	// Embedding triggers ANN-accelerated seed selection via [Tx.SearchByEmbedding].
 	// When non-nil, the planner uses the embedding index to narrow the candidate
 	// set and boosts scores by embedding similarity. The vector length must match
-	// [DB.EmbeddingDimension]; the database must have a non-zero dimension.
+	// [DB.EmbeddingDimension] (auto-detected on first [Tx.PutEmbedding]).
+	// Returns empty results if no embeddings have been stored yet.
 	// All other predicate fields (tags, temporal, spatial, etc.) are applied as
 	// post-filters on the embedding results.
 	Embedding []float32

@@ -9,15 +9,17 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/hexxla/hexxladb"
+	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
 type hexGridView struct {
 	noConsume
-	db     *hexxladb.DB
-	center hexxladb.Coord
-	radius int
-	width  int
-	height int
+	db      *hexxladb.DB
+	center  hexxladb.Coord
+	radius  int
+	showFOV bool // toggle FOV overlay
+	width   int
+	height  int
 }
 
 func newHexGridView(db *hexxladb.DB) view {
@@ -47,6 +49,8 @@ func (v *hexGridView) Update(msg tea.Msg) (view, tea.Cmd) {
 			}
 		case "0":
 			v.center = hexxladb.Coord{}
+		case "v":
+			v.showFOV = !v.showFOV
 		case "enter":
 			coord := v.center
 			return v, func() tea.Msg { return inspectCellMsg{coord: coord} }
@@ -68,6 +72,25 @@ func (v *hexGridView) View() string {
 		return nil
 	})
 
+	// Build FOV visible set if overlay is on
+	visibleSet := map[hexxladb.Coord]struct{}{}
+	if v.showFOV {
+		_ = v.db.View(func(tx *hexxladb.Tx) error {
+			opaque := func(c hexxladb.Coord) bool {
+				p, err := lattice.Pack(c)
+				if err != nil {
+					return true
+				}
+				_, ok, _ := tx.GetCell(p)
+				return !ok
+			}
+			for _, c := range lattice.FieldOfView(v.center, v.radius, opaque) {
+				visibleSet[c] = struct{}{}
+			}
+			return nil
+		})
+	}
+
 	// Color the grid lines
 	var coloredGrid strings.Builder
 	for line := range strings.SplitSeq(gridStr, "\n") {
@@ -82,9 +105,15 @@ func (v *hexGridView) View() string {
 		coloredGrid.WriteString(coloredLine + "\n")
 	}
 
+	fovLabel := ""
+	if v.showFOV {
+		fovLabel = lipgloss.NewStyle().Foreground(colorGreen).Background(colorBg1).Render("  FOV ON") +
+			styleDim.Render(fmt.Sprintf(" (%d visible)", len(visibleSet)))
+	}
+
 	gridPanel := styleBorder.Background(colorBg1).Padding(0, 2).
 		Render(
-			styleSectionHeader.Render(fmt.Sprintf("Hex Grid — center (%d,%d) radius %d", v.center.Q, v.center.R, v.radius)) + "\n\n" +
+			styleSectionHeader.Render(fmt.Sprintf("Hex Grid — center (%d,%d) radius %d", v.center.Q, v.center.R, v.radius)) + fovLabel + "\n\n" +
 				coloredGrid.String(),
 		)
 
@@ -116,6 +145,7 @@ func (v *hexGridView) View() string {
 	help := strings.Join([]string{
 		helpItem("↑↓←→/hjkl", "move center"),
 		helpItem("+/-", "zoom"),
+		helpItem("v", "toggle FOV"),
 		helpItem("0", "origin"),
 		helpItem("Enter", "inspect center"),
 	}, "  ")

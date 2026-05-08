@@ -10,6 +10,7 @@ import (
 
 	"github.com/hexxla/hexxladb"
 	"github.com/hexxla/hexxladb/internal/lattice"
+	"github.com/hexxla/hexxladb/internal/record"
 )
 
 type inspectorView struct {
@@ -18,7 +19,9 @@ type inspectorView struct {
 	cell        hexxladb.Coord
 	data        *hexxladb.CellView
 	pack        *hexxladb.ContextPack
+	fovCells    []record.CellRecord // FOV-filtered context results
 	packLoading bool
+	packMode    string // "radial" or "fov"
 	width       int
 	height      int
 }
@@ -46,11 +49,22 @@ func (v *inspectorView) Update(msg tea.Msg) (view, tea.Cmd) {
 		v.pack = &msg.pack
 		return v, nil
 
+	case fovContextLoadedMsg:
+		v.packLoading = false
+		if msg.err != nil {
+			return v, nil
+		}
+		v.fovCells = msg.cells
+		v.pack = nil
+		v.packMode = "fov"
+		return v, nil
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "c":
 			if v.data != nil && !v.packLoading {
 				v.packLoading = true
+				v.packMode = "radial"
 				coord := v.cell
 				db := v.db
 				return v, func() tea.Msg {
@@ -58,10 +72,22 @@ func (v *inspectorView) Update(msg tea.Msg) (view, tea.Cmd) {
 					return contextPackLoadedMsg{pack: pack, err: err}
 				}
 			}
+		case "f":
+			if v.data != nil && !v.packLoading {
+				v.packLoading = true
+				v.packMode = "fov"
+				coord := v.cell
+				db := v.db
+				return v, func() tea.Msg {
+					return loadContextFOV(db, coord)
+				}
+			}
 		case "r":
 			v.data = nil
 			v.pack = nil
+			v.fovCells = nil
 			v.packLoading = false
+			v.packMode = ""
 			return v, nil
 		}
 	}
@@ -163,19 +189,22 @@ func (v *inspectorView) View() string {
 				styleCardValue.Render(v.data.RawContent),
 		)
 
-	// ── context pack ─────────────────────────────────────────────────────────
+	// ── context pack ─────────────────────────────────────────────────────────────
 	var packPanel string
 	switch {
 	case v.packLoading:
 		packPanel = styleBorderSubtle.Background(colorBg2).Width(halfW).Padding(0, 2).Render(
-			lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg2).Bold(true).Italic(true).Render("⟳  Loading context pack…"),
+			lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg2).Bold(true).Italic(true).Render("⟳  Loading context…"),
 		)
-	case v.pack == nil:
+	case v.pack == nil && v.fovCells == nil:
 		packPanel = styleBorderSubtle.Background(colorBg2).Width(halfW).Padding(0, 2).Render(
-			styleCardHeader.Render("Context Pack") + "\n" +
-				styleCardDim.Render("Press ") + lipgloss.NewStyle().Foreground(colorCyan).Background(colorBg2).Bold(true).Render("c") + styleCardDim.Render(" to assemble context pack\n") +
-				styleCardDim.Render("(radius 3, 8KB budget, seam-aware)"),
+			styleCardHeader.Render("Context Loading") + "\n" +
+				styleCardDim.Render("Press ") + lipgloss.NewStyle().Foreground(colorCyan).Background(colorBg2).Bold(true).Render("c") + styleCardDim.Render(" radial context pack\n") +
+				styleCardDim.Render("Press ") + lipgloss.NewStyle().Foreground(colorGreen).Background(colorBg2).Bold(true).Render("f") + styleCardDim.Render(" FOV-filtered context\n") +
+				styleCardDim.Render("(radius 3, seam-aware, visibility-filtered)"),
 		)
+	case v.fovCells != nil:
+		packPanel = v.renderFOV(halfW)
 	default:
 		packPanel = v.renderPack(halfW)
 	}
@@ -188,7 +217,7 @@ func (v *inspectorView) View() string {
 		explainPanel = v.renderExplain(w)
 	}
 
-	help := helpItem("c", "load context pack") + "  " + helpItem("r", "reset")
+	help := helpItem("c", "radial context") + "  " + helpItem("f", "FOV context") + "  " + helpItem("r", "reset")
 
 	parts := []string{
 		viewTitle("◈ Cell Inspector", v.width),
@@ -268,6 +297,55 @@ func (v *inspectorView) renderPack(w int) string {
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorPurple).
+		Background(colorBg2).
+		Padding(0, 1).
+		Width(w).
+		Render(sb.String())
+}
+
+func (v *inspectorView) renderFOV(w int) string {
+	cells := v.fovCells
+	var sb strings.Builder
+
+	sb.WriteString(styleCardHeader.Render("FOV Context (visibility-filtered)") + "\n")
+	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Left,
+		styleCardDim.Render("visible cells: "), lipgloss.NewStyle().Foreground(colorGreen).Background(colorBg2).Render(fmt.Sprintf("%d", len(cells))),
+		styleCardDim.Render("  center: "), styleCardValue.Render(fmt.Sprintf("(%d,%d)", v.cell.Q, v.cell.R)),
+		styleCardDim.Render("  radius: "), styleCardValue.Render("3"),
+	) + "\n")
+	sb.WriteString(styleCardDim.Render("empty cells block line-of-sight") + "\n\n")
+
+	maxConf := 0.0
+	for _, c := range cells {
+		if c.Provenance.Confidence > maxConf {
+			maxConf = c.Provenance.Confidence
+		}
+	}
+	if maxConf == 0 {
+		maxConf = 1
+	}
+
+	for _, c := range cells {
+		coord, _ := lattice.Unpack(c.Key)
+		dist := v.cell.Distance(coord)
+		bar := barGraphBg(int(c.Provenance.Confidence*100), int(maxConf*100), 8, colorGreen, colorBg2)
+		line := lipgloss.JoinHorizontal(lipgloss.Left,
+			lipgloss.NewStyle().Foreground(colorText2).Background(colorBg2).Width(10).Render(
+				fmt.Sprintf("(%d,%d)", coord.Q, coord.R),
+			),
+			lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg2).Width(4).Render(
+				fmt.Sprintf("d%d", dist),
+			),
+			bar,
+			styleCardDim.Render("  "),
+			lipgloss.NewStyle().Foreground(colorText0).Background(colorBg2).Render(truncStr(c.RawContent, w-36)),
+		)
+		sb.WriteString(line + "\n")
+	}
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorGreen).
 		Background(colorBg2).
 		Padding(0, 1).
 		Width(w).

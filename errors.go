@@ -71,8 +71,10 @@ var (
 	// maximum allowed length (200 bytes).
 	ErrSnapshotTagLabelTooLong = errors.New("hexxladb: snapshot tag label too long")
 
-	// ErrEmbeddingsDisabled means an embedding operation was attempted on a database opened
-	// with [Options.EmbeddingDimension] == 0 (or an older database without embedding support).
+	// ErrEmbeddingsDisabled is retained for backward compatibility but no longer returned by
+	// standard embedding operations. Dimension is now auto-detected on the first [Tx.PutEmbedding].
+	//
+	// Deprecated: check [DB.EmbeddingDimension] == 0 to see if embeddings have been stored yet.
 	ErrEmbeddingsDisabled = errors.New("hexxladb: embeddings not enabled for this database")
 
 	// ErrEmbeddingDimension means the vector length does not match [DB.EmbeddingDimension].
