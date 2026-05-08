@@ -14,6 +14,8 @@
 //   - Phase 10  QueryCells + multi-seed context assembly (LoadContextPackFrom)
 //   - Phase 11  Health check (DB.HealthCheck) + MVCC Snapshot Diff
 //   - Phase 12  DeleteCell + Compact (MVCC tombstones, snapshot isolation, copy-compaction)
+//   - Phase 13  Field of View — visibility-filtered context (LoadContextFOV)
+//   - Phase 14  Pathfinding over edges (PutEdge, FindEdgePath A*, WalkEdges BFS, LoadContextByEdges)
 //
 // For embedding-based semantic search, see examples/llm_context_engine.
 //
@@ -119,7 +121,7 @@ func run(dbPath string) error {
 
 	_, _ = separatorStyle.Println(strings.Repeat("═", lineWidth))
 	_, _ = headerStyle.Printf("  ▶  HexxlaDB — Conversational Memory Demo\n")
-	_, _ = dimStyle.Printf("  %d-turn corpus · 5 thematic sessions · 12 phases\n", len(seedConversation))
+	_, _ = dimStyle.Printf("  %d-turn corpus · 5 thematic sessions · 14 phases\n", len(seedConversation))
 	_, _ = separatorStyle.Println(strings.Repeat("═", lineWidth))
 	fmt.Println()
 
@@ -1148,6 +1150,218 @@ func run(dbPath string) error {
 	fmt.Println()
 
 	// ═══════════════════════════════════════════════════════════════
+	// PHASE 13: Field of View (FOV) Context Loading
+	// ═══════════════════════════════════════════════════════════════
+	printHeader("Phase 13: Field of View — Visibility-Filtered Context")
+
+	printNote("LoadContextFOV uses LOS ray casting to skip cells hidden behind empty regions.")
+	printNote("Compared to radial LoadContextPack, FOV spends budget only on reachable cells.")
+	fmt.Println()
+
+	fovCenter := cells[len(cells)/2] // a cell near the middle of the corpus
+
+	// Radial context for comparison
+	var radialCells []record.CellRecord
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		packed := lattice.WalkRingsPacked(fovCenter, 3)
+		for _, p := range packed {
+			rec, ok, err := tx.GetCell(p)
+			if err != nil {
+				return err
+			}
+			if ok {
+				radialCells = append(radialCells, rec)
+			}
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("radial context: %w", err)
+	}
+
+	// FOV-filtered context — empty cells act as opaque barriers
+	var fovCells []record.CellRecord
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		opaque := func(c lattice.Coord) bool {
+			p, err := lattice.Pack(c)
+			if err != nil {
+				return true
+			}
+			_, ok, _ := tx.GetCell(p)
+			return !ok // treat empty cells as opaque barriers
+		}
+		var err error
+		fovCells, err = tx.LoadContextFOV(ctx, fovCenter, 3, opaque, hexxladb.FOVContextConfig{
+			MaxCells: 128,
+		})
+		return err
+	}); err != nil {
+		return fmt.Errorf("fov context: %w", err)
+	}
+
+	printSubHeader("Comparison: radial vs FOV-filtered context")
+	printMetric("Center", fmt.Sprintf("(%d,%d)", fovCenter.Q, fovCenter.R), "")
+	printMetric("Radius", 3, "rings")
+	printMetric("Radial cells (all occupied)", len(radialCells), "cells")
+	printMetric("FOV cells (visible only)", len(fovCells), "cells")
+	if len(radialCells) > len(fovCells) {
+		printMetric("Cells skipped by FOV", len(radialCells)-len(fovCells), "occluded cells saved from budget")
+	}
+	fmt.Println()
+
+	_, _ = infoStyle.Println("  FOV-visible cells:")
+	for i, rec := range fovCells {
+		if i >= 10 {
+			_, _ = dimStyle.Printf("    ⋯  (%d more cells not shown)\n", len(fovCells)-10)
+			break
+		}
+		c, _ := lattice.Unpack(rec.Key)
+		dist := fovCenter.Distance(c)
+		_, _ = dimStyle.Printf("    [%02d] (%d,%d) dist=%d  ", i+1, c.Q, c.R, dist)
+		_, _ = dataStyle.Printf("%s\n", truncate(rec.RawContent, 48))
+	}
+	fmt.Println()
+
+	printNote("FOV is ideal for sparse grids: large empty gaps block LOS, so the context")
+	printNote("budget is spent only on cells the observer can actually 'see.'")
+	printSuccess("FOV context loading complete")
+	fmt.Println()
+
+	// ═══════════════════════════════════════════════════════════════
+	// PHASE 14: Pathfinding Over Edges
+	// ═══════════════════════════════════════════════════════════════
+	printHeader("Phase 14: Pathfinding Over Edges (A* / BFS)")
+
+	printNote("Edges create a graph overlay on the hex grid. PutEdge links cells,")
+	printNote("FindEdgePath finds shortest A* paths, WalkEdges does BFS reachability.")
+	fmt.Println()
+
+	// Create edges between some cells to form a graph
+	printSubHeader("Step 1 — Create edge network")
+	type edgePair struct {
+		from, to int
+		kind     string
+		weight   float64
+	}
+	edgePairs := []edgePair{
+		{0, 1, "follows", 1.0},
+		{1, 2, "follows", 1.0},
+		{2, 3, "follows", 1.0},
+		{3, 4, "follows", 1.0},
+		{4, 5, "follows", 1.0},
+		{0, 5, "references", 3.0}, // shortcut with higher weight
+		{5, 10, "topic-link", 1.0},
+		{10, 15, "topic-link", 1.0},
+		{15, 20, "topic-link", 1.0},
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		for _, ep := range edgePairs {
+			if ep.from >= len(cells) || ep.to >= len(cells) {
+				continue
+			}
+			fromPK, _ := lattice.Pack(cells[ep.from])
+			toPK, _ := lattice.Pack(cells[ep.to])
+			if err := tx.PutEdge(record.EdgeRecord{
+				From:         fromPK,
+				To:           toPK,
+				RelationType: ep.kind,
+				Weight:       ep.weight,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("put edges: %w", err)
+	}
+	printSuccess(fmt.Sprintf("Created %d edges across the conversation graph", len(edgePairs)))
+	for _, ep := range edgePairs {
+		if ep.from >= len(cells) || ep.to >= len(cells) {
+			continue
+		}
+		_, _ = dimStyle.Printf("    (%d,%d) →[%s w=%.0f]→ (%d,%d)\n",
+			cells[ep.from].Q, cells[ep.from].R, ep.kind, ep.weight,
+			cells[ep.to].Q, cells[ep.to].R)
+	}
+	fmt.Println()
+
+	// A* shortest path
+	printSubHeader("Step 2 — FindEdgePath (A* shortest path)")
+	if len(cells) > 20 {
+		start, goal := cells[0], cells[5]
+		_, _ = infoStyle.Printf("  Finding shortest path: (%d,%d) → (%d,%d)\n", start.Q, start.R, goal.Q, goal.R)
+		var path []hexxladb.Coord
+		if err := db.View(func(tx *hexxladb.Tx) error {
+			var err error
+			path, err = tx.FindEdgePath(ctx, start, goal, "", 100)
+			return err
+		}); err != nil {
+			return fmt.Errorf("find edge path: %w", err)
+		}
+		if path != nil {
+			printMetric("Path length", len(path), "hops")
+			pathStr := make([]string, len(path))
+			for i, c := range path {
+				pathStr[i] = fmt.Sprintf("(%d,%d)", c.Q, c.R)
+			}
+			_, _ = dimStyle.Printf("    Path: %s\n", strings.Join(pathStr, " → "))
+		} else {
+			printNote("No path found (cells not connected)")
+		}
+	}
+	fmt.Println()
+
+	// BFS reachability
+	printSubHeader("Step 3 — WalkEdges (BFS reachability)")
+	if len(cells) > 0 {
+		bfsStart := cells[0]
+		_, _ = infoStyle.Printf("  BFS from (%d,%d), max 4 hops, following all edge types:\n", bfsStart.Q, bfsStart.R)
+		var reachable []hexxladb.Coord
+		if err := db.View(func(tx *hexxladb.Tx) error {
+			var err error
+			reachable, err = tx.WalkEdges(ctx, bfsStart, "", 4, 20)
+			return err
+		}); err != nil {
+			return fmt.Errorf("walk edges: %w", err)
+		}
+		printMetric("Reachable cells", len(reachable), "coords")
+		for i, c := range reachable {
+			if i >= 10 {
+				_, _ = dimStyle.Printf("    ⋯  (%d more not shown)\n", len(reachable)-10)
+				break
+			}
+			_, _ = dimStyle.Printf("    [%d] (%d,%d)\n", i+1, c.Q, c.R)
+		}
+	}
+	fmt.Println()
+
+	// LoadContextByEdges
+	printSubHeader("Step 4 — LoadContextByEdges (graph-aware context)")
+	if len(cells) > 0 {
+		edgeCenter := cells[0]
+		var edgeCells []record.CellRecord
+		if err := db.View(func(tx *hexxladb.Tx) error {
+			var err error
+			edgeCells, err = tx.LoadContextByEdges(ctx, edgeCenter, "", 3, 20)
+			return err
+		}); err != nil {
+			return fmt.Errorf("load context by edges: %w", err)
+		}
+		printMetric("Edge-connected context cells", len(edgeCells), "cells")
+		for i, rec := range edgeCells {
+			if i >= 5 {
+				_, _ = dimStyle.Printf("    ⋯  (%d more not shown)\n", len(edgeCells)-5)
+				break
+			}
+			c, _ := lattice.Unpack(rec.Key)
+			_, _ = dimStyle.Printf("    [%d] (%d,%d) ", i+1, c.Q, c.R)
+			_, _ = dataStyle.Printf("%s\n", truncate(rec.RawContent, 50))
+		}
+	}
+	fmt.Println()
+	printSuccess("Pathfinding over edges complete")
+	fmt.Println()
+
+	// ═══════════════════════════════════════════════════════════════
 	// COMPLETION
 	// ═══════════════════════════════════════════════════════════════
 	_, _ = separatorStyle.Println(strings.Repeat("═", lineWidth))
@@ -1157,7 +1371,7 @@ func run(dbPath string) error {
 
 	printInfo("Database", dbPath)
 	printInfo("Corpus", fmt.Sprintf("%d turns · 5 thematic sessions", len(seedConversation)))
-	printInfo("Phases run", "1–12 (all)")
+	printInfo("Phases run", "1–14 (all)")
 	printInfo("Hook writes", fmt.Sprintf("%d cell writes observed via AfterPutCell", hookCellCount))
 	fmt.Println()
 
@@ -1165,9 +1379,10 @@ func run(dbPath string) error {
 	_, _ = dimStyle.Println("    •  Implement your own TokenBudgeter (e.g., tiktoken bindings)")
 	_, _ = dimStyle.Println("    •  Wire AfterPutCell/AfterPutSeam for real-time CDC or audit logging")
 	_, _ = dimStyle.Println("    •  Use SnapshotDiff for incremental replication pipelines")
+	_, _ = dimStyle.Println("    •  Use LoadContextFOV for sparse grids to save context budget")
+	_, _ = dimStyle.Println("    •  Build edge graphs for topic-navigation and graph-based retrieval")
 	_, _ = dimStyle.Println("    •  Enable encryption (Options.Passphrase / Options.EncryptionKey)")
 	_, _ = dimStyle.Println("    •  Tune Options.PageSize (4096/8192/16384/65536) for your workload")
-	_, _ = dimStyle.Println("    •  Schedule Compact after PruneCellVersions for optimal file size")
 	_, _ = dimStyle.Println("    •  See docs/hexxladb/API_REFERENCE.md for the full API surface")
 	fmt.Println()
 
