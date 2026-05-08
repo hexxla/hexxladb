@@ -14,12 +14,13 @@ By default, implement changes rather than only suggesting them. If the user's in
 
 <minimal_changes>
 Avoid over-engineering. Only make changes that are directly requested or clearly necessary.
+
 - Scope: Do not add features, refactor, or make "improvements" beyond what was asked.
 - Documentation: Do not add comments or docstrings to code you did not change.
 - Abstractions: Do not create helpers or utilities for one-time operations.
 - Defensive coding: Do not add error handling for scenarios that cannot happen.
-The right amount of complexity is the minimum needed for the current task.
-</minimal_changes>
+  The right amount of complexity is the minimum needed for the current task.
+  </minimal_changes>
 
 <action_safety>
 Take local, reversible actions freely (editing files, running tests, reading code). Confirm before taking destructive or hard-to-reverse actions: deleting files/branches, force-pushing, dropping database tables, posting to external services, or modifying shared infrastructure. Never bypass safety checks (e.g. --no-verify, --force) as a shortcut.
@@ -61,7 +62,6 @@ If you intend to call multiple tools and there are no dependencies between them,
 | `docs/hexxladb/OPERATIONS.md`    | Production operations          |
 | `docs/ROADMAP.md`                | Roadmap and out-of-scope items |
 | `doc.go`                         | Package-level documentation    |
-| `docs/context/MODERN_GO.md`      | Go 1.21–1.26 feature inventory |
 
 **Session tracking:** Update `TODOS.md` and `CHANGELOG.md` when working on related items:
 
