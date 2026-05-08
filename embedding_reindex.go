@@ -25,7 +25,7 @@ func (tx *Tx) ReindexEmbeddings(ctx context.Context, fn EmbeddingFunc) error {
 	}
 	dim := tx.db.eng.EmbeddingDim()
 	if dim == 0 {
-		return ErrEmbeddingsDisabled
+		return nil // no embeddings stored yet — nothing to reindex
 	}
 
 	// Collect cell coords first to avoid mutation during iteration.

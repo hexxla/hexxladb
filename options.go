@@ -78,12 +78,12 @@ type Options struct {
 	// the first job in a batch. Zero means a 2ms default in the engine. See [docs/hexxladb/DURABILITY.md].
 	GroupWALMaxBatchWait time.Duration
 
-	// EmbeddingDimension sets the fixed vector dimension for new databases (0 = embeddings disabled).
-	// Persisted in the file header; immutable after creation. All vectors stored via [Tx.PutEmbedding]
-	// must have exactly this length.
+	// EmbeddingDimension optionally pre-sets the fixed vector dimension for new databases.
+	// When 0 (default), the dimension is auto-detected from the first [Tx.PutEmbedding] call
+	// and persisted in the file header. When non-zero, the dimension is set at creation time.
+	// Either way, once set it is immutable — all subsequent vectors must match.
 	EmbeddingDimension uint16
-	// DistanceMetric sets the similarity function for embedding search.
-	// Only meaningful when EmbeddingDimension > 0. Default is [DistanceCosine].
+	// DistanceMetric sets the similarity function for embedding search. Default is [DistanceCosine].
 	// Persisted in the file header; immutable after creation.
 	DistanceMetric DistanceMetric
 }

@@ -12,16 +12,29 @@ import (
 )
 
 // PutEmbedding stores a vector embedding for the cell at coord.
-// The vector length must equal [DB.EmbeddingDimension]; the database must have been
-// opened with a non-zero [Options.EmbeddingDimension].
+// The vector length must equal [DB.EmbeddingDimension]. If no dimension was configured
+// at [Open] time, it is auto-detected from the first vector and persisted in the file header.
+// All subsequent vectors must match that dimension.
 // Only allowed inside [DB.Update].
 func (tx *Tx) PutEmbedding(coord lattice.PackedCoord, vec []float32) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}
+	if len(vec) == 0 {
+		return fmt.Errorf("%w: empty vector", ErrEmbeddingDimension)
+	}
 	dim := tx.db.eng.EmbeddingDim()
 	if dim == 0 {
-		return ErrEmbeddingsDisabled
+		// Auto-detect: first PutEmbedding sets the dimension for this database.
+		newDim := uint16(len(vec)) //nolint:gosec // bounded by uint16 max
+		metric := tx.db.eng.EmbeddingMetric()
+		if metric == 0 {
+			metric = engine.DistanceCosine // default
+		}
+		if err := tx.db.eng.SetEmbeddingConfig(newDim, metric); err != nil {
+			return fmt.Errorf("auto-detect embedding dimension: %w", err)
+		}
+		dim = newDim
 	}
 	if uint16(len(vec)) != dim { //nolint:gosec // len(vec) bounded by uint16 max (65535 dimensions)
 		return fmt.Errorf("%w: want %d, got %d", ErrEmbeddingDimension, dim, len(vec))
@@ -37,6 +50,7 @@ func (tx *Tx) PutEmbedding(coord lattice.PackedCoord, vec []float32) error {
 }
 
 // GetEmbedding returns the vector embedding for the cell at coord, or (nil, false, nil) if none stored.
+// Returns (nil, false, nil) if no embeddings have been stored yet (dimension not configured).
 func (tx *Tx) GetEmbedding(coord lattice.PackedCoord) (vec []float32, ok bool, err error) {
 	if tx == nil || tx.db == nil {
 		return nil, false, ErrClosed
@@ -46,7 +60,7 @@ func (tx *Tx) GetEmbedding(coord lattice.PackedCoord) (vec []float32, ok bool, e
 	}
 	dim := tx.db.eng.EmbeddingDim()
 	if dim == 0 {
-		return nil, false, ErrEmbeddingsDisabled
+		return nil, false, nil // no embeddings stored yet
 	}
 	key := index.EmbedKey(coord)
 	val, found, getErr := tx.getDirect(key)
@@ -57,6 +71,7 @@ func (tx *Tx) GetEmbedding(coord lattice.PackedCoord) (vec []float32, ok bool, e
 }
 
 // DeleteEmbedding removes the vector embedding for the cell at coord. Idempotent.
+// No-op if no embeddings have been stored yet (dimension not configured).
 // Only allowed inside [DB.Update].
 func (tx *Tx) DeleteEmbedding(coord lattice.PackedCoord) error {
 	if err := tx.requireWritable(); err != nil {
@@ -64,7 +79,7 @@ func (tx *Tx) DeleteEmbedding(coord lattice.PackedCoord) error {
 	}
 	dim := tx.db.eng.EmbeddingDim()
 	if dim == 0 {
-		return ErrEmbeddingsDisabled
+		return nil // no embeddings stored yet — nothing to delete
 	}
 	key := index.EmbedKey(coord)
 	if err := tx.deleteDirect(key); err != nil {
