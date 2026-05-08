@@ -6,16 +6,16 @@
 //   - Phase  2  Batch-storing a rich, multi-session conversation corpus
 //   - Phase  3  Contradiction detection with MarkConflict seams
 //   - Phase  4  Supersession — seam-aware context assembly (FilterSuperseded)
-//   - Phase  5  Context assembly: QueryCells → seeds → LoadContextPackFrom
+//   - Phase  5  Context assembly: QueryCells → seeds → LoadContext
 //   - Phase  6  Tag discovery, TagCounts, TagCooccurrences
 //   - Phase  7  Query patterns (QueryCells: tag, source, score, recency)
 //   - Phase  8  MVCC time-travel (ViewAt)
 //   - Phase  9  Lattice visualisation: ASCII hex grid + RingDensityMap
-//   - Phase 10  QueryCells + multi-seed context assembly (LoadContextPackFrom)
+//   - Phase 10  QueryCells + multi-seed context assembly (LoadContext)
 //   - Phase 11  Health check (DB.HealthCheck) + MVCC Snapshot Diff
 //   - Phase 12  DeleteCell + Compact (MVCC tombstones, snapshot isolation, copy-compaction)
 //   - Phase 13  Field of View — visibility-filtered context (LoadContextFOV)
-//   - Phase 14  Pathfinding over edges (PutEdge, FindEdgePath A*, WalkEdges BFS, LoadContextByEdges)
+//   - Phase 14  Pathfinding over edges (PutEdge, FindEdgePath A*, WalkEdges BFS, LoadContext with EdgeFilter)
 //
 // For embedding-based semantic search, see examples/llm_context_engine.
 //
@@ -363,7 +363,7 @@ func run(dbPath string) error {
 	// ═══════════════════════════════════════════════════════════════
 	printHeader("Phase 5: Context Assembly (QueryCells → Seeds → Token-Budgeted Pack)")
 
-	printNote("Pipeline: QueryCells finds matching cells → coords become ring-walk seeds → LoadContextPackFrom assembles a budgeted pack.")
+	printNote("Pipeline: QueryCells finds matching cells → coords become ring-walk seeds → LoadContext assembles a budgeted pack.")
 	fmt.Println()
 
 	printSubHeader("Step 1 — QueryCells: find 'preference' seeds sorted by confidence")
@@ -402,7 +402,7 @@ func run(dbPath string) error {
 	}
 
 	budget := 600 // bytes — larger budget exercises more of the corpus
-	printSubHeader(fmt.Sprintf("Step 2 — LoadContextPackFrom: %d seed(s), shared budget %d bytes", len(assemblySeeds), budget))
+	printSubHeader(fmt.Sprintf("Step 2 — LoadContext: %d seed(s), shared budget %d bytes", len(assemblySeeds), budget))
 	printNote("Ring walk r=3 around each seed · merged pool re-ranked by confidence · greedy fill.")
 	fmt.Println()
 
@@ -745,7 +745,7 @@ func run(dbPath string) error {
 	fmt.Println()
 
 	printSubHeader("Query C — keyword 'database', sorted by composite score")
-	printNote("Scores: tag exact +1.0 · prefix +0.8 · content verbatim +0.6 · content icase +0.5 · sourceID +0.3 · confidence bonus")
+	printNote("Multi-term tokenized scoring per token: tag exact +1.0 · prefix +0.8 · content verbatim +0.6 · content icase +0.5 · sourceID +0.3 · confidence bonus (once)")
 
 	var queryResults []hexxladb.CellQueryResult
 	if err := db.View(func(tx *hexxladb.Tx) error {
@@ -805,7 +805,7 @@ func run(dbPath string) error {
 	}
 
 	printSubHeader(fmt.Sprintf("Multi-Seed Assembly — %d seeds from Query C, shared budget 800 bytes", len(seeds)))
-	printNote("LoadContextPackFrom dispatches: 1 seed → LoadContextPack; N seeds → LoadMultiContextPack. No caller switch needed.")
+	printNote("LoadContext auto-dispatches: 1 seed → ring walk; N seeds → concurrent multi-seed merge. No caller switch needed.")
 	fmt.Println()
 
 	if len(seeds) == 0 {
@@ -1174,7 +1174,7 @@ func run(dbPath string) error {
 	printHeader("Phase 13: Field of View — Visibility-Filtered Context")
 
 	printNote("LoadContextFOV uses LOS ray casting to skip cells hidden behind empty regions.")
-	printNote("Compared to radial LoadContextPack, FOV spends budget only on reachable cells.")
+	printNote("Compared to a radial ring walk, FOV spends budget only on reachable cells.")
 	fmt.Println()
 
 	fovCenter := cells[len(cells)/2] // a cell near the middle of the corpus
@@ -1311,7 +1311,7 @@ func run(dbPath string) error {
 		var path []hexxladb.Coord
 		if err := db.View(func(tx *hexxladb.Tx) error {
 			var err error
-			path, err = tx.FindEdgePath(ctx, start, goal, "", 100)
+			path, err = tx.FindEdgePath(ctx, start, goal, hexxladb.FindEdgePathConfig{MaxExpand: 100})
 			return err
 		}); err != nil {
 			return fmt.Errorf("find edge path: %w", err)
@@ -1353,8 +1353,8 @@ func run(dbPath string) error {
 	}
 	fmt.Println()
 
-	// LoadContextByEdges
-	printSubHeader("Step 4 — LoadContextByEdges (graph-aware context)")
+	// LoadContext with EdgeFilter
+	printSubHeader("Step 4 — LoadContext with EdgeFilter (graph-aware context)")
 	if len(cells) > 0 {
 		edgeCenter := cells[0]
 		var edgePack hexxladb.ContextPack

@@ -32,13 +32,14 @@
 //     embedding-only names: [FacetWalkRecord], [EdgeWalkRecord] ([walk_export_aliases.go]);
 //     [NewFacetDerived], [NewProvenanceWire] ([templates.go]) for callers outside this module;
 //     spec-named sugar: [Tx.MarkConflict], [Tx.UpdateFacet], [Tx.LinkCells];
-//     validity read filters: [record.ValidAt], [Tx.WalkRingAt], [Tx.LoadContextAt], [Tx.WalkRingFacets];
+//     validity read filters: [record.ValidAt], [Tx.WalkRingAt], [Tx.WalkRingFacets];
 //     secondary index walks: [Tx.AscendCellsBySource], [Tx.AscendCellsInTimeBucket],
 //     [Tx.AscendCellsByTag], [Tx.AscendDistinctTags], [Tx.ListExistingTopics],
 //     [Tx.AscendSeamsBySource], [Tx.AscendSeamsInTimeBucket];
 //     HEXXLA-shaped views ([views.go]): [CellView], [ContextPack], [Tx.AssembleCellView],
-//     [Tx.LoadContextWithBudgeting], [Tx.LoadContextPack], [CellViewPredicate],
-//     [FilterCellViews], [TruncateCellViewsToTokenBudget], [TokenBudgeter].
+//     [CellViewPredicate], [FilterCellViews], [TruncateCellViewsToTokenBudget], [TokenBudgeter];
+//     spatial context: [Tx.LoadContextFOV] (shadowcasting FOV), [Tx.LoadContextVoronoi] (Voronoi regions),
+//     [Tx.FindEdgePath] (A* over edges), [Tx.WalkEdges] (BFS over edges).
 //   - Embedding / vector search: dimension auto-detected from first [Tx.PutEmbedding]
 //     (or pre-set via [Options.EmbeddingDimension]); [Options.DistanceMetric] (default cosine);
 //     [Tx.PutEmbedding], [Tx.GetEmbedding], [Tx.DeleteEmbedding];
@@ -56,6 +57,11 @@
 // Lattice types ([Coord], [PackedCoord], [Pack], [Unpack], [Ring], [WalkRings]) are
 // re-exported from internal/lattice; see docs/hexxladb/HEXXLA.md and
 // internal/lattice/PACKED_COORD.md for geometry and key layout.
+//
+// Internal spatial algorithms (not exported at root level) power the context-loading
+// methods above: [FieldOfView] (symmetric shadowcasting, Albert Ford 2021 adaptation),
+// [Voronoi] (multi-source Dijkstra with optional [WeightFunc] cost function),
+// and [pathfind.EuclideanHeuristic] used by [Tx.FindEdgePath].
 //
 // # Embedding in your program
 //

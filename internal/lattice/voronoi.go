@@ -1,5 +1,12 @@
 package lattice
 
+import "container/heap"
+
+// WeightFunc returns an additional traversal cost for coord (must be >= 0).
+// Return 0 for uniform cost (identical to standard BFS Voronoi behaviour).
+// A nil WeightFunc is treated as returning 0 for all coordinates.
+type WeightFunc func(coord Coord) float64
+
 // VoronoiCell pairs a coordinate with its owning seed index and BFS distance.
 type VoronoiCell struct {
 	Coord    Coord
@@ -7,75 +14,98 @@ type VoronoiCell struct {
 	Distance int
 }
 
-// Voronoi computes a hex-grid Voronoi diagram via multi-source BFS.
-// Each hex within maxRadius of any seed is assigned to the nearest seed
-// (by hop count). Ties are broken by seed order (lower index wins).
+// Voronoi computes a hex-grid Voronoi diagram via multi-source Dijkstra.
+// Each hex within maxRadius of any seed is assigned to the seed whose
+// cumulative traversal cost (hop count + WeightFunc penalties) is lowest.
+// Ties are broken by seed order (lower index wins).
 //
-// Returns the partition as a slice of VoronoiCell in BFS visit order, and
+// When weightFn is nil, behaviour is identical to the previous uniform-BFS
+// implementation — every hop costs 1.0 and the result is purely geometric.
+//
+// Returns the partition as a slice of VoronoiCell in visit order, and
 // a map from each coordinate to its owning seed index for fast lookup.
 //
-// maxRadius bounds the BFS depth from each seed (must be > 0).
-// Seeds outside the packable range are silently skipped.
-func Voronoi(seeds []Coord, maxRadius int) (cells []VoronoiCell, owner map[Coord]int) {
+// maxRadius bounds the BFS hop depth from each seed (must be > 0).
+func Voronoi(seeds []Coord, maxRadius int, weightFn WeightFunc) (cells []VoronoiCell, owner map[Coord]int) {
 	if len(seeds) == 0 || maxRadius <= 0 {
 		return nil, nil
 	}
 
 	owner = make(map[Coord]int, 3*maxRadius*maxRadius+3*maxRadius+1)
-	queue := newBFSQueue(seeds, owner)
+	dist := make(map[Coord]float64, len(owner))
 
-	for _, e := range queue.entries {
-		cells = append(cells, VoronoiCell{Coord: e.coord, SeedIdx: e.seedIdx, Distance: 0})
-	}
-
-	cells = processBFS(queue, owner, maxRadius, cells)
-	return cells, owner
-}
-
-// bfsQueue holds BFS state for multi-source traversal.
-type bfsQueue struct {
-	entries []bfsEntry
-}
-
-type bfsEntry struct {
-	coord   Coord
-	seedIdx int
-	dist    int
-}
-
-// newBFSQueue initialises the queue with deduplicated seeds.
-func newBFSQueue(seeds []Coord, owner map[Coord]int) bfsQueue {
-	q := bfsQueue{entries: make([]bfsEntry, 0, len(seeds))}
+	pq := make(voronoiPQ, 0, len(seeds))
 	for i, s := range seeds {
 		if _, seen := owner[s]; seen {
 			continue
 		}
 		owner[s] = i
-		q.entries = append(q.entries, bfsEntry{coord: s, seedIdx: i, dist: 0})
+		dist[s] = 0
+		cells = append(cells, VoronoiCell{Coord: s, SeedIdx: i, Distance: 0})
+		heap.Push(&pq, &voronoiItem{coord: s, seedIdx: i, cost: 0, hops: 0})
 	}
-	return q
-}
+	heap.Init(&pq)
 
-// processBFS runs the BFS loop, expanding neighbors up to maxRadius.
-func processBFS(q bfsQueue, owner map[Coord]int, maxRadius int, cells []VoronoiCell) []VoronoiCell {
-	head := 0
-	for head < len(q.entries) {
-		e := q.entries[head]
-		head++
-		if e.dist >= maxRadius {
+	for pq.Len() > 0 {
+		cur := heap.Pop(&pq).(*voronoiItem)
+		if cur.cost > dist[cur.coord] {
+			continue // stale entry
+		}
+		if cur.hops >= maxRadius {
 			continue
 		}
-		for _, nb := range e.coord.Neighbors() {
-			if _, seen := owner[nb]; seen {
+		for _, nb := range cur.coord.Neighbors() {
+			penalty := 0.0
+			if weightFn != nil {
+				penalty = weightFn(nb)
+			}
+			newCost := cur.cost + 1.0 + penalty
+			if d, seen := dist[nb]; seen && d <= newCost {
 				continue
 			}
-			owner[nb] = e.seedIdx
-			next := bfsEntry{coord: nb, seedIdx: e.seedIdx, dist: e.dist + 1}
-			q.entries = append(q.entries, next)
-			cells = append(cells, VoronoiCell{Coord: nb, SeedIdx: e.seedIdx, Distance: next.dist})
+			owner[nb] = cur.seedIdx
+			dist[nb] = newCost
+			newHops := cur.hops + 1
+			cells = append(cells, VoronoiCell{Coord: nb, SeedIdx: cur.seedIdx, Distance: newHops})
+			heap.Push(&pq, &voronoiItem{coord: nb, seedIdx: cur.seedIdx, cost: newCost, hops: newHops})
 		}
 	}
-	return cells
+	return cells, owner
+}
+
+// voronoiItem is a priority queue entry for weighted Voronoi.
+type voronoiItem struct {
+	coord   Coord
+	seedIdx int
+	cost    float64
+	hops    int
+	index   int
+}
+
+// voronoiPQ implements heap.Interface (min-heap by cost, tie-break by seedIdx).
+type voronoiPQ []*voronoiItem
+
+func (pq voronoiPQ) Len() int      { return len(pq) }
+func (pq voronoiPQ) Swap(i, j int) { pq[i], pq[j] = pq[j], pq[i]; pq[i].index = i; pq[j].index = j }
+func (pq voronoiPQ) Less(i, j int) bool {
+	if pq[i].cost != pq[j].cost {
+		return pq[i].cost < pq[j].cost
+	}
+	return pq[i].seedIdx < pq[j].seedIdx
+}
+func (pq *voronoiPQ) Push(x any) {
+	item := x.(*voronoiItem)
+	item.index = len(*pq)
+	*pq = append(*pq, item)
+}
+func (pq *voronoiPQ) Pop() any {
+	old := *pq
+	n := len(old)
+	item := old[n-1]
+	old[n-1] = nil
+	item.index = -1
+	*pq = old[:n-1]
+	return item
 }
 
 // VoronoiRegion returns only the coordinates assigned to a specific seed index.

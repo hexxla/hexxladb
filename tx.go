@@ -37,7 +37,7 @@ func (db *DB) View(fn func(*Tx) error) error {
 	if fn == nil {
 		return ErrNilCallback
 	}
-	if db == nil {
+	if db == nil || db.closed.Load() {
 		return ErrDatabaseClosed
 	}
 	db.mu.RLock()
@@ -45,11 +45,8 @@ func (db *DB) View(fn func(*Tx) error) error {
 	if db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
-	hdr, err := db.eng.ReadHeader()
-	if err != nil {
-		return err
-	}
-	tx := &Tx{db: db, writable: false, readSeq: hdr.CommitSeq, cachedBTreeRoot: hdr.BTreeRoot}
+	ch := db.cachedHdr.Load()
+	tx := &Tx{db: db, writable: false, readSeq: ch.commitSeq, cachedBTreeRoot: ch.btreeRoot}
 	return fn(tx)
 }
 
@@ -59,7 +56,7 @@ func (db *DB) ViewAt(readSeq uint64, fn func(*Tx) error) error {
 	if fn == nil {
 		return ErrNilCallback
 	}
-	if db == nil {
+	if db == nil || db.closed.Load() {
 		return ErrDatabaseClosed
 	}
 	db.mu.RLock()
@@ -67,14 +64,11 @@ func (db *DB) ViewAt(readSeq uint64, fn func(*Tx) error) error {
 	if db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
-	hdr, err := db.eng.ReadHeader()
-	if err != nil {
-		return err
-	}
-	if readSeq > hdr.CommitSeq {
+	ch := db.cachedHdr.Load()
+	if readSeq > ch.commitSeq {
 		return ErrReadSeqFuture
 	}
-	tx := &Tx{db: db, writable: false, readSeq: readSeq, cachedBTreeRoot: hdr.BTreeRoot}
+	tx := &Tx{db: db, writable: false, readSeq: readSeq, cachedBTreeRoot: ch.btreeRoot}
 	return fn(tx)
 }
 
@@ -84,7 +78,7 @@ func (db *DB) ViewAtTime(asOf time.Time, fn func(*Tx) error) error {
 	if fn == nil {
 		return ErrNilCallback
 	}
-	if db == nil {
+	if db == nil || db.closed.Load() {
 		return ErrDatabaseClosed
 	}
 	db.mu.RLock()
@@ -92,18 +86,16 @@ func (db *DB) ViewAtTime(asOf time.Time, fn func(*Tx) error) error {
 	if db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
-	hdr, err := db.eng.ReadHeader()
-	if err != nil {
-		return err
-	}
-	readSeq := hdr.CommitSeq
+	ch := db.cachedHdr.Load()
+	readSeq := ch.commitSeq
 	if db.useMVCC {
+		var err error
 		readSeq, err = db.resolveReadSeqAtOrBeforeUnixNano(asOf.UTC().UnixNano())
 		if err != nil {
 			return err
 		}
 	}
-	tx := &Tx{db: db, writable: false, readSeq: readSeq, cachedBTreeRoot: hdr.BTreeRoot}
+	tx := &Tx{db: db, writable: false, readSeq: readSeq, cachedBTreeRoot: ch.btreeRoot}
 	return fn(tx)
 }
 
@@ -113,7 +105,7 @@ func (db *DB) Update(fn func(*Tx) error) error {
 	if fn == nil {
 		return ErrNilCallback
 	}
-	if db == nil {
+	if db == nil || db.closed.Load() {
 		return ErrDatabaseClosed
 	}
 	db.mu.Lock()
@@ -189,6 +181,11 @@ func (db *DB) Update(fn func(*Tx) error) error {
 		}); err != nil {
 			return fmt.Errorf("%w: header update: %w", ErrCommitFinalization, err)
 		}
+	}
+	// Refresh the cached header so the next View sees the updated BTreeRoot and CommitSeq
+	// without a pread(page0). This is safe: we still hold db.mu.Lock().
+	if fhdr, fErr := db.eng.ReadHeader(); fErr == nil {
+		db.storeCachedHeader(fhdr.CommitSeq, fhdr.BTreeRoot)
 	}
 	return nil
 }

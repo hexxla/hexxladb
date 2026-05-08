@@ -101,7 +101,9 @@ func (e *Engine) CommitWriteTxn() error {
 	for i := range txn.pending {
 		p := &txn.pending[i]
 		rec := encodeWALRecordWithMAC(p.seq, p.pageID, p.plain, e.walMACKey, e.walMACEnabled, e.pageSize)
-		if _, err := e.wal.Write(rec); err != nil {
+		n, err := e.wal.Write(rec)
+		e.walSize += int64(n)
+		if err != nil {
 			return err
 		}
 	}
@@ -133,10 +135,12 @@ func (e *Engine) CommitWriteTxn() error {
 	}
 	e.lastSeq = final.LastWALSeq
 
-	// Truncate WAL: primary is durable, so redo records are no longer needed.
-	// This prevents unbounded WAL growth across many transactions. On next Open
-	// the WAL will be empty and replay is a no-op.
-	if err := e.wal.Truncate(0); err != nil {
+	// Shrink WAL to the bytes written this cycle (not zero) so the kernel retains
+	// the allocated inode blocks — avoids fallocate on the next commit.
+	// walSize is reset to 0 so the next commit overwrites from position 0.
+	written := e.walSize
+	e.walSize = 0
+	if err := e.wal.Truncate(written); err != nil {
 		return err
 	}
 	if _, err := e.wal.Seek(0, io.SeekStart); err != nil {
@@ -157,6 +161,10 @@ func (e *Engine) writePrimaryData(pageID uint64, plain []byte) error {
 	off, err := pageByteOffset(pageID, e.pageSize)
 	if err != nil {
 		return err
+	}
+	// Invalidate before writing so no concurrent reader can see stale cached bytes.
+	if e.cache != nil {
+		e.cache.invalidate(pageID)
 	}
 	_, err = e.db.WriteAt(plain, off)
 	return err

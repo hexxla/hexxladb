@@ -1,8 +1,8 @@
-# Unified Context API — Design Plan
+# Unified Context API
 
 **Branch:** `feat/unified-context-api`
-**Status:** Design / Pre-implementation
-**Target version bump:** v0.5.0 (minor — breaking API surface reduction)
+**Status:** Complete — implemented and deprecated methods removed
+**Version:** v0.5.0 (minor — breaking API surface reduction)
 
 ---
 
@@ -22,38 +22,20 @@ graph traversal). One entry point. Consistent return type.
 
 ---
 
-## Current API Inventory
+## Pre-unification API (historical)
 
-### Context loading — return `ContextPack` (CellView-based)
+Before unification, the API had two incompatible return types and 10+ overlapping methods:
 
-| Method | Notes |
-|---|---|
-| `Tx.LoadContextWithBudgeting` | Core implementation |
-| `Tx.LoadContextPack` | Exact alias of above |
-| `Tx.LoadContextPackFrom` | Unified single/multi — dispatches internally |
-| `Tx.LoadMultiContextPack` | Explicit multi-seed with dedup |
+| Category              | Methods                                                                                                              | Return type                              |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| ContextPack-returning | `LoadContextWithBudgeting`, `LoadContextPack`, `LoadContextPackFrom`, `LoadMultiContextPack`                         | `ContextPack`                            |
+| Raw-returning         | `LoadContext` (old), `LoadContextAt`, `LoadContextByEdges`, `LoadContextLOD`, `LoadContextFOV`, `LoadContextVoronoi` | `[]CellRecord` or `map[int][]CellRecord` |
 
-### Context loading — return `[]CellRecord` (raw wire type)
-
-| Method | Notes |
-|---|---|
-| `Tx.LoadContext` | Original primitive, no budget |
-| `Tx.LoadContextAt` | MVCC temporal variant |
-| `Tx.LoadContextByEdges` | Graph BFS traversal |
-| `Tx.LoadContextLOD` | Level-of-detail coarsening for large radii |
-| `Tx.LoadContextFOV` | Field-of-view occlusion |
-| `Tx.LoadContextVoronoi` | Multi-region Voronoi partition → `map[int][]CellRecord` |
-
-### Type inconsistency
-
-`LoadContextByEdges`, `LoadContextLOD`, `LoadContextFOV` all return `[]CellRecord` — the
-raw wire format — while `LoadContextPackFrom` returns `ContextPack` with assembled `CellView`
-values (facets, edges, seam refs). This means callers get different richness depending on
-which method they choose.
+All ContextPack-returning methods and the raw spatial methods (`LoadContextByEdges`, `LoadContextLOD`) have been **removed**. Low-level raw scan is still available as `ScanContextRaw` / `ScanContextAtRaw`.
 
 ---
 
-## Proposed Design
+## Design
 
 ### Single entry point
 
@@ -92,33 +74,38 @@ type LoadContextConfig struct {
 
 // LoadContext is the unified context loading entry point.
 // The DB selects the optimal algorithm:
-//   - EdgeFilter non-empty  → graph BFS traversal (LoadContextByEdges internally)
-//   - MaxRing >= LODThreshold AND single seed → LOD coarsened ring walk
-//   - Multiple seeds → deduped multi-seed ring walk
+//   - EdgeFilter non-empty  → graph BFS traversal
+//   - MaxRing >= 10 AND single seed → LOD coarsened ring walk
+//   - Multiple seeds → concurrent multi-seed ring walk, merged under shared budget
 //   - Otherwise → standard ring walk with budgeting
 //
 // Always returns ContextPack regardless of internal algorithm.
 func (tx *Tx) LoadContext(ctx context.Context, cfg LoadContextConfig) (ContextPack, error)
 ```
 
-### Internal dispatch logic (pseudocode)
+### Internal dispatch logic
 
 ```
 LoadContext(cfg):
-    normalize defaults (MaxRing, MaxTokens, Budgeter, MaxHops)
+    normalize defaults (MaxRing=5, MaxTokens=4096, Budgeter=ByteLenBudgeter{}, MaxHops=5)
 
     if cfg.EdgeFilter != "" || cfg.MaxHops > 0:
-        → internal graph BFS (assemble CellViews from []CellRecord result)
+        → internal graph BFS via WalkEdges
+        → assemble CellViews from reached coords
         → wrap into ContextPack
 
-    if len(cfg.Seeds) == 1 && cfg.MaxRing >= lodThreshold:
-        → internal LOD ring walk (assemble CellViews from []CellRecord result)
+    if len(cfg.Seeds) == 1 && cfg.MaxRing >= lodAutoThreshold (10):
+        → internal LOD ring walk (coarsen outer rings)
+        → assemble CellViews
         → wrap into ContextPack
 
     if len(cfg.Seeds) > 1:
-        → LoadMultiContextPack (already returns ContextPack)
+        → concurrent per-seed ring walks (goroutine per seed)
+        → merge + dedup under shared token budget
+        → wrap into ContextPack
 
-    → LoadContextPack single-seed (already returns ContextPack)
+    → standard single-seed ring walk with budgeting
+        → wrap into ContextPack
 ```
 
 ### LOD threshold
@@ -143,42 +130,29 @@ fundamentally different shape. It stays public, but return type should be upgrad
 
 ---
 
-## Migration Plan
+## Completed migration
 
-### Phase 1 — Add unified entry point (non-breaking)
+### What was removed
 
-- Add `LoadContextConfig` struct
-- Add `Tx.LoadContext(ctx, LoadContextConfig) (ContextPack, error)`
-- Internal dispatch to existing implementations
-- All existing methods remain exported and functional
+- `Tx.LoadContextWithBudgeting` — core implementation, folded into `LoadContext` dispatch
+- `Tx.LoadContextPack` — alias of above
+- `Tx.LoadContextPackFrom` — variadic multi-seed shim
+- `Tx.LoadMultiContextPack` — explicit multi-seed
+- `Tx.LoadContextByEdges` — graph BFS; replaced by `LoadContext` with `EdgeFilter`
+- `Tx.LoadContextLOD` + `LODContextConfig` — LOD coarsening; auto-dispatched by `LoadContext` when `MaxRing >= 10`
+- `MultiContextConfig` struct
 
-### Phase 2 — Fix return type inconsistency
+### What was renamed
 
-- `LoadContextByEdges` → return `ContextPack` (assemble CellViews internally)
-- `LoadContextLOD` → return `ContextPack`
-- `LoadContextFOV` → return `ContextPack` (or `[]CellView`)
-- `LoadContextVoronoi` → return `map[int]ContextPack`
+- Old `Tx.LoadContext` (returned `[]CellRecord`) → `Tx.ScanContextRaw`
+- Old `Tx.LoadContextAt` (returned `[]CellRecord`) → `Tx.ScanContextAtRaw`
 
-### Phase 3 — Deprecate redundant methods
+### What was kept
 
-Add `// Deprecated: use Tx.LoadContext instead.` godoc to:
-
-- `Tx.LoadContextWithBudgeting`
-- `Tx.LoadContextPack`
-- `Tx.LoadContextPackFrom`
-- `Tx.LoadMultiContextPack`
-- `Tx.LoadContext` (the old primitive returning `[]CellRecord` — rename conflict to resolve)
-- `Tx.LoadContextAt`
-
-The old primitive `Tx.LoadContext` (returns `[]CellRecord`) conflicts with the new name.
-Resolution: rename old primitive to `Tx.loadContextRaw` (unexport it) since it has no
-direct callers outside the package — it is only called by `LoadContextWithBudgeting` internally.
-
-### Phase 4 — Cleanup (v0.6.0 or later)
-
-- Remove deprecated methods
-- Remove `CellRecord` from public API (only needed because old spatial tools return it)
-- Keep `ProvenanceWire`, `ValidityWire` as they are needed for `CellRecord`-based CDC via `SnapshotDiff`
+- `Tx.LoadContextFOV` — specialist: requires caller-supplied opaque predicate
+- `Tx.LoadContextVoronoi` — specialist: non-overlapping per-region output shape
+- `Tx.ScanContextRaw`, `Tx.ScanContextAtRaw` — low-level raw scan primitives
+- `CellRecord` re-export — still needed by `SnapshotDiff`, `PutCell`, write paths
 
 ---
 
@@ -209,25 +183,25 @@ exclusively use `CellView` / `ContextPack`.
 
 ### Primary (stable)
 
-| Symbol | Purpose |
-|---|---|
-| `Tx.LoadContext(ctx, LoadContextConfig) ContextPack` | **Unified entry point** |
-| `LoadContextConfig` | Configuration struct |
-| `ContextPack`, `CellView`, `ContextPackStats` | Result types |
-| `TokenBudgeter`, `ByteLenBudgeter` | Budget interface + default |
-| `LoadContextBudgetConfig` | Assembly options (seams, supersession, facets) |
+| Symbol                                               | Purpose                                        |
+| ---------------------------------------------------- | ---------------------------------------------- |
+| `Tx.LoadContext(ctx, LoadContextConfig) ContextPack` | **Unified entry point**                        |
+| `LoadContextConfig`                                  | Configuration struct                           |
+| `ContextPack`, `CellView`, `ContextPackStats`        | Result types                                   |
+| `TokenBudgeter`, `ByteLenBudgeter`                   | Budget interface + default                     |
+| `LoadContextBudgetConfig`                            | Assembly options (seams, supersession, facets) |
 
 ### Specialist (stable, documented as advanced)
 
-| Symbol | Purpose |
-|---|---|
-| `Tx.LoadContextFOV` | FOV with caller-supplied opaque predicate |
-| `Tx.LoadContextVoronoi` | Multi-region Voronoi partition |
-| `Tx.FindEdgePath` | A* shortest path via edges |
-| `Tx.WalkEdges` | BFS edge walk returning coordinates |
-| `Tx.RingDensityMap` | Per-ring occupancy counts |
+| Symbol                  | Purpose                                   |
+| ----------------------- | ----------------------------------------- |
+| `Tx.LoadContextFOV`     | FOV with caller-supplied opaque predicate |
+| `Tx.LoadContextVoronoi` | Multi-region Voronoi partition            |
+| `Tx.FindEdgePath`       | A\* shortest path via edges               |
+| `Tx.WalkEdges`          | BFS edge walk returning coordinates       |
+| `Tx.RingDensityMap`     | Per-ring occupancy counts                 |
 
-### Deprecated (removed in v0.6.0)
+### Removed (v0.5.0)
 
 - `Tx.LoadContextWithBudgeting`
 - `Tx.LoadContextPack`
@@ -235,23 +209,22 @@ exclusively use `CellView` / `ContextPack`.
 - `Tx.LoadMultiContextPack`
 - `Tx.LoadContextByEdges` (folded into `LoadContext` via `EdgeFilter`)
 - `Tx.LoadContextLOD` (folded into `LoadContext` auto-dispatch)
-- `Tx.LoadContextAt` (folded into `LoadContext` via `AsOf *time.Time`)
-- The old raw `Tx.LoadContext` → unexported as `loadContextRaw`
+- `MultiContextConfig`, `LODContextConfig`
+- Old raw `Tx.LoadContext` → renamed `Tx.ScanContextRaw`
+- Old raw `Tx.LoadContextAt` → renamed `Tx.ScanContextAtRaw`
 
 ### Kept but under review
 
-| Symbol | Concern |
-|---|---|
-| `Tx.Get`, `Tx.Put`, `Tx.AscendRange` | Raw KV — risk of internal key namespace corruption; consider deprecating `Put` |
-| `RenderHexGrid`, `RenderHexGridFromDB` | Debug/TUI utility; consider moving to `cmd/tui` |
+| Symbol                                 | Concern                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------ |
+| `Tx.Get`, `Tx.Put`, `Tx.AscendRange`   | Raw KV — risk of internal key namespace corruption; consider deprecating `Put` |
+| `RenderHexGrid`, `RenderHexGridFromDB` | Debug/TUI utility; consider moving to `cmd/tui`                                |
 
 ---
 
 ## Versioning
 
-- **Phase 1+2** (add `LoadContext`, fix return types): `v0.5.0` — new features, no removals
-- **Phase 3** (add deprecation notices): `v0.5.x` — documentation only
-- **Phase 4** (remove deprecated): `v0.6.0` — breaking removals, documented in CHANGELOG
+- **v0.5.0** — added `LoadContext`, renamed raw primitives, removed all deprecated methods
 
 ---
 
@@ -261,10 +234,6 @@ exclusively use `CellView` / `ContextPack`.
    strong warnings? Rotation and changelog use `putDirect` internally; the public `Put` is
    only needed if an external caller wants raw KV access alongside HexxlaDB primitives.
 
-2. **`LoadContextVoronoi` return type** — upgrade to `map[int]ContextPack` in Phase 2, or
-   keep `map[int][]CellRecord` as it is a specialist use case and the assembly cost may
+2. **`LoadContextVoronoi` return type** — upgrade to `map[int]ContextPack` in a future version,
+   or keep `map[int][]CellRecord` as it is a specialist use case and the assembly cost may
    not be wanted by all callers?
-
-3. **`FOVContextConfig` and `LODContextConfig`** — these config structs remain public for
-   the specialist APIs. After `LoadContextLOD` is folded into `LoadContext`, `LODContextConfig`
-   can be removed (the LOD threshold and coarse factor become internal constants or `Options` fields).

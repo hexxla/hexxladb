@@ -8,7 +8,7 @@ import (
 
 func TestVoronoi_singleSeed(t *testing.T) {
 	t.Parallel()
-	cells, owner := lattice.Voronoi([]lattice.Coord{{Q: 0, R: 0}}, 2)
+	cells, owner := lattice.Voronoi([]lattice.Coord{{Q: 0, R: 0}}, 2, nil)
 	// Radius 2: 3*4+6+1 = 19 cells.
 	if len(cells) != 19 {
 		t.Fatalf("expected 19 cells, got %d", len(cells))
@@ -27,7 +27,7 @@ func TestVoronoi_twoSeeds(t *testing.T) {
 	t.Parallel()
 	s0 := lattice.Coord{Q: -3, R: 0}
 	s1 := lattice.Coord{Q: 3, R: 0}
-	cells, owner := lattice.Voronoi([]lattice.Coord{s0, s1}, 4)
+	cells, owner := lattice.Voronoi([]lattice.Coord{s0, s1}, 4, nil)
 
 	if len(cells) == 0 {
 		t.Fatal("expected non-empty cells")
@@ -63,7 +63,7 @@ func TestVoronoi_twoSeeds(t *testing.T) {
 
 func TestVoronoi_emptySeeds(t *testing.T) {
 	t.Parallel()
-	cells, owner := lattice.Voronoi(nil, 3)
+	cells, owner := lattice.Voronoi(nil, 3, nil)
 	if cells != nil {
 		t.Fatalf("expected nil cells, got %d", len(cells))
 	}
@@ -74,7 +74,7 @@ func TestVoronoi_emptySeeds(t *testing.T) {
 
 func TestVoronoi_zeroRadius(t *testing.T) {
 	t.Parallel()
-	cells, owner := lattice.Voronoi([]lattice.Coord{{Q: 0, R: 0}}, 0)
+	cells, owner := lattice.Voronoi([]lattice.Coord{{Q: 0, R: 0}}, 0, nil)
 	if cells != nil {
 		t.Fatal("expected nil for radius 0")
 	}
@@ -85,7 +85,7 @@ func TestVoronoi_zeroRadius(t *testing.T) {
 
 func TestVoronoi_negativeRadius(t *testing.T) {
 	t.Parallel()
-	cells, _ := lattice.Voronoi([]lattice.Coord{{Q: 0, R: 0}}, -1)
+	cells, _ := lattice.Voronoi([]lattice.Coord{{Q: 0, R: 0}}, -1, nil)
 	if cells != nil {
 		t.Fatal("expected nil for negative radius")
 	}
@@ -94,7 +94,7 @@ func TestVoronoi_negativeRadius(t *testing.T) {
 func TestVoronoi_duplicateSeeds(t *testing.T) {
 	t.Parallel()
 	s := lattice.Coord{Q: 1, R: 1}
-	cells, owner := lattice.Voronoi([]lattice.Coord{s, s}, 2)
+	cells, owner := lattice.Voronoi([]lattice.Coord{s, s}, 2, nil)
 	// Duplicate should be ignored; all cells owned by seed 0.
 	for _, c := range cells {
 		if c.SeedIdx != 0 {
@@ -108,7 +108,7 @@ func TestVoronoi_duplicateSeeds(t *testing.T) {
 
 func TestVoronoi_distanceMonotonic(t *testing.T) {
 	t.Parallel()
-	cells, _ := lattice.Voronoi([]lattice.Coord{{Q: 0, R: 0}}, 3)
+	cells, _ := lattice.Voronoi([]lattice.Coord{{Q: 0, R: 0}}, 3, nil)
 	// BFS distances should be monotonically non-decreasing in visit order.
 	maxDist := 0
 	for _, c := range cells {
@@ -132,7 +132,7 @@ func TestVoronoi_symmetry(t *testing.T) {
 	// Two seeds symmetric around origin should produce equal-sized regions.
 	s0 := lattice.Coord{Q: -2, R: 0}
 	s1 := lattice.Coord{Q: 2, R: 0}
-	cells, _ := lattice.Voronoi([]lattice.Coord{s0, s1}, 3)
+	cells, _ := lattice.Voronoi([]lattice.Coord{s0, s1}, 3, nil)
 	r0 := lattice.VoronoiRegion(cells, 0)
 	r1 := lattice.VoronoiRegion(cells, 1)
 	// Due to tie-breaking by seed index, region 0 may be slightly larger.
@@ -147,9 +147,43 @@ func TestVoronoi_symmetry(t *testing.T) {
 	}
 }
 
+func TestVoronoi_weighted(t *testing.T) {
+	t.Parallel()
+	// Seed A at (0,0), seed B at (6,0). Target cell: (4,0).
+	// Barrier: cells (1,0) and (2,0) on A's direct path have huge penalty.
+	// With uniform BFS, A reaches (4,0) in 4 hops (wins over B's 2 hops). → A wins.
+	// With barriers on (1,0) and (2,0), A's cheapest path to (4,0) costs
+	//   ≥ 1+100+1+100+1+1 ≫ B's cost of 1+1 = 2. → B wins.
+	barrier := map[lattice.Coord]bool{
+		{Q: 1, R: 0}: true,
+		{Q: 2, R: 0}: true,
+	}
+	weightFn := func(c lattice.Coord) float64 {
+		if barrier[c] {
+			return 100.0
+		}
+		return 0
+	}
+	sA := lattice.Coord{Q: 0, R: 0}
+	sB := lattice.Coord{Q: 6, R: 0}
+	target := lattice.Coord{Q: 4, R: 0}
+	_, owner := lattice.Voronoi([]lattice.Coord{sA, sB}, 8, weightFn)
+
+	if owner[target] != 1 {
+		t.Fatalf("target (4,0) should belong to seed B (idx 1) with barriers, got %d", owner[target])
+	}
+	// Uniform nil regression: a cell near A (3 hops from A, 3 from B = equidistant)
+	// should belong to A due to tie-break (lower seed index). Use (3,0).
+	mid := lattice.Coord{Q: 3, R: 0}
+	_, ownerU := lattice.Voronoi([]lattice.Coord{sA, sB}, 8, nil)
+	if ownerU[mid] != 0 {
+		t.Fatalf("uniform: midpoint (3,0) should belong to seed A (idx 0) on tie, got %d", ownerU[mid])
+	}
+}
+
 func TestVoronoiRegion_nonexistentSeed(t *testing.T) {
 	t.Parallel()
-	cells, _ := lattice.Voronoi([]lattice.Coord{{Q: 0, R: 0}}, 2)
+	cells, _ := lattice.Voronoi([]lattice.Coord{{Q: 0, R: 0}}, 2, nil)
 	r := lattice.VoronoiRegion(cells, 99)
 	if len(r) != 0 {
 		t.Fatalf("expected 0 cells for non-existent seed, got %d", len(r))

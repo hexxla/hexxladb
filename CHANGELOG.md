@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Lazy ring iterators** (`internal/lattice`) — `RingSeq`, `WalkRingsSeq`, `SpiralRangeSeq`, `WalkRingsPackedSeq`, `SpiralRangePackedSeq` return `iter.Seq[Coord]` / `iter.Seq[CoordPacked]`. No backing slice is ever allocated; callers break early when a budget is met. For `MaxRing=100` (31,401 cells) with a 16-cell budget, zero ring computation happens beyond the 16th cell — the same early-exit discipline Badger applies in its `Iterator` (Seek/Next cursor).
+- **Streaming context assembly** (`internal/views`) — `assembleCoordsIntoContextPack` replaced with a sequential streaming loop: one cell read + assembled + budget-tested at a time. Assembly stops the moment the token budget is full; no goroutine fan-out, no full-slice sort, no cells assembled beyond what fits in the response. Coords are processed in ring order (nearest-first) which is already the correct priority for conversational memory.
+- **Streaming LOD coord collection** — `collectLODCoords` now uses `WalkRingsPackedSeq` / `SpiralRangePackedSeq` for both inner and outer ring walks, eliminating the `O(3r²+3r+1)` packed-coord slice allocation for large `MaxRing` values.
+- **Fused query scan pipeline** (`query_exec.go`) — `QueryCells` / `SearchCells` no longer materialise an intermediate `[]CellRecord` candidates slice. Tag, source, time, and radius scan paths now use a single-pass fused callback: each record is filtered and scored inline as it arrives from the B+ tree cursor, and only passing records enter the sort. The radius scanner (`scanByRadiusFused`) uses `WalkRingsPackedSeq` — a lazy `iter.Seq` — so no `O(3r²)` packed-coord slice is allocated for the scan radius. `scanByEmbedding` is unchanged (bounded `MaxResults×2`, needs the scores map).
+- **`docs/context/STREAMING.md`** — new design document describing the full streaming architecture, per-layer status, data-flow diagrams, and what cannot be fully streamed (sorted query results require seeing all candidates before ordering).
+
+- **`SpiralRange`** (`internal/lattice`) — annular ring walk `[minR, maxR]` from a center; O(cells) with no intermediate allocations. Replaces manual ring loops in `collectLODCoords`.
+- **`FieldOfViewShadowcast`** (`internal/lattice`) — symmetric shadowcasting FOV (Albert Ford 2021, hex adaptation). Six sextants, explicit-stack iterative scan, O(visible cells). `FieldOfView` now delegates here. Original raycasting retained as `FieldOfViewRaycast` for regression comparison.
+- **`WeightFunc`** (`internal/lattice`) — optional traversal-cost function for Voronoi. `Voronoi` upgraded to multi-source Dijkstra; `nil` WeightFunc preserves uniform-BFS behaviour.
+- **`EuclideanHeuristic`** (`internal/pathfind`) — Euclidean distance in axial 2D embedding: `sqrt(dq²+dr²+dq·dr)`. Admissible for edge weights ≥ 1; provides tighter lower bound than `HexDistanceHeuristic` on diagonal paths. `FindEdgePath` now uses it by default.
+- **`FindEdgePathConfig`** — config struct replacing `FindEdgePath`'s positional `filter`/`maxExpand` args. New `CostFunc func(from, to Coord) float64` field lets callers override edge-weight-based traversal cost (e.g. inject confidence, recency, or semantic distance). `nil` = existing edge-weight behaviour.
+- **`VoronoiWeightFunc`** / **`VoronoiContextConfig.WeightFunc`** — exposes the internal `lattice.WeightFunc` on the public Voronoi config. Callers steer region boundaries by cost; `nil` = uniform geometric Voronoi.
+
+### Changed
+
+- **`Voronoi` signature** — third parameter `weightFn WeightFunc` added (internal package only, no public API surface change). All callers updated to pass `nil`.
+- **`Tx.FindEdgePath` signature** ⚠️ **breaking** — positional `(filter string, maxExpand int)` replaced by `FindEdgePathConfig` struct. Migrate: `tx.FindEdgePath(ctx, a, b, "", 0)` → `tx.FindEdgePath(ctx, a, b, hexxladb.FindEdgePathConfig{})`. All call sites updated.
+
 ## [0.4.0] - 2026-05-08
 
 ### Added

@@ -103,3 +103,131 @@ func BenchmarkWalkRings(b *testing.B) {
 		_ = lattice.WalkRings(nil, center, 32)
 	}
 }
+
+// --- Lazy iterator tests ---
+
+func TestWalkRingsPackedSeq_matchesEager(t *testing.T) {
+	t.Parallel()
+	center := lattice.Coord{Q: 0, R: 0}
+	for maxR := range 6 {
+		eager := lattice.WalkRingsPacked(center, maxR)
+		var lazy []lattice.PackedCoord
+		for cp := range lattice.WalkRingsPackedSeq(center, maxR) {
+			lazy = append(lazy, cp.Packed)
+		}
+		if len(lazy) != len(eager) {
+			t.Fatalf("maxR=%d: lazy len=%d eager len=%d", maxR, len(lazy), len(eager))
+		}
+		for i := range eager {
+			if lazy[i] != eager[i] {
+				t.Fatalf("maxR=%d idx=%d: lazy %v != eager %v", maxR, i, lazy[i], eager[i])
+			}
+		}
+	}
+}
+
+func TestWalkRingsPackedSeq_negativeMaxR(t *testing.T) {
+	t.Parallel()
+	count := 0
+	for range lattice.WalkRingsPackedSeq(lattice.Coord{}, -1) {
+		count++
+	}
+	if count != 0 {
+		t.Fatalf("expected 0 yields for negative maxR, got %d", count)
+	}
+}
+
+func TestWalkRingsPackedSeq_earlyBreak(t *testing.T) {
+	t.Parallel()
+	center := lattice.Coord{Q: 0, R: 0}
+	const limit = 5
+	count := 0
+	for range lattice.WalkRingsPackedSeq(center, 10) {
+		count++
+		if count >= limit {
+			break
+		}
+	}
+	if count != limit {
+		t.Fatalf("expected exactly %d yields before break, got %d", limit, count)
+	}
+}
+
+func TestSpiralRangePackedSeq_matchesEager(t *testing.T) {
+	t.Parallel()
+	center := lattice.Coord{Q: 2, R: -1}
+	for minR := range 4 {
+		for maxR := minR; maxR < minR+4; maxR++ {
+			eager := lattice.SpiralRange(nil, center, minR, maxR)
+			var lazy []lattice.Coord
+			for cp := range lattice.SpiralRangePackedSeq(center, minR, maxR) {
+				lazy = append(lazy, cp.Coord)
+			}
+			if len(lazy) != len(eager) {
+				t.Fatalf("minR=%d maxR=%d: lazy len=%d eager len=%d", minR, maxR, len(lazy), len(eager))
+			}
+			for i := range eager {
+				if lazy[i] != eager[i] {
+					t.Fatalf("minR=%d maxR=%d idx=%d: lazy %v != eager %v", minR, maxR, i, lazy[i], eager[i])
+				}
+			}
+		}
+	}
+}
+
+func TestRingSeq_matchesRing(t *testing.T) {
+	t.Parallel()
+	center := lattice.Coord{Q: 1, R: 2}
+	for k := range 5 {
+		eager := lattice.Ring(center, k)
+		var lazy []lattice.Coord
+		for c := range lattice.RingSeq(center, k) {
+			lazy = append(lazy, c)
+		}
+		if len(lazy) != len(eager) {
+			t.Fatalf("k=%d: lazy len=%d eager len=%d", k, len(lazy), len(eager))
+		}
+		for i := range eager {
+			if lazy[i] != eager[i] {
+				t.Fatalf("k=%d idx=%d: lazy %v != eager %v", k, i, lazy[i], eager[i])
+			}
+		}
+	}
+}
+
+func BenchmarkWalkRingsPackedSeq_full(b *testing.B) {
+	center := lattice.Coord{Q: 0, R: 0}
+	for b.Loop() {
+		for range lattice.WalkRingsPackedSeq(center, 32) {
+		}
+	}
+}
+
+func BenchmarkWalkRingsPackedSeq_budget16(b *testing.B) {
+	// Simulate early-exit at budget=16: lazy saves all work beyond coord 16.
+	center := lattice.Coord{Q: 0, R: 0}
+	for b.Loop() {
+		n := 0
+		for range lattice.WalkRingsPackedSeq(center, 100) {
+			n++
+			if n >= 16 {
+				break
+			}
+		}
+	}
+}
+
+func BenchmarkWalkRingsPacked_r100(b *testing.B) {
+	center := lattice.Coord{Q: 0, R: 0}
+	for b.Loop() {
+		_ = lattice.WalkRingsPacked(center, 100)
+	}
+}
+
+func BenchmarkWalkRingsPackedSeq_r100_full(b *testing.B) {
+	center := lattice.Coord{Q: 0, R: 0}
+	for b.Loop() {
+		for range lattice.WalkRingsPackedSeq(center, 100) {
+		}
+	}
+}

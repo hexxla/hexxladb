@@ -186,3 +186,62 @@ func TestLoadContextVoronoi_nilTx(t *testing.T) {
 		t.Fatal("expected error on nil tx")
 	}
 }
+
+func TestLoadContextVoronoi_weightFunc(t *testing.T) {
+	t.Parallel()
+	db := openVoronoiTestDB(t)
+	ctx := context.Background()
+
+	// Seeds: A=(0,0), B=(4,0).
+	// Cell (2,0) is given high cost so A cannot cheaply claim it.
+	// With uniform cost A owns (2,0) (distance 2 < 2 from B=4).
+	// With WeightFunc cost 20 on (2,0), A's effective cost = 1+1+20 = 22 > B's = 2, so B claims it.
+	seedA := lattice.Coord{Q: 0, R: 0}
+	seedB := lattice.Coord{Q: 4, R: 0}
+	heavy := lattice.Coord{Q: 1, R: 0}
+
+	coords := []lattice.Coord{seedA, seedB, heavy, {Q: 2, R: 0}, {Q: 3, R: 0}}
+	err := db.Update(func(tx *hexxladb.Tx) error {
+		for _, c := range coords {
+			if err := putCell(tx, c, "x"); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = db.View(func(tx *hexxladb.Tx) error {
+		weightFn := func(c lattice.Coord) float64 {
+			if c == heavy {
+				return 20.0
+			}
+			return 0
+		}
+		result, err := tx.LoadContextVoronoi(ctx, []lattice.Coord{seedA, seedB}, hexxladb.VoronoiContextConfig{
+			MaxRadius:  4,
+			WeightFunc: weightFn,
+		})
+		if err != nil {
+			return err
+		}
+		// (2,0) should belong to B (index 1), not A (index 0), due to high cost through (1,0).
+		target := lattice.Coord{Q: 2, R: 0}
+		inA := false
+		for _, rec := range result[0] {
+			c, _ := lattice.Unpack(rec.Key)
+			if c == target {
+				inA = true
+			}
+		}
+		if inA {
+			t.Fatalf("expected (2,0) to be owned by seed B due to WeightFunc, but it was in seed A's region")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

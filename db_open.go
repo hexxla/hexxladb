@@ -249,6 +249,30 @@ func mergeEngineEmbedding(eo *engine.Options, o *Options) *engine.Options {
 	return eo
 }
 
+const defaultPageCacheSize = 4 << 20 // 4 MiB
+
+// mergeEnginePageCache resolves the public PageCacheSize convention:
+//
+//   - 0 (default) → 4 MiB cache budget
+//   - -1           → cache disabled (engine receives 0)
+//   - positive     → use as-is
+func mergeEnginePageCache(eo *engine.Options, o *Options) *engine.Options {
+	var budget int64
+	switch {
+	case o == nil || o.PageCacheSize == 0:
+		budget = defaultPageCacheSize
+	case o.PageCacheSize < 0:
+		budget = 0 // disabled
+	default:
+		budget = o.PageCacheSize
+	}
+	if eo == nil {
+		return &engine.Options{PageCacheSize: budget}
+	}
+	eo.PageCacheSize = budget
+	return eo
+}
+
 func openValidateEncryption(opts *Options, hdr engine.Header) error {
 	if opts == nil {
 		opts = &Options{}

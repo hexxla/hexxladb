@@ -15,17 +15,17 @@ Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored 
 
 ## Database lifecycle
 
-| Symbol                                   | Notes                                                                                                                                                    |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`Open`](../../db.go)**                | Open or create a database file; applies WAL on startup.                                                                                                  |
-| **[`(*DB).Close`](../../db.go)**         | Waits for in-flight transactions; idempotent for nil receiver.                                                                                           |
-| **[`(*DB).Compact`](../../compact.go)**  | Copy-compact open DB to destPath (minimal-size file, preserves all data including MVCC history).                                                         |
-| **[`CompactTo`](../../compact.go)**      | Standalone copy-compaction from srcPath to destPath; propagates format, encryption, MaxValueBytes.                                                       |
-| **[`ErrCorruptDatabase`](../../db.go)**  | Open-time corruption (header/WAL).                                                                                                                       |
-| **[`Options`](../../options.go)**        | `EnableMVCC`, `MVCCRetention`, changelog, encryption, `CellValidator`, `AfterPutCell`, `AfterPutSeam`, `PageSize`, `MaxValueBytes`, optional page hooks. |
-| **[`(*DB).PageSize`](../../db.go)**      | Returns the active page size (bytes); 4096 default for new databases.                                                                                    |
-| **[`(*DB).MaxValueBytes`](../../db.go)** | Returns the effective per-database max value size (bytes) from the file header.                                                                          |
-| **[`MVCCRetention`](../../options.go)**  | Retention hint for prune suggestions.                                                                                                                    |
+| Symbol                                   | Notes                                                                                                                                                                                                       |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`Open`](../../db.go)**                | Open or create a database file; applies WAL on startup.                                                                                                                                                     |
+| **[`(*DB).Close`](../../db.go)**         | Waits for in-flight transactions; idempotent for nil receiver.                                                                                                                                              |
+| **[`(*DB).Compact`](../../compact.go)**  | Copy-compact open DB to destPath (minimal-size file, preserves all data including MVCC history).                                                                                                            |
+| **[`CompactTo`](../../compact.go)**      | Standalone copy-compaction from srcPath to destPath; propagates format, encryption, MaxValueBytes.                                                                                                          |
+| **[`ErrCorruptDatabase`](../../db.go)**  | Open-time corruption (header/WAL).                                                                                                                                                                          |
+| **[`Options`](../../options.go)**        | `EnableMVCC`, `MVCCRetention`, changelog, encryption, `CellValidator`, `AfterPutCell`, `AfterPutSeam`, `PageSize`, `MaxValueBytes`, `PageCacheSize` (0 = 4 MiB default, -1 = disable), optional page hooks. |
+| **[`(*DB).PageSize`](../../db.go)**      | Returns the active page size (bytes); 4096 default for new databases.                                                                                                                                       |
+| **[`(*DB).MaxValueBytes`](../../db.go)** | Returns the effective per-database max value size (bytes) from the file header.                                                                                                                             |
+| **[`MVCCRetention`](../../options.go)**  | Retention hint for prune suggestions.                                                                                                                                                                       |
 
 ---
 
@@ -54,8 +54,8 @@ Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored 
 | **[`(*Tx).DeleteCell`](../../delete_cell.go)** / **[`DeleteCellWithOutcome`](../../delete_cell.go)** | Remove cell + secondaries + facets + outbound edges. Idempotent **`DeleteCell`**; **`DeleteCellWithOutcome`** returns whether a visible cell existed. MVCC: tombstone; seams NOT removed. |
 | **[`(*Tx).WalkRing`](../../primitives.go)**                                                          | Visit one ring; raw bytes per coord.                                                                                                                                                      |
 | **[`(*Tx).WalkRingAt`](../../primitives.go)**                                                        | Same order; **`record.ValidAt`** filter at **`asOf`**.                                                                                                                                    |
-| **[`(*Tx).LoadContext`](../../primitives.go)**                                                       | Concentric walk; **`maxR`**, **`maxCells`**.                                                                                                                                              |
-| **[`(*Tx).LoadContextAt`](../../primitives.go)**                                                     | Same as **`LoadContext`** + validity filter.                                                                                                                                              |
+| **[`(*Tx).ScanContextRaw`](../../primitives.go)**                                                    | Low-level concentric walk returning raw `[]CellRecord`; **`maxR`**, **`maxCells`**. Prefer **`LoadContext`** for assembled `ContextPack`.                                                 |
+| **[`(*Tx).ScanContextAtRaw`](../../primitives.go)**                                                  | Same as **`ScanContextRaw`** + validity filter (MVCC `asOf`). Low-level primitive.                                                                                                        |
 | **[`(*Tx).WalkRingFacets`](../../primitives.go)**                                                    | Facet_mask ring walk; optional validity on cell.                                                                                                                                          |
 | **[`(*Tx).PutSeam`](../../primitives.go)**                                                           | Seam primary + **`seam-by-cells/`** + seam secondaries.                                                                                                                                   |
 | **[`(*Tx).FindSeams`](../../primitives.go)**                                                         | Query ball using seam index + primaries.                                                                                                                                                  |
@@ -154,11 +154,11 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 
 ## Wire format types (public re-exports)
 
-| Symbol                                         | Notes                                                                                                                                               |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`CellRecord`](../../record_export.go)**     | v1 wire shape for cell/<packed_coord> blobs. Re-exported from internal/record for public API access. Used by LoadContextByEdges and LoadContextLOD. |
-| **[`ProvenanceWire`](../../record_export.go)** | Provenance stored in v1 payloads (times as Unix nanoseconds UTC). Re-exported from internal/record.                                                 |
-| **[`ValidityWire`](../../record_export.go)**   | Optional validity window (nil = open-ended on that side). Re-exported from internal/record.                                                         |
+| Symbol                                         | Notes                                                                                                                                                                             |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`CellRecord`](../../record_export.go)**     | v1 wire shape for cell/<packed_coord> blobs. Re-exported from internal/record for public API access. Used by `ScanContextRaw`, `ScanContextAtRaw`, and low-level cell operations. |
+| **[`ProvenanceWire`](../../record_export.go)** | Provenance stored in v1 payloads (times as Unix nanoseconds UTC). Re-exported from internal/record.                                                                               |
+| **[`ValidityWire`](../../record_export.go)**   | Optional validity window (nil = open-ended on that side). Re-exported from internal/record.                                                                                       |
 
 These types allow external packages (e.g., Mosaic) to work with wire formats without importing internal packages. They are re-exported type aliases from `internal/record`.
 
@@ -192,20 +192,34 @@ These types allow external packages (e.g., Mosaic) to work with wire formats wit
 
 ---
 
-## HEXXLA-shaped views and budgeting
+## HEXXLA-shaped views and context loading
 
 | Symbol                                                                                                                                                                      | Notes                                                                                                                                                                             |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*Tx).LoadContext`](../../context_load.go)**                                                                                                                            | **Unified context entry point.** Auto-dispatches to ring walk, LOD, graph BFS, or concurrent multi-seed based on `LoadContextConfig`. Always returns `ContextPack`.               |
+| **[`LoadContextConfig`](../../context_load.go)**                                                                                                                            | `Seeds`, `MaxRing`, `MaxTokens`, `Budgeter`, `EdgeFilter`, `MaxHops`, `AsOf`, `Assembly`. The DB selects the algorithm.                                                           |
 | **[`(*Tx).AssembleCellView`](../../views.go)**                                                                                                                              | One coord → **`CellView`** with opts.                                                                                                                                             |
-| **[`(*Tx).LoadContextWithBudgeting`](../../views.go)**                                                                                                                      | Token-budget **`ContextPack`**.                                                                                                                                                   |
-| **[`(*Tx).LoadContextPack`](../../views.go)**                                                                                                                               | Alias of **`LoadContextWithBudgeting`**.                                                                                                                                          |
-| **[`(*Tx).LoadContextPackFrom`](../../views.go)**                                                                                                                           | Unified variadic entry point: one coord → `LoadContextPack`; multiple coords → `LoadMultiContextPack` with deduplication. Zero overhead for single-seed callers.                  |
 | **[`CellView`](../../views.go)**, **[`ContextPack`](../../views.go)**, **[`FacetView`](../../views.go)**, **[`EdgeView`](../../views.go)**, **[`SeamRef`](../../views.go)** | View types. **`CellView.SupersededFrom`** is set when a cell substituted a superseded cell during assembly.                                                                       |
-| **[`LoadContextBudgetConfig`](../../views.go)**, **[`AssembleCellViewOpts`](../../views.go)**, **[`DefaultAssembleCellViewOpts`](../../views.go)**                          | Assembly + seam radius + caps. **`FilterSuperseded`** enables seam-aware context assembly.                                                                                        |
+| **[`LoadContextBudgetConfig`](../../views.go)**, **[`AssembleCellViewOpts`](../../views.go)**, **[`DefaultAssembleCellViewOpts`](../../views.go)**                          | Assembly options: seam radius, caps, **`FilterSuperseded`**, `IncludeSeams`, `Explain`.                                                                                           |
 | **[`TokenBudgeter`](../../views.go)**, **[`ByteLenBudgeter`](../../views.go)**                                                                                              | Budget counting.                                                                                                                                                                  |
 | **[`CellViewPredicate`](../../views.go)**, **[`FilterCellViews`](../../views.go)**, **[`TruncateCellViewsToTokenBudget`](../../views.go)**                                  | Post-process assembled views.                                                                                                                                                     |
 | **[`ContextPackStats`](../../views.go)**                                                                                                                                    | Assembly stats: candidates, evicted, max ring.                                                                                                                                    |
 | **[`CellExplanation`](../../views.go)**                                                                                                                                     | Per-cell inclusion/eviction reason (Explain mode). **`Reason`**: `"included"`, `"evicted_low_confidence"`, `"superseded"`. **`SupersededBy`** coord set on superseded exclusions. |
+
+---
+
+## Spatial context loading
+
+| Symbol                                                     | Notes                                                                                                                      |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*Tx).LoadContextFOV`](../../fov_context.go)**         | Load cells from origin limited to shadowcasting field-of-view. `opaque` func determines walls.                             |
+| **[`FOVContextConfig`](../../fov_context.go)**             | `MaxCells` cap (default 256).                                                                                              |
+| **[`(*Tx).LoadContextVoronoi`](../../voronoi_context.go)** | Multi-source Dijkstra partitions area into non-overlapping regions, one per seed.                                          |
+| **[`VoronoiContextConfig`](../../voronoi_context.go)**     | `MaxRadius`, `MaxCellsPerSeed`, `WeightFunc`. `WeightFunc` steers region boundaries by cost.                               |
+| **[`VoronoiWeightFunc`](../../voronoi_context.go)**        | Type alias for `lattice.WeightFunc`: `func(Coord) float64`. `nil` = uniform cost.                                          |
+| **[`(*Tx).FindEdgePath`](../../pathfind_api.go)**          | A\* shortest path from start to goal over edges. Returns `nil` if no path exists.                                          |
+| **[`FindEdgePathConfig`](../../pathfind_api.go)**          | `Filter` (relation type), `MaxExpand` (node cap), `CostFunc func(from, to Coord) float64`. `CostFunc nil` = edge `Weight`. |
+| **[`(*Tx).WalkEdges`](../../pathfind_api.go)**             | BFS from start: all reachable coords within `maxHops` hops and `maxNodes` cap.                                             |
 
 ---
 
@@ -225,14 +239,20 @@ Methods on **`Coord`** / **`PackedCoord`** (e.g. **`Distance`**, **`Neighbors`**
 
 Used by the public context-loading APIs above; listed here for completeness.
 
-| Package             | Function                                      | Used by                  |
-| ------------------- | --------------------------------------------- | ------------------------ |
-| `internal/lattice`  | `FieldOfView(origin, maxR, opaque) → []Coord` | `Tx.LoadContextFOV`      |
-| `internal/lattice`  | `HexLine(a, b) → []Coord`                     | `FieldOfView` (LOS rays) |
-| `internal/lattice`  | `Voronoi(seeds, maxR) → map[Coord]int`        | `Tx.LoadContextVoronoi`  |
-| `internal/lattice`  | `CoarsenCoord`, `RefineCoord`, `CoarsenMulti` | `Tx.LoadContextLOD`      |
-| `internal/lattice`  | `WalkRingsPacked`, `WalkRingsCoordPacked`     | `scanByRadius`           |
-| `internal/pathfind` | `AStar`, `Dijkstra`, `BFS`                    | `Tx.FindEdgePath` etc.   |
+| Package             | Function / Type                                                   | Used by                                          |
+| ------------------- | ----------------------------------------------------------------- | ------------------------------------------------ |
+| `internal/lattice`  | `FieldOfView(origin, maxR, opaque) → []Coord`                     | `Tx.LoadContextFOV` — delegates to shadowcast    |
+| `internal/lattice`  | `FieldOfViewShadowcast(origin, maxR, opaque) → []Coord`           | `FieldOfView` (Albert Ford 2021 hex adaptation)  |
+| `internal/lattice`  | `FieldOfViewRaycast(origin, maxR, opaque) → []Coord`              | Regression tests only                            |
+| `internal/lattice`  | `HexLine(a, b) → []Coord`                                         | `FieldOfViewRaycast` (raycasting LOS)            |
+| `internal/lattice`  | `Voronoi(seeds, maxR, weightFn) → ([]VoronoiCell, map[Coord]int)` | `Tx.LoadContextVoronoi`                          |
+| `internal/lattice`  | `WeightFunc` type                                                 | `Voronoi` optional traversal-cost function       |
+| `internal/lattice`  | `SpiralRange(dst, center, minR, maxR) → []Coord`                  | LOD inner walk; annular ring slice               |
+| `internal/lattice`  | `CoarsenCoord`, `RefineCoord`, `CoarsenMulti`                     | `Tx.LoadContext` (LOD auto-dispatch)             |
+| `internal/lattice`  | `WalkRingsPacked`, `WalkRingsCoordPacked`                         | `scanByRadius`                                   |
+| `internal/pathfind` | `AStar`, `Dijkstra`, `BFS`                                        | `Tx.FindEdgePath`, `Tx.WalkEdges`                |
+| `internal/pathfind` | `EuclideanHeuristic`                                              | `Tx.FindEdgePath` default; tighter than hex dist |
+| `internal/pathfind` | `HexDistanceHeuristic`                                            | Available alternative heuristic for callers      |
 
 ---
 
@@ -321,44 +341,42 @@ See **[CHANGEFEED.md](./CHANGEFEED.md)**.
 
 ## Content Search
 
-`SearchCells` is a convenience wrapper over `QueryCells` kept for backward compatibility. For `ExcludeTags`, `SortBy`, `Explain`, or temporal filters, use `QueryCells` directly.
+`SearchCells` is the ergonomic entry point for the search-then-seed pipeline. For full control over sort order, temporal filters, `ExcludeTags`, and `Explain` mode use `QueryCells` directly.
 
 | Symbol                                     | Notes                                                                                                                                                                                       |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*Tx).SearchCells`](../../search.go)** | Wrapper over `QueryCells`. Returns `[]CellSearchResult` sorted by score; each result includes a `Coord` for use as a context-pack seed.                                                     |
+| **[`(*Tx).SearchCells`](../../search.go)** | Wrapper over `QueryCells`. Returns `[]CellSearchResult` sorted by score; access the seed coord via `result.Cell.Coord` for use with `LoadContext`.                                          |
 | **[`CellSearchConfig`](../../search.go)**  | `Query`, `RequireTags` (AND), `AnyTags` (OR), `MinConfidence`, `MaxConfidence`, `SourceID`, `Center`+`Radius`, `MaxResults`, `MaxScanRadius`, `Embedding` (ANN-accelerated seed selection). |
 | **[`CellSearchResult`](../../search.go)**  | `Cell CellView` + `Score float64`.                                                                                                                                                          |
 
 ### Content Search scoring
 
-| Condition                                      | Score contribution |
-| ---------------------------------------------- | ------------------ |
-| Query matches a tag exactly (case-insensitive) | +1.0               |
-| Query is a prefix of a tag                     | +0.8               |
-| Query found verbatim in `RawContent`           | +0.6               |
-| Query found case-insensitively in `RawContent` | +0.5               |
-| Query matches `SourceID` exactly               | +0.3               |
-| Confidence bonus                               | +0.1 × Confidence  |
+The query is tokenized on whitespace. Each token is scored independently and contributions summed — a cell matching all tokens in a multi-word query scores higher than one matching only some.
+
+| Condition (per token)                               | Score contribution |
+| --------------------------------------------------- | ------------------ |
+| Token matches a tag exactly (case-insensitive)      | +1.0               |
+| Token is a prefix of a tag (case-insensitive)       | +0.8               |
+| Token found verbatim in `RawContent`                | +0.6               |
+| Token found case-insensitively in `RawContent`      | +0.5               |
+| Token matches `SourceID` exactly (case-insensitive) | +0.3               |
+| Confidence bonus (once, regardless of token count)  | +0.1 × Confidence  |
+
+Each tag contributes at most once per token (exact beats prefix). `Explain` mode labels each match as `[tag:exact:tok]`, `[content:verbatim:tok]`, etc.
 
 ---
 
 ## Multi-seed context assembly
 
-A **seed** is a `Coord` — the centre point of a ring-walk expansion. `SearchCells` returns `CellSearchResult` values each carrying a `Coord`; those coords are the seeds passed to the assembly APIs, which expand each matched location's neighbourhood into context. One natural-language or keyword query → N matched coords → N seeds → one merged `ContextPack`.
-
-| Symbol                                                     | Notes                                                                                                                                                                                                          |
-| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*Tx).LoadContextPackFrom`](../../views.go)**          | **Recommended unified entry point.** Variadic: one coord → zero-overhead `LoadContextPack`; multiple coords → `LoadMultiContextPack` with `DeduplicateCoords`. Callers never switch API based on result count. |
-| **[`(*Tx).LoadMultiContextPack`](../../multi_context.go)** | Expand multiple seed coords (e.g. top-N from `SearchCells`), merge under a shared token budget, cross-seed confidence re-ranking, optional deduplication of shared neighbourhood cells.                        |
-| **[`MultiContextConfig`](../../multi_context.go)**         | `Centers []Coord`, `MaxR`, `MaxTokens`, `Budgeter`, `AssemblyConfig LoadContextBudgetConfig`, `DeduplicateCoords`.                                                                                             |
+A **seed** is a `Coord` — the centre point of a ring-walk expansion. `SearchCells` returns `CellSearchResult` values each carrying a `Coord`; those coords are the seeds passed to `LoadContext`, which assembles all seeds concurrently and merges them under the shared token budget.
 
 ### Typical pipeline
 
 ```text
-SearchCells(query) → []CellSearchResult → extract .Cell.Coord → LoadContextPackFrom(coords...)
+SearchCells(query) → []CellSearchResult → extract .Cell.Coord → LoadContext(LoadContextConfig{Seeds: coords, ...})
 ```
 
-Token budget across seeds: each seed expands independently (ring walk, `FilterSuperseded`), cells merge into one pool, pool re-ranked by `Confidence` descending, greedy fill to `MaxTokens`.
+Token budget across seeds: each seed expands concurrently (ring walk + `FilterSuperseded`), cells merge into one pool, pool re-ranked by `Confidence` descending, greedy fill to `MaxTokens`.
 
 ---
 
@@ -366,30 +384,26 @@ Token budget across seeds: each seed expands independently (ring walk, `FilterSu
 
 Graph traversal across the cell-edge topology. Algorithms live in `internal/pathfind`; public API on `*Tx`.
 
-| Symbol                                                  | Notes                                                                                                                                  |
-| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*Tx).FindEdgePath`](../../pathfind_api.go)**       | A\* shortest path between two coords over out-edges. Optional `filter` restricts relation types. Returns `[]Coord` path or nil.        |
-| **[`(*Tx).WalkEdges`](../../pathfind_api.go)**          | BFS/Dijkstra reachability walk from a coord. Returns all coords reachable within `maxHops` hops over filtered edges.                   |
-| **[`(*Tx).LoadContextByEdges`](../../pathfind_api.go)** | Walk edges from `center` (BFS), then fetch cells for all reached coords. `maxCells` caps output. Combines graph traversal + cell load. |
+| Symbol                                            | Notes                                                                                                                           |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*Tx).FindEdgePath`](../../pathfind_api.go)** | A\* shortest path between two coords over out-edges. Optional `filter` restricts relation types. Returns `[]Coord` path or nil. |
+| **[`(*Tx).WalkEdges`](../../pathfind_api.go)**    | BFS reachability walk from a coord. Returns all coords reachable within `maxHops` hops over filtered edges.                     |
+
+For graph-aware **context loading** (BFS walk + assembled `ContextPack`), set `EdgeFilter` on `LoadContextConfig` and call `Tx.LoadContext`.
 
 ### Pathfinding pipeline
 
 ```text
 SearchCells(query) → top result → FindEdgePath(result.Coord, target) → path of coords
                                   WalkEdges(result.Coord, maxHops=3, filter="follow-up") → reachable set
-                                  LoadContextByEdges(result.Coord, filter, maxHops, maxCells) → []CellRecord
+                                  LoadContext(LoadContextConfig{EdgeFilter: "follow-up", MaxHops: 3}) → ContextPack
 ```
 
 ---
 
 ## LOD (multi-resolution) context
 
-Load nearby cells at full resolution, outer cells at coarsened resolution. Reduces I/O for large radii by mapping outer-ring coordinates to coarser parent cells.
-
-| Symbol                                             | Notes                                                                                                         |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **[`(*Tx).LoadContextLOD`](../../lod_context.go)** | Load rings `[0..fineR]` at full resolution, `[fineR+1..maxR]` at coarsened resolution. `factor` controls LOD. |
-| **[`LODContextConfig`](../../lod_context.go)**     | `FineRings` (default 2), `CoarsenFactor` (default 3), `MaxCells` (default 256).                               |
+Level-of-Detail coarsening is **automatically applied** by `Tx.LoadContext` when `MaxRing >= 10` (single seed). No separate API is needed — set a large `MaxRing` and the DB applies coarsening to outer rings transparently.
 
 Lattice primitives in `internal/lattice`: `CoarsenCoord`, `RefineCoord`, `CoarsenMulti`, `floorDiv`.
 
@@ -397,7 +411,7 @@ Lattice primitives in `internal/lattice`: `CoarsenCoord`, `RefineCoord`, `Coarse
 
 ## Voronoi partitioning (multi-seed context)
 
-Non-overlapping partitioning of hex space around multiple seeds. Unlike `LoadMultiContextPack` (which merges overlapping radial neighborhoods), Voronoi assigns each coordinate to **exactly one** seed via multi-source BFS — giving each seed a fair, non-overlapping share of the context budget.
+Non-overlapping partitioning of hex space around multiple seeds. Unlike `LoadContext` with multiple seeds (which merges overlapping radial neighborhoods), Voronoi assigns each coordinate to **exactly one** seed via multi-source BFS — giving each seed a fair, non-overlapping share of the context budget.
 
 | Symbol                                                     | Notes                                                                                                        |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -406,11 +420,11 @@ Non-overlapping partitioning of hex space around multiple seeds. Unlike `LoadMul
 
 Lattice primitives in `internal/lattice`: `Voronoi(seeds, maxRadius)`, `VoronoiRegion(cells, seedIdx)`.
 
-### When to use Voronoi vs LoadMultiContextPack
+### When to use Voronoi vs LoadContext with multiple seeds
 
-| Concern             | `LoadMultiContextPack`                      | `LoadContextVoronoi`                                      |
+| Concern             | `LoadContext` (multi-seed)                  | `LoadContextVoronoi`                                      |
 | ------------------- | ------------------------------------------- | --------------------------------------------------------- |
-| Overlap             | Seeds share cells (dedup optional)          | No overlap — each hex assigned to exactly one seed        |
+| Overlap             | Seeds share cells (always deduplicated)     | No overlap — each hex assigned to exactly one seed        |
 | Budget distribution | Shared pool, confidence-ranked              | Per-seed cap — each region gets a fair independent budget |
 | Use case            | "Merge everything relevant into one prompt" | "Give each topic its own context slice"                   |
 
@@ -429,7 +443,7 @@ Lattice primitives in `internal/lattice`: `FieldOfView(origin, maxR, opaque)`, `
 
 ### How FOV improves retrieval accuracy
 
-Standard radial context loading (`LoadContext`, `LoadContextPack`) treats the hex grid as uniformly reachable — every cell within radius is a candidate. On **sparse grids** (where many coordinates have no stored cell), or grids with **logical boundaries** (topic changes, empty regions, deleted cells), this wastes the context budget on coordinates that are semantically disconnected from the center.
+Standard radial context loading (`LoadContext`) treats the hex grid as uniformly reachable — every cell within radius is a candidate. On **sparse grids** (where many coordinates have no stored cell), or grids with **logical boundaries** (topic changes, empty regions, deleted cells), this wastes the context budget on coordinates that are semantically disconnected from the center.
 
 FOV filtering solves this by treating empty/deleted cells as "opaque" — cells behind them are not loaded. The result:
 

@@ -10,6 +10,14 @@ import (
 	"github.com/hexxla/hexxladb/internal/engine"
 )
 
+// dbCachedHeader holds the two header fields needed by readers: the latest committed
+// sequence number and the B+ tree root page ID. Updated atomically by the writer after
+// every successful commit; read lock-free by View / ViewAt / ViewAtTime.
+type dbCachedHeader struct {
+	commitSeq uint64
+	btreeRoot uint64
+}
+
 // DB is a handle to an embedded HexxlaDB database. Construction is via [Open].
 // Concurrent [View] calls are serialized with readers. [Update] and [Batch] hold the DB lock around
 // the callback; see [docs/hexxladb/TX.md] for group-WAL wait semantics during engine commit.
@@ -24,6 +32,16 @@ type DB struct {
 	afterPutCell  AfterPutCellHook // optional post-write hook from [Options.AfterPutCell].
 	afterPutSeam  AfterPutSeamHook // optional post-write hook from [Options.AfterPutSeam].
 	writeSeqNext  atomic.Uint64
+	// cachedHdr is the fast-path header snapshot for readers. Writers store a new pointer
+	// after every commit; readers load it without holding any lock.
+	cachedHdr atomic.Pointer[dbCachedHeader]
+	// closed is set to true by Close before the mutex is released, allowing
+	// public methods to fast-fail without acquiring the read lock.
+	closed atomic.Bool
+}
+
+func (db *DB) storeCachedHeader(commitSeq, btreeRoot uint64) {
+	db.cachedHdr.Store(&dbCachedHeader{commitSeq: commitSeq, btreeRoot: btreeRoot})
 }
 
 // ErrCorruptDatabase means the database or WAL failed validation on open.
@@ -39,6 +57,7 @@ func Open(path string, opts *Options) (*DB, error) {
 	eopts = mergeEnginePrimaryFdatasync(eopts, opts)
 	eopts = mergeEngineGroupWAL(eopts, opts)
 	eopts = mergeEngineMaxValueBytes(eopts, opts)
+	eopts = mergeEnginePageCache(eopts, opts)
 	eopts = mergeEngineEmbedding(eopts, opts)
 	eng, err := engine.Open(path, eopts)
 	if err != nil {
@@ -81,6 +100,7 @@ func Open(path string, opts *Options) (*DB, error) {
 	bt := engine.OpenBTree(eng)
 	db := &DB{eng: eng, btree: bt, useMVCC: hdr.FormatVersion >= 2}
 	db.writeSeqNext.Store(hdr.CommitSeq)
+	db.storeCachedHeader(hdr.CommitSeq, hdr.BTreeRoot)
 	if opts != nil {
 		db.mvccRetention = opts.MVCCRetention
 		db.cellValidator = opts.CellValidator
@@ -114,6 +134,7 @@ func (db *DB) Close() error {
 	if db.eng == nil {
 		return nil
 	}
+	db.closed.Store(true)
 	var err error
 	if db.changelog != nil {
 		err = db.changelog.Close()

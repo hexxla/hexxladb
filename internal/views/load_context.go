@@ -162,27 +162,27 @@ func loadContextLOD(ctx context.Context, tx TxReader, p LoadContextParams) (Cont
 
 // collectLODCoords gathers coordinates using LOD strategy: full resolution for
 // inner rings, coarsened for outer rings.
+// Both walks are lazy (iter.Seq): no ring slice is allocated; iteration stops as
+// soon as maxCoords is reached, mirroring Badger's iterator early-exit pattern.
 func collectLODCoords(ctx context.Context, tx TxReader, center lattice.Coord, fineR, maxR, coarseFactor, maxCoords int) ([]lattice.Coord, error) {
-	packed := lattice.WalkRingsPacked(center, fineR)
-	out := make([]lattice.Coord, 0, min(len(packed), maxCoords))
+	out := make([]lattice.Coord, 0, min(maxCoords, 64))
 
-	for _, p := range packed {
+	// Inner rings: full resolution, lazy packed iterator.
+	seenInner := make(map[lattice.PackedCoord]struct{})
+	for cp := range lattice.WalkRingsPackedSeq(center, fineR) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		if len(out) >= maxCoords {
-			break
+			return out, nil
 		}
-		_, ok, err := tx.GetCell(p)
+		seenInner[cp.Packed] = struct{}{}
+		_, ok, err := tx.GetCell(cp.Packed)
 		if err != nil {
 			return nil, err
 		}
 		if ok {
-			c, err := lattice.Unpack(p)
-			if err != nil {
-				continue
-			}
-			out = append(out, c)
+			out = append(out, cp.Coord)
 		}
 	}
 
@@ -190,40 +190,37 @@ func collectLODCoords(ctx context.Context, tx TxReader, center lattice.Coord, fi
 		return out, nil
 	}
 
-	seen := make(map[lattice.PackedCoord]struct{}, len(out))
-	for _, p := range packed {
+	// Outer rings: coarsened resolution, lazy packed iterator.
+	seen := make(map[lattice.PackedCoord]struct{}, len(seenInner))
+	for p := range seenInner {
 		seen[p] = struct{}{}
 	}
 
-	ringBuf := make([]lattice.Coord, 0, 6*maxR+1)
-	for ring := fineR + 1; ring <= maxR; ring++ {
+	for cp := range lattice.SpiralRangePackedSeq(center, fineR+1, maxR) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		ringBuf = lattice.RingInto(ringBuf[:0], center, ring)
-		for _, c := range ringBuf {
-			if len(out) >= maxCoords {
-				return out, nil
-			}
-			coarse, err := lattice.CoarsenCoord(c, coarseFactor)
-			if err != nil {
-				continue
-			}
-			cp, err := lattice.Pack(coarse)
-			if err != nil {
-				continue
-			}
-			if _, dup := seen[cp]; dup {
-				continue
-			}
-			seen[cp] = struct{}{}
-			_, ok, err := tx.GetCell(cp)
-			if err != nil {
-				return nil, err
-			}
-			if ok {
-				out = append(out, coarse)
-			}
+		if len(out) >= maxCoords {
+			return out, nil
+		}
+		coarse, err := lattice.CoarsenCoord(cp.Coord, coarseFactor)
+		if err != nil {
+			continue
+		}
+		cp2, err := lattice.Pack(coarse)
+		if err != nil {
+			continue
+		}
+		if _, dup := seen[cp2]; dup {
+			continue
+		}
+		seen[cp2] = struct{}{}
+		_, ok, err := tx.GetCell(cp2)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, coarse)
 		}
 	}
 	return out, nil
@@ -316,68 +313,36 @@ func mergeSeeds(results []seedResult, p LoadContextParams) (ContextPack, error) 
 	}, nil
 }
 
-// assembleCoordsIntoContextPack takes a pre-collected list of coordinates, assembles
-// CellViews concurrently (read-only, safe), then wraps into a budget-bounded ContextPack.
+// assembleCoordsIntoContextPack assembles CellViews from coords and applies the token
+// budget incrementally, stopping as soon as the budget is full.
+//
+// Coords are processed in the order supplied (ring order = nearest first), which is
+// already the correct priority for conversational memory — no sort is needed.
+// This mirrors Badger's iterator pattern: one record at a time, early exit when the
+// consumer (token budget) is satisfied, never materialising more than necessary.
 func assembleCoordsIntoContextPack(ctx context.Context, tx TxReader, coords []lattice.Coord, p LoadContextParams) (ContextPack, error) {
 	if len(coords) == 0 {
 		return ContextPack{}, nil
 	}
 
-	type viewResult struct {
-		idx  int
-		view CellView
-		ok   bool
-		err  error
-	}
-
-	results := make([]viewResult, len(coords))
-	var wg sync.WaitGroup
-	wg.Add(len(coords))
-
-	for i, c := range coords {
-		go func() {
-			defer wg.Done()
-			v, err := AssembleCellView(ctx, tx, c, p.AsOf, p.Assembly.Assemble)
-			if err != nil {
-				if isNotFound(err) {
-					results[i] = viewResult{idx: i, ok: false}
-					return
-				}
-				results[i] = viewResult{idx: i, err: err}
-				return
-			}
-			results[i] = viewResult{idx: i, view: v, ok: true}
-		}()
-	}
-	wg.Wait()
-
-	views := make([]CellView, 0, len(coords))
-	for i := range results {
-		if results[i].err != nil {
-			return ContextPack{}, results[i].err
-		}
-		if results[i].ok {
-			views = append(views, results[i].view)
-		}
-	}
-
-	// Apply token budget: sort by confidence descending then truncate.
-	slices.SortFunc(views, func(a, b CellView) int {
-		switch {
-		case a.Provenance.Confidence > b.Provenance.Confidence:
-			return -1
-		case a.Provenance.Confidence < b.Provenance.Confidence:
-			return 1
-		default:
-			return 0
-		}
-	})
-
 	budgeter := p.Budgeter
 	used := 0
 	evicted := 0
-	kept := views[:0]
-	for _, v := range views {
+	scanned := 0
+	kept := make([]CellView, 0, min(len(coords), 64))
+
+	for _, c := range coords {
+		if err := ctx.Err(); err != nil {
+			return ContextPack{}, err
+		}
+		scanned++
+		v, err := AssembleCellView(ctx, tx, c, p.AsOf, p.Assembly.Assemble)
+		if err != nil {
+			if isNotFound(err) {
+				continue
+			}
+			return ContextPack{}, err
+		}
 		tokens := budgeter.CountTokens(v.RawContent)
 		if used+tokens > p.MaxTokens {
 			evicted++
@@ -391,7 +356,7 @@ func assembleCoordsIntoContextPack(ctx context.Context, tx TxReader, coords []la
 		Cells:       kept,
 		TotalTokens: used,
 		Stats: ContextPackStats{
-			CandidatesScanned: len(coords),
+			CandidatesScanned: scanned,
 			CellsEvicted:      evicted,
 		},
 	}, nil

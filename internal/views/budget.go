@@ -3,7 +3,6 @@ package views
 import (
 	"context"
 	"errors"
-	"slices"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
@@ -16,7 +15,7 @@ const SeamTypeSupersedes = "supersedes"
 
 const maxSupersessionDepth = 16
 
-// LoadContextBudgetConfig configures [LoadContextWithBudgeting].
+// LoadContextBudgetConfig configures context assembly for [Tx.LoadContext].
 type LoadContextBudgetConfig struct {
 	Assemble          AssembleCellViewOpts
 	MaxCandidateCells int // upper bound on cells considered before eviction; default 256
@@ -368,85 +367,4 @@ func attachSeams(ctx context.Context, tx TxReader, center lattice.Coord, maxR in
 	}
 	pack.Seams = seams
 	return nil
-}
-
-// LoadMultiContextPack assembles a merged [ContextPack] from multiple seed
-// coordinates under a shared token budget.
-func LoadMultiContextPack(ctx context.Context, tx TxReader, centers []lattice.Coord, maxR, maxTokens int, budgeter TokenBudgeter, assemblyCfg LoadContextBudgetConfig, deduplicateCoords bool) (ContextPack, error) {
-	if err := ctx.Err(); err != nil {
-		return ContextPack{}, err
-	}
-	if len(centers) == 0 {
-		return ContextPack{}, nil
-	}
-	if budgeter == nil {
-		budgeter = ByteLenBudgeter{}
-	}
-	if maxR <= 0 {
-		maxR = 3
-	}
-	if maxTokens <= 0 {
-		maxTokens = 8192
-	}
-
-	seen := make(map[lattice.Coord]struct{})
-	var merged []CellView
-	var allExplanations []CellExplanation
-	totalStats := ContextPackStats{}
-
-	for _, center := range centers {
-		if err := ctx.Err(); err != nil {
-			return ContextPack{}, err
-		}
-		pack, err := LoadContextWithBudgeting(ctx, tx, center, maxR, maxTokens, budgeter, assemblyCfg)
-		if err != nil {
-			return ContextPack{}, err
-		}
-		totalStats.CandidatesScanned += pack.Stats.CandidatesScanned
-		totalStats.CellsEvicted += pack.Stats.CellsEvicted
-		if pack.Stats.MaxRingUsed > totalStats.MaxRingUsed {
-			totalStats.MaxRingUsed = pack.Stats.MaxRingUsed
-		}
-		for _, cv := range pack.Cells {
-			if deduplicateCoords {
-				if _, dup := seen[cv.Coord]; dup {
-					continue
-				}
-				seen[cv.Coord] = struct{}{}
-			}
-			merged = append(merged, cv)
-		}
-		allExplanations = append(allExplanations, pack.Explanations...)
-	}
-
-	// Re-rank by Confidence descending for fair cross-seed budget eviction.
-	slices.SortFunc(merged, func(a, b CellView) int {
-		switch {
-		case a.Provenance.Confidence > b.Provenance.Confidence:
-			return -1
-		case a.Provenance.Confidence < b.Provenance.Confidence:
-			return 1
-		default:
-			return 0
-		}
-	})
-
-	used := 0
-	kept := merged[:0]
-	for _, cv := range merged {
-		tokens := budgeter.CountTokens(cv.RawContent)
-		if used+tokens > maxTokens {
-			totalStats.CellsEvicted++
-			continue
-		}
-		used += tokens
-		kept = append(kept, cv)
-	}
-
-	return ContextPack{
-		Cells:        kept,
-		Seams:        []record.SeamRecord{},
-		Explanations: allExplanations,
-		Stats:        totalStats,
-	}, nil
 }

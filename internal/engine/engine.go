@@ -35,6 +35,12 @@ type Engine struct {
 	embeddingMetric DistanceMetric
 	// pageBufPool is an instance-level pool of page-sized buffers.
 	pageBufPool sync.Pool
+	// walSize tracks the number of bytes written to the WAL since the last reset.
+	// Used to truncate to the last-written size (not zero) so the kernel retains
+	// the allocated inode blocks, avoiding fallocate on the next write.
+	walSize int64
+	// cache is the optional CLOCK-Pro page cache. Nil when disabled.
+	cache *pageCache
 	// wtxn is set between [Engine.BeginWriteTxn] and commit/abort. Not used concurrently.
 	wtxn *writeTxnState
 	// Group commit (Options.GroupWAL) — set at Open.
@@ -144,6 +150,7 @@ func Open(path string, opts *Options) (*Engine, error) {
 	}
 	if opts != nil {
 		e.groupWALCfg = opts.GroupWAL
+		e.cache = newPageCache(opts.PageCacheSize)
 	}
 	e.nextWALSeq.Store(newLast)
 	if e.groupWALCfg.Enabled {
@@ -364,6 +371,7 @@ func openValidateEmbedding(opts *Options, hdr Header) error {
 // Close releases file handles.
 func (e *Engine) Close() error {
 	e.wtxn = nil
+	e.cache = nil
 	e.stopGroupWALFlusher()
 	var errs []error
 	if e.wal != nil {
@@ -384,6 +392,15 @@ func (e *Engine) Close() error {
 
 // PageSizeInt returns the effective page size in bytes for this engine instance.
 func (e *Engine) PageSizeInt() int { return e.pageSize }
+
+// PageCacheStats returns cumulative page cache hit and miss counts.
+// Both are zero when the cache is disabled (Options.PageCacheSize == 0).
+func (e *Engine) PageCacheStats() (hits, misses int64) {
+	if e.cache == nil {
+		return 0, 0
+	}
+	return e.cache.stats()
+}
 
 func releaseNothing() {}
 
@@ -478,8 +495,19 @@ func (e *Engine) pooledTransformRead(pageID uint64, src []byte) (data []byte, re
 	return out, releaseNothing, nil
 }
 
-// readPageFromDisk reads a data page directly from the primary file.
+// readPageFromDisk reads a data page directly from the primary file, consulting
+// the page cache first when enabled.
 func (e *Engine) readPageFromDisk(pageID uint64) (data []byte, release func(), err error) {
+	// Cache check: on hit return a pooled copy so the caller's release contract is unchanged.
+	if e.cache != nil {
+		if cached := e.cache.get(pageID); cached != nil {
+			bp := e.pageBufPool.Get().(*[]byte)
+			buf := (*bp)[:e.pageSize]
+			copy(buf, cached)
+			return buf, func() { e.pageBufPool.Put(bp) }, nil
+		}
+	}
+
 	bp := e.pageBufPool.Get().(*[]byte)
 	buf := (*bp)[:e.pageSize]
 
@@ -496,6 +524,10 @@ func (e *Engine) readPageFromDisk(pageID uint64) (data []byte, release func(), e
 	if err != nil {
 		e.pageBufPool.Put(bp)
 		return nil, releaseNothing, err
+	}
+	// Populate cache with the post-transform (decrypted) bytes.
+	if e.cache != nil {
+		e.cache.set(pageID, out)
 	}
 	if sliceSameBase(out, buf) {
 		return out, func() { e.pageBufPool.Put(bp) }, nil
@@ -561,11 +593,7 @@ func (e *Engine) WritePage(pageID uint64, data []byte) error {
 // is already durable (caller must have synced the WAL). Used by [Engine.WritePage]
 // and by tests exploring batched WAL sync + sequential primary application.
 func (e *Engine) persistRedoPage(seq, pageID uint64, plain []byte) error {
-	off, err := pageByteOffset(pageID, e.pageSize)
-	if err != nil {
-		return err
-	}
-	if _, err := e.db.WriteAt(plain, off); err != nil {
+	if err := e.writePrimaryData(pageID, plain); err != nil {
 		return err
 	}
 	if err := e.syncPrimary(); err != nil {

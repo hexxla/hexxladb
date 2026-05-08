@@ -133,6 +133,48 @@ func TestBFS_maxDepth(t *testing.T) {
 	}
 }
 
+func TestEuclideanHeuristic_admissible(t *testing.T) {
+	t.Parallel()
+	// EuclideanHeuristic must never exceed HexDistanceHeuristic (which equals
+	// the true shortest path on an unweighted hex grid).
+	origin := lattice.Coord{Q: 0, R: 0}
+	candidates := lattice.WalkRings(nil, origin, 10)
+	for _, c := range candidates {
+		euc := pathfind.EuclideanHeuristic(origin, c)
+		hex := pathfind.HexDistanceHeuristic(origin, c)
+		if euc > hex+1e-9 {
+			t.Fatalf("EuclideanHeuristic(%v,%v)=%f > HexDistance=%f (not admissible)", origin, c, euc, hex)
+		}
+	}
+}
+
+func TestEuclideanHeuristic_samePathAsHex(t *testing.T) {
+	t.Parallel()
+	start := lattice.Coord{Q: 0, R: 0}
+	goal := lattice.Coord{Q: 5, R: -3}
+	pathHex := pathfind.AStar(start, goal, hexNeighbors, pathfind.UniformCost, pathfind.HexDistanceHeuristic, 0)
+	pathEuc := pathfind.AStar(start, goal, hexNeighbors, pathfind.UniformCost, pathfind.EuclideanHeuristic, 0)
+	if len(pathHex) != len(pathEuc) {
+		t.Fatalf("path lengths differ: hex=%d euc=%d", len(pathHex), len(pathEuc))
+	}
+}
+
+func BenchmarkAStar_HexDistanceHeuristic(b *testing.B) {
+	start := lattice.Coord{Q: 0, R: 0}
+	goal := lattice.Coord{Q: 20, R: -10}
+	for b.Loop() {
+		pathfind.AStar(start, goal, hexNeighbors, pathfind.UniformCost, pathfind.HexDistanceHeuristic, 0)
+	}
+}
+
+func BenchmarkAStar_EuclideanHeuristic(b *testing.B) {
+	start := lattice.Coord{Q: 0, R: 0}
+	goal := lattice.Coord{Q: 20, R: -10}
+	for b.Loop() {
+		pathfind.AStar(start, goal, hexNeighbors, pathfind.UniformCost, pathfind.EuclideanHeuristic, 0)
+	}
+}
+
 func TestAStar_restrictedNeighbors(t *testing.T) {
 	t.Parallel()
 	// Only allow specific edges (simulating EdgeRecord graph).

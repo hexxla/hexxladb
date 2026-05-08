@@ -306,6 +306,106 @@ func TestSearchCells_SpatialRadiusFilter(t *testing.T) {
 	}
 }
 
+func TestSearchCells_MultiTermQuery_BothTermsScoreHigher(t *testing.T) {
+	t.Parallel()
+	db := openSearchDB(t)
+	ctx := context.Background()
+
+	// A: content contains both "machine" and "learning".
+	// B: content contains only "machine".
+	// C: content contains neither.
+	coordA := hexxladb.Coord{Q: 0, R: 0}
+	coordB := hexxladb.Coord{Q: 1, R: 0}
+	coordC := hexxladb.Coord{Q: 2, R: 0}
+	pkA := mustPackTest(t, coordA)
+	pkB := mustPackTest(t, coordB)
+	pkC := mustPackTest(t, coordC)
+
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		if err := tx.PutCell(ctx, hexxladb.NewFactCell(pkA, "machine learning is powerful", "src", "ai", 0.8)); err != nil {
+			return err
+		}
+		if err := tx.PutCell(ctx, hexxladb.NewFactCell(pkB, "machine tools are useful", "src", "tools", 0.8)); err != nil {
+			return err
+		}
+		return tx.PutCell(ctx, hexxladb.NewFactCell(pkC, "unrelated content", "src", "other", 0.8))
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var results []hexxladb.CellSearchResult
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		var err error
+		results, err = tx.SearchCells(ctx, hexxladb.CellSearchConfig{Query: "machine learning", MaxResults: 10})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// coordC should not appear (no signal beyond confidence bonus).
+	for _, r := range results {
+		if r.Cell.Coord == coordC {
+			t.Error("coordC (no matching terms) should not appear in results")
+		}
+	}
+
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %d", len(results))
+	}
+	// A (both terms) must score higher than B (one term).
+	var scoreA, scoreB float64
+	for _, r := range results {
+		switch r.Cell.Coord {
+		case coordA:
+			scoreA = r.Score
+		case coordB:
+			scoreB = r.Score
+		}
+	}
+	if scoreA <= scoreB {
+		t.Errorf("scoreA (both terms) = %.2f should be > scoreB (one term) = %.2f", scoreA, scoreB)
+	}
+}
+
+func TestSearchCells_MultiTermQuery_TagAndContent(t *testing.T) {
+	t.Parallel()
+	db := openSearchDB(t)
+	ctx := context.Background()
+
+	// A: tag matches "go", content matches "concurrency" → two token hits.
+	// B: only content matches "go" → one token hit.
+	coordA := hexxladb.Coord{Q: 0, R: 0}
+	coordB := hexxladb.Coord{Q: 1, R: 0}
+	pkA := mustPackTest(t, coordA)
+	pkB := mustPackTest(t, coordB)
+
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		if err := tx.PutCell(ctx, hexxladb.NewFactCell(pkA, "all about concurrency", "src", "go", 0.9)); err != nil {
+			return err
+		}
+		return tx.PutCell(ctx, hexxladb.NewFactCell(pkB, "go is fast", "src", "languages", 0.9))
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var results []hexxladb.CellSearchResult
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		var err error
+		results, err = tx.SearchCells(ctx, hexxladb.CellSearchConfig{Query: "go concurrency", MaxResults: 10})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(results) < 1 {
+		t.Fatal("expected at least 1 result")
+	}
+	// A must be ranked first: tag exact match on "go" + content match on "concurrency".
+	if results[0].Cell.Coord != coordA {
+		t.Errorf("top result = %v, want coordA (tag+content match)", results[0].Cell.Coord)
+	}
+}
+
 func TestSearchCells_SortedByScore(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)

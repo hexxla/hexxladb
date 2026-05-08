@@ -46,78 +46,62 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
 	queryLow := strings.ToLower(strings.TrimSpace(q.Query))
 
 	// ── plan: choose primary scan strategy ───────────────────────────────────
-	var candidates []record.CellRecord
-	var embScores map[lattice.PackedCoord]float64 // embedding similarity per coord
-	var err error
-
-	switch {
-	case len(q.Embedding) > 0:
-		candidates, embScores, err = tx.scanByEmbedding(q.Embedding, maxResults)
-	case len(q.RequireTags) > 0:
-		candidates, err = tx.scanByTag(ctx, q.RequireTags[0], q.MaxScanRows)
-	case q.SourceID != "":
-		candidates, err = tx.scanBySource(ctx, q.SourceID, q.MaxScanRows)
-	case !q.After.IsZero() || !q.Before.IsZero():
-		candidates, err = tx.scanByTimeRange(ctx, q.After, q.Before)
-	case q.Radius > 0:
-		candidates, err = tx.scanByRadius(ctx, q.Center, q.Radius)
-	default:
-		candidates, err = tx.scanByRadius(ctx, Coord{}, defaultQueryScanRadius)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	// ── filter + score ────────────────────────────────────────────────────────
+	// The embedding path needs a scores map, so it materialises a small bounded
+	// candidate set (MaxResults×2) and falls through to the fused loop below.
+	// All other paths use a fused yield callback: filter+score happen inside the
+	// scan callback itself, so no intermediate []CellRecord slice is allocated.
 	var results []CellQueryResult
-	for _, rec := range candidates {
+	var embScores map[lattice.PackedCoord]float64
+
+	if len(q.Embedding) > 0 {
+		// Embedding: bounded ANN fetch, then fused filter+score below.
+		candidates, scores, err := tx.scanByEmbedding(q.Embedding, maxResults)
+		if err != nil {
+			return nil, err
+		}
+		embScores = scores
+		for _, rec := range candidates {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if r, ok := tx.scoreRecord(q, rec, queryLow, embScores); ok {
+				results = append(results, r)
+			}
+		}
+	} else {
+		// All other paths: fused scan — filter+score inline, no candidates slice.
+		yield := func(rec record.CellRecord) bool {
+			if ctx.Err() != nil {
+				return false
+			}
+			if r, ok := tx.scoreRecord(q, rec, queryLow, nil); ok {
+				results = append(results, r)
+			}
+			return true
+		}
+
+		var err error
+		switch {
+		case len(q.RequireTags) > 0:
+			err = tx.scanByTagFused(ctx, q.RequireTags[0], q.MaxScanRows, yield)
+		case q.SourceID != "":
+			err = tx.scanBySourceFused(ctx, q.SourceID, q.MaxScanRows, yield)
+		case !q.After.IsZero() || !q.Before.IsZero():
+			err = tx.scanByTimeRangeFused(ctx, q.After, q.Before, yield)
+		case q.Radius > 0:
+			err = tx.scanByRadiusFused(ctx, q.Center, q.Radius, q.MaxScanRows, yield)
+		default:
+			err = tx.scanByRadiusFused(ctx, Coord{}, defaultQueryScanRadius, q.MaxScanRows, yield)
+		}
+		if err != nil {
+			return nil, err
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-
-		coord, err := lattice.Unpack(rec.Key)
-		if err != nil {
-			continue
-		}
-		c := Coord(coord)
-
-		if !applyPredicates(q, rec, c, queryLow) {
-			continue
-		}
-
-		score := scoreCell(queryLow, rec.Tags, rec.RawContent, rec.Provenance.SourceID, rec.Provenance.Confidence)
-
-		// Boost score with embedding similarity when embedding scan was used.
-		if embScores != nil {
-			if es, ok := embScores[rec.Key]; ok {
-				score += es // embedding similarity added to composite score
-			}
-		}
-
-		// With a non-empty query, skip cells that scored no signal beyond the confidence bonus.
-		if queryLow != "" && embScores == nil && score <= 0.1*rec.Provenance.Confidence {
-			continue
-		}
-
-		var explanation string
-		if q.Explain {
-			explanation = buildExplanation(q, rec, c, score, queryLow)
-		}
-
-		results = append(results, CellQueryResult{
-			Cell: CellView{
-				Coord:      c,
-				RawContent: rec.RawContent,
-				Tags:       rec.Tags,
-				Provenance: rec.Provenance,
-				Validity:   rec.Validity,
-			},
-			Score:       score,
-			Explanation: explanation,
-		})
 	}
 
-	// ── sort ──────────────────────────────────────────────────────────────────
+	// ── sort (required: caller expects ordered results) ────────────────────────
 	sortResults(results, q.SortBy)
 
 	// ── limit ─────────────────────────────────────────────────────────────────
@@ -127,42 +111,90 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
 	return results, nil
 }
 
-// ── scanners ─────────────────────────────────────────────────────────────────
+// scoreRecord applies predicates, scores, and builds a CellQueryResult.
+// Returns (result, true) if the record passes all filters; (zero, false) otherwise.
+func (tx *Tx) scoreRecord(q CellQuery, rec record.CellRecord, queryLow string, embScores map[lattice.PackedCoord]float64) (CellQueryResult, bool) {
+	coord, err := lattice.Unpack(rec.Key)
+	if err != nil {
+		return CellQueryResult{}, false
+	}
+	c := Coord(coord)
 
-func (tx *Tx) scanByTag(ctx context.Context, tag string, maxScanRows int) ([]record.CellRecord, error) {
-	var recs []record.CellRecord
+	if !applyPredicates(q, rec, c, queryLow) {
+		return CellQueryResult{}, false
+	}
+
+	score := scoreCell(queryLow, rec.Tags, rec.RawContent, rec.Provenance.SourceID, rec.Provenance.Confidence)
+
+	if embScores != nil {
+		if es, ok := embScores[rec.Key]; ok {
+			score += es
+		}
+	}
+
+	if queryLow != "" && embScores == nil && score <= 0.1*rec.Provenance.Confidence {
+		return CellQueryResult{}, false
+	}
+
+	var explanation string
+	if q.Explain {
+		explanation = buildExplanation(q, rec, c, score, queryLow)
+	}
+
+	return CellQueryResult{
+		Cell: CellView{
+			Coord:      c,
+			RawContent: rec.RawContent,
+			Tags:       rec.Tags,
+			Provenance: rec.Provenance,
+			Validity:   rec.Validity,
+		},
+		Score:       score,
+		Explanation: explanation,
+	}, true
+}
+
+// ── scanners (fused: filter+score called inline, no intermediate slice) ───────
+
+// scanByTagFused walks the tag index and calls yield for each decoded record.
+// yield returning false stops the walk early.
+func (tx *Tx) scanByTagFused(ctx context.Context, tag string, maxScanRows int, yield func(record.CellRecord) bool) error {
+	scanned := 0
 	if err := tx.AscendCellsByTag(ctx, tag, func(r record.CellRecord) bool {
-		recs = append(recs, r)
-		return maxScanRows <= 0 || len(recs) < maxScanRows
+		scanned++
+		if !yield(r) {
+			return false
+		}
+		return maxScanRows <= 0 || scanned < maxScanRows
 	}); err != nil {
-		return nil, fmt.Errorf("hexxladb: QueryCells tag scan %q: %w", tag, err)
+		return fmt.Errorf("hexxladb: QueryCells tag scan %q: %w", tag, err)
 	}
-	return recs, nil
+	return nil
 }
 
-func (tx *Tx) scanBySource(ctx context.Context, sourceID string, maxScanRows int) ([]record.CellRecord, error) {
-	var recs []record.CellRecord
+// scanBySourceFused walks the source index and calls yield for each decoded record.
+func (tx *Tx) scanBySourceFused(ctx context.Context, sourceID string, maxScanRows int, yield func(record.CellRecord) bool) error {
+	scanned := 0
 	if err := tx.AscendCellsBySource(ctx, sourceID, func(r record.CellRecord) bool {
-		recs = append(recs, r)
-		return maxScanRows <= 0 || len(recs) < maxScanRows
+		scanned++
+		if !yield(r) {
+			return false
+		}
+		return maxScanRows <= 0 || scanned < maxScanRows
 	}); err != nil {
-		return nil, fmt.Errorf("hexxladb: QueryCells source scan %q: %w", sourceID, err)
+		return fmt.Errorf("hexxladb: QueryCells source scan %q: %w", sourceID, err)
 	}
-	return recs, nil
+	return nil
 }
 
-func (tx *Tx) scanByTimeRange(ctx context.Context, after, before time.Time) ([]record.CellRecord, error) {
-	// Compute week-bucket bounds for the AscendRange key span.
-	// The time/ index keys are: "time/" + int64be(bucket) + "/" + packed_coord
-	// We scan a single contiguous key range rather than iterating bucket-by-bucket.
+// scanByTimeRangeFused walks the time index and calls yield for each record in [after, before).
+func (tx *Tx) scanByTimeRangeFused(ctx context.Context, after, before time.Time, yield func(record.CellRecord) bool) error {
 	var bucketFrom, bucketTo int64
 	if !after.IsZero() {
-		// Start from the bucket containing 'after' (may hold entries just before it too —
-		// fine-grained ValidFrom check below will filter those out).
 		bucketFrom = after.UnixNano() / index.WeekNanos
 	}
 	if !before.IsZero() {
-		bucketTo = before.UnixNano()/index.WeekNanos + 1 // inclusive upper bucket
+		bucketTo = before.UnixNano()/index.WeekNanos + 1
 	} else {
 		bucketTo = 1<<62 - 1
 	}
@@ -171,7 +203,6 @@ func (tx *Tx) scanByTimeRange(ctx context.Context, after, before time.Time) ([]r
 	_, to := index.TimeRangePrefix(bucketTo)
 
 	seen := make(map[lattice.PackedCoord]struct{})
-	var recs []record.CellRecord
 
 	if err := tx.AscendRange(from, to, func(k, _ []byte) bool {
 		if ctx.Err() != nil {
@@ -189,7 +220,6 @@ func (tx *Tx) scanByTimeRange(ctx context.Context, after, before time.Time) ([]r
 		if e != nil || !ok {
 			return true
 		}
-		// Fine-grained ValidFrom check: bucket boundaries are weekly, exact bounds below.
 		if rec.Validity.ValidFrom == nil {
 			return true
 		}
@@ -200,19 +230,43 @@ func (tx *Tx) scanByTimeRange(ctx context.Context, after, before time.Time) ([]r
 		if !before.IsZero() && !vf.Before(before) {
 			return true
 		}
-		recs = append(recs, rec)
-		return true
+		return yield(rec)
 	}); err != nil {
-		return nil, fmt.Errorf("hexxladb: QueryCells time scan: %w", err)
+		return fmt.Errorf("hexxladb: QueryCells time scan: %w", err)
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return recs, nil
+	return ctx.Err()
 }
 
+// scanByRadiusFused walks rings from center up to radius using a lazy iterator
+// and calls yield for each present cell. maxScanRows=0 means unlimited.
+func (tx *Tx) scanByRadiusFused(ctx context.Context, center Coord, radius, maxScanRows int, yield func(record.CellRecord) bool) error {
+	scanned := 0
+	for cp := range lattice.WalkRingsPackedSeq(center, radius) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		rec, ok, err := tx.GetCell(cp.Packed)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		scanned++
+		if !yield(rec) {
+			return nil
+		}
+		if maxScanRows > 0 && scanned >= maxScanRows {
+			return nil
+		}
+	}
+	return nil
+}
+
+// scanByEmbedding fetches ANN candidates (bounded by MaxResults×2).
+// The embedding path is inherently bounded and needs the scores map,
+// so it keeps the small intermediate slice.
 func (tx *Tx) scanByEmbedding(vec []float32, maxResults int) ([]record.CellRecord, map[lattice.PackedCoord]float64, error) {
-	// Over-fetch 2× to leave room for post-filters to narrow down.
 	fetchK := max(maxResults*2, 20)
 	hits, err := tx.SearchByEmbedding(vec, EmbeddingSearchConfig{MaxResults: fetchK})
 	if err != nil {
@@ -229,24 +283,6 @@ func (tx *Tx) scanByEmbedding(vec []float32, maxResults int) ([]record.CellRecor
 		scores[rec.Key] = h.Score
 	}
 	return recs, scores, nil
-}
-
-func (tx *Tx) scanByRadius(ctx context.Context, center Coord, radius int) ([]record.CellRecord, error) {
-	packed := lattice.WalkRingsPacked(center, radius)
-	recs := make([]record.CellRecord, 0, len(packed))
-	for _, p := range packed {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		rec, ok, err := tx.GetCell(p)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			recs = append(recs, rec)
-		}
-	}
-	return recs, nil
 }
 
 // ── predicate pipeline ────────────────────────────────────────────────────────
@@ -369,26 +405,32 @@ func validFromNanos(cv CellView) int64 {
 
 // ── explain ───────────────────────────────────────────────────────────────────
 
-func buildExplanation(q CellQuery, rec record.CellRecord, c Coord, score float64, queryLow string) string {
+func buildExplanation(_ CellQuery, rec record.CellRecord, c Coord, score float64, queryLow string) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "coord=(%d,%d) score=%.2f conf=%.2f", c.Q, c.R, score, rec.Provenance.Confidence)
 	if queryLow != "" {
 		fmt.Fprintf(&sb, " query=%q", queryLow)
-		for _, tag := range rec.Tags {
-			tagLow := strings.ToLower(tag)
-			if tagLow == queryLow {
-				sb.WriteString(" [tag:exact]")
-			} else if strings.HasPrefix(tagLow, queryLow) {
-				sb.WriteString(" [tag:prefix]")
+		tokens := strings.Fields(queryLow)
+		contentLow := strings.ToLower(rec.RawContent)
+		sourceIDLow := strings.ToLower(rec.Provenance.SourceID)
+		for _, tok := range tokens {
+			for _, tag := range rec.Tags {
+				tagLow := strings.ToLower(tag)
+				if tagLow == tok {
+					fmt.Fprintf(&sb, " [tag:exact:%s]", tok)
+				} else if strings.HasPrefix(tagLow, tok) {
+					fmt.Fprintf(&sb, " [tag:prefix:%s]", tok)
+				}
 			}
-		}
-		if strings.Contains(rec.RawContent, q.Query) {
-			sb.WriteString(" [content:verbatim]")
-		} else if strings.Contains(strings.ToLower(rec.RawContent), queryLow) {
-			sb.WriteString(" [content:icase]")
-		}
-		if rec.Provenance.SourceID == queryLow {
-			sb.WriteString(" [source:exact]")
+			switch {
+			case strings.Contains(rec.RawContent, tok):
+				fmt.Fprintf(&sb, " [content:verbatim:%s]", tok)
+			case strings.Contains(contentLow, tok):
+				fmt.Fprintf(&sb, " [content:icase:%s]", tok)
+			}
+			if sourceIDLow == tok {
+				fmt.Fprintf(&sb, " [source:exact:%s]", tok)
+			}
 		}
 	}
 	if len(rec.Tags) > 0 {

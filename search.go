@@ -7,13 +7,12 @@ import (
 )
 
 // CellSearchConfig controls how [Tx.SearchCells] filters and scores cells.
-//
-// The API is intentionally forward-compatible: the Query field handles lexical
-// search today. A future Embedding []float32 field will be added here for
-// ANN-accelerated seed selection without breaking existing callers.
 type CellSearchConfig struct {
 	// Query is matched against RawContent (case-insensitive substring),
 	// Tags (exact and prefix, case-insensitive), and SourceID (exact).
+	// Multi-word queries are automatically tokenized on whitespace: each token
+	// is scored independently and contributions summed, so "machine learning"
+	// scores cells that contain both terms higher than cells containing only one.
 	// Empty query matches all cells (useful for pure filter/tag queries).
 	Query string
 
@@ -54,8 +53,8 @@ type CellSearchConfig struct {
 }
 
 // CellSearchResult is one entry returned by [Tx.SearchCells].
-// The Coord field can be used directly as a seed for [Tx.LoadContextPack]
-// or collected into [MultiContextConfig.Centers] for multi-seed assembly.
+// The Coord field can be used directly as a seed for [Tx.LoadContext]
+// or collected into [LoadContextConfig.Seeds] for multi-seed assembly.
 type CellSearchResult struct {
 	// Cell is the fully assembled view of the matching cell.
 	Cell CellView
@@ -70,14 +69,19 @@ type CellSearchResult struct {
 // over sort order, temporal filters, ExcludeTags, and Explain mode use
 // [Tx.QueryCells] directly.
 //
-// Scoring (contributions are additive):
-//   - Query matches a tag exactly (case-insensitive):           +1.0
-//   - Query is a prefix of a tag (case-insensitive):            +0.8
-//   - Query found verbatim in RawContent:                       +0.6
-//   - Query found case-insensitively in RawContent:             +0.5
-//   - Query matches SourceID exactly:                           +0.3
-//   - Confidence bonus:                                         +0.1 × Confidence
+// Multi-word queries are tokenized on whitespace. Each token is scored
+// independently and contributions summed. A cell matching all tokens in a
+// query scores higher than one matching only some.
 //
+// Scoring per token (contributions are additive across all tokens):
+//   - Token matches a tag exactly (case-insensitive):           +1.0
+//   - Token is a prefix of a tag (case-insensitive):            +0.8
+//   - Token found verbatim in RawContent:                       +0.6
+//   - Token found case-insensitively in RawContent:             +0.5
+//   - Token matches SourceID exactly:                           +0.3
+//   - Confidence bonus (once, not per token):                   +0.1 × Confidence
+//
+// Each tag contributes at most once per token (exact beats prefix).
 // Results are sorted descending by Score; ties broken by Confidence descending.
 // An empty Query still applies all filter fields and scores by Confidence only.
 func (tx *Tx) SearchCells(ctx context.Context, cfg CellSearchConfig) ([]CellSearchResult, error) {
@@ -116,38 +120,51 @@ func (tx *Tx) SearchCells(ctx context.Context, cfg CellSearchConfig) ([]CellSear
 	return out, nil
 }
 
-// scoreCell computes a composite relevance score for a cell given a lower-cased query.
+// scoreCell computes a composite relevance score for a cell.
+// queryLow is the full query string already lower-cased; it is tokenized on
+// whitespace so that multi-word queries score each token independently and
+// sum contributions. A cell matching all tokens scores higher than one
+// matching only some.
 func scoreCell(queryLow string, tags []string, content, sourceID string, confidence float64) float64 {
-	score := 0.1 * confidence // baseline confidence bonus
+	score := 0.1 * confidence // baseline confidence bonus (applied once)
 
 	if queryLow == "" {
 		return score
 	}
 
+	tokens := strings.Fields(queryLow)
 	contentLow := strings.ToLower(content)
+	sourceIDLow := strings.ToLower(sourceID)
 
-	// Tag scoring.
-	for _, tag := range tags {
-		tagLow := strings.ToLower(tag)
-		switch {
-		case tagLow == queryLow:
-			score += 1.0
-		case strings.HasPrefix(tagLow, queryLow):
-			score += 0.8
+	// Pre-lowercase tags once.
+	tagsLow := make([]string, len(tags))
+	for i, t := range tags {
+		tagsLow[i] = strings.ToLower(t)
+	}
+
+	for _, tok := range tokens {
+		// Tag scoring: each tag scores at most once per token (exact beats prefix).
+		for _, tagLow := range tagsLow {
+			switch {
+			case tagLow == tok:
+				score += 1.0
+			case strings.HasPrefix(tagLow, tok):
+				score += 0.8
+			}
 		}
-	}
 
-	// Content scoring: verbatim first, then case-insensitive.
-	switch {
-	case strings.Contains(content, queryLow):
-		score += 0.6
-	case strings.Contains(contentLow, queryLow):
-		score += 0.5
-	}
+		// Content scoring: verbatim match scores higher than case-insensitive.
+		switch {
+		case strings.Contains(content, tok):
+			score += 0.6
+		case strings.Contains(contentLow, tok):
+			score += 0.5
+		}
 
-	// Source ID exact match.
-	if sourceID == queryLow {
-		score += 0.3
+		// Source ID exact match per token.
+		if sourceIDLow == tok {
+			score += 0.3
+		}
 	}
 
 	return score

@@ -133,6 +133,139 @@ func TestFieldOfView_offCenter(t *testing.T) {
 	}
 }
 
+func TestFieldOfViewShadowcast_symmetry(t *testing.T) {
+	t.Parallel()
+	origin := lattice.Coord{Q: 0, R: 0}
+	// Scattered obstacles at various positions.
+	obstacles := map[lattice.Coord]bool{
+		{Q: 2, R: -1}: true,
+		{Q: -1, R: 2}: true,
+		{Q: 0, R: 3}:  true,
+		{Q: 3, R: -3}: true,
+	}
+	opaque := func(c lattice.Coord) bool { return obstacles[c] }
+
+	visible := lattice.FieldOfViewShadowcast(origin, 5, opaque)
+	visSet := make(map[lattice.Coord]struct{}, len(visible))
+	for _, c := range visible {
+		visSet[c] = struct{}{}
+	}
+
+	// For every non-opaque visible cell A, A must also see origin.
+	for _, a := range visible {
+		if opaque(a) {
+			continue
+		}
+		aVisible := lattice.FieldOfViewShadowcast(a, 5, opaque)
+		aSet := make(map[lattice.Coord]struct{}, len(aVisible))
+		for _, c := range aVisible {
+			aSet[c] = struct{}{}
+		}
+		if _, ok := aSet[origin]; !ok {
+			t.Fatalf("symmetry violated: origin sees %v but %v does not see origin", a, a)
+		}
+	}
+}
+
+func TestFieldOfViewShadowcast_openRegressionVsRaycast(t *testing.T) {
+	t.Parallel()
+	origin := lattice.Coord{Q: 0, R: 0}
+	noOpaque := func(lattice.Coord) bool { return false }
+
+	for r := 0; r <= 5; r++ {
+		shadow := lattice.FieldOfViewShadowcast(origin, r, noOpaque)
+		ray := lattice.FieldOfViewRaycast(origin, r, noOpaque)
+		if len(shadow) != len(ray) {
+			t.Fatalf("r=%d: shadowcast=%d raycasting=%d", r, len(shadow), len(ray))
+		}
+		raySet := make(map[lattice.Coord]struct{}, len(ray))
+		for _, c := range ray {
+			raySet[c] = struct{}{}
+		}
+		for _, c := range shadow {
+			if _, ok := raySet[c]; !ok {
+				t.Fatalf("r=%d: shadowcast cell %v missing from raycasting", r, c)
+			}
+		}
+	}
+}
+
+func TestFieldOfViewShadowcast_pillarShadow(t *testing.T) {
+	t.Parallel()
+	origin := lattice.Coord{Q: 0, R: 0}
+	pillar := lattice.Coord{Q: 2, R: 0}
+	opaque := func(c lattice.Coord) bool { return c == pillar }
+
+	visible := lattice.FieldOfViewShadowcast(origin, 5, opaque)
+	visSet := make(map[lattice.Coord]struct{}, len(visible))
+	for _, c := range visible {
+		visSet[c] = struct{}{}
+	}
+
+	// Pillar itself must be visible.
+	if _, ok := visSet[pillar]; !ok {
+		t.Fatal("pillar should be visible")
+	}
+	// Cell directly behind pillar must be blocked.
+	behind := lattice.Coord{Q: 3, R: 0}
+	if _, ok := visSet[behind]; ok {
+		t.Fatalf("cell %v directly behind pillar should be blocked", behind)
+	}
+	// Cells well off to the side should not be blocked.
+	side := lattice.Coord{Q: 3, R: -2}
+	if _, ok := visSet[side]; !ok {
+		t.Fatalf("cell %v off to side should be visible", side)
+	}
+}
+
+func TestFieldOfViewShadowcast_countOpen(t *testing.T) {
+	t.Parallel()
+	origin := lattice.Coord{Q: 0, R: 0}
+	noOpaque := func(lattice.Coord) bool { return false }
+	for r := 0; r <= 8; r++ {
+		got := lattice.FieldOfViewShadowcast(origin, r, noOpaque)
+		want := 1 + 3*r*(r+1)
+		if len(got) != want {
+			t.Fatalf("r=%d: got %d cells, want %d (ball formula)", r, len(got), want)
+		}
+	}
+}
+
+func BenchmarkFieldOfViewShadowcast(b *testing.B) {
+	origin := lattice.Coord{Q: 0, R: 0}
+	noOpaque := func(lattice.Coord) bool { return false }
+	b.Run("r10", func(b *testing.B) {
+		for b.Loop() {
+			lattice.FieldOfViewShadowcast(origin, 10, noOpaque)
+		}
+	})
+	b.Run("r20", func(b *testing.B) {
+		for b.Loop() {
+			lattice.FieldOfViewShadowcast(origin, 20, noOpaque)
+		}
+	})
+	b.Run("r50", func(b *testing.B) {
+		for b.Loop() {
+			lattice.FieldOfViewShadowcast(origin, 50, noOpaque)
+		}
+	})
+}
+
+func BenchmarkFieldOfViewRaycast(b *testing.B) {
+	origin := lattice.Coord{Q: 0, R: 0}
+	noOpaque := func(lattice.Coord) bool { return false }
+	b.Run("r10", func(b *testing.B) {
+		for b.Loop() {
+			lattice.FieldOfViewRaycast(origin, 10, noOpaque)
+		}
+	})
+	b.Run("r20", func(b *testing.B) {
+		for b.Loop() {
+			lattice.FieldOfViewRaycast(origin, 20, noOpaque)
+		}
+	})
+}
+
 func TestHexLine_samePoint(t *testing.T) {
 	t.Parallel()
 	line := lattice.HexLine(lattice.Coord{Q: 3, R: 2}, lattice.Coord{Q: 3, R: 2})

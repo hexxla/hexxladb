@@ -1,5 +1,7 @@
 package lattice
 
+import "iter"
+
 // WalkRingsPacked generates coordinates for rings 0..maxR from center and packs
 // each into a PackedCoord. Returns the packed coords in ring order (center first,
 // then ring 1, ring 2, etc). Coords that fall outside the packable range are
@@ -52,4 +54,38 @@ func WalkRingsCoordPacked(center Coord, maxR int) []CoordPacked {
 type CoordPacked struct {
 	Coord  Coord
 	Packed PackedCoord
+}
+
+// WalkRingsPackedSeq returns a lazy iterator over (Coord, PackedCoord) pairs for
+// rings 0..maxR from center. Coords outside the packable range are silently skipped.
+// No backing slice is allocated; callers may break early for budget-bounded walks.
+func WalkRingsPackedSeq(center Coord, maxR int) iter.Seq[CoordPacked] {
+	return func(yield func(CoordPacked) bool) {
+		for c := range WalkRingsSeq(center, maxR) {
+			p, err := Pack(c)
+			if err != nil {
+				continue
+			}
+			if !yield(CoordPacked{Coord: c, Packed: p}) {
+				return
+			}
+		}
+	}
+}
+
+// SpiralRangePackedSeq returns a lazy iterator over (Coord, PackedCoord) pairs for
+// rings [minR, maxR] from center. Coords outside the packable range are silently skipped.
+// No backing slice is allocated; callers may break early.
+func SpiralRangePackedSeq(center Coord, minR, maxR int) iter.Seq[CoordPacked] {
+	return func(yield func(CoordPacked) bool) {
+		for c := range SpiralRangeSeq(center, minR, maxR) {
+			p, err := Pack(c)
+			if err != nil {
+				continue
+			}
+			if !yield(CoordPacked{Coord: c, Packed: p}) {
+				return
+			}
+		}
+	}
 }
