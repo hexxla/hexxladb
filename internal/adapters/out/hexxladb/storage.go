@@ -146,17 +146,17 @@ func (s *Storage) FindSeamsAt(ctx context.Context, center lattice.Coord, radius 
 	})
 }
 
-// LoadContext implements [domain.Storage].
-func (s *Storage) LoadContext(ctx context.Context, center lattice.Coord, maxR, maxCells int) ([]record.CellRecord, error) {
+// ScanContextRaw implements [domain.Storage].
+func (s *Storage) ScanContextRaw(ctx context.Context, center lattice.Coord, maxR, maxCells int) ([]record.CellRecord, error) {
 	return viewPair(s, func(tx *hxdb.Tx) ([]record.CellRecord, error) {
-		return tx.LoadContext(ctx, center, maxR, maxCells)
+		return tx.ScanContextRaw(ctx, center, maxR, maxCells)
 	})
 }
 
-// LoadContextAt implements [domain.Storage].
-func (s *Storage) LoadContextAt(ctx context.Context, center lattice.Coord, maxR, maxCells int, asOf time.Time) ([]record.CellRecord, error) {
+// ScanContextAtRaw implements [domain.Storage].
+func (s *Storage) ScanContextAtRaw(ctx context.Context, center lattice.Coord, maxR, maxCells int, asOf time.Time) ([]record.CellRecord, error) {
 	return viewPair(s, func(tx *hxdb.Tx) ([]record.CellRecord, error) {
-		return tx.LoadContextAt(ctx, center, maxR, maxCells, asOf)
+		return tx.ScanContextAtRaw(ctx, center, maxR, maxCells, asOf)
 	})
 }
 

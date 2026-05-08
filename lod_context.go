@@ -35,8 +35,8 @@ func (cfg *LODContextConfig) withDefaults() {
 // only the coarsened parent coordinate is queried, dramatically reducing
 // lookups for large radii while preserving nearby detail.
 //
-// This is useful for large-radius context loading where distant cells are
-// less important and can be represented at lower density.
+// Deprecated: use [Tx.LoadContext] — it automatically applies LOD when MaxRing >= 10
+// with a single seed, returning a fully assembled [ContextPack] instead of raw [CellRecord] values.
 func (tx *Tx) LoadContextLOD(ctx context.Context, center Coord, maxR int, cfg LODContextConfig) ([]CellRecord, error) {
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed

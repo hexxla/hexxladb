@@ -289,7 +289,7 @@ func BenchmarkAPI_LoadContext(b *testing.B) {
 				var cells []record.CellRecord
 				err := db.View(func(tx *hexxladb.Tx) error {
 					var inner error
-					cells, inner = tx.LoadContext(ctx, center, 3, 50)
+					cells, inner = tx.ScanContextRaw(ctx, center, 3, 50)
 					return inner
 				})
 				if err != nil {
@@ -326,7 +326,7 @@ func BenchmarkAPI_LoadContextAt(b *testing.B) {
 				var cells []record.CellRecord
 				err := db.View(func(tx *hexxladb.Tx) error {
 					var inner error
-					cells, inner = tx.LoadContextAt(ctx, center, 3, 50, asOf)
+					cells, inner = tx.ScanContextAtRaw(ctx, center, 3, 50, asOf)
 					return inner
 				})
 				if err != nil {

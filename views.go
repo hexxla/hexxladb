@@ -88,6 +88,8 @@ func (tx *Tx) AssembleCellView(ctx context.Context, coord Coord, asOf *time.Time
 // LoadContextWithBudgeting walks rings from center, builds [CellView] values,
 // then applies HEXXLA.md-style eviction: drop lowest-confidence cells from the
 // outermost ring first until within maxTokens (or no progress).
+//
+// Deprecated: use [Tx.LoadContext] with a [LoadContextConfig] instead.
 func (tx *Tx) LoadContextWithBudgeting(ctx context.Context, center Coord, maxR, maxTokens int, budgeter TokenBudgeter, cfg LoadContextBudgetConfig) (ContextPack, error) {
 	if tx == nil || tx.db == nil {
 		return ContextPack{}, ErrClosed
@@ -101,19 +103,16 @@ func (tx *Tx) LoadContextWithBudgeting(ctx context.Context, center Coord, maxR, 
 
 // LoadContextPack matches HEXXLA.md naming for token-capped neighbourhoods;
 // it forwards to [Tx.LoadContextWithBudgeting].
+//
+// Deprecated: use [Tx.LoadContext] with a [LoadContextConfig] instead.
 func (tx *Tx) LoadContextPack(ctx context.Context, center Coord, maxR, maxTokens int, budgeter TokenBudgeter, cfg LoadContextBudgetConfig) (ContextPack, error) {
 	return tx.LoadContextWithBudgeting(ctx, center, maxR, maxTokens, budgeter, cfg)
 }
 
 // LoadContextPackFrom is a unified entry point for one or many seed coordinates.
 //
-// When a single coord is provided it delegates to [Tx.LoadContextPack] directly (no overhead).
-// When multiple coords are provided it delegates to [Tx.LoadMultiContextPack] with
-// [MultiContextConfig.DeduplicateCoords] enabled so shared neighbourhood cells are not double-counted.
-//
-// Typical usage — feed top-N results from [Tx.SearchCells] without switching APIs:
-//
-//	pack, err := tx.LoadContextPackFrom(ctx, maxR, maxTokens, budgeter, assemblyCfg, coords...)
+// Deprecated: use [Tx.LoadContext] with a [LoadContextConfig] instead; pass multiple
+// coords via [LoadContextConfig.Seeds].
 func (tx *Tx) LoadContextPackFrom(ctx context.Context, maxR, maxTokens int, budgeter TokenBudgeter, cfg LoadContextBudgetConfig, centers ...Coord) (ContextPack, error) {
 	switch len(centers) {
 	case 0:

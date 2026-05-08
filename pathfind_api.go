@@ -48,7 +48,8 @@ func (tx *Tx) WalkEdges(ctx context.Context, start Coord, filter string, maxHops
 // with spatial locality — cells reachable via edges are preferred over
 // blind spatial expansion.
 //
-// maxHops is the maximum edge traversal depth; maxCells caps the result set.
+// Deprecated: use [Tx.LoadContext] with [LoadContextConfig.EdgeFilter] set \u2014
+// returns a fully assembled [ContextPack] with [CellView] values instead of raw [CellRecord] values.
 func (tx *Tx) LoadContextByEdges(ctx context.Context, center Coord, filter string, maxHops, maxCells int) ([]CellRecord, error) {
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
@@ -83,6 +84,13 @@ func (tx *Tx) LoadContextByEdges(ctx context.Context, center Coord, filter strin
 		}
 	}
 	return out, nil
+}
+
+// WalkEdgeCoords performs BFS from start following edges matching filter,
+// up to maxHops depth and maxCoords total. It satisfies [views.TxEdgeWalker]
+// so *Tx can be passed to [views.LoadContext] when EdgeFilter is set.
+func (tx *Tx) WalkEdgeCoords(ctx context.Context, start Coord, filter string, maxHops, maxCoords int) ([]Coord, error) {
+	return tx.WalkEdges(ctx, start, filter, maxHops, maxCoords)
 }
 
 // edgeNeighborFunc returns a NeighborFunc that resolves neighbors via edge records.

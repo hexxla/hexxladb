@@ -178,7 +178,7 @@ func TestTx_LoadContextAt_maxCellsAfterFilter(t *testing.T) {
 	var out []record.CellRecord
 	err = db.View(func(tx *hexxladb.Tx) error {
 		var inner error
-		out, inner = tx.LoadContextAt(ctx, center, 1, 10, asOf)
+		out, inner = tx.ScanContextAtRaw(ctx, center, 1, 10, asOf)
 		return inner
 	})
 	if err != nil {
@@ -191,7 +191,7 @@ func TestTx_LoadContextAt_maxCellsAfterFilter(t *testing.T) {
 	var out2 []record.CellRecord
 	err = db.View(func(tx *hexxladb.Tx) error {
 		var inner error
-		out2, inner = tx.LoadContextAt(ctx, center, 1, 1, asOf)
+		out2, inner = tx.ScanContextAtRaw(ctx, center, 1, 1, asOf)
 		return inner
 	})
 	if err != nil {

@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
@@ -369,12 +370,6 @@ func attachSeams(ctx context.Context, tx TxReader, center lattice.Coord, maxR in
 	return nil
 }
 
-// LoadContextPack is an alias for [LoadContextWithBudgeting] matching the
-// HEXXLA.md naming for token-capped neighbourhoods.
-func LoadContextPack(ctx context.Context, tx TxReader, center lattice.Coord, maxR, maxTokens int, budgeter TokenBudgeter, cfg LoadContextBudgetConfig) (ContextPack, error) {
-	return LoadContextWithBudgeting(ctx, tx, center, maxR, maxTokens, budgeter, cfg)
-}
-
 // LoadMultiContextPack assembles a merged [ContextPack] from multiple seed
 // coordinates under a shared token budget.
 func LoadMultiContextPack(ctx context.Context, tx TxReader, centers []lattice.Coord, maxR, maxTokens int, budgeter TokenBudgeter, assemblyCfg LoadContextBudgetConfig, deduplicateCoords bool) (ContextPack, error) {
@@ -403,7 +398,7 @@ func LoadMultiContextPack(ctx context.Context, tx TxReader, centers []lattice.Co
 		if err := ctx.Err(); err != nil {
 			return ContextPack{}, err
 		}
-		pack, err := LoadContextPack(ctx, tx, center, maxR, maxTokens, budgeter, assemblyCfg)
+		pack, err := LoadContextWithBudgeting(ctx, tx, center, maxR, maxTokens, budgeter, assemblyCfg)
 		if err != nil {
 			return ContextPack{}, err
 		}
@@ -425,7 +420,16 @@ func LoadMultiContextPack(ctx context.Context, tx TxReader, centers []lattice.Co
 	}
 
 	// Re-rank by Confidence descending for fair cross-seed budget eviction.
-	sortByConfidenceDesc(merged)
+	slices.SortFunc(merged, func(a, b CellView) int {
+		switch {
+		case a.Provenance.Confidence > b.Provenance.Confidence:
+			return -1
+		case a.Provenance.Confidence < b.Provenance.Confidence:
+			return 1
+		default:
+			return 0
+		}
+	})
 
 	used := 0
 	kept := merged[:0]
@@ -445,13 +449,4 @@ func LoadMultiContextPack(ctx context.Context, tx TxReader, centers []lattice.Co
 		Explanations: allExplanations,
 		Stats:        totalStats,
 	}, nil
-}
-
-func sortByConfidenceDesc(vs []CellView) {
-	n := len(vs)
-	for i := 1; i < n; i++ {
-		for j := i; j > 0 && vs[j].Provenance.Confidence > vs[j-1].Provenance.Confidence; j-- {
-			vs[j], vs[j-1] = vs[j-1], vs[j]
-		}
-	}
 }

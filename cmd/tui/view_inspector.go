@@ -98,17 +98,20 @@ func loadContextPack(db *hexxladb.DB, coord hexxladb.Coord) (hexxladb.ContextPac
 	var pack hexxladb.ContextPack
 	err := db.View(func(tx *hexxladb.Tx) error {
 		var e error
-		pack, e = tx.LoadContextPack(
+		pack, e = tx.LoadContext(
 			context.Background(),
-			coord, 3, 8192,
-			hexxladb.ByteLenBudgeter{},
-			hexxladb.LoadContextBudgetConfig{
-				Assemble:          hexxladb.DefaultAssembleCellViewOpts(),
-				MaxCandidateCells: 128,
-				IncludeSeams:      true,
-				SeamRadius:        2,
-				FilterSuperseded:  true,
-				Explain:           true,
+			hexxladb.LoadContextConfig{
+				Seeds:     []hexxladb.Coord{coord},
+				MaxRing:   3,
+				MaxTokens: 8192,
+				Assembly: hexxladb.LoadContextBudgetConfig{
+					Assemble:          hexxladb.DefaultAssembleCellViewOpts(),
+					MaxCandidateCells: 128,
+					IncludeSeams:      true,
+					SeamRadius:        2,
+					FilterSuperseded:  true,
+					Explain:           true,
+				},
 			},
 		)
 		return e

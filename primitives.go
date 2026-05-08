@@ -514,10 +514,9 @@ func (tx *Tx) collectSeamFind(out *[]record.SeamRecord, seen map[string]struct{}
 	return nil
 }
 
-// LoadContext walks concentric rings from center (same order as [WalkRings]) and
-// collects up to maxCells existing cell records. maxR is the maximum ring index
-// (inclusive). maxCells must be positive.
-func (tx *Tx) LoadContext(ctx context.Context, center lattice.Coord, maxR, maxCells int) ([]record.CellRecord, error) {
+// ScanContextRaw walks concentric rings from center and collects up to maxCells
+// existing cell records. Raw primitive; prefer [Tx.LoadContext] for new callers.
+func (tx *Tx) ScanContextRaw(ctx context.Context, center lattice.Coord, maxR, maxCells int) ([]record.CellRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -556,9 +555,9 @@ func (tx *Tx) LoadContext(ctx context.Context, center lattice.Coord, maxR, maxCe
 	return out, nil
 }
 
-// LoadContextAt is like [Tx.LoadContext] but only includes cells whose [record.ValidityWire]
-// contains asOf (UTC), using the same semantics as [record.ValidAt]. maxCells applies after filtering.
-func (tx *Tx) LoadContextAt(ctx context.Context, center lattice.Coord, maxR, maxCells int, asOf time.Time) ([]record.CellRecord, error) {
+// ScanContextAtRaw is like [Tx.ScanContextRaw] but skips cells whose validity does not contain asOf.
+// Raw primitive; prefer [Tx.LoadContext] with AsOf field for new callers.
+func (tx *Tx) ScanContextAtRaw(ctx context.Context, center lattice.Coord, maxR, maxCells int, asOf time.Time) ([]record.CellRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

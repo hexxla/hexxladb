@@ -316,13 +316,17 @@ func run(dbPath string) error {
 	printNote("Ideal for large-radius context where distant cells need less detail.")
 	fmt.Println()
 
-	var lodCells []record.CellRecord
+	var lodPack hexxladb.ContextPack
 	err = db.View(func(tx *hexxladb.Tx) error {
 		var e error
-		lodCells, e = tx.LoadContextLOD(ctx, center, 6, hexxladb.LODContextConfig{
-			FineRadius:   2,
-			CoarseFactor: 2,
-			MaxCells:     100,
+		lodPack, e = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds:     []hexxladb.Coord{center},
+			MaxRing:   12,
+			MaxTokens: 100 * 64,
+			Assembly: hexxladb.LoadContextBudgetConfig{
+				Assemble:          hexxladb.DefaultAssembleCellViewOpts(),
+				MaxCandidateCells: 100,
+			},
 		})
 		return e
 	})
@@ -333,14 +337,13 @@ func run(dbPath string) error {
 	printMetric("Max radius", 6, "rings")
 	printMetric("Fine radius", 2, "rings (full resolution)")
 	printMetric("Coarse factor", 2, "(outer rings sampled at 1/4 density)")
-	printMetric("LOD cells loaded", len(lodCells), "")
+	printMetric("LOD cells loaded", len(lodPack.Cells), "")
 	fmt.Println()
 
 	_, _ = infoStyle.Println("  LOD cells by distance from center:")
 	ringBuckets := map[int]int{}
-	for _, rec := range lodCells {
-		c, _ := lattice.Unpack(rec.Key)
-		d := center.Distance(c)
+	for _, cv := range lodPack.Cells {
+		d := center.Distance(cv.Coord)
 		ringBuckets[d]++
 	}
 	for d := range 7 {
@@ -472,24 +475,29 @@ func run(dbPath string) error {
 	// Edge-based context loading
 	printStep("LoadContextByEdges — graph-aware context")
 	if len(cells) > 0 {
-		var edgeCells []record.CellRecord
+		var edgePack hexxladb.ContextPack
 		err = db.View(func(tx *hexxladb.Tx) error {
 			var e error
-			edgeCells, e = tx.LoadContextByEdges(ctx, center, "", 4, 30)
+			edgePack, e = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+				Seeds:      []hexxladb.Coord{center},
+				EdgeFilter: "",
+				MaxHops:    4,
+				MaxTokens:  30 * 64,
+				Assembly:   hexxladb.LoadContextBudgetConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
+			})
 			return e
 		})
 		if err != nil {
 			return fmt.Errorf("edge context: %w", err)
 		}
-		printMetric("Edge-connected cells", len(edgeCells), "")
-		for i, rec := range edgeCells {
+		printMetric("Edge-connected cells", len(edgePack.Cells), "")
+		for i, cv := range edgePack.Cells {
 			if i >= 5 {
-				_, _ = dimStyle.Printf("    ⋯  (%d more)\n", len(edgeCells)-5)
+				_, _ = dimStyle.Printf("    ⋯  (%d more)\n", len(edgePack.Cells)-5)
 				break
 			}
-			c, _ := lattice.Unpack(rec.Key)
-			_, _ = dimStyle.Printf("    [%d] (%d,%d) ", i+1, c.Q, c.R)
-			_, _ = dataStyle.Printf("%s\n", trunc(rec.RawContent, 45))
+			_, _ = dimStyle.Printf("    [%d] (%d,%d) ", i+1, cv.Coord.Q, cv.Coord.R)
+			_, _ = dataStyle.Printf("%s\n", trunc(cv.RawContent, 45))
 		}
 	}
 	fmt.Println()
@@ -516,9 +524,15 @@ func run(dbPath string) error {
 	})
 
 	// Edge context
-	var edgeCtxCells []record.CellRecord
+	var edgeCtxPack hexxladb.ContextPack
 	_ = db.View(func(tx *hexxladb.Tx) error {
-		edgeCtxCells, _ = tx.LoadContextByEdges(ctx, center, "", 5, 200)
+		edgeCtxPack, _ = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds:      []hexxladb.Coord{center},
+			EdgeFilter: "",
+			MaxHops:    5,
+			MaxTokens:  200 * 64,
+			Assembly:   hexxladb.LoadContextBudgetConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
+		})
 		return nil
 	})
 
@@ -532,9 +546,9 @@ func run(dbPath string) error {
 	}{
 		{"Radial (blind)", len(radialCells), "All occupied cells within radius — baseline"},
 		{"FOV (visibility)", len(fovCells), "LOS-filtered — skips occluded cells"},
-		{"LOD (multi-res)", len(lodCells), "Fine inner + coarse outer — fewer lookups"},
+		{"LOD (multi-res)", len(lodPack.Cells), "Fine inner + coarse outer — fewer lookups"},
 		{"Voronoi (4 seeds)", totalVoronoi, "Non-overlapping regions — fair budget split"},
-		{"Edge-walk (graph)", len(edgeCtxCells), "BFS over edges — follows connections"},
+		{"Edge-walk (graph)", len(edgeCtxPack.Cells), "BFS over edges — follows connections"},
 	}
 
 	maxCount := 0

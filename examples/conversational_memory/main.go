@@ -288,10 +288,15 @@ func run(dbPath string) error {
 	var packWithStale hexxladb.ContextPack
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		packWithStale, err = tx.LoadContextPack(ctx, center, 3, 10000, hexxladb.ByteLenBudgeter{}, hexxladb.LoadContextBudgetConfig{
-			Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
-			FilterSuperseded: false,
-			Explain:          true,
+		packWithStale, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds:     []hexxladb.Coord{center},
+			MaxRing:   3,
+			MaxTokens: 10000,
+			Assembly: hexxladb.LoadContextBudgetConfig{
+				Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
+				FilterSuperseded: false,
+				Explain:          true,
+			},
 		})
 		return err
 	}); err != nil {
@@ -302,10 +307,15 @@ func run(dbPath string) error {
 	var packFiltered hexxladb.ContextPack
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		packFiltered, err = tx.LoadContextPack(ctx, center, 3, 10000, hexxladb.ByteLenBudgeter{}, hexxladb.LoadContextBudgetConfig{
-			Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
-			FilterSuperseded: true,
-			Explain:          true,
+		packFiltered, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds:     []hexxladb.Coord{center},
+			MaxRing:   3,
+			MaxTokens: 10000,
+			Assembly: hexxladb.LoadContextBudgetConfig{
+				Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
+				FilterSuperseded: true,
+				Explain:          true,
+			},
 		})
 		return err
 	}); err != nil {
@@ -408,7 +418,12 @@ func run(dbPath string) error {
 	var pack hexxladb.ContextPack
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		pack, err = tx.LoadContextPackFrom(ctx, 3, budget, hexxladb.ByteLenBudgeter{}, assemblyCfg, assemblySeeds...)
+		pack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds:     assemblySeeds,
+			MaxRing:   3,
+			MaxTokens: budget,
+			Assembly:  assemblyCfg,
+		})
 		return err
 	}); err != nil {
 		return fmt.Errorf("load context pack from: %w", err)
@@ -644,7 +659,7 @@ func run(dbPath string) error {
 
 		var historicalCount int
 		err = db.ViewAt(snapshotSeq, func(tx *hexxladb.Tx) error {
-			histCells, err := tx.LoadContext(ctx, center, 3, 50)
+			histCells, err := tx.ScanContextRaw(ctx, center, 3, 50)
 			historicalCount = len(histCells)
 			return err
 		})
@@ -805,8 +820,12 @@ func run(dbPath string) error {
 		var multiPack hexxladb.ContextPack
 		if err := db.View(func(tx *hexxladb.Tx) error {
 			var err error
-			multiPack, err = tx.LoadContextPackFrom(ctx, 2, sharedBudget,
-				hexxladb.ByteLenBudgeter{}, multiCfg, seeds...)
+			multiPack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+				Seeds:     seeds,
+				MaxRing:   2,
+				MaxTokens: sharedBudget,
+				Assembly:  multiCfg,
+			})
 			return err
 		}); err != nil {
 			return fmt.Errorf("load context pack from: %w", err)
@@ -1338,23 +1357,28 @@ func run(dbPath string) error {
 	printSubHeader("Step 4 — LoadContextByEdges (graph-aware context)")
 	if len(cells) > 0 {
 		edgeCenter := cells[0]
-		var edgeCells []record.CellRecord
+		var edgePack hexxladb.ContextPack
 		if err := db.View(func(tx *hexxladb.Tx) error {
 			var err error
-			edgeCells, err = tx.LoadContextByEdges(ctx, edgeCenter, "", 3, 20)
+			edgePack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+				Seeds:      []hexxladb.Coord{edgeCenter},
+				EdgeFilter: "",
+				MaxHops:    3,
+				MaxTokens:  20 * 64,
+				Assembly:   hexxladb.LoadContextBudgetConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
+			})
 			return err
 		}); err != nil {
 			return fmt.Errorf("load context by edges: %w", err)
 		}
-		printMetric("Edge-connected context cells", len(edgeCells), "cells")
-		for i, rec := range edgeCells {
+		printMetric("Edge-connected context cells", len(edgePack.Cells), "cells")
+		for i, cv := range edgePack.Cells {
 			if i >= 5 {
-				_, _ = dimStyle.Printf("    ⋯  (%d more not shown)\n", len(edgeCells)-5)
+				_, _ = dimStyle.Printf("    ⋯  (%d more not shown)\n", len(edgePack.Cells)-5)
 				break
 			}
-			c, _ := lattice.Unpack(rec.Key)
-			_, _ = dimStyle.Printf("    [%d] (%d,%d) ", i+1, c.Q, c.R)
-			_, _ = dataStyle.Printf("%s\n", truncate(rec.RawContent, 50))
+			_, _ = dimStyle.Printf("    [%d] (%d,%d) ", i+1, cv.Coord.Q, cv.Coord.R)
+			_, _ = dataStyle.Printf("%s\n", truncate(cv.RawContent, 50))
 		}
 	}
 	fmt.Println()

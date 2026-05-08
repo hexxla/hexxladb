@@ -120,20 +120,20 @@ func (s *Service) FindSeamsAt(ctx context.Context, center lattice.Coord, radius 
 	return s.Storage.FindSeamsAt(ctx, center, radius, unresolvedOnly, asOf)
 }
 
-// LoadContext assembles a concentric context around center via [domain.Storage].
-func (s *Service) LoadContext(ctx context.Context, center lattice.Coord, maxR, maxCells int) ([]record.CellRecord, error) {
+// ScanContextRaw assembles a concentric context around center via [domain.Storage].
+func (s *Service) ScanContextRaw(ctx context.Context, center lattice.Coord, maxR, maxCells int) ([]record.CellRecord, error) {
 	if s == nil || s.Storage == nil {
 		return nil, ErrNoStorage
 	}
-	return s.Storage.LoadContext(ctx, center, maxR, maxCells)
+	return s.Storage.ScanContextRaw(ctx, center, maxR, maxCells)
 }
 
-// LoadContextAt assembles a context with a validity filter via [domain.Storage].
-func (s *Service) LoadContextAt(ctx context.Context, center lattice.Coord, maxR, maxCells int, asOf time.Time) ([]record.CellRecord, error) {
+// ScanContextAtRaw assembles a context with a validity filter via [domain.Storage].
+func (s *Service) ScanContextAtRaw(ctx context.Context, center lattice.Coord, maxR, maxCells int, asOf time.Time) ([]record.CellRecord, error) {
 	if s == nil || s.Storage == nil {
 		return nil, ErrNoStorage
 	}
-	return s.Storage.LoadContextAt(ctx, center, maxR, maxCells, asOf)
+	return s.Storage.ScanContextAtRaw(ctx, center, maxR, maxCells, asOf)
 }
 
 // WalkRingFacets visits facets on a ring via [domain.Storage].

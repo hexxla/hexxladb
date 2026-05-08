@@ -9,9 +9,7 @@ import (
 // MultiContextConfig controls how [Tx.LoadMultiContextPack] assembles a merged
 // [ContextPack] from multiple seed coordinates.
 //
-// A typical usage pattern is to pass the top-N [CellSearchResult.Cell.Coord]
-// values from [Tx.SearchCells] as Centers, then let LoadMultiContextPack
-// expand each seed's neighbourhood and merge into a single budget-bounded pack.
+// Deprecated: use [LoadContextConfig] with multiple [LoadContextConfig.Seeds] instead.
 type MultiContextConfig struct {
 	// Centers are the seed coordinates to expand from (e.g. from SearchCells).
 	// Seeds are processed in order; earlier seeds' neighbourhoods take priority
@@ -40,12 +38,8 @@ type MultiContextConfig struct {
 // LoadMultiContextPack assembles a merged [ContextPack] from multiple seed
 // coordinates under a shared token budget.
 //
-// Each seed in cfg.Centers is expanded independently via [Tx.LoadContextPack].
-// The resulting cell views are merged, optionally deduplicated, then re-ranked
-// by Confidence descending and truncated to cfg.MaxTokens using cfg.Budgeter.
-//
-// The returned ContextPack.Stats reflects totals across all seeds.
-// If cfg.AssemblyConfig.Explain is true, Explanations are merged from all seeds.
+// Deprecated: use [Tx.LoadContext] with [LoadContextConfig.Seeds] set to multiple
+// coordinates instead — the DB handles deduplication and concurrent assembly automatically.
 func (tx *Tx) LoadMultiContextPack(ctx context.Context, cfg MultiContextConfig) (ContextPack, error) {
 	if tx == nil || tx.db == nil {
 		return ContextPack{}, ErrClosed
