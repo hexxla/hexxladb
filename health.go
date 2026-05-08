@@ -73,23 +73,18 @@ func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthRep
 		return HealthReport{}, ErrClosed
 	}
 	var report HealthReport
-	var err error
-
-	report.MVCCStats, err = db.StatsMVCC()
-	if err != nil {
-		return HealthReport{}, fmt.Errorf("hexxladb: health check StatsMVCC: %w", err)
-	}
 
 	if err := db.View(func(tx *Tx) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		liveCells, cellCount, err := healthScanCells(ctx, tx, db.useMVCC)
+		liveCells, cellCount, mvccStats, err := healthScanCells(ctx, tx, db)
 		if err != nil {
 			return err
 		}
 		report.CellCount = cellCount
+		report.MVCCStats = mvccStats
 
 		seams, err := healthScanSeams(ctx, tx, db.useMVCC)
 		if err != nil {
@@ -129,8 +124,14 @@ func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthRep
 }
 
 // healthScanCells scans the cell/ primary key range and returns the set of
-// live PackedCoords and the total live cell count.
-func healthScanCells(ctx context.Context, tx *Tx, isMVCC bool) (liveCells map[lattice.PackedCoord]struct{}, cellCount int, err error) {
+// live PackedCoords, the total live cell count, and MVCC stats computed in the
+// same pass — eliminating the separate StatsMVCC() scan that HealthCheck previously issued.
+func healthScanCells(ctx context.Context, tx *Tx, db *DB) (liveCells map[lattice.PackedCoord]struct{}, cellCount int, stats MVCCStats, err error) {
+	isMVCC := db.useMVCC
+	ch := db.cachedHdr.Load()
+	stats.CommitSeq = ch.commitSeq
+	stats.WastedBytes = db.eng.WastedBytes()
+
 	liveCells = map[lattice.PackedCoord]struct{}{}
 	cellFrom := []byte(index.CellPrefix)
 	cellTo := []byte("cell0") // sorts after all cell/<16-byte packed> keys
@@ -138,6 +139,7 @@ func healthScanCells(ctx context.Context, tx *Tx, isMVCC bool) (liveCells map[la
 
 	var lastCoord lattice.PackedCoord
 	var lastCoordLive bool
+	var hasPrevCoord bool
 
 	if rangeErr := tx.AscendRange(cellFrom, cellTo, func(k, v []byte) bool {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -155,13 +157,18 @@ func healthScanCells(ctx context.Context, tx *Tx, isMVCC bool) (liveCells map[la
 			return true
 		}
 		if isMVCC {
-			if p != lastCoord {
-				if lastCoordLive {
-					liveCells[lastCoord] = struct{}{}
-					cellCount++
+			stats.VersionedRows++
+			if !hasPrevCoord || p != lastCoord {
+				if hasPrevCoord {
+					if lastCoordLive {
+						liveCells[lastCoord] = struct{}{}
+						cellCount++
+					}
+					stats.LogicalCells++
 				}
 				lastCoord = p
 				lastCoordLive = false
+				hasPrevCoord = true
 			}
 			lastCoordLive = len(v) > 0
 		} else {
@@ -170,16 +177,19 @@ func healthScanCells(ctx context.Context, tx *Tx, isMVCC bool) (liveCells map[la
 		}
 		return true
 	}); rangeErr != nil {
-		return nil, 0, fmt.Errorf("hexxladb: health cell scan: %w", rangeErr)
+		return nil, 0, MVCCStats{}, fmt.Errorf("hexxladb: health cell scan: %w", rangeErr)
 	}
-	if isMVCC && lastCoordLive {
-		liveCells[lastCoord] = struct{}{}
-		cellCount++
+	if isMVCC && hasPrevCoord {
+		if lastCoordLive {
+			liveCells[lastCoord] = struct{}{}
+			cellCount++
+		}
+		stats.LogicalCells++ // flush final coord group
 	}
 	if scanErr != nil {
-		return nil, 0, scanErr
+		return nil, 0, MVCCStats{}, scanErr
 	}
-	return liveCells, cellCount, nil
+	return liveCells, cellCount, stats, nil
 }
 
 // healthScanSeams scans seam/ primary keys and returns decoded visible seams.

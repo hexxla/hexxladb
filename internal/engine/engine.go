@@ -57,6 +57,10 @@ type Engine struct {
 	groupWALStatsApplyBatches           atomic.Uint64
 	groupWALStatsBatchesWith2OrMoreJobs atomic.Uint64
 	groupWALStatsWalSynces              atomic.Uint64
+	// wastedBytes accumulates the logical byte size of freed overflow pages.
+	// Since the engine has no freelist, freed pages become dead space until Compact.
+	// This counter is in-memory only (resets on Open) and is exposed via WastedBytes().
+	wastedBytes atomic.Uint64
 }
 
 // WalPath returns the WAL path for a primary database path.
@@ -625,6 +629,11 @@ func (e *Engine) Path() string { return e.path }
 // LastWALSeq returns the last applied redo sequence (for tests).
 func (e *Engine) LastWALSeq() uint64 { return e.lastSeq }
 
+// WastedBytes returns the cumulative logical byte size of overflow-page chains
+// freed since this [Engine] was opened. These pages are dead space on disk until
+// the next [CompactTo]. The counter resets to zero on [Open] / [Engine.Close] + reopen.
+func (e *Engine) WastedBytes() uint64 { return e.wastedBytes.Load() }
+
 // ReadHeader returns the current file header (page 0 prefix).
 func (e *Engine) ReadHeader() (Header, error) {
 	if e.db == nil {
@@ -638,20 +647,28 @@ func (e *Engine) ReadHeader() (Header, error) {
 // During a write transaction, mut is applied in memory only; disk is updated at
 // [Engine.CommitWriteTxn].
 func (e *Engine) UpdateHeader(mut func(*Header)) error {
+	_, err := e.UpdateHeaderGet(mut)
+	return err
+}
+
+// UpdateHeaderGet is like [UpdateHeader] but also returns the header value after
+// mut is applied. Callers that need to cache the resulting header (e.g. BTreeRoot)
+// can use this to avoid a second [ReadHeader] pread.
+func (e *Engine) UpdateHeaderGet(mut func(*Header)) (Header, error) {
 	if e.db == nil {
-		return fmt.Errorf("engine: closed")
+		return Header{}, fmt.Errorf("engine: closed")
 	}
 	if e.wtxn != nil {
 		mut(&e.wtxn.hdr)
-		return nil
+		return e.wtxn.hdr, nil
 	}
 	hdr, err := readHeaderAt(e.db, e.pageSize)
 	if err != nil {
-		return err
+		return Header{}, err
 	}
 	mut(&hdr)
 	if err := writeHeaderAt(e.db, hdr); err != nil {
-		return err
+		return Header{}, err
 	}
-	return e.syncPrimary()
+	return hdr, e.syncPrimary()
 }

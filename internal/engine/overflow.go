@@ -151,9 +151,22 @@ func (t *BTree) readOverflowChain(firstPageID uint64, logicalLen uint32) ([]byte
 	return result, nil
 }
 
-// freeOverflowChain walks an overflow chain and marks pages as dead.
-// Since the engine is extend-only (no freelist), this is a no-op for now.
-// Overflow pages become dead space reclaimed by Compact.
-func (t *BTree) freeOverflowChain(_ uint64) {
-	// No-op: extend-only allocator. Dead overflow pages are reclaimed by Compact.
+// freeOverflowChain walks an overflow chain and accounts for the wasted bytes.
+// Pages are not physically reclaimed (no freelist — dead space is reclaimed by Compact),
+// but the cumulative waste is tracked in [Engine.wastedBytes] for operator observability.
+func (t *BTree) freeOverflowChain(firstPageID uint64) {
+	ps := t.pageSize()
+	payload := uint64(overflowPayloadPerPage(ps)) //nolint:gosec // G115: ps >= overflowPtrSize always
+	pid := firstPageID
+	for pid != 0 {
+		page, release, err := t.eng.readPagePooled(pid)
+		if err != nil {
+			release()
+			return
+		}
+		nextID := binary.BigEndian.Uint64(page[0:8])
+		release()
+		t.eng.wastedBytes.Add(payload)
+		pid = nextID
+	}
 }

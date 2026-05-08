@@ -389,6 +389,61 @@ func (t *BTree) splitInternal(pid, parent uint64, ptrs []uint64, keys [][]byte) 
 	return true, rid, promoted, nil
 }
 
+// AscendRangeFromRoot calls fn for every key in [from, to] inclusive using the
+// provided root page ID. Callers that already hold a snapshot root (e.g. read-only
+// Tx with cachedBTreeRoot) should prefer this to avoid a ReadHeader pread.
+func (t *BTree) AscendRangeFromRoot(root uint64, from, to []byte, fn func(k, v []byte) bool) error {
+	if root == 0 {
+		return nil
+	}
+	pid, err := t.leftmostLeaf(root, from)
+	if err != nil {
+		return err
+	}
+	started := false
+	for pid != 0 {
+		page, release, err := t.eng.readPagePooled(pid)
+		if err != nil {
+			return err
+		}
+		ld, err := parseLeafPage(page)
+		release()
+		if err != nil {
+			return err
+		}
+		i := 0
+		if !started && from != nil {
+			i = leafKeyIndex(ld.keys, from)
+		}
+		started = true
+		for ; i < len(ld.keys); i++ {
+			k := ld.keys[i]
+			if to != nil && bytes.Compare(k, to) > 0 {
+				return nil
+			}
+			v := ld.vals[i]
+			if isOverflowStub(v) {
+				logLen, firstPage := decodeOverflowStub(v)
+				v, err = t.readOverflowChain(firstPage, logLen)
+				if err != nil {
+					return err
+				}
+			}
+			if isCompressedValue(v) {
+				v, err = decompressValue(v)
+				if err != nil {
+					return err
+				}
+			}
+			if !fn(k, v) {
+				return nil
+			}
+		}
+		pid = ld.next
+	}
+	return nil
+}
+
 // AscendRange calls fn for every key in [from, to] inclusive (byte order). If from is nil, start at the smallest key.
 func (t *BTree) AscendRange(from, to []byte, fn func(k, v []byte) bool) error {
 	hdr, err := t.eng.ReadHeader()
@@ -444,6 +499,127 @@ func (t *BTree) AscendRange(from, to []byte, fn func(k, v []byte) bool) error {
 		pid = ld.next
 	}
 	return nil
+}
+
+// DescendRangeFromRoot calls fn for every key in [from, to] inclusive in descending
+// (reverse) byte order using the provided root page ID. If to is nil, starts at the
+// largest key. Stops when fn returns false or all keys in range are visited.
+//
+// This is used by [resolveReadSeqAtOrBeforeUnixNano] to find the largest commit
+// timestamp ≤ asOf without scanning from the beginning of the keyspace.
+func (t *BTree) DescendRangeFromRoot(root uint64, from, to []byte, fn func(k, v []byte) bool) error {
+	if root == 0 {
+		return nil
+	}
+	pid, err := t.rightmostLeaf(root, to)
+	if err != nil {
+		return err
+	}
+	for pid != 0 {
+		page, release, err := t.eng.readPagePooled(pid)
+		if err != nil {
+			return err
+		}
+		ld, err := parseLeafPage(page)
+		release()
+		if err != nil {
+			return err
+		}
+		// Determine the start index (rightmost entry ≤ to).
+		iEnd := len(ld.keys) - 1
+		if to != nil {
+			iEnd = len(ld.keys) - 1
+			for iEnd >= 0 && bytes.Compare(ld.keys[iEnd], to) > 0 {
+				iEnd--
+			}
+		}
+		for i := iEnd; i >= 0; i-- {
+			k := ld.keys[i]
+			if from != nil && bytes.Compare(k, from) < 0 {
+				return nil
+			}
+			v := ld.vals[i]
+			if isOverflowStub(v) {
+				logLen, firstPage := decodeOverflowStub(v)
+				v, err = t.readOverflowChain(firstPage, logLen)
+				if err != nil {
+					return err
+				}
+			}
+			if isCompressedValue(v) {
+				v, err = decompressValue(v)
+				if err != nil {
+					return err
+				}
+			}
+			if !fn(k, v) {
+				return nil
+			}
+		}
+		prev, err := t.prevLeaf(pid, ld.parent, root)
+		if err != nil {
+			return err
+		}
+		pid = prev
+	}
+	return nil
+}
+
+// rightmostLeaf returns the page ID of the rightmost leaf whose keys are ≤ to
+// (or the absolute rightmost leaf if to is nil).
+func (t *BTree) rightmostLeaf(root uint64, to []byte) (uint64, error) {
+	pid := root
+	for {
+		page, release, err := t.eng.readPagePooled(pid)
+		if err != nil {
+			return 0, err
+		}
+		if page[5] == btreeKindLeaf {
+			release()
+			return pid, nil
+		}
+		in, err := parseInternalPage(page)
+		release()
+		if err != nil {
+			return 0, err
+		}
+		if to == nil {
+			pid = in.ptrs[len(in.ptrs)-1]
+			continue
+		}
+		ci := internalPickChild(in.keys, to)
+		pid = in.ptrs[ci]
+	}
+}
+
+// prevLeaf returns the page ID of the leaf immediately before leafPID in the
+// linked list (left sibling), or 0 if leafPID is the leftmost leaf. It uses the
+// parent pointer chain to find the left sibling without storing a prev pointer.
+func (t *BTree) prevLeaf(leafPID, parentPID, root uint64) (uint64, error) {
+	if parentPID == 0 || leafPID == root {
+		return 0, nil
+	}
+	page, release, err := t.eng.readPagePooled(parentPID)
+	if err != nil {
+		return 0, err
+	}
+	in, err := parseInternalPage(page)
+	parentParent := in.parent
+	release()
+	if err != nil {
+		return 0, err
+	}
+	for i, ptr := range in.ptrs {
+		if ptr == leafPID {
+			if i == 0 {
+				// No left sibling at this level — go up.
+				return t.prevLeaf(parentPID, parentParent, root)
+			}
+			// Descend into left sibling to find its rightmost leaf.
+			return t.rightmostLeaf(in.ptrs[i-1], nil)
+		}
+	}
+	return 0, nil
 }
 
 func (t *BTree) leftmostLeaf(root uint64, from []byte) (uint64, error) {

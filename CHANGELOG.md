@@ -17,10 +17,26 @@
 - **`FindEdgePathConfig`** — config struct replacing `FindEdgePath`'s positional `filter`/`maxExpand` args. New `CostFunc func(from, to Coord) float64` field lets callers override edge-weight-based traversal cost (e.g. inject confidence, recency, or semantic distance). `nil` = existing edge-weight behaviour.
 - **`VoronoiWeightFunc`** / **`VoronoiContextConfig.WeightFunc`** — exposes the internal `lattice.WeightFunc` on the public Voronoi config. Callers steer region boundaries by cost; `nil` = uniform geometric Voronoi.
 
+### Added
+
+- **`MVCCStats.WastedBytes`** — cumulative logical byte size of freed overflow-page chains since the DB was opened. In-memory counter (resets on reopen). Non-zero signals that `CompactTo` is warranted to reclaim dead space. Surfaced by both `DB.StatsMVCC` and `DB.HealthCheck`.
+
 ### Changed
 
 - **`Voronoi` signature** — third parameter `weightFn WeightFunc` added (internal package only, no public API surface change). All callers updated to pass `nil`.
 - **`Tx.FindEdgePath` signature** ⚠️ **breaking** — positional `(filter string, maxExpand int)` replaced by `FindEdgePathConfig` struct. Migrate: `tx.FindEdgePath(ctx, a, b, "", 0)` → `tx.FindEdgePath(ctx, a, b, hexxladb.FindEdgePathConfig{})`. All call sites updated.
+
+### Performance
+
+- **`Tx.AscendRange`** in read-only transactions no longer issues a `pread(page0)` per call — it uses the transaction's cached `BTreeRoot`. Each `QueryCells` / `SearchCells` / `HealthCheck` that previously issued N header reads now issues zero (N typically 3–10 per query).
+- **`DB.ViewAtTime`** now resolves the wall-clock snapshot via a reverse B+ tree walk (`DescendRangeFromRoot`) and stops at the first hit. Previously O(commits before asOf); now O(log N) for recent queries.
+- **`DB.HealthCheck`** merged the separate `StatsMVCC` full cell-scan into `healthScanCells` — one pass instead of two.
+- **`CompactTo`** opens the source database with the page cache disabled (`PageCacheSize: -1`); a read-once sequential scan gets zero cache benefit and previously displaced 4 MiB of hot pages.
+- **`Compact`** (and `CompactTo`) now copies in batches of 4096 keys per write transaction, capping WAL burst and releasing the write lock between batches.
+- **`DB.Update`** reads `readSeq` from the in-memory `cachedHdr` instead of `eng.ReadHeader()` (eliminates one `pread(page0)` per write transaction on MVCC DBs).
+- **`DB.Update`** uses `UpdateHeaderGet` to set `CommitSeq` and refresh `cachedHdr` in one engine call post-commit (eliminates a second `ReadHeader` pread per MVCC write transaction).
+- **`StatsMVCC`** replaced the `map[PackedCoord]struct{}` logical-cell counter with a running `prevCoord` comparison — O(1) memory instead of O(logical cells).
+- **`scoreCell`** tag lowercasing moved to `scoreRecord` (once per record) rather than being repeated inside the scoring function.
 
 ## [0.4.0] - 2026-05-08
 
