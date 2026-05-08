@@ -8,12 +8,24 @@ import (
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
+// FindEdgePathConfig configures [Tx.FindEdgePath].
+type FindEdgePathConfig struct {
+	// Filter restricts traversal to edges whose relationType matches this value.
+	// Empty string traverses all edges.
+	Filter string
+	// MaxExpand limits the number of nodes expanded by A* (0 = unlimited).
+	MaxExpand int
+	// CostFunc overrides edge-weight-based traversal cost.
+	// Receives the from and to coordinates; return a negative value to mark an
+	// edge impassable. Nil uses the edge's recorded Weight (1.0 when Weight <= 0).
+	CostFunc func(from, to Coord) float64
+}
+
 // FindEdgePath returns the shortest path from start to goal, following edges.
-// Only edges whose relationType matches filter are traversed (empty filter = all edges).
-// Edge weights are used as traversal costs. maxExpand limits node expansion (0 = unlimited).
-//
-// Returns nil if no path exists between start and goal via edges.
-func (tx *Tx) FindEdgePath(ctx context.Context, start, goal Coord, filter string, maxExpand int) ([]Coord, error) {
+// Only edges whose relationType matches [FindEdgePathConfig.Filter] are traversed
+// (empty = all edges). Edge weights are used as traversal costs unless
+// [FindEdgePathConfig.CostFunc] is set. Returns nil if no path exists.
+func (tx *Tx) FindEdgePath(ctx context.Context, start, goal Coord, cfg FindEdgePathConfig) ([]Coord, error) {
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
 	}
@@ -21,10 +33,15 @@ func (tx *Tx) FindEdgePath(ctx context.Context, start, goal Coord, filter string
 		return []Coord{start}, nil
 	}
 
-	neighbors := tx.edgeNeighborFunc(ctx, filter)
-	cost := tx.edgeCostFunc(filter)
+	neighbors := tx.edgeNeighborFunc(ctx, cfg.Filter)
+	var cost pathfind.CostFunc
+	if cfg.CostFunc != nil {
+		cost = cfg.CostFunc
+	} else {
+		cost = tx.edgeCostFunc(cfg.Filter)
+	}
 
-	path := pathfind.AStar(start, goal, neighbors, cost, pathfind.HexDistanceHeuristic, maxExpand)
+	path := pathfind.AStar(start, goal, neighbors, cost, pathfind.EuclideanHeuristic, cfg.MaxExpand)
 	if path == nil {
 		return nil, nil
 	}
@@ -43,46 +60,11 @@ func (tx *Tx) WalkEdges(ctx context.Context, start Coord, filter string, maxHops
 	return result, nil
 }
 
-// LoadContextByEdges walks outward from center following edges (BFS), then
-// builds CellRecords for the visited coordinates. Combines graph connectivity
-// with spatial locality — cells reachable via edges are preferred over
-// blind spatial expansion.
-//
-// maxHops is the maximum edge traversal depth; maxCells caps the result set.
-func (tx *Tx) LoadContextByEdges(ctx context.Context, center Coord, filter string, maxHops, maxCells int) ([]CellRecord, error) {
-	if tx == nil || tx.db == nil {
-		return nil, ErrClosed
-	}
-	if maxCells <= 0 || maxHops < 0 {
-		return nil, ErrInvalidArgument
-	}
-
-	coords, err := tx.WalkEdges(ctx, center, filter, maxHops, maxCells)
-	if err != nil {
-		return nil, err
-	}
-
-	out := make([]CellRecord, 0, len(coords))
-	for _, c := range coords {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if len(out) >= maxCells {
-			break
-		}
-		p, err := lattice.Pack(c)
-		if err != nil {
-			continue
-		}
-		rec, ok, err := tx.GetCell(p)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			out = append(out, rec)
-		}
-	}
-	return out, nil
+// WalkEdgeCoords performs BFS from start following edges matching filter,
+// up to maxHops depth and maxCoords total. It satisfies [views.TxEdgeWalker]
+// so *Tx can be passed to [views.LoadContext] when EdgeFilter is set.
+func (tx *Tx) WalkEdgeCoords(ctx context.Context, start Coord, filter string, maxHops, maxCoords int) ([]Coord, error) {
+	return tx.WalkEdges(ctx, start, filter, maxHops, maxCoords)
 }
 
 // edgeNeighborFunc returns a NeighborFunc that resolves neighbors via edge records.

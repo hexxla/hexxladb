@@ -7,6 +7,11 @@ import (
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
+// pruneSubBatchSize is the maximum number of B+ tree deletes per commit in PruneCellVersions.
+// Keeping this small caps the WAL burst per commit and limits the time db.mu is held
+// between sub-batches, allowing concurrent readers to make progress.
+const pruneSubBatchSize = 64
+
 // PruneScheduler holds defaults for operator-driven periodic pruning. It does not start
 // background goroutines; invoke [PruneScheduler.Tick] from your process scheduler or timer.
 type PruneScheduler struct {
@@ -47,13 +52,10 @@ func (db *DB) SuggestedPruneBeforeSeq() (beforeSeq uint64, ok bool, err error) {
 	if !db.useMVCC || db.mvccRetention.RetainCommitsBehindHead == 0 {
 		return 0, false, nil
 	}
-	hdr, err := db.eng.ReadHeader()
-	if err != nil {
-		return 0, false, err
-	}
+	ch := db.cachedHdr.Load()
 	c := db.mvccRetention.RetainCommitsBehindHead
-	if hdr.CommitSeq > c {
-		return hdr.CommitSeq - c, true, nil
+	if ch.commitSeq > c {
+		return ch.commitSeq - c, true, nil
 	}
 	return 0, true, nil
 }
@@ -120,32 +122,28 @@ func (db *DB) StatsMVCC() (MVCCStats, error) {
 	if db.activeEng() == nil {
 		return MVCCStats{}, ErrDatabaseClosed
 	}
-	hdr, err := db.eng.ReadHeader()
-	if err != nil {
-		return MVCCStats{}, err
-	}
+	ch := db.cachedHdr.Load()
 	if !db.useMVCC {
-		return MVCCStats{CommitSeq: hdr.CommitSeq}, nil
+		return MVCCStats{CommitSeq: ch.commitSeq}, nil
 	}
 	seen := make(map[lattice.PackedCoord]struct{})
 	var rows int64
-	err = db.btree.AscendRange([]byte(index.CellPrefix), nil, func(k, _ []byte) bool {
+	if err := db.btree.AscendRange([]byte(index.CellPrefix), nil, func(k, _ []byte) bool {
 		if !bytes.HasPrefix(k, []byte(index.CellPrefix)) {
 			return false
 		}
-		p, _, err := index.ParseCellVersionKey(k)
-		if err != nil {
+		p, _, parseErr := index.ParseCellVersionKey(k)
+		if parseErr != nil {
 			return true
 		}
 		rows++
 		seen[p] = struct{}{}
 		return true
-	})
-	if err != nil {
+	}); err != nil {
 		return MVCCStats{}, err
 	}
 	return MVCCStats{
-		CommitSeq:     hdr.CommitSeq,
+		CommitSeq:     ch.commitSeq,
 		VersionedRows: rows,
 		LogicalCells:  int64(len(seen)),
 	}, nil
@@ -153,6 +151,15 @@ func (db *DB) StatsMVCC() (MVCCStats, error) {
 
 // PruneCellVersions removes up to maxDelete stale versioned rows with commit_seq < beforeSeq.
 // It always keeps the latest version for each logical cell key.
+//
+// Implementation notes:
+//   - Single-pass scan: because cell/<packed>/<seq> keys are sorted with seq ascending within
+//     each coordinate group, the last row seen per coordinate is always the latest version.
+//     We buffer the previous row and emit it as a delete candidate when the coordinate changes,
+//     never emitting the final row of each group. This replaces the previous two-pass approach
+//     and requires O(1) extra memory instead of a full latest-version map.
+//   - Batched commits: deletes are committed in sub-batches of [pruneSubBatchSize] to cap WAL
+//     burst size and release db.mu between sub-batches so concurrent readers are not starved.
 func (db *DB) PruneCellVersions(beforeSeq uint64, maxDelete int) (deleted int, err error) {
 	if db == nil {
 		return 0, ErrDatabaseClosed
@@ -168,60 +175,82 @@ func (db *DB) PruneCellVersions(beforeSeq uint64, maxDelete int) (deleted int, e
 	if !db.useMVCC {
 		return 0, nil
 	}
-	latest := make(map[lattice.PackedCoord]uint64)
-	if err := db.btree.AscendRange([]byte(index.CellPrefix), nil, func(k, _ []byte) bool {
+
+	// Single-pass scan: walk cell/ keys left-to-right. Within each coordinate group,
+	// keys are ordered by seq ascending, so the last key seen per coordinate is the
+	// latest version. We buffer prevKey/prevSeq/prevCoord and emit the buffered row
+	// as a delete candidate when we advance to a new coordinate.
+	toDelete := make([][]byte, 0, min(maxDelete, pruneSubBatchSize*4))
+	var (
+		prevKey   []byte
+		prevSeq   uint64
+		prevCoord lattice.PackedCoord
+		hasPrev   bool
+	)
+	_ = db.btree.AscendRange([]byte(index.CellPrefix), nil, func(k, _ []byte) bool {
 		if !bytes.HasPrefix(k, []byte(index.CellPrefix)) {
 			return false
 		}
-		p, seq, err := index.ParseCellVersionKey(k)
-		if err != nil {
+		p, seq, parseErr := index.ParseCellVersionKey(k)
+		if parseErr != nil {
 			return true
 		}
-		if cur, ok := latest[p]; !ok || seq > cur {
-			latest[p] = seq
+		coordChanged := !hasPrev || p != prevCoord
+		if hasPrev && !coordChanged && prevSeq < beforeSeq {
+			// prevKey is a non-latest version of the current coordinate group — prunable.
+			toDelete = append(toDelete, prevKey)
 		}
-		return true
-	}); err != nil {
-		return 0, err
-	}
-	toDelete := make([][]byte, 0, maxDelete)
-	if err := db.btree.AscendRange([]byte(index.CellPrefix), nil, func(k, _ []byte) bool {
-		if !bytes.HasPrefix(k, []byte(index.CellPrefix)) {
-			return false
-		}
-		p, seq, err := index.ParseCellVersionKey(k)
-		if err != nil {
-			return true
-		}
-		if seq < beforeSeq && seq != latest[p] {
-			toDelete = append(toDelete, append([]byte(nil), k...))
-			if len(toDelete) >= maxDelete {
-				return false
-			}
-		}
-		return true
-	}); err != nil {
-		return 0, err
-	}
+		// When coordChanged, prevKey was the latest version of the previous group — skip it.
+		prevKey = append([]byte(nil), k...)
+		prevSeq = seq
+		prevCoord = p
+		hasPrev = true
+		return len(toDelete) < maxDelete
+	})
+	// prevKey after the scan is always the latest version of its coordinate — never emit it.
+
 	if len(toDelete) == 0 {
 		return 0, nil
 	}
-	// Route deletes through the same engine write-transaction path as [DB.Update]. Otherwise
-	// [Engine.WritePage] uses immediate WAL/primary persistence while [Engine.readPagePooled] still
-	// honors group-WAL overlay — rebalance can see a mixed view and corrupt the B+ tree.
-	if err := db.eng.BeginWriteTxn(); err != nil {
-		return 0, err
-	}
-	for i := range toDelete {
-		if err := db.btree.Delete(toDelete[i]); err != nil {
+
+	// Batched commits: commit in sub-batches to cap WAL burst and release the lock
+	// between sub-batches so concurrent readers are not starved.
+	// Route deletes through the same engine write-transaction path as [DB.Update].
+	for len(toDelete) > 0 {
+		batch := toDelete
+		if len(batch) > pruneSubBatchSize {
+			batch = toDelete[:pruneSubBatchSize]
+		}
+		toDelete = toDelete[len(batch):]
+
+		if err := db.eng.BeginWriteTxn(); err != nil {
+			return deleted, err
+		}
+		for _, key := range batch {
+			if err := db.btree.Delete(key); err != nil {
+				db.eng.AbortWriteTxn()
+				return deleted, err
+			}
+			deleted++
+		}
+		if err := db.eng.CommitWriteTxn(); err != nil {
 			db.eng.AbortWriteTxn()
 			return deleted, err
 		}
-		deleted++
-	}
-	if err := db.eng.CommitWriteTxn(); err != nil {
-		db.eng.AbortWriteTxn()
-		return deleted, err
+		// Refresh the cached header after each sub-batch commit so subsequent
+		// View calls see the updated BTreeRoot without a pread.
+		if fhdr, fErr := db.eng.ReadHeader(); fErr == nil {
+			db.storeCachedHeader(fhdr.CommitSeq, fhdr.BTreeRoot)
+		}
+		// Release and re-acquire the lock between sub-batches to allow
+		// concurrent readers to make progress.
+		if len(toDelete) > 0 {
+			db.mu.Unlock()
+			db.mu.Lock()
+			if db.activeEng() == nil {
+				return deleted, ErrDatabaseClosed
+			}
+		}
 	}
 	return deleted, nil
 }

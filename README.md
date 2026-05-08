@@ -118,18 +118,22 @@ db.View(func(tx *hexxladb.Tx) error {
 ```go
 db.View(func(tx *hexxladb.Tx) error {
     // Use the top-3 search results as seeds
-    seeds := []hexxladb.Coord{results[0].Cell.Coord, results[1].Cell.Coord, results[2].Cell.Coord}
+    seeds := []hexxladb.Coord{
+        results[0].Cell.Coord,
+        results[1].Cell.Coord,
+        results[2].Cell.Coord,
+    }
 
-    pack, err := tx.LoadContextPackFrom(ctx,
-        2,     // max ring radius
-        4096,  // token budget
-        hexxladb.ByteLenBudgeter{},
-        hexxladb.LoadContextBudgetConfig{
-            FilterSuperseded: true,  // old preferences auto-replaced by new ones
-            IncludeSeams:     true,  // surface contradictions for the LLM
+    pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+        Seeds:     seeds,
+        MaxRing:   2,    // expand up to 2 rings from each seed
+        MaxTokens: 4096, // token budget
+        Assembly: hexxladb.LoadContextBudgetConfig{
+            Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
+            FilterSuperseded: true, // old preferences auto-replaced by new ones
+            IncludeSeams:     true, // surface contradictions for the LLM
         },
-        seeds...,
-    )
+    })
     // pack.Cells: ordered context, pack.TotalTokens: fits your budget
 })
 ```
@@ -180,19 +184,19 @@ HexxlaDB combines HNSW vector search, spatial indexing, contradiction tracking, 
 
 - **HNSW vector search** — ANN with flat-scan fallback; vectors stored alongside cells
 - **Hybrid queries** — embeddings + tags + confidence + source + temporal + spatial in one call (`QueryCells`)
-- **Lexical search** — ranked substring matching across content, tags, source IDs
+- **Lexical search** — multi-term ranked matching across content, tags, source IDs; auto-tokenized on whitespace (`SearchCells`, `QueryCells`)
 
 ### Spatial algorithms
 
 - **Hex-native keys** — Morton-ordered `(q, r)` coordinates; ring walks scale with ring area, not DB size
 - **Field of view** — LOS ray casting skips cells occluded behind empty regions (`LoadContextFOV`)
-- **Level of detail** — full resolution nearby, coarsened outer rings (`LoadContextLOD`)
+- **Level of detail** — full resolution nearby, coarsened outer rings (auto-applied by `LoadContext` when `MaxRing >= 10`)
 - **Voronoi partitioning** — non-overlapping regions for fair multi-seed budget splits (`LoadContextVoronoi`)
-- **Pathfinding** — A\* shortest path, BFS reachability, edge-based context loading (`FindEdgePath`, `WalkEdges`)
+- **Pathfinding** — A\* shortest path, BFS reachability, graph-traversal context loading via `EdgeFilter` (`FindEdgePath`, `WalkEdges`, `LoadContext`)
 
 ### Memory management
 
-- **Token-budgeted assembly** — evicts low-confidence outer-ring cells first (`LoadContextPackFrom`)
+- **Token-budgeted assembly** — evicts low-confidence outer-ring cells first; auto-dispatches ring walk, LOD, graph BFS, or multi-seed merge (`LoadContext`)
 - **Contradiction tracking** — seams surface disagreements in context (`MarkConflict`)
 - **Supersession chains** — stale cells auto-replaced by successors (`MarkSupersedes` + `FilterSuperseded`)
 - **MVCC time-travel** — pin snapshots, diff between any two points (`ViewAt`, `SnapshotDiff`)
@@ -211,23 +215,22 @@ HexxlaDB combines HNSW vector search, spatial indexing, contradiction tracking, 
 
 Full reference: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.md)
 
-| Operation                                 | What it does                                                                |
-| ----------------------------------------- | --------------------------------------------------------------------------- |
-| `PutCell` / `GetCell` / `DeleteCell`      | Store, retrieve, or tombstone a memory                                      |
-| `PutEmbedding` / `SearchByEmbedding`      | Store a vector; HNSW nearest-neighbor search                                |
-| `QueryCells`                              | Hybrid search: embeddings + tags + confidence + source + temporal + spatial |
-| `LoadContextPack` / `LoadContextPackFrom` | Token-budgeted context assembly with supersession filtering                 |
-| `LoadContextFOV`                          | Visibility-filtered context — skip cells occluded behind empty regions      |
-| `LoadContextLOD` / `LoadContextVoronoi`   | Multi-resolution and Voronoi-partitioned context loading                    |
-| `FindEdgePath` / `WalkEdges`              | A\* shortest path and BFS reachability over cell edges                      |
-| `LoadContextByEdges`                      | Graph-aware context: BFS over edges then fetch cells                        |
-| `MarkConflict` / `MarkSupersedes`         | Record contradictions or preference changes                                 |
-| `FindSeams`                               | Retrieve contradiction/supersession markers                                 |
-| `SearchCells`                             | Lexical ranked search across content, tags, and source IDs                  |
-| `ViewAt` / `ViewAtTime` / `SnapshotDiff`  | MVCC time-travel and change detection                                       |
-| `Compact` / `CompactTo`                   | Copy-compaction for file size recovery                                      |
-| `HealthCheck`                             | Structural integrity verification                                           |
-| `TagCounts` / `TagCooccurrences`          | Tag analytics for memory exploration                                        |
+| Operation                                | What it does                                                                                        |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `PutCell` / `GetCell` / `DeleteCell`     | Store, retrieve, or tombstone a memory                                                              |
+| `PutEmbedding` / `SearchByEmbedding`     | Store a vector; HNSW nearest-neighbor search                                                        |
+| `QueryCells`                             | Hybrid search: embeddings + tags + confidence + source + temporal + spatial                         |
+| `LoadContext`                            | Token-budgeted context assembly — ring walk, LOD, graph BFS, or multi-seed dispatched automatically |
+| `LoadContextFOV`                         | Visibility-filtered context — skip cells occluded behind empty regions                              |
+| `LoadContextVoronoi`                     | Voronoi-partitioned context loading for non-overlapping multi-region splits                         |
+| `FindEdgePath` / `WalkEdges`             | A\* shortest path and BFS reachability over cell edges                                              |
+| `MarkConflict` / `MarkSupersedes`        | Record contradictions or preference changes                                                         |
+| `FindSeams`                              | Retrieve contradiction/supersession markers                                                         |
+| `SearchCells`                            | Multi-term lexical ranked search across content, tags, and source IDs                               |
+| `ViewAt` / `ViewAtTime` / `SnapshotDiff` | MVCC time-travel and change detection                                                               |
+| `Compact` / `CompactTo`                  | Copy-compaction for file size recovery                                                              |
+| `HealthCheck`                            | Structural integrity verification                                                                   |
+| `TagCounts` / `TagCooccurrences`         | Tag analytics for memory exploration                                                                |
 
 ---
 

@@ -39,6 +39,9 @@ Spec exists; implementation deferred.
 - **MVCC version chain optimisation** — replace O(n) linear scan in `SelectVisible` with a skip list or compact index for cells with many versions (>100).
   _Impact: prevents latency regression on long-running databases with heavy update workloads; keeps `ViewAt` and time-travel reads fast at scale. Defer until profiling confirms this is a real hot path ([LEAN audit](./context/audits/LEAN_ARCHITECTURE_AUDIT.md))._
 
+- **Sub-linear SSSP via Duan et al. 2025 (BMSSP)** — Deterministic `O(m log^(2/3) n)` single-source shortest paths replacing Dijkstra for large sparse graphs. Relevant to `LoadContextVoronoi` (multi-source Dijkstra) and any future large-graph `FindEdgePath`. Implementation requires a custom block-list data structure (Lemma 3.3: two block sequences + Red-Black tree on upper bounds), `FindPivots` (bounded Bellman-Ford), and the recursive `BMSSP` divide-and-conquer.
+  _Practical crossover vs A\*: estimated n ≥ 10⁵–10⁶ nodes; current HexxlaDB workloads peak at ~31k cells (MaxRing=100). Defer until large-graph use cases emerge. Reference: `docs/SSSP_SUBLINEAR.md`, arXiv:2504.17033._
+
 ## Future exploration
 
 Interesting but unvalidated. Needs user demand or benchmark data before committing.

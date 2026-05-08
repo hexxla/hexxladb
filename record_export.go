@@ -18,5 +18,5 @@ type ValidityWire = record.ValidityWire
 
 // CellRecord is the v1 wire shape for cell/<packed_coord> blobs.
 // Re-exported from internal/record for public API access.
-// Used by LoadContextByEdges and LoadContextLOD for direct cell access.
+// Used by [Tx.ScanContextRaw], [Tx.ScanContextAtRaw], and low-level cell operations.
 type CellRecord = record.CellRecord

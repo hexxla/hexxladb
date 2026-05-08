@@ -6,16 +6,16 @@
 //   - Phase  2  Batch-storing a rich, multi-session conversation corpus
 //   - Phase  3  Contradiction detection with MarkConflict seams
 //   - Phase  4  Supersession — seam-aware context assembly (FilterSuperseded)
-//   - Phase  5  Context assembly: QueryCells → seeds → LoadContextPackFrom
+//   - Phase  5  Context assembly: QueryCells → seeds → LoadContext
 //   - Phase  6  Tag discovery, TagCounts, TagCooccurrences
 //   - Phase  7  Query patterns (QueryCells: tag, source, score, recency)
 //   - Phase  8  MVCC time-travel (ViewAt)
 //   - Phase  9  Lattice visualisation: ASCII hex grid + RingDensityMap
-//   - Phase 10  QueryCells + multi-seed context assembly (LoadContextPackFrom)
+//   - Phase 10  QueryCells + multi-seed context assembly (LoadContext)
 //   - Phase 11  Health check (DB.HealthCheck) + MVCC Snapshot Diff
 //   - Phase 12  DeleteCell + Compact (MVCC tombstones, snapshot isolation, copy-compaction)
 //   - Phase 13  Field of View — visibility-filtered context (LoadContextFOV)
-//   - Phase 14  Pathfinding over edges (PutEdge, FindEdgePath A*, WalkEdges BFS, LoadContextByEdges)
+//   - Phase 14  Pathfinding over edges (PutEdge, FindEdgePath A*, WalkEdges BFS, LoadContext with EdgeFilter)
 //
 // For embedding-based semantic search, see examples/llm_context_engine.
 //
@@ -288,10 +288,15 @@ func run(dbPath string) error {
 	var packWithStale hexxladb.ContextPack
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		packWithStale, err = tx.LoadContextPack(ctx, center, 3, 10000, hexxladb.ByteLenBudgeter{}, hexxladb.LoadContextBudgetConfig{
-			Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
-			FilterSuperseded: false,
-			Explain:          true,
+		packWithStale, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds:     []hexxladb.Coord{center},
+			MaxRing:   3,
+			MaxTokens: 10000,
+			Assembly: hexxladb.LoadContextBudgetConfig{
+				Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
+				FilterSuperseded: false,
+				Explain:          true,
+			},
 		})
 		return err
 	}); err != nil {
@@ -302,10 +307,15 @@ func run(dbPath string) error {
 	var packFiltered hexxladb.ContextPack
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		packFiltered, err = tx.LoadContextPack(ctx, center, 3, 10000, hexxladb.ByteLenBudgeter{}, hexxladb.LoadContextBudgetConfig{
-			Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
-			FilterSuperseded: true,
-			Explain:          true,
+		packFiltered, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds:     []hexxladb.Coord{center},
+			MaxRing:   3,
+			MaxTokens: 10000,
+			Assembly: hexxladb.LoadContextBudgetConfig{
+				Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
+				FilterSuperseded: true,
+				Explain:          true,
+			},
 		})
 		return err
 	}); err != nil {
@@ -353,7 +363,7 @@ func run(dbPath string) error {
 	// ═══════════════════════════════════════════════════════════════
 	printHeader("Phase 5: Context Assembly (QueryCells → Seeds → Token-Budgeted Pack)")
 
-	printNote("Pipeline: QueryCells finds matching cells → coords become ring-walk seeds → LoadContextPackFrom assembles a budgeted pack.")
+	printNote("Pipeline: QueryCells finds matching cells → coords become ring-walk seeds → LoadContext assembles a budgeted pack.")
 	fmt.Println()
 
 	printSubHeader("Step 1 — QueryCells: find 'preference' seeds sorted by confidence")
@@ -392,7 +402,7 @@ func run(dbPath string) error {
 	}
 
 	budget := 600 // bytes — larger budget exercises more of the corpus
-	printSubHeader(fmt.Sprintf("Step 2 — LoadContextPackFrom: %d seed(s), shared budget %d bytes", len(assemblySeeds), budget))
+	printSubHeader(fmt.Sprintf("Step 2 — LoadContext: %d seed(s), shared budget %d bytes", len(assemblySeeds), budget))
 	printNote("Ring walk r=3 around each seed · merged pool re-ranked by confidence · greedy fill.")
 	fmt.Println()
 
@@ -408,7 +418,12 @@ func run(dbPath string) error {
 	var pack hexxladb.ContextPack
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		pack, err = tx.LoadContextPackFrom(ctx, 3, budget, hexxladb.ByteLenBudgeter{}, assemblyCfg, assemblySeeds...)
+		pack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds:     assemblySeeds,
+			MaxRing:   3,
+			MaxTokens: budget,
+			Assembly:  assemblyCfg,
+		})
 		return err
 	}); err != nil {
 		return fmt.Errorf("load context pack from: %w", err)
@@ -644,7 +659,7 @@ func run(dbPath string) error {
 
 		var historicalCount int
 		err = db.ViewAt(snapshotSeq, func(tx *hexxladb.Tx) error {
-			histCells, err := tx.LoadContext(ctx, center, 3, 50)
+			histCells, err := tx.ScanContextRaw(ctx, center, 3, 50)
 			historicalCount = len(histCells)
 			return err
 		})
@@ -730,7 +745,7 @@ func run(dbPath string) error {
 	fmt.Println()
 
 	printSubHeader("Query C — keyword 'database', sorted by composite score")
-	printNote("Scores: tag exact +1.0 · prefix +0.8 · content verbatim +0.6 · content icase +0.5 · sourceID +0.3 · confidence bonus")
+	printNote("Multi-term tokenized scoring per token: tag exact +1.0 · prefix +0.8 · content verbatim +0.6 · content icase +0.5 · sourceID +0.3 · confidence bonus (once)")
 
 	var queryResults []hexxladb.CellQueryResult
 	if err := db.View(func(tx *hexxladb.Tx) error {
@@ -790,7 +805,7 @@ func run(dbPath string) error {
 	}
 
 	printSubHeader(fmt.Sprintf("Multi-Seed Assembly — %d seeds from Query C, shared budget 800 bytes", len(seeds)))
-	printNote("LoadContextPackFrom dispatches: 1 seed → LoadContextPack; N seeds → LoadMultiContextPack. No caller switch needed.")
+	printNote("LoadContext auto-dispatches: 1 seed → ring walk; N seeds → concurrent multi-seed merge. No caller switch needed.")
 	fmt.Println()
 
 	if len(seeds) == 0 {
@@ -805,8 +820,12 @@ func run(dbPath string) error {
 		var multiPack hexxladb.ContextPack
 		if err := db.View(func(tx *hexxladb.Tx) error {
 			var err error
-			multiPack, err = tx.LoadContextPackFrom(ctx, 2, sharedBudget,
-				hexxladb.ByteLenBudgeter{}, multiCfg, seeds...)
+			multiPack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+				Seeds:     seeds,
+				MaxRing:   2,
+				MaxTokens: sharedBudget,
+				Assembly:  multiCfg,
+			})
 			return err
 		}); err != nil {
 			return fmt.Errorf("load context pack from: %w", err)
@@ -1155,7 +1174,7 @@ func run(dbPath string) error {
 	printHeader("Phase 13: Field of View — Visibility-Filtered Context")
 
 	printNote("LoadContextFOV uses LOS ray casting to skip cells hidden behind empty regions.")
-	printNote("Compared to radial LoadContextPack, FOV spends budget only on reachable cells.")
+	printNote("Compared to a radial ring walk, FOV spends budget only on reachable cells.")
 	fmt.Println()
 
 	fovCenter := cells[len(cells)/2] // a cell near the middle of the corpus
@@ -1292,7 +1311,7 @@ func run(dbPath string) error {
 		var path []hexxladb.Coord
 		if err := db.View(func(tx *hexxladb.Tx) error {
 			var err error
-			path, err = tx.FindEdgePath(ctx, start, goal, "", 100)
+			path, err = tx.FindEdgePath(ctx, start, goal, hexxladb.FindEdgePathConfig{MaxExpand: 100})
 			return err
 		}); err != nil {
 			return fmt.Errorf("find edge path: %w", err)
@@ -1334,27 +1353,32 @@ func run(dbPath string) error {
 	}
 	fmt.Println()
 
-	// LoadContextByEdges
-	printSubHeader("Step 4 — LoadContextByEdges (graph-aware context)")
+	// LoadContext with EdgeFilter
+	printSubHeader("Step 4 — LoadContext with EdgeFilter (graph-aware context)")
 	if len(cells) > 0 {
 		edgeCenter := cells[0]
-		var edgeCells []record.CellRecord
+		var edgePack hexxladb.ContextPack
 		if err := db.View(func(tx *hexxladb.Tx) error {
 			var err error
-			edgeCells, err = tx.LoadContextByEdges(ctx, edgeCenter, "", 3, 20)
+			edgePack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+				Seeds:      []hexxladb.Coord{edgeCenter},
+				EdgeFilter: "",
+				MaxHops:    3,
+				MaxTokens:  20 * 64,
+				Assembly:   hexxladb.LoadContextBudgetConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
+			})
 			return err
 		}); err != nil {
 			return fmt.Errorf("load context by edges: %w", err)
 		}
-		printMetric("Edge-connected context cells", len(edgeCells), "cells")
-		for i, rec := range edgeCells {
+		printMetric("Edge-connected context cells", len(edgePack.Cells), "cells")
+		for i, cv := range edgePack.Cells {
 			if i >= 5 {
-				_, _ = dimStyle.Printf("    ⋯  (%d more not shown)\n", len(edgeCells)-5)
+				_, _ = dimStyle.Printf("    ⋯  (%d more not shown)\n", len(edgePack.Cells)-5)
 				break
 			}
-			c, _ := lattice.Unpack(rec.Key)
-			_, _ = dimStyle.Printf("    [%d] (%d,%d) ", i+1, c.Q, c.R)
-			_, _ = dataStyle.Printf("%s\n", truncate(rec.RawContent, 50))
+			_, _ = dimStyle.Printf("    [%d] (%d,%d) ", i+1, cv.Coord.Q, cv.Coord.R)
+			_, _ = dataStyle.Printf("%s\n", truncate(cv.RawContent, 50))
 		}
 	}
 	fmt.Println()

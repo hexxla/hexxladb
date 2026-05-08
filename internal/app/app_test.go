@@ -66,11 +66,11 @@ func TestService_ErrNoStorage_AllMethods(t *testing.T) {
 	_, err = s.FindSeamsAt(ctx, coord, 1, false, now)
 	noStorageErr(t, "FindSeamsAt", err)
 
-	_, err = s.LoadContext(ctx, coord, 3, 10)
-	noStorageErr(t, "LoadContext", err)
+	_, err = s.ScanContextRaw(ctx, coord, 3, 10)
+	noStorageErr(t, "ScanContextRaw", err)
 
-	_, err = s.LoadContextAt(ctx, coord, 3, 10, now)
-	noStorageErr(t, "LoadContextAt", err)
+	_, err = s.ScanContextAtRaw(ctx, coord, 3, 10, now)
+	noStorageErr(t, "ScanContextAtRaw", err)
 
 	noStorageErr(t, "WalkRingFacets",
 		s.WalkRingFacets(ctx, coord, 0, 0, nil, func(lattice.Coord, record.CellRecord, []record.FacetRecord) bool { return true }))

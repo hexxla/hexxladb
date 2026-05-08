@@ -43,7 +43,7 @@ type ByteLenBudgeter = views.ByteLenBudgeter
 // AssembleCellViewOpts configures [Tx.AssembleCellView].
 type AssembleCellViewOpts = views.AssembleCellViewOpts
 
-// LoadContextBudgetConfig configures [Tx.LoadContextWithBudgeting].
+// LoadContextBudgetConfig configures context assembly options for [Tx.LoadContext].
 type LoadContextBudgetConfig = views.LoadContextBudgetConfig
 
 // CellViewPredicate selects [CellView] rows when filtering slices.
@@ -83,51 +83,4 @@ func (tx *Tx) AssembleCellView(ctx context.Context, coord Coord, asOf *time.Time
 		return CellView{}, ErrInvalidArgument
 	}
 	return v, err
-}
-
-// LoadContextWithBudgeting walks rings from center, builds [CellView] values,
-// then applies HEXXLA.md-style eviction: drop lowest-confidence cells from the
-// outermost ring first until within maxTokens (or no progress).
-func (tx *Tx) LoadContextWithBudgeting(ctx context.Context, center Coord, maxR, maxTokens int, budgeter TokenBudgeter, cfg LoadContextBudgetConfig) (ContextPack, error) {
-	if tx == nil || tx.db == nil {
-		return ContextPack{}, ErrClosed
-	}
-	pack, err := views.LoadContextWithBudgeting(ctx, tx, center, maxR, maxTokens, budgeter, cfg)
-	if errors.Is(err, views.ErrInvalidArgument) {
-		return ContextPack{}, ErrInvalidArgument
-	}
-	return pack, err
-}
-
-// LoadContextPack matches HEXXLA.md naming for token-capped neighbourhoods;
-// it forwards to [Tx.LoadContextWithBudgeting].
-func (tx *Tx) LoadContextPack(ctx context.Context, center Coord, maxR, maxTokens int, budgeter TokenBudgeter, cfg LoadContextBudgetConfig) (ContextPack, error) {
-	return tx.LoadContextWithBudgeting(ctx, center, maxR, maxTokens, budgeter, cfg)
-}
-
-// LoadContextPackFrom is a unified entry point for one or many seed coordinates.
-//
-// When a single coord is provided it delegates to [Tx.LoadContextPack] directly (no overhead).
-// When multiple coords are provided it delegates to [Tx.LoadMultiContextPack] with
-// [MultiContextConfig.DeduplicateCoords] enabled so shared neighbourhood cells are not double-counted.
-//
-// Typical usage — feed top-N results from [Tx.SearchCells] without switching APIs:
-//
-//	pack, err := tx.LoadContextPackFrom(ctx, maxR, maxTokens, budgeter, assemblyCfg, coords...)
-func (tx *Tx) LoadContextPackFrom(ctx context.Context, maxR, maxTokens int, budgeter TokenBudgeter, cfg LoadContextBudgetConfig, centers ...Coord) (ContextPack, error) {
-	switch len(centers) {
-	case 0:
-		return ContextPack{}, nil
-	case 1:
-		return tx.LoadContextPack(ctx, centers[0], maxR, maxTokens, budgeter, cfg)
-	default:
-		return tx.LoadMultiContextPack(ctx, MultiContextConfig{
-			Centers:           centers,
-			MaxR:              maxR,
-			MaxTokens:         maxTokens,
-			Budgeter:          budgeter,
-			AssemblyConfig:    cfg,
-			DeduplicateCoords: true,
-		})
-	}
 }

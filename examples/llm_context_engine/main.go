@@ -417,19 +417,20 @@ func run(dbPath string) error {
 
 		// Now show that context assembly respects supersession
 		printStep("Context assembly with FilterSuperseded")
-		printNote("LoadContextPackFrom excludes superseded cells and substitutes successors.")
+		printNote("LoadContext excludes superseded cells and substitutes successors.")
 
 		var pack hexxladb.ContextPack
 		err = db.View(func(tx *hexxladb.Tx) error {
 			var e error
-			pack, e = tx.LoadContextPackFrom(ctx, 3, 4096,
-				hexxladb.ByteLenBudgeter{},
-				hexxladb.LoadContextBudgetConfig{
+			pack, e = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+				Seeds:     []hexxladb.Coord{briefCoord}, // start from the OLD coord — successor should appear instead
+				MaxRing:   3,
+				MaxTokens: 4096,
+				Assembly: hexxladb.LoadContextBudgetConfig{
 					FilterSuperseded: true,
 					Explain:          true,
 				},
-				briefCoord, // start from the OLD coord — successor should appear instead
-			)
+			})
 			return e
 		})
 		if err != nil {
@@ -547,15 +548,16 @@ func run(dbPath string) error {
 	var contextPack hexxladb.ContextPack
 	err = db.View(func(tx *hexxladb.Tx) error {
 		var e error
-		contextPack, e = tx.LoadContextPackFrom(ctx, 2, 2048,
-			hexxladb.ByteLenBudgeter{},
-			hexxladb.LoadContextBudgetConfig{
+		contextPack, e = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds:     seeds,
+			MaxRing:   2,
+			MaxTokens: 2048,
+			Assembly: hexxladb.LoadContextBudgetConfig{
 				FilterSuperseded: true,
 				IncludeSeams:     true,
 				Explain:          true,
 			},
-			seeds...,
-		)
+		})
 		return e
 	})
 	if err != nil {
@@ -627,7 +629,7 @@ func run(dbPath string) error {
 		{
 			"Token-budgeted context",
 			"Naive truncation drops relevant context; overflow breaks generation",
-			"LoadContextPackFrom evicts low-confidence cells from outer rings first",
+			"LoadContext evicts low-confidence cells from outer rings first",
 		},
 		{
 			"Auditable memory",

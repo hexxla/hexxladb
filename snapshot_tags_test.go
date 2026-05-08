@@ -65,8 +65,8 @@ func TestSnapshotTags_TagAndView(t *testing.T) {
 	// ViewAtTag should see only 1 cell (snapshot before the 2 later writes).
 	var countAtTag int
 	if err := db.ViewAtTag("after-first", func(tx *hexxladb.Tx) error {
-		cells, err := tx.LoadContext(t.Context(), hexxladb.Coord{}, 10, 100)
-		countAtTag = len(cells)
+		pack, err := tx.ScanContextRaw(t.Context(), hexxladb.Coord{}, 10, 100)
+		countAtTag = len(pack)
 		return err
 	}); err != nil {
 		t.Fatalf("ViewAtTag: %v", err)
@@ -74,8 +74,8 @@ func TestSnapshotTags_TagAndView(t *testing.T) {
 
 	var countHead int
 	countCells(t, db, func(tx *hexxladb.Tx) error {
-		cells, err := tx.LoadContext(t.Context(), hexxladb.Coord{}, 10, 100)
-		countHead = len(cells)
+		pack, err := tx.ScanContextRaw(t.Context(), hexxladb.Coord{}, 10, 100)
+		countHead = len(pack)
 		return err
 	})
 
@@ -100,15 +100,15 @@ func TestSnapshotTags_TwoTags_DifferentSeqs(t *testing.T) {
 
 	var c1, c2 int
 	if err := db.ViewAtTag("v1", func(tx *hexxladb.Tx) error {
-		cells, err := tx.LoadContext(t.Context(), hexxladb.Coord{}, 10, 100)
-		c1 = len(cells)
+		pack, err := tx.ScanContextRaw(t.Context(), hexxladb.Coord{}, 10, 100)
+		c1 = len(pack)
 		return err
 	}); err != nil {
 		t.Fatalf("ViewAtTag v1: %v", err)
 	}
 	if err := db.ViewAtTag("v2", func(tx *hexxladb.Tx) error {
-		cells, err := tx.LoadContext(t.Context(), hexxladb.Coord{}, 10, 100)
-		c2 = len(cells)
+		pack, err := tx.ScanContextRaw(t.Context(), hexxladb.Coord{}, 10, 100)
+		c2 = len(pack)
 		return err
 	}); err != nil {
 		t.Fatalf("ViewAtTag v2: %v", err)
@@ -294,8 +294,8 @@ func TestSnapshotTags_PersistsAcrossReopen(t *testing.T) {
 
 	var found bool
 	if err := db2.ViewAtTag("persistent", func(tx *hexxladb.Tx) error {
-		cells, err := tx.LoadContext(t.Context(), hexxladb.Coord{}, 5, 100)
-		found = len(cells) == 1
+		pack, err := tx.ScanContextRaw(t.Context(), hexxladb.Coord{}, 5, 100)
+		found = len(pack) == 1
 		return err
 	}); err != nil {
 		t.Fatalf("ViewAtTag after reopen: %v", err)

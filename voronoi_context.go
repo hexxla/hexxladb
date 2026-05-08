@@ -7,12 +7,21 @@ import (
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
+// VoronoiWeightFunc returns an additional traversal cost for a coordinate
+// (must be >= 0). Return 0 for uniform cost, which is identical to the default
+// geometric Voronoi behaviour. Nil is treated as uniform cost.
+type VoronoiWeightFunc = lattice.WeightFunc
+
 // VoronoiContextConfig configures [Tx.LoadContextVoronoi].
 type VoronoiContextConfig struct {
-	// MaxRadius bounds the BFS expansion from each seed (default 4).
+	// MaxRadius bounds the Dijkstra expansion from each seed (default 4).
 	MaxRadius int
 	// MaxCellsPerSeed caps cells loaded per Voronoi region (default 64).
 	MaxCellsPerSeed int
+	// WeightFunc optionally adjusts the traversal cost for each coordinate.
+	// Higher cost makes a coordinate harder to claim from a given seed.
+	// Nil means uniform cost (geometric Voronoi by hex distance).
+	WeightFunc VoronoiWeightFunc
 }
 
 func (cfg *VoronoiContextConfig) withDefaults() {
@@ -25,12 +34,15 @@ func (cfg *VoronoiContextConfig) withDefaults() {
 }
 
 // LoadContextVoronoi partitions the area around multiple seeds using a Voronoi
-// diagram (multi-source BFS on the hex grid), then loads cells for each region.
+// diagram (multi-source Dijkstra on the hex grid), then loads cells for each region.
 //
-// Unlike [LoadMultiContextPack], which loads independent radial neighborhoods
-// and merges them (causing overlap near adjacent seeds), Voronoi assigns each
-// coordinate to exactly one seed. This gives each seed a fair, non-overlapping
-// share of the context budget.
+// Unlike loading independent radial neighborhoods per seed (which causes overlap
+// near adjacent seeds), Voronoi assigns each coordinate to exactly one seed.
+// This gives each seed a fair, non-overlapping share of the context budget.
+//
+// When [VoronoiContextConfig.WeightFunc] is set, the Dijkstra expansion uses
+// the returned cost as an additional penalty, allowing callers to steer region
+// boundaries using confidence, recency, or semantic similarity scores.
 //
 // Returns a map from seed index to the cells in that seed's region.
 func (tx *Tx) LoadContextVoronoi(ctx context.Context, seeds []Coord, cfg VoronoiContextConfig) (map[int][]record.CellRecord, error) {
@@ -42,7 +54,7 @@ func (tx *Tx) LoadContextVoronoi(ctx context.Context, seeds []Coord, cfg Voronoi
 		return nil, nil
 	}
 
-	cells, _ := lattice.Voronoi(seeds, cfg.MaxRadius)
+	cells, _ := lattice.Voronoi(seeds, cfg.MaxRadius, cfg.WeightFunc)
 	return tx.loadVoronoiRegions(ctx, seeds, cells, cfg)
 }
 

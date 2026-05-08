@@ -475,12 +475,12 @@ func RunAll(t *testing.T, factory Factory) {
 			t.Fatal(err)
 		}
 		center := lattice.Coord{Q: 0, R: 0}
-		cells, err := s.LoadContext(ctx, center, 1, 10)
+		cells, err := s.ScanContextRaw(ctx, center, 1, 10)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(cells) == 0 {
-			t.Fatal("LoadContext: expected at least 1 cell")
+			t.Fatal("ScanContextRaw: expected at least 1 cell")
 		}
 	})
 

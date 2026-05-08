@@ -2,7 +2,6 @@ package hexxladb_test
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"testing"
 
@@ -52,7 +51,7 @@ func TestTx_AssembleCellView(t *testing.T) {
 	}
 }
 
-func TestTx_LoadContextWithBudgeting_evictionOrder(t *testing.T) {
+func TestTx_LoadContext_evictionOrder(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	db, err := hexxladb.Open(filepath.Join(dir, "budget.db"), nil)
@@ -93,11 +92,16 @@ func TestTx_LoadContextWithBudgeting_evictionOrder(t *testing.T) {
 	}
 
 	err = db.View(func(tx *hexxladb.Tx) error {
-		pack, err := tx.LoadContextWithBudgeting(ctx, center, 1, 14, hexxladb.ByteLenBudgeter{}, hexxladb.LoadContextBudgetConfig{
-			Assemble:          hexxladb.AssembleCellViewOpts{IncludeFacets: false},
-			MaxCandidateCells: 10,
-			IncludeFacetText:  false,
-			IncludeSeams:      false,
+		pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds:     []hexxladb.Coord{center},
+			MaxRing:   1,
+			MaxTokens: 14,
+			Assembly: hexxladb.LoadContextBudgetConfig{
+				Assemble:          hexxladb.AssembleCellViewOpts{IncludeFacets: false},
+				MaxCandidateCells: 10,
+				IncludeFacetText:  false,
+				IncludeSeams:      false,
+			},
 		})
 		if err != nil {
 			return err
@@ -120,45 +124,6 @@ func TestTx_LoadContextWithBudgeting_evictionOrder(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestTx_LoadContextPack_alias(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	db, err := hexxladb.Open(filepath.Join(dir, "pack.db"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	center := lattice.Coord{Q: 0, R: 0}
-	ctx := context.Background()
-	if err := db.Update(func(tx *hexxladb.Tx) error {
-		p, err := lattice.Pack(center)
-		if err != nil {
-			return err
-		}
-		return tx.PutCell(ctx, record.CellRecord{Key: p, RawContent: "c"})
-	}); err != nil {
-		t.Fatal(err)
-	}
-	var a, b hexxladb.ContextPack
-	cfg := hexxladb.LoadContextBudgetConfig{
-		Assemble:          hexxladb.AssembleCellViewOpts{IncludeFacets: false},
-		MaxCandidateCells: 4,
-	}
-	err = db.View(func(tx *hexxladb.Tx) error {
-		var err1, err2 error
-		a, err1 = tx.LoadContextWithBudgeting(ctx, center, 0, 100, hexxladb.ByteLenBudgeter{}, cfg)
-		b, err2 = tx.LoadContextPack(ctx, center, 0, 100, hexxladb.ByteLenBudgeter{}, cfg)
-		return errors.Join(err1, err2)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(a.Cells) != len(b.Cells) || a.TotalTokens != b.TotalTokens {
-		t.Fatalf("pack vs budgeting: %+v vs %+v", a, b)
 	}
 }
 
@@ -206,9 +171,11 @@ func TestFilterSuperseded_excludesStale(t *testing.T) {
 	}
 
 	err = db.View(func(tx *hexxladb.Tx) error {
-		pack, err := tx.LoadContextWithBudgeting(ctx, center, 1, 10000, hexxladb.ByteLenBudgeter{}, hexxladb.LoadContextBudgetConfig{
-			Assemble:         hexxladb.AssembleCellViewOpts{IncludeFacets: false},
-			FilterSuperseded: true,
+		pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds: []hexxladb.Coord{center}, MaxRing: 1, MaxTokens: 10000,
+			Assembly: hexxladb.LoadContextBudgetConfig{
+				Assemble: hexxladb.AssembleCellViewOpts{IncludeFacets: false}, FilterSuperseded: true,
+			},
 		})
 		if err != nil {
 			return err
@@ -265,9 +232,11 @@ func TestFilterSuperseded_chainWalk(t *testing.T) {
 	}
 
 	err = db.View(func(tx *hexxladb.Tx) error {
-		pack, err := tx.LoadContextWithBudgeting(ctx, center, 1, 10000, hexxladb.ByteLenBudgeter{}, hexxladb.LoadContextBudgetConfig{
-			Assemble:         hexxladb.AssembleCellViewOpts{IncludeFacets: false},
-			FilterSuperseded: true,
+		pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds: []hexxladb.Coord{center}, MaxRing: 1, MaxTokens: 10000,
+			Assembly: hexxladb.LoadContextBudgetConfig{
+				Assemble: hexxladb.AssembleCellViewOpts{IncludeFacets: false}, FilterSuperseded: true,
+			},
 		})
 		if err != nil {
 			return err
@@ -318,9 +287,11 @@ func TestFilterSuperseded_noSuccessor(t *testing.T) {
 	}
 
 	err = db.View(func(tx *hexxladb.Tx) error {
-		pack, err := tx.LoadContextWithBudgeting(ctx, center, 1, 10000, hexxladb.ByteLenBudgeter{}, hexxladb.LoadContextBudgetConfig{
-			Assemble:         hexxladb.AssembleCellViewOpts{IncludeFacets: false},
-			FilterSuperseded: true,
+		pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds: []hexxladb.Coord{center}, MaxRing: 1, MaxTokens: 10000,
+			Assembly: hexxladb.LoadContextBudgetConfig{
+				Assemble: hexxladb.AssembleCellViewOpts{IncludeFacets: false}, FilterSuperseded: true,
+			},
 		})
 		if err != nil {
 			return err
@@ -366,9 +337,11 @@ func TestFilterSuperseded_offByDefault(t *testing.T) {
 	}
 
 	err = db.View(func(tx *hexxladb.Tx) error {
-		pack, err := tx.LoadContextWithBudgeting(ctx, center, 1, 10000, hexxladb.ByteLenBudgeter{}, hexxladb.LoadContextBudgetConfig{
-			Assemble:         hexxladb.AssembleCellViewOpts{IncludeFacets: false},
-			FilterSuperseded: false,
+		pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds: []hexxladb.Coord{center}, MaxRing: 1, MaxTokens: 10000,
+			Assembly: hexxladb.LoadContextBudgetConfig{
+				Assemble: hexxladb.AssembleCellViewOpts{IncludeFacets: false}, FilterSuperseded: false,
+			},
 		})
 		if err != nil {
 			return err

@@ -194,7 +194,9 @@ func (e *Engine) groupWriteWAL(jobs []*groupJob) error {
 		for i := range job.pending {
 			p := &job.pending[i]
 			rec := encodeWALRecordWithMAC(p.seq, p.pageID, p.plain, e.walMACKey, e.walMACEnabled, e.pageSize)
-			if _, err := e.wal.Write(rec); err != nil {
+			n, err := e.wal.Write(rec)
+			e.walSize += int64(n)
+			if err != nil {
 				return err
 			}
 		}
@@ -240,9 +242,13 @@ func (e *Engine) groupFinalizeHeader(jobs []*groupJob) error {
 	return nil
 }
 
-// groupTruncateWAL truncates and syncs the WAL after primary is durable.
+// groupTruncateWAL resets the WAL after the primary is durable.
+// It shrinks to the exact bytes written this cycle (not zero) so the kernel
+// retains allocated inode blocks, avoiding fallocate on the next commit.
 func (e *Engine) groupTruncateWAL() error {
-	if err := e.wal.Truncate(0); err != nil {
+	written := e.walSize
+	e.walSize = 0
+	if err := e.wal.Truncate(written); err != nil {
 		return err
 	}
 	if _, err := e.wal.Seek(0, io.SeekStart); err != nil {

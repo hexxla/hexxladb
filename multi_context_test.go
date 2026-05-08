@@ -22,18 +22,18 @@ func openMultiCtxDB(t *testing.T) *hexxladb.DB {
 	return db
 }
 
-func TestLoadMultiContextPack_NoCenters(t *testing.T) {
+func TestLoadContext_NoSeeds(t *testing.T) {
 	t.Parallel()
 	db := openMultiCtxDB(t)
 	ctx := context.Background()
 
 	if err := db.View(func(tx *hexxladb.Tx) error {
-		pack, err := tx.LoadMultiContextPack(ctx, hexxladb.MultiContextConfig{})
+		pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{})
 		if err != nil {
 			return err
 		}
 		if len(pack.Cells) != 0 {
-			t.Errorf("empty Centers produced %d cells, want 0", len(pack.Cells))
+			t.Errorf("empty Seeds produced %d cells, want 0", len(pack.Cells))
 		}
 		return nil
 	}); err != nil {
@@ -41,7 +41,7 @@ func TestLoadMultiContextPack_NoCenters(t *testing.T) {
 	}
 }
 
-func TestLoadMultiContextPack_SingleSeed(t *testing.T) {
+func TestLoadContext_SingleSeed(t *testing.T) {
 	t.Parallel()
 	db := openMultiCtxDB(t)
 	ctx := context.Background()
@@ -58,9 +58,9 @@ func TestLoadMultiContextPack_SingleSeed(t *testing.T) {
 	var pack hexxladb.ContextPack
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		pack, err = tx.LoadMultiContextPack(ctx, hexxladb.MultiContextConfig{
-			Centers:   []hexxladb.Coord{center},
-			MaxR:      2,
+		pack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds:     []hexxladb.Coord{center},
+			MaxRing:   2,
 			MaxTokens: 4096,
 		})
 		return err
@@ -73,7 +73,7 @@ func TestLoadMultiContextPack_SingleSeed(t *testing.T) {
 	}
 }
 
-func TestLoadMultiContextPack_MultiSeed_DeduplicateCoords(t *testing.T) {
+func TestLoadContext_MultiSeed_DeduplicateCoords(t *testing.T) {
 	t.Parallel()
 	db := openMultiCtxDB(t)
 	ctx := context.Background()
@@ -92,60 +92,37 @@ func TestLoadMultiContextPack_MultiSeed_DeduplicateCoords(t *testing.T) {
 		}
 	}
 
-	// Without dedup.
-	var packNoDedup hexxladb.ContextPack
+	// Multi-seed via LoadContext always deduplicates (concurrent assembly).
+	var pack hexxladb.ContextPack
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		packNoDedup, err = tx.LoadMultiContextPack(ctx, hexxladb.MultiContextConfig{
-			Centers:           []hexxladb.Coord{seedA, seedB},
-			MaxR:              1,
-			MaxTokens:         8192,
-			DeduplicateCoords: false,
+		pack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds:     []hexxladb.Coord{seedA, seedB},
+			MaxRing:   1,
+			MaxTokens: 8192,
 		})
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	// With dedup.
-	var packDedup hexxladb.ContextPack
-	if err := db.View(func(tx *hexxladb.Tx) error {
-		var err error
-		packDedup, err = tx.LoadMultiContextPack(ctx, hexxladb.MultiContextConfig{
-			Centers:           []hexxladb.Coord{seedA, seedB},
-			MaxR:              1,
-			MaxTokens:         8192,
-			DeduplicateCoords: true,
-		})
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Dedup must produce fewer or equal cells than no-dedup.
-	if len(packDedup.Cells) > len(packNoDedup.Cells) {
-		t.Errorf("dedup pack has %d cells > no-dedup %d cells; dedup should reduce or equal",
-			len(packDedup.Cells), len(packNoDedup.Cells))
-	}
-
-	// Dedup pack must have no repeated coords.
+	// No repeated coords in the returned pack.
 	seen := map[hexxladb.Coord]int{}
-	for _, cv := range packDedup.Cells {
+	for _, cv := range pack.Cells {
 		seen[cv.Coord]++
 	}
 	for coord, count := range seen {
 		if count > 1 {
-			t.Errorf("coord %v appears %d times in deduplicated pack", coord, count)
+			t.Errorf("coord %v appears %d times in pack", coord, count)
 		}
 	}
 }
 
-func TestLoadMultiContextPack_SharedBudget(t *testing.T) {
+func TestLoadContext_SharedBudget(t *testing.T) {
 	t.Parallel()
 	db := openMultiCtxDB(t)
 	ctx := context.Background()
 
-	// Write cells with enough content to stress the budget.
 	longContent := "This is a fairly long cell content string that will consume budget tokens. "
 	coords := []hexxladb.Coord{{Q: 0, R: 0}, {Q: 1, R: 0}, {Q: 2, R: 0}, {Q: 0, R: 1}, {Q: 1, R: 1}}
 	for _, c := range coords {
@@ -161,19 +138,16 @@ func TestLoadMultiContextPack_SharedBudget(t *testing.T) {
 	var pack hexxladb.ContextPack
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		pack, err = tx.LoadMultiContextPack(ctx, hexxladb.MultiContextConfig{
-			Centers:           []hexxladb.Coord{{Q: 0, R: 0}, {Q: 2, R: 0}},
-			MaxR:              2,
-			MaxTokens:         tinyBudget,
-			Budgeter:          hexxladb.ByteLenBudgeter{},
-			DeduplicateCoords: true,
+		pack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds:     []hexxladb.Coord{{Q: 0, R: 0}, {Q: 2, R: 0}},
+			MaxRing:   2,
+			MaxTokens: tinyBudget,
 		})
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	// Verify budget was respected: total token usage ≤ tinyBudget.
 	total := 0
 	for _, cv := range pack.Cells {
 		total += hexxladb.ByteLenBudgeter{}.CountTokens(cv.RawContent)
@@ -183,7 +157,7 @@ func TestLoadMultiContextPack_SharedBudget(t *testing.T) {
 	}
 }
 
-func TestLoadMultiContextPack_StatsAccumulated(t *testing.T) {
+func TestLoadContext_StatsAccumulated(t *testing.T) {
 	t.Parallel()
 	db := openMultiCtxDB(t)
 	ctx := context.Background()
@@ -199,9 +173,9 @@ func TestLoadMultiContextPack_StatsAccumulated(t *testing.T) {
 	var pack hexxladb.ContextPack
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		pack, err = tx.LoadMultiContextPack(ctx, hexxladb.MultiContextConfig{
-			Centers:   []hexxladb.Coord{coord},
-			MaxR:      1,
+		pack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds:     []hexxladb.Coord{coord},
+			MaxRing:   1,
 			MaxTokens: 4096,
 		})
 		return err
@@ -209,7 +183,6 @@ func TestLoadMultiContextPack_StatsAccumulated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Stats should reflect at least one candidate scanned.
 	if pack.Stats.CandidatesScanned == 0 {
 		t.Error("Stats.CandidatesScanned = 0, expected > 0 after assembly")
 	}

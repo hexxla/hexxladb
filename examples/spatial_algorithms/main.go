@@ -3,11 +3,11 @@
 // Demonstrates HexxlaDB's spatial algorithms on the hex grid:
 //
 //   - Phase 1  Grid setup: seed cells in a spiral pattern with edges
-//   - Phase 2  Field of View (LoadContextFOV) — LOS-based visibility filtering
-//   - Phase 3  Level of Detail (LoadContextLOD) — multi-resolution context loading
+//   - Phase 2  Field of View (LoadContextFOV) — symmetric shadowcasting visibility filtering
+//   - Phase 3  Level of Detail (LoadContext, MaxRing>=10) — auto-dispatched multi-resolution loading
 //   - Phase 4  Voronoi Partitioning (LoadContextVoronoi) — fair, non-overlapping regions
-//   - Phase 5  Pathfinding (FindEdgePath A*, WalkEdges BFS, LoadContextByEdges)
-//   - Phase 6  Comparison — radial vs FOV vs LOD vs Voronoi vs edge-based
+//   - Phase 5  Pathfinding (FindEdgePath A*, WalkEdges BFS, LoadContext with EdgeFilter)
+//   - Phase 6  Comparison — radial vs FOV vs LOD (auto) vs Voronoi vs edge-based
 //
 // No external dependencies required — runs on a self-contained in-memory-like DB.
 //
@@ -250,8 +250,8 @@ func run(dbPath string) error {
 	// PHASE 2: Field of View
 	// ════════════════════════════════════════════════════════════════
 	printHeader("Phase 2: Field of View (LoadContextFOV)")
-	printNote("LOS ray casting from center — empty cells block vision.")
-	printNote("Opaque function: empty grid positions = walls.")
+	printNote("Symmetric shadowcasting FOV (Albert Ford 2021 adaptation) from center.")
+	printNote("Opaque function: empty grid positions = walls. Guaranteed symmetric: if A sees B, B sees A.")
 	fmt.Println()
 
 	var fovCells []record.CellRecord
@@ -311,18 +311,22 @@ func run(dbPath string) error {
 	// ════════════════════════════════════════════════════════════════
 	// PHASE 3: Level of Detail
 	// ════════════════════════════════════════════════════════════════
-	printHeader("Phase 3: Level of Detail (LoadContextLOD)")
-	printNote("Inner rings at full resolution; outer rings coarsened to reduce lookups.")
-	printNote("Ideal for large-radius context where distant cells need less detail.")
+	printHeader("Phase 3: Level of Detail (LoadContext, MaxRing >= 10)")
+	printNote("LoadContext auto-dispatches LOD when MaxRing >= 10: inner rings at full resolution,")
+	printNote("outer rings coarsened to reduce lookups. No separate API needed.")
 	fmt.Println()
 
-	var lodCells []record.CellRecord
+	var lodPack hexxladb.ContextPack
 	err = db.View(func(tx *hexxladb.Tx) error {
 		var e error
-		lodCells, e = tx.LoadContextLOD(ctx, center, 6, hexxladb.LODContextConfig{
-			FineRadius:   2,
-			CoarseFactor: 2,
-			MaxCells:     100,
+		lodPack, e = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds:     []hexxladb.Coord{center},
+			MaxRing:   12,
+			MaxTokens: 100 * 64,
+			Assembly: hexxladb.LoadContextBudgetConfig{
+				Assemble:          hexxladb.DefaultAssembleCellViewOpts(),
+				MaxCandidateCells: 100,
+			},
 		})
 		return e
 	})
@@ -330,17 +334,14 @@ func run(dbPath string) error {
 		return fmt.Errorf("lod: %w", err)
 	}
 
-	printMetric("Max radius", 6, "rings")
-	printMetric("Fine radius", 2, "rings (full resolution)")
-	printMetric("Coarse factor", 2, "(outer rings sampled at 1/4 density)")
-	printMetric("LOD cells loaded", len(lodCells), "")
+	printMetric("MaxRing", 12, "rings (>= 10 triggers LOD dispatch)")
+	printMetric("LOD cells loaded", len(lodPack.Cells), "")
 	fmt.Println()
 
 	_, _ = infoStyle.Println("  LOD cells by distance from center:")
 	ringBuckets := map[int]int{}
-	for _, rec := range lodCells {
-		c, _ := lattice.Unpack(rec.Key)
-		d := center.Distance(c)
+	for _, cv := range lodPack.Cells {
+		d := center.Distance(cv.Coord)
 		ringBuckets[d]++
 	}
 	for d := range 7 {
@@ -361,8 +362,8 @@ func run(dbPath string) error {
 	// PHASE 4: Voronoi Partitioning
 	// ════════════════════════════════════════════════════════════════
 	printHeader("Phase 4: Voronoi Partitioning (LoadContextVoronoi)")
-	printNote("Multi-source BFS assigns each coordinate to exactly one seed.")
-	printNote("No overlap between regions — fair budget allocation per seed.")
+	printNote("Multi-source Dijkstra assigns each coordinate to the lowest-cost seed.")
+	printNote("No overlap between regions — fair budget allocation per seed. Supports optional WeightFunc for non-uniform cost.")
 	fmt.Println()
 
 	voronoiSeeds := []hexxladb.Coord{
@@ -410,7 +411,7 @@ func run(dbPath string) error {
 	// PHASE 5: Pathfinding
 	// ════════════════════════════════════════════════════════════════
 	printHeader("Phase 5: Pathfinding (A* / BFS / Edge Context)")
-	printNote("Edges form a graph overlay. A* finds shortest paths; BFS discovers reachable sets.")
+	printNote("Edges form a graph overlay. A* (EuclideanHeuristic default) finds shortest paths; BFS discovers reachable sets.")
 	fmt.Println()
 
 	// A* path
@@ -421,7 +422,7 @@ func run(dbPath string) error {
 		var path []hexxladb.Coord
 		err = db.View(func(tx *hexxladb.Tx) error {
 			var e error
-			path, e = tx.FindEdgePath(ctx, start, goal, "", 500)
+			path, e = tx.FindEdgePath(ctx, start, goal, hexxladb.FindEdgePathConfig{MaxExpand: 500})
 			return e
 		})
 		if err != nil {
@@ -470,26 +471,31 @@ func run(dbPath string) error {
 	fmt.Println()
 
 	// Edge-based context loading
-	printStep("LoadContextByEdges — graph-aware context")
+	printStep("LoadContext with EdgeFilter — graph-aware context")
 	if len(cells) > 0 {
-		var edgeCells []record.CellRecord
+		var edgePack hexxladb.ContextPack
 		err = db.View(func(tx *hexxladb.Tx) error {
 			var e error
-			edgeCells, e = tx.LoadContextByEdges(ctx, center, "", 4, 30)
+			edgePack, e = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+				Seeds:      []hexxladb.Coord{center},
+				EdgeFilter: "",
+				MaxHops:    4,
+				MaxTokens:  30 * 64,
+				Assembly:   hexxladb.LoadContextBudgetConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
+			})
 			return e
 		})
 		if err != nil {
 			return fmt.Errorf("edge context: %w", err)
 		}
-		printMetric("Edge-connected cells", len(edgeCells), "")
-		for i, rec := range edgeCells {
+		printMetric("Edge-connected cells", len(edgePack.Cells), "")
+		for i, cv := range edgePack.Cells {
 			if i >= 5 {
-				_, _ = dimStyle.Printf("    ⋯  (%d more)\n", len(edgeCells)-5)
+				_, _ = dimStyle.Printf("    ⋯  (%d more)\n", len(edgePack.Cells)-5)
 				break
 			}
-			c, _ := lattice.Unpack(rec.Key)
-			_, _ = dimStyle.Printf("    [%d] (%d,%d) ", i+1, c.Q, c.R)
-			_, _ = dataStyle.Printf("%s\n", trunc(rec.RawContent, 45))
+			_, _ = dimStyle.Printf("    [%d] (%d,%d) ", i+1, cv.Coord.Q, cv.Coord.R)
+			_, _ = dataStyle.Printf("%s\n", trunc(cv.RawContent, 45))
 		}
 	}
 	fmt.Println()
@@ -516,9 +522,15 @@ func run(dbPath string) error {
 	})
 
 	// Edge context
-	var edgeCtxCells []record.CellRecord
+	var edgeCtxPack hexxladb.ContextPack
 	_ = db.View(func(tx *hexxladb.Tx) error {
-		edgeCtxCells, _ = tx.LoadContextByEdges(ctx, center, "", 5, 200)
+		edgeCtxPack, _ = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds:      []hexxladb.Coord{center},
+			EdgeFilter: "",
+			MaxHops:    5,
+			MaxTokens:  200 * 64,
+			Assembly:   hexxladb.LoadContextBudgetConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
+		})
 		return nil
 	})
 
@@ -531,10 +543,10 @@ func run(dbPath string) error {
 		desc  string
 	}{
 		{"Radial (blind)", len(radialCells), "All occupied cells within radius — baseline"},
-		{"FOV (visibility)", len(fovCells), "LOS-filtered — skips occluded cells"},
-		{"LOD (multi-res)", len(lodCells), "Fine inner + coarse outer — fewer lookups"},
-		{"Voronoi (4 seeds)", totalVoronoi, "Non-overlapping regions — fair budget split"},
-		{"Edge-walk (graph)", len(edgeCtxCells), "BFS over edges — follows connections"},
+		{"FOV (visibility)", len(fovCells), "Shadowcast-filtered — skips occluded cells; symmetric"},
+		{"LOD (multi-res)", len(lodPack.Cells), "Fine inner + coarse outer — fewer lookups"},
+		{"Voronoi (4 seeds)", totalVoronoi, "Dijkstra regions — non-overlapping, cost-aware"},
+		{"Edge-walk (graph)", len(edgeCtxPack.Cells), "BFS over edges — follows connections"},
 	}
 
 	maxCount := 0
@@ -559,9 +571,9 @@ func run(dbPath string) error {
 
 	_, _ = infoStyle.Println("  When to use each strategy:")
 	_, _ = dimStyle.Println("    • Radial:  dense grids, all neighbors equally important")
-	_, _ = dimStyle.Println("    • FOV:     sparse grids, save budget by skipping occluded regions")
+	_, _ = dimStyle.Println("    • FOV:     sparse grids, symmetric shadowcasting skips occluded regions")
 	_, _ = dimStyle.Println("    • LOD:     large radius needed but distant cells less important")
-	_, _ = dimStyle.Println("    • Voronoi: multi-seed fairness, no duplicate context between seeds")
+	_, _ = dimStyle.Println("    • Voronoi: multi-seed Dijkstra, no duplicate context; supports weighted cost")
 	_, _ = dimStyle.Println("    • Edges:   graph-structured data, follow relationships not proximity")
 	fmt.Println()
 

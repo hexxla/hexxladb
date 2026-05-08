@@ -70,6 +70,12 @@ type Options struct {
 	// Invalid values cause [Open] to return [ErrInvalidArgument].
 	MaxValueBytes uint32
 
+	// PageCacheSize controls the in-process CLOCK-Pro B+ tree page cache.
+	// 0 (default) enables the cache with a 4 MiB budget, which is appropriate for most workloads.
+	// Positive values set a custom byte budget (e.g. 16 << 20 for 16 MiB).
+	// -1 disables the cache entirely (useful for memory-constrained environments or benchmarking).
+	PageCacheSize int64
+
 	// UsePrimaryFdatasync, when true, uses fdatasync(2) on the primary data file on supported
 	// platforms (e.g. Linux) instead of fsync(2) for engine durability barriers. Default false; see
 	// [docs/hexxladb/DURABILITY.md] before enabling in production.

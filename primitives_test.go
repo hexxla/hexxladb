@@ -200,7 +200,7 @@ func TestTx_LoadContext(t *testing.T) {
 
 	ctx := context.Background()
 	err = db.View(func(tx *hexxladb.Tx) error {
-		recs, err := tx.LoadContext(ctx, center, 1, 10)
+		recs, err := tx.ScanContextRaw(ctx, center, 1, 10)
 		if err != nil {
 			return err
 		}

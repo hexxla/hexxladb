@@ -50,4 +50,10 @@ type Options struct {
 	// EmbeddingMetric sets the distance function for embedding search. Only valid when
 	// EmbeddingDim > 0. Persisted in the file header; immutable after creation.
 	EmbeddingMetric DistanceMetric
+	// PageCacheSize is the total byte budget for the in-process CLOCK-Pro page cache.
+	// Zero disables the cache at the engine level. The public [Open] API resolves the
+	// user-facing 0-means-default / -1-means-disabled convention before passing a value here.
+	// The cache stores decrypted page bytes keyed by pageID and eliminates
+	// pread syscalls for hot B+ tree pages (root, internal nodes, hot leaves).
+	PageCacheSize int64
 }

@@ -289,7 +289,7 @@ func BenchmarkAPI_LoadContext(b *testing.B) {
 				var cells []record.CellRecord
 				err := db.View(func(tx *hexxladb.Tx) error {
 					var inner error
-					cells, inner = tx.LoadContext(ctx, center, 3, 50)
+					cells, inner = tx.ScanContextRaw(ctx, center, 3, 50)
 					return inner
 				})
 				if err != nil {
@@ -326,7 +326,7 @@ func BenchmarkAPI_LoadContextAt(b *testing.B) {
 				var cells []record.CellRecord
 				err := db.View(func(tx *hexxladb.Tx) error {
 					var inner error
-					cells, inner = tx.LoadContextAt(ctx, center, 3, 50, asOf)
+					cells, inner = tx.ScanContextAtRaw(ctx, center, 3, 50, asOf)
 					return inner
 				})
 				if err != nil {
@@ -453,15 +453,14 @@ func BenchmarkAPI_QueryCells(b *testing.B) {
 	}
 }
 
-// BenchmarkAPI_LoadContextPack measures [Tx.LoadContextPack] with varying radii.
-func BenchmarkAPI_LoadContextPack(b *testing.B) {
+// BenchmarkAPI_LoadContext_Budgeted measures [Tx.LoadContext] with budgeted assembly at varying radii.
+func BenchmarkAPI_LoadContext_Budgeted(b *testing.B) {
 	for _, n := range apiBenchPreloadSizes(b) {
 		db, _ := benchAPIPreloadCells(b, n)
 		b.Cleanup(func() { _ = db.Close() })
 		ctx := context.Background()
 		center := lattice.Coord{Q: 0, R: 0}
-		budgeter := hexxladb.ByteLenBudgeter{}
-		cfg := hexxladb.LoadContextBudgetConfig{
+		assembly := hexxladb.LoadContextBudgetConfig{
 			Assemble: hexxladb.DefaultAssembleCellViewOpts(),
 		}
 
@@ -473,7 +472,12 @@ func BenchmarkAPI_LoadContextPack(b *testing.B) {
 				b.ResetTimer()
 				for b.Loop() {
 					err := db.View(func(tx *hexxladb.Tx) error {
-						_, err := tx.LoadContextPack(ctx, center, radius, 4096, budgeter, cfg)
+						_, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+							Seeds:     []hexxladb.Coord{center},
+							MaxRing:   radius,
+							MaxTokens: 4096,
+							Assembly:  assembly,
+						})
 						return err
 					})
 					if err != nil {

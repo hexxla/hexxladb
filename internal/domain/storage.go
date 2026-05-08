@@ -36,9 +36,9 @@ type Storage interface {
 	FindSeams(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool) ([]record.SeamRecord, error)
 	// FindSeamsAt is like FindSeams but only includes seams whose validity contains asOf (single-version filter; not MVCC).
 	FindSeamsAt(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool, asOf time.Time) ([]record.SeamRecord, error)
-	LoadContext(ctx context.Context, center lattice.Coord, maxR, maxCells int) ([]record.CellRecord, error)
-	// LoadContextAt is like LoadContext but skips cells whose validity does not contain asOf.
-	LoadContextAt(ctx context.Context, center lattice.Coord, maxR, maxCells int, asOf time.Time) ([]record.CellRecord, error)
+	ScanContextRaw(ctx context.Context, center lattice.Coord, maxR, maxCells int) ([]record.CellRecord, error)
+	// ScanContextAtRaw is like ScanContextRaw but skips cells whose validity does not contain asOf.
+	ScanContextAtRaw(ctx context.Context, center lattice.Coord, maxR, maxCells int, asOf time.Time) ([]record.CellRecord, error)
 	// WalkRingFacets loads facet records (bit i = facet_id i) for each ring cell that passes the optional asOf filter.
 	WalkRingFacets(ctx context.Context, center lattice.Coord, ring int, facetMask uint8, asOf *time.Time, fn func(lattice.Coord, record.CellRecord, []record.FacetRecord) bool) error
 	ResolveSeam(ctx context.Context, id, resolutionStatus, resolutionNote string) error
