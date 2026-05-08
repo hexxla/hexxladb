@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
-	"github.com/hexxla/hexxladb/internal/record"
 )
 
 // LODContextConfig configures [Tx.LoadContextLOD].
@@ -38,7 +37,7 @@ func (cfg *LODContextConfig) withDefaults() {
 //
 // This is useful for large-radius context loading where distant cells are
 // less important and can be represented at lower density.
-func (tx *Tx) LoadContextLOD(ctx context.Context, center Coord, maxR int, cfg LODContextConfig) ([]record.CellRecord, error) {
+func (tx *Tx) LoadContextLOD(ctx context.Context, center Coord, maxR int, cfg LODContextConfig) ([]CellRecord, error) {
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
 	}
@@ -65,9 +64,9 @@ func (tx *Tx) LoadContextLOD(ctx context.Context, center Coord, maxR int, cfg LO
 }
 
 // loadFineRings loads rings [0..fineR] at full resolution using pre-packed coords.
-func (tx *Tx) loadFineRings(ctx context.Context, center Coord, fineR, maxCells int) ([]record.CellRecord, error) {
+func (tx *Tx) loadFineRings(ctx context.Context, center Coord, fineR, maxCells int) ([]CellRecord, error) {
 	packed := lattice.WalkRingsPacked(center, fineR)
-	out := make([]record.CellRecord, 0, min(len(packed), maxCells))
+	out := make([]CellRecord, 0, min(len(packed), maxCells))
 	for _, p := range packed {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -89,7 +88,7 @@ func (tx *Tx) loadFineRings(ctx context.Context, center Coord, fineR, maxCells i
 // coarseRingState tracks progress during coarsened ring loading.
 type coarseRingState struct {
 	seen      map[lattice.PackedCoord]struct{}
-	out       []record.CellRecord
+	out       []CellRecord
 	added     int
 	remaining int
 	factor    int
@@ -127,7 +126,7 @@ func (s *coarseRingState) tryCoarseCoord(tx *Tx, c Coord) (done bool, err error)
 // For each ring, it generates fine coords, coarsens them, deduplicates,
 // and looks up the coarsened coordinate. This reduces the number of
 // lookups from O(6k) to O(6k/factor²) per ring.
-func (tx *Tx) loadCoarseRings(ctx context.Context, center Coord, startR, maxR, factor, remaining int, out []record.CellRecord) ([]record.CellRecord, error) {
+func (tx *Tx) loadCoarseRings(ctx context.Context, center Coord, startR, maxR, factor, remaining int, out []CellRecord) ([]CellRecord, error) {
 	s := coarseRingState{
 		seen:      make(map[lattice.PackedCoord]struct{}, len(out)),
 		out:       out,

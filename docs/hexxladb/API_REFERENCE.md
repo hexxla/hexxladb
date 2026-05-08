@@ -152,6 +152,18 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 
 ---
 
+## Wire format types (public re-exports)
+
+| Symbol                                         | Notes                                                                                                                                               |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`CellRecord`](../../record_export.go)**     | v1 wire shape for cell/<packed_coord> blobs. Re-exported from internal/record for public API access. Used by LoadContextByEdges and LoadContextLOD. |
+| **[`ProvenanceWire`](../../record_export.go)** | Provenance stored in v1 payloads (times as Unix nanoseconds UTC). Re-exported from internal/record.                                                 |
+| **[`ValidityWire`](../../record_export.go)**   | Optional validity window (nil = open-ended on that side). Re-exported from internal/record.                                                         |
+
+These types allow external packages (e.g., Mosaic) to work with wire formats without importing internal packages. They are re-exported type aliases from `internal/record`.
+
+---
+
 ## Cell templates
 
 | Symbol                                               | Notes                                                                                                                   |

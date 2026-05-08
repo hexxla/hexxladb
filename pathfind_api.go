@@ -49,7 +49,7 @@ func (tx *Tx) WalkEdges(ctx context.Context, start Coord, filter string, maxHops
 // blind spatial expansion.
 //
 // maxHops is the maximum edge traversal depth; maxCells caps the result set.
-func (tx *Tx) LoadContextByEdges(ctx context.Context, center Coord, filter string, maxHops, maxCells int) ([]record.CellRecord, error) {
+func (tx *Tx) LoadContextByEdges(ctx context.Context, center Coord, filter string, maxHops, maxCells int) ([]CellRecord, error) {
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
 	}
@@ -62,7 +62,7 @@ func (tx *Tx) LoadContextByEdges(ctx context.Context, center Coord, filter strin
 		return nil, err
 	}
 
-	out := make([]record.CellRecord, 0, len(coords))
+	out := make([]CellRecord, 0, len(coords))
 	for _, c := range coords {
 		if err := ctx.Err(); err != nil {
 			return nil, err
