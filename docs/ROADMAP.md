@@ -37,10 +37,10 @@ Spec exists; implementation deferred.
   _Impact: stale facts naturally fall out of context without manual intervention; particularly valuable for long-running agents where old preferences or facts become misleading._
 
 - **MVCC version chain optimisation** — replace O(n) linear scan in `SelectVisible` with a skip list or compact index for cells with many versions (>100).
-  _Impact: prevents latency regression on long-running databases with heavy update workloads; keeps `ViewAt` and time-travel reads fast at scale. Defer until profiling confirms this is a real hot path ([LEAN audit](./context/audits/LEAN_ARCHITECTURE_AUDIT.md))._
+  _Impact: prevents latency regression on long-running databases with heavy update workloads; keeps `ViewAt` and time-travel reads fast at scale. Defer until profiling confirms this is a real hot path._
 
 - **Sub-linear SSSP via Duan et al. 2025 (BMSSP)** — Deterministic `O(m log^(2/3) n)` single-source shortest paths replacing Dijkstra for large sparse graphs. Relevant to `LoadContextVoronoi` (multi-source Dijkstra) and any future large-graph `FindEdgePath`. Implementation requires a custom block-list data structure (Lemma 3.3: two block sequences + Red-Black tree on upper bounds), `FindPivots` (bounded Bellman-Ford), and the recursive `BMSSP` divide-and-conquer.
-  _Practical crossover vs A\*: estimated n ≥ 10⁵–10⁶ nodes; current HexxlaDB workloads peak at ~31k cells (MaxRing=100). Defer until large-graph use cases emerge. Reference: `docs/SSSP_SUBLINEAR.md`, arXiv:2504.17033._
+  _Practical crossover vs A\*: estimated n ≥ 10⁵–10⁶ nodes; current HexxlaDB workloads peak at ~31k cells (MaxRing=100). Defer until large-graph use cases emerge. Reference: arXiv:2504.17033._
 
 ## Future exploration
 
@@ -61,7 +61,7 @@ Research spikes; default operator guidance stays **`Compact`** + **`PruneCellVer
   _Impact: context quality improves over time as the assembler learns which memories are actually useful; no manual tuning required. Overhead concerns need profiling._
 
 - **Record encoding allocation reduction** — pool or capacity-hint `AppendEnvelope` in `internal/record` to reduce per-encode allocations.
-  _Impact: lower GC pressure under write-heavy workloads (batch ingestion, embedding reindex); potentially significant at >1000 writes/sec. Needs benchmark validation before committing ([LEAN audit](./context/audits/LEAN_ARCHITECTURE_AUDIT.md))._
+  _Impact: lower GC pressure under write-heavy workloads (batch ingestion, embedding reindex); potentially significant at >1000 writes/sec. Needs benchmark validation before committing._
 
 - **Edge Weight Decay** — directed edges strengthen with traversal frequency and weaken with disuse over time.
   _Impact: graph structure self-organises around actually-useful relationships; retrieval via `AscendEdgesFrom` naturally surfaces the most relevant associations without manual curation._

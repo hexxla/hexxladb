@@ -6,4 +6,4 @@
 - New benchmarks: use `testing.B.Loop` (Go 1.24+)
 - Use `log/slog` in `cmd/` and adapters
 - Keep tests fast and focused; integration tests get `//go:build integration`
-- See `docs/context/MODERN_GO.md` for Go 1.21–1.26 feature inventory
+- See https://go.dev/doc/devel/release for Go release notes
