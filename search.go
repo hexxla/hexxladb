@@ -48,8 +48,8 @@ type CellSearchConfig struct {
 
 	// Embedding enables ANN-accelerated seed selection. When non-nil, the
 	// query planner uses [Tx.SearchByEmbedding] to narrow the candidate set
-	// and boosts scores by embedding similarity. Requires the database to
-	// have been opened with a non-zero [Options.EmbeddingDimension].
+	// and boosts scores by embedding similarity. The vector length must match
+	// the database's embedding dimension (auto-detected on first [Tx.PutEmbedding]).
 	Embedding []float32
 }
 

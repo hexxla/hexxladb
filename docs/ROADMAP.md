@@ -68,6 +68,10 @@ Research spikes; default operator guidance stays **`Compact`** + **`PruneCellVer
 
 - **~~Shortest Path Between Cells~~** — ✅ Done. `FindEdgePath` (A\*), `WalkEdges` (BFS), `LoadContextByEdges`. See API reference.
 
+- **~~Field of View~~** — ✅ Done. `LoadContextFOV` — LOS ray casting; empty cells block visibility. See API reference.
+
+- **~~Level of Detail + Voronoi~~** — ✅ Done. `LoadContextLOD` (multi-resolution), `LoadContextVoronoi` (non-overlapping multi-seed regions). See API reference.
+
 ## Out of Scope
 
 Intentional boundaries for embedded library v1.
