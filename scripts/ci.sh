@@ -56,6 +56,18 @@ else
 	fi
 fi
 
+echo "==> Complexity analysis (cyclomatic + cognitive + CRAP; see .complexity.yml)"
+if command -v gocyclo >/dev/null 2>&1 && command -v gocognit >/dev/null 2>&1; then
+	./scripts/ci/pre-push/05-complexity.sh
+else
+	echo "    gocyclo/gocognit not on PATH — skipping"
+	echo "    Install: go install github.com/fzipp/gocyclo/cmd/gocyclo@latest"
+	echo "             go install github.com/uudashr/gocognit/cmd/gocognit@latest"
+	if [[ "${CI:-}" == "true" ]]; then
+		die "gocyclo and gocognit are required in CI"
+	fi
+fi
+
 echo "==> go mod tidy (ensure go.mod / go.sum match module graph)"
 go mod tidy
 # Only enforce when CI runs or go.mod is in the index (skip repos with no go.mod yet).

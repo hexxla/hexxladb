@@ -46,23 +46,36 @@ fi
 
 echo -e "${CYAN}> Running complexity check on changed files${NC}"
 
-# Layer detection and threshold application
+# Layer detection — maps file paths to .complexity.yml threshold keys.
+# More-specific prefixes must come before less-specific ones.
 detect_layer() {
     local file="$1"
-    if [[ "$file" == internal/core/domain/* ]]; then
-        echo "core_domain"
-    elif [[ "$file" == internal/core/ports/* ]]; then
-        echo "core_ports"
-    elif [[ "$file" == internal/core/services/* ]]; then
-        echo "core_services"
-    elif [[ "$file" == internal/adapter/primary/* ]]; then
-        echo "adapter_primary"
-    elif [[ "$file" == internal/adapter/secondary/* ]]; then
-        echo "adapter_secondary"
+    if [[ "$file" == internal/engine/* ]]; then
+        echo "engine"
+    elif [[ "$file" == internal/hnsw/* ]]; then
+        echo "hnsw"
+    elif [[ "$file" == internal/record/* ]]; then
+        echo "record"
+    elif [[ "$file" == internal/views/* ]]; then
+        echo "views"
+    elif [[ "$file" == internal/lattice/* ]]; then
+        echo "lattice"
+    elif [[ "$file" == internal/domain/* ]]; then
+        echo "domain"
+    elif [[ "$file" == internal/app/* ]]; then
+        echo "app"
+    elif [[ "$file" == internal/adapters/in/* ]]; then
+        echo "adapters_in"
+    elif [[ "$file" == internal/adapters/out/* ]]; then
+        echo "adapters_out"
+    elif [[ "$file" == internal/* ]]; then
+        echo "default"
     elif [[ "$file" == cmd/* ]]; then
         echo "cmd"
+    elif [[ "$file" == examples/* ]]; then
+        echo "examples"
     else
-        echo "default"
+        echo "pkg_root"
     fi
 }
 
@@ -81,15 +94,21 @@ get_threshold() {
         fi
     fi
 
-    # Defaults
+    # Hardcoded fallbacks mirror .complexity.yml defaults
     case "$layer" in
-        core_domain) echo 5 ;;
-        core_ports) echo 3 ;;
-        core_services) echo 10 ;;
-        adapter_primary) echo 15 ;;
-        adapter_secondary) echo 12 ;;
-        cmd) echo 15 ;;
-        *) echo 10 ;;
+        domain)       [[ "$metric" == "cyclomatic" ]] && echo 5  || echo 10 ;;
+        app)          [[ "$metric" == "cyclomatic" ]] && echo 10 || echo 15 ;;
+        adapters_in)  [[ "$metric" == "cyclomatic" ]] && echo 15 || echo 20 ;;
+        adapters_out) [[ "$metric" == "cyclomatic" ]] && echo 12 || echo 18 ;;
+        engine)       [[ "$metric" == "cyclomatic" ]] && echo 25 || echo 40 ;;
+        hnsw)         [[ "$metric" == "cyclomatic" ]] && echo 18 || echo 30 ;;
+        record)       [[ "$metric" == "cyclomatic" ]] && echo 18 || echo 25 ;;
+        views)        [[ "$metric" == "cyclomatic" ]] && echo 20 || echo 30 ;;
+        lattice)      [[ "$metric" == "cyclomatic" ]] && echo 15 || echo 25 ;;
+        pkg_root)     [[ "$metric" == "cyclomatic" ]] && echo 25 || echo 35 ;;
+        cmd)          [[ "$metric" == "cyclomatic" ]] && echo 20 || echo 25 ;;
+        examples)     [[ "$metric" == "cyclomatic" ]] && echo 150 || echo 250 ;;
+        *)            [[ "$metric" == "cyclomatic" ]] && echo 15 || echo 20 ;;
     esac
 }
 

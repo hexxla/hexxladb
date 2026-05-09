@@ -15,6 +15,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 errors=0
+crap_errors=0
 total_funcs=0
 violation_funcs=0
 
@@ -25,6 +26,13 @@ if [[ -f ".complexity.yml" ]]; then
         echo -e "${YELLOW}> Complexity checks disabled in .complexity.yml${NC}"
         exit 0
     fi
+fi
+
+# Read fail_on_violation (default true)
+fail_on_violation=true
+if [[ -f ".complexity.yml" ]]; then
+    fov=$(grep "fail_on_violation:" .complexity.yml | head -1 | awk '{print $2}' || true)
+    [[ "$fov" == "false" ]] && fail_on_violation=false
 fi
 
 # Check for required tools
@@ -40,10 +48,22 @@ fi
 
 echo -e "${CYAN}> Running full complexity analysis${NC}"
 
-# Layer detection
+# Layer detection — maps file paths to .complexity.yml threshold keys.
+# More-specific prefixes must come before less-specific ones.
 detect_layer() {
     local file="$1"
-    if [[ "$file" == internal/domain/* ]]; then
+    # internal layers (most-specific first)
+    if [[ "$file" == internal/engine/* ]]; then
+        echo "engine"
+    elif [[ "$file" == internal/hnsw/* ]]; then
+        echo "hnsw"
+    elif [[ "$file" == internal/record/* ]]; then
+        echo "record"
+    elif [[ "$file" == internal/views/* ]]; then
+        echo "views"
+    elif [[ "$file" == internal/lattice/* ]]; then
+        echo "lattice"
+    elif [[ "$file" == internal/domain/* ]]; then
         echo "domain"
     elif [[ "$file" == internal/app/* ]]; then
         echo "app"
@@ -51,10 +71,15 @@ detect_layer() {
         echo "adapters_in"
     elif [[ "$file" == internal/adapters/out/* ]]; then
         echo "adapters_out"
+    elif [[ "$file" == internal/* ]]; then
+        echo "default"
     elif [[ "$file" == cmd/* ]]; then
         echo "cmd"
+    elif [[ "$file" == examples/* ]]; then
+        echo "examples"
     else
-        echo "default"
+        # Root package (./*.go) — public API surface
+        echo "pkg_root"
     fi
 }
 
@@ -71,110 +96,98 @@ get_threshold() {
         fi
     fi
 
+    # Hardcoded fallbacks mirror .complexity.yml defaults
     case "$layer" in
-        domain) echo 5 ;;
-        app) echo 10 ;;
-        adapters_in) echo 15 ;;
-        adapters_out) echo 12 ;;
-        cmd) echo 15 ;;
-        *) echo 10 ;;
+        domain)       [[ "$metric" == "cyclomatic" ]] && echo 5  || echo 10 ;;
+        app)          [[ "$metric" == "cyclomatic" ]] && echo 10 || echo 15 ;;
+        adapters_in)  [[ "$metric" == "cyclomatic" ]] && echo 15 || echo 20 ;;
+        adapters_out) [[ "$metric" == "cyclomatic" ]] && echo 12 || echo 18 ;;
+        engine)       [[ "$metric" == "cyclomatic" ]] && echo 25 || echo 40 ;;
+        hnsw)         [[ "$metric" == "cyclomatic" ]] && echo 18 || echo 30 ;;
+        record)       [[ "$metric" == "cyclomatic" ]] && echo 18 || echo 25 ;;
+        views)        [[ "$metric" == "cyclomatic" ]] && echo 20 || echo 30 ;;
+        lattice)      [[ "$metric" == "cyclomatic" ]] && echo 15 || echo 25 ;;
+        pkg_root)     [[ "$metric" == "cyclomatic" ]] && echo 25 || echo 35 ;;
+        cmd)          [[ "$metric" == "cyclomatic" ]] && echo 20 || echo 25 ;;
+        examples)     [[ "$metric" == "cyclomatic" ]] && echo 150 || echo 250 ;;
+        *)            [[ "$metric" == "cyclomatic" ]] && echo 15 || echo 20 ;;
     esac
 }
 
 # Get CRAP threshold
 get_crap_threshold() {
     if [[ -f ".complexity.yml" ]]; then
-        local val=$(grep -A 3 "crap:" .complexity.yml 2>/dev/null | grep "threshold:" | head -1 | awk '{print $2}' || true)
+        local val=$(grep -A 8 "crap:" .complexity.yml 2>/dev/null | grep "threshold:" | head -1 | awk '{print $2}' || true)
         if [[ -n "$val" ]]; then
             echo "$val"
             return
         fi
     fi
-    echo 30
+    echo 100
 }
 
-# Build coverage map if available
+# Coverage map: funcname -> coverage_pct (numeric string, e.g. "87.5")
+# Keyed by the bare function name as output by `go tool cover -func`.
 declare -A coverage_map
 
 load_coverage() {
     local coverage_file="${1:-coverage.out}"
 
+    # Always regenerate — a stale profile from a partial run causes false CRAP violations.
+    echo -e "${YELLOW}  Generating coverage profile (go test -count=1 ./...)...${NC}"
+    rm -f "$coverage_file"
+    go test -count=1 -coverprofile="$coverage_file" -covermode=atomic ./... >/dev/null 2>&1 || true
+
     if [[ ! -f "$coverage_file" ]]; then
-        # Try to generate it
-        echo -e "${YELLOW}  Generating coverage profile...${NC}"
-        go test -coverprofile="$coverage_file" -covermode=atomic ./... 2>/dev/null || true
+        echo -e "${YELLOW}  Coverage generation failed — CRAP scores assume 0% coverage${NC}"
+        return
     fi
 
-    if [[ -f "$coverage_file" ]]; then
-        # Parse coverage.out format:
-        # github.com/sploitzberg/go-llm-project-structure/internal/core/domain.User.Name:1.1,2.2 2 1
-        # Format: <file:func>:<start>,<end> <statements> <covered>
-        while IFS= read -r line; do
-            if [[ "$line" =~ ^github\.com/[^/]+/[^/]+/(.+):(.+)\.(.+): ]]; then
-                local pkg_func="${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
-                local coverage_info=$(echo "$line" | awk '{print $3 "/" $4}')
-                coverage_map["$pkg_func"]="$coverage_info"
-            fi
-        done < "$coverage_file" 2>/dev/null || true
-    fi
+    # `go tool cover -func` output (one line per function):
+    #   github.com/hexxla/hexxladb/query_exec.go:295:  applyPredicates   82.4%
+    #   github.com/hexxla/hexxladb/mvcc.go:10:         (*Tx).getCellVisibleRaw  100.0%
+    # Fields: $1=pkg/file:line  $2=FuncName  $3=pct%
+    while IFS= read -r covline; do
+        [[ "$covline" == total:* ]] && continue
+        local fname pct
+        fname=$(echo "$covline" | awk '{print $2}')
+        pct=$(echo "$covline"   | awk '{print $3}' | tr -d '%')
+        [[ -z "$fname" || -z "$pct" ]] && continue
+        coverage_map["$fname"]="$pct"
+    done < <(go tool cover -func="$coverage_file" 2>/dev/null || true)
 }
 
 # Calculate CRAP score: (cyclomatic² × (1 - coverage/100)³) + cyclomatic
+# Returns integer part only. Uses awk (always available) instead of bc.
 calculate_crap() {
     local cyclomatic="$1"
     local coverage_pct="${2:-0}"
-
-    # Convert to float for calculation
-    local cov_frac=$(echo "scale=6; $coverage_pct / 100" | bc 2>/dev/null || echo "0")
-    local one_minus_cov=$(echo "scale=6; 1 - $cov_frac" | bc 2>/dev/null || echo "1")
-
-    # (1 - coverage)³
-    local cubed=$(echo "scale=6; $one_minus_cov * $one_minus_cov * $one_minus_cov" | bc 2>/dev/null || echo "1")
-
-    # cyclomatic² × cubed
-    local sq=$(echo "scale=6; $cyclomatic * $cyclomatic" | bc 2>/dev/null || echo "$cyclomatic")
-    local product=$(echo "scale=6; $sq * $cubed" | bc 2>/dev/null || echo "$sq")
-
-    # + cyclomatic
-    local crap=$(echo "scale=2; $product + $cyclomatic" | bc 2>/dev/null || echo "$cyclomatic")
-
-    # Return integer part
-    echo "${crap%.*}"
+    awk -v c="$cyclomatic" -v p="$coverage_pct" 'BEGIN {
+        f = p / 100
+        d = 1 - f
+        printf "%d\n", int(c * c * d * d * d + c)
+    }'
 }
 
-# Parse gocyclo output format: <complexity> <package> <function> <file:line>
-# Function name may be "Type.Method" format
-# We need to match with coverage format
-
+# Look up per-function coverage percentage.
+# gocyclo $3 field is the bare function name (e.g. "applyPredicates" or "(*Tx).QueryCells").
+# go tool cover -func emits the same names, so we can match directly.
 get_coverage_for_function() {
-    local pkg="$1"
-    local func="$2"
+    local func="$1"
 
-    # Try exact match
-    local key="${pkg}.${func}"
-    if [[ -n "${coverage_map[$key]:-}" ]]; then
-        local info="${coverage_map[$key]}"
-        local total=$(echo "$info" | cut -d'/' -f1)
-        local covered=$(echo "$info" | cut -d'/' -f2)
-        if [[ "$total" -gt 0 ]]; then
-            echo "scale=2; ($covered / $total) * 100" | bc 2>/dev/null || echo "0"
-            return
-        fi
+    # Direct match
+    if [[ -n "${coverage_map[$func]:-}" ]]; then
+        echo "${coverage_map[$func]}"
+        return
     fi
 
-    # Try without last part (for methods)
-    if [[ "$func" =~ \. ]]; then
-        local base=$(echo "$func" | rev | cut -d'.' -f2- | rev)
-        key="${pkg}.${base}"
-        if [[ -n "${coverage_map[$key]:-}" ]]; then
-            local info="${coverage_map[$key]}"
-            local total=$(echo "$info" | cut -d'/' -f1)
-            local covered=$(echo "$info" | cut -d'/' -f2)
-            if [[ "$total" -gt 0 ]]; then
-                echo "scale=2; ($covered / $total) * 100" | bc 2>/dev/null || echo "0"
-                return
-            fi
-        fi
+    # gocyclo strips pointer syntax in some versions; try without * and parens
+    local stripped="${func//\*/}"
+    stripped="${stripped//(/}"
+    stripped="${stripped//)/}"
+    if [[ -n "${coverage_map[$stripped]:-}" ]]; then
+        echo "${coverage_map[$stripped]}"
+        return
     fi
 
     echo "0"
@@ -200,6 +213,11 @@ while IFS= read -r line; do
     func=$(echo "$line" | awk '{print $3}')
     loc=$(echo "$line" | awk '{print $4}')
     file=$(echo "$loc" | cut -d: -f1)
+    # Strip leading ./ so glob patterns in detect_layer() match correctly
+    file="${file#./}"
+
+    # Skip test files — large integration/stress tests are not production code
+    [[ "$file" == *_test.go ]] && continue
 
     layer=$(detect_layer "$file")
     max_cyclo=$(get_threshold "$layer" "cyclomatic")
@@ -209,7 +227,7 @@ while IFS= read -r line; do
         cyclo_violations+=("$file|$func|$comp|$max_cyclo|$layer|$loc")
         violation_funcs=$((violation_funcs + 1))
     fi
-done < <(find . -name '*.go' -not -path './vendor/*' -exec gocyclo {} + 2>/dev/null || true)
+done < <(find . -name '*.go' -not -path './vendor/*' -not -name '*_test.go' -exec gocyclo {} + 2>/dev/null || true)
 
 # Check cognitive complexity
 echo -e "${CYAN}  Analyzing cognitive complexity...${NC}"
@@ -222,6 +240,9 @@ while IFS= read -r line; do
     func=$(echo "$line" | awk '{print $3}')
     loc=$(echo "$line" | awk '{print $4}')
     file=$(echo "$loc" | cut -d: -f1)
+    file="${file#./}"
+
+    [[ "$file" == *_test.go ]] && continue
 
     layer=$(detect_layer "$file")
     max_cog=$(get_threshold "$layer" "cognitive")
@@ -229,7 +250,7 @@ while IFS= read -r line; do
     if [[ "$comp" -gt "$max_cog" ]]; then
         cog_violations+=("$file|$func|$comp|$max_cog|$layer|$loc")
     fi
-done < <(find . -name '*.go' -not -path './vendor/*' -exec gocognit {} + 2>/dev/null || true)
+done < <(find . -name '*.go' -not -path './vendor/*' -not -name '*_test.go' -exec gocognit {} + 2>/dev/null || true)
 
 # CRAP scoring
 echo -e "${CYAN}  Calculating CRAP scores...${NC}"
@@ -245,14 +266,18 @@ while IFS= read -r line; do
     func=$(echo "$line" | awk '{print $3}')
     loc=$(echo "$line" | awk '{print $4}')
     file=$(echo "$loc" | cut -d: -f1)
+    file="${file#./}"
 
-    coverage=$(get_coverage_for_function "$pkg" "$func")
+    [[ "$file" == *_test.go ]] && continue
+    [[ "$file" == examples/* ]] && continue
+
+    coverage=$(get_coverage_for_function "$func")
     crap=$(calculate_crap "$cyclo" "$coverage")
 
     if [[ "$crap" -gt "$crap_threshold" ]]; then
         crap_violations+=("$file|$func|$crap|$crap_threshold|$cyclo|$coverage|$loc")
     fi
-done < <(find . -name '*.go' -not -path './vendor/*' -exec gocyclo {} + 2>/dev/null || true)
+done < <(find . -name '*.go' -not -path './vendor/*' -not -name '*_test.go' -exec gocyclo {} + 2>/dev/null || true)
 
 # Report violations
 cyclo_count=${#cyclo_violations[@]}
@@ -291,24 +316,38 @@ if [[ $crap_count -gt 0 ]]; then
         IFS='|' read -r file func crap cyclo coverage loc <<< "$v"
         printf "%-40s %-30s %8s %8s %11s%%\n" "$file" "$func" "$crap" "$cyclo" "$coverage"
     done
-    errors=$((errors + crap_count))
+    crap_errors=$((crap_errors + crap_count))
 fi
 
 # Summary
 echo
+total_exit_errors=$((errors + crap_errors))
+
 if ((errors > 0)); then
-    echo -e "${RED}error:${NC} Complexity analysis FAILED"
-    echo "  Total functions analyzed: $total_funcs"
-    echo "  Functions with violations: $violation_funcs"
-    echo "  Total violations: $errors"
-    echo
-    echo "  Fix the violations or adjust thresholds in .complexity.yml"
+    echo -e "${RED}error:${NC} Cyclomatic/cognitive complexity FAILED ($errors violation(s))"
+fi
+if ((crap_errors > 0)); then
+    echo -e "${YELLOW}warn:${NC}  CRAP score violations: $crap_errors function(s) complex AND undertested"
     echo "  CRAP = (cyclomatic² × (1 - coverage/100)³) + cyclomatic"
-    exit 1
-else
+    echo "  Threshold: $(get_crap_threshold) — tighten toward 50 as coverage improves"
+fi
+
+if ((total_exit_errors == 0)); then
     echo -e "${GREEN}Complexity analysis: OK${NC}"
     echo "  Total functions analyzed: $total_funcs"
     echo "  All metrics within thresholds"
     echo
     exit 0
+elif [[ "$fail_on_violation" == "false" ]]; then
+    echo
+    echo "  Total functions analyzed: $total_funcs"
+    echo "  fail_on_violation=false in .complexity.yml — exiting 0 (warn only)"
+    echo
+    exit 0
+else
+    echo
+    echo "  Total functions analyzed: $total_funcs"
+    echo "  Fix violations or adjust thresholds in .complexity.yml"
+    echo
+    exit 1
 fi

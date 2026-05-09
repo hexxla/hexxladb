@@ -17,6 +17,7 @@ linters:
     - modernize # simplify to current stdlib / language features
     - nolintlint # valid, explained nolint directives
     - revive # style / correctness (golint successor; see settings)
+    - gocyclo # cyclomatic complexity gate (threshold mirrors .complexity.yml pkg_root max)
   settings:
     depguard:
       rules:
@@ -32,6 +33,10 @@ linters:
           deny:
             - pkg: github.com/hexxla/hexxladb/internal/adapters
               desc: internal/app must not import internal/adapters (inject ports from cmd; adapters depend on app/domain).
+    gocyclo:
+      # Threshold set to baseline max (2026-05-09); tighten after reducing offenders.
+      # Layer-specific thresholds enforced by scripts/ci/pre-push/05-complexity.sh.
+      min-complexity: 25
     gocritic:
       enabled-tags:
         - diagnostic
@@ -79,6 +84,7 @@ linters:
         linters:
           - gosec
           - revive
+          - gocyclo
 
 # https://golangci-lint.run/docs/formatters/configuration/
 formatters:

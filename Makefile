@@ -1,4 +1,4 @@
-.PHONY: help ci integration stress bench bench-api bench-stress fuzz test vet fmt lint mod-tidy govulncheck clean bench-tmp \
+.PHONY: help ci integration stress bench bench-api bench-stress fuzz test vet fmt lint mod-tidy govulncheck complexity clean bench-tmp \
 	pre-commit-install pre-commit-run pre-commit-update \
 	build build-cli build-tui build-demo build-demo-llm build-examples build-all \
 	build-linux build-darwin build-windows \
@@ -28,6 +28,7 @@ help:
 	@echo "make lint            golangci-lint (binary on PATH)"
 	@echo "make govulncheck     Vulnerability scan only (also runs inside make ci)"
 	@echo "make mod-tidy        go mod tidy"
+	@echo "make complexity      Full complexity analysis: cyclomatic + cognitive + CRAP (see .complexity.yml)"
 	@echo "make build           Build CLI + TUI + demos for host OS → bin/<os>-<arch>/"
 	@echo "make build-cli       Build cmd/hexxladb operator CLI only"
 	@echo "make build-all       Cross-compile for linux/darwin/windows (amd64)"
@@ -191,6 +192,9 @@ tui: seed
 govulncheck:
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+complexity:
+	@./scripts/ci/pre-push/05-complexity.sh
+
 # Optional Git hooks — requires: pip install pre-commit (or pipx install pre-commit)
 pre-commit-install:
 	pre-commit install
@@ -241,9 +245,11 @@ clean-llm-all:
 
 clean-llm: clean-llm-all
 
-# Full CI pipeline: core checks + complexity + mutation testing + coupling analysis
+# Full CI pipeline: core CI (incl. complexity) + mutation testing (dry-run)
 ci-full:
 	@./scripts/ci/ci.sh
+	@echo "==> Mutation testing (dry-run; use make mutation-test for full)"
+	@./scripts/ci/pre-push/06-gremlins.sh
 
 # Mutation testing with Gremlins — full run (slow, thorough)
 # Override target: make mutation-test TARGET=./internal/lattice
