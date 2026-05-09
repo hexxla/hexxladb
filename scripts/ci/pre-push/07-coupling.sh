@@ -66,17 +66,14 @@ check_fanout() {
     fi
 
     # Skip if no Go packages in path
-    if ! go list "./${pkg_path}/..." 2>/dev/null | grep -q .; then
+    if [[ -z "$(go list "./${pkg_path}/..." 2>/dev/null)" ]]; then
         return 0
     fi
 
     # List all imports of this layer, subtract stdlib and self-module packages
     local fanout
     fanout=$(goda list "./${pkg_path}/...:import" 2>/dev/null \
-        | grep -v "^ID$" \
-        | grep -v "^${MODULE}" \
-        | grep -v "^std " \
-        | grep -v "^$" \
+        | awk -v mod="$MODULE" 'NR>1 && $0 != "" && index($0, mod) != 1 && $0 != "std"' \
         | wc -l | tr -d ' ')
 
     if [[ "$fanout" -gt "$threshold" ]]; then

@@ -85,6 +85,9 @@ linters:
           - gosec
           - revive
           - gocyclo
+      - path: ^examples/
+        linters:
+          - gocyclo
 
 # https://golangci-lint.run/docs/formatters/configuration/
 formatters:
