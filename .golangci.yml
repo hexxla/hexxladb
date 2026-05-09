@@ -88,6 +88,10 @@ linters:
       - path: ^examples/
         linters:
           - gocyclo
+      # G115: uintptr->int for kernel FDs is safe on Linux; gosec fires version-dependently.
+      - path: internal/engine/primary_datasync_linux\.go
+        linters:
+          - gosec
 
 # https://golangci-lint.run/docs/formatters/configuration/
 formatters:
