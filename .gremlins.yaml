@@ -12,16 +12,25 @@ unleash:
   output: ""
   diff: ""
   output-statuses: ""
-  workers: 0
-  test-cpu: 0
+  # 32 cores but only ~4GB available RAM; each worker spawns a full go test
+  # compile+run (~300-500MB). 4 workers × 2 CPUs = 8 cores, safe ceiling.
+  workers: 4
+  test-cpu: 2
   # The default coefficient (5) is far too low for packages whose tests take >10ms.
   # 100 gives reliable results: a 50ms baseline becomes 5s timeout per mutant.
   timeout-coefficient: 100
   threshold:
-    # Enforce minimum quality gates; fail CI if below these.
-    # Start conservative — raise as test suites improve.
-    efficacy: 0
-    mutant-coverage: 0
+    # Baseline 2026-05-09 (full run, workers=4):
+    #   lattice: efficacy=100% mcover=88%
+    #   record:  efficacy=100% mcover=93%
+    #   changelog: efficacy=100% mcover=97%
+    #   hnsw:    efficacy=100% mcover=91%
+    #   index:   efficacy=100% mcover=55% (key encode funcs not directly tested)
+    # efficacy=100 locks in "kill everything reachable".
+    # mutant-coverage=54 is just below index's 54.93% — fails if coverage regresses.
+    # Raise mutant-coverage toward 80 once index key encoding tests are added.
+    efficacy: 100
+    mutant-coverage: 54
   exclude-files:
     - ".*_test\\.go"
     - "doc\\.go"
