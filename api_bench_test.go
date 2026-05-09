@@ -701,3 +701,320 @@ func BenchmarkAPI_WalkRingAt(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkAPI_SearchCells measures [Tx.SearchCells] lexical search with varying query complexity.
+// Sub-benchmarks: single-term hit, multi-term (two tokens), tag-filter-only.
+func BenchmarkAPI_SearchCells(b *testing.B) {
+	for _, n := range apiBenchPreloadSizes(b) {
+		db, _ := benchAPIPreloadCells(b, n)
+		b.Cleanup(func() { _ = db.Close() })
+		ctx := context.Background()
+
+		b.Run(fmt.Sprintf("single_term/cells_%d", n), func(b *testing.B) {
+			b.ReportMetric(float64(n), "cells")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				err := db.View(func(tx *hexxladb.Tx) error {
+					_, err := tx.SearchCells(ctx, hexxladb.CellSearchConfig{
+						Query:      "bench",
+						MaxResults: 20,
+					})
+					return err
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+
+		b.Run(fmt.Sprintf("multi_term/cells_%d", n), func(b *testing.B) {
+			b.ReportMetric(float64(n), "cells")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				err := db.View(func(tx *hexxladb.Tx) error {
+					_, err := tx.SearchCells(ctx, hexxladb.CellSearchConfig{
+						Query:      "bench preload",
+						MaxResults: 20,
+					})
+					return err
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+
+		b.Run(fmt.Sprintf("no_match/cells_%d", n), func(b *testing.B) {
+			b.ReportMetric(float64(n), "cells")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				err := db.View(func(tx *hexxladb.Tx) error {
+					_, err := tx.SearchCells(ctx, hexxladb.CellSearchConfig{
+						Query:      "zzz_nonexistent_xyzzy",
+						MaxResults: 20,
+					})
+					return err
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkAPI_LoadContextFOV measures [Tx.LoadContextFOV] — visibility-filtered ring walk.
+// opaque returns false for all cells (open field) to measure pure scan overhead.
+func BenchmarkAPI_LoadContextFOV(b *testing.B) {
+	center := lattice.Coord{Q: 0, R: 0}
+	ctx := context.Background()
+	opaque := func(hexxladb.Coord) bool { return false }
+	for _, n := range apiBenchPreloadSizes(b) {
+		for _, radius := range []int{3, 5} {
+			b.Run(fmt.Sprintf("r%d/cells_%d", radius, n), func(b *testing.B) {
+				db, _ := benchAPIPreloadCells(b, n)
+				b.Cleanup(func() { _ = db.Close() })
+				b.ReportMetric(float64(n), "cells")
+				b.ReportMetric(float64(radius), "radius")
+				b.ReportAllocs()
+				b.ResetTimer()
+				for b.Loop() {
+					err := db.View(func(tx *hexxladb.Tx) error {
+						_, err := tx.LoadContextFOV(ctx, center, radius, opaque, hexxladb.FOVContextConfig{MaxCells: 200})
+						return err
+					})
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
+// BenchmarkAPI_LoadContextVoronoi measures [Tx.LoadContextVoronoi] with 2 and 4 seeds.
+func BenchmarkAPI_LoadContextVoronoi(b *testing.B) {
+	seeds2 := []hexxladb.Coord{{Q: 0, R: 0}, {Q: 10, R: 0}}
+	seeds4 := []hexxladb.Coord{{Q: 0, R: 0}, {Q: 10, R: 0}, {Q: 0, R: 10}, {Q: 10, R: 10}}
+	ctx := context.Background()
+	cfg := hexxladb.VoronoiContextConfig{MaxRadius: 4, MaxCellsPerSeed: 50}
+
+	for _, n := range apiBenchPreloadSizes(b) {
+		db, _ := benchAPIPreloadCells(b, n)
+		b.Cleanup(func() { _ = db.Close() })
+
+		b.Run(fmt.Sprintf("seeds_2/cells_%d", n), func(b *testing.B) {
+			b.ReportMetric(float64(n), "cells")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				err := db.View(func(tx *hexxladb.Tx) error {
+					_, err := tx.LoadContextVoronoi(ctx, seeds2, cfg)
+					return err
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+
+		b.Run(fmt.Sprintf("seeds_4/cells_%d", n), func(b *testing.B) {
+			b.ReportMetric(float64(n), "cells")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				err := db.View(func(tx *hexxladb.Tx) error {
+					_, err := tx.LoadContextVoronoi(ctx, seeds4, cfg)
+					return err
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkAPI_PutEmbedding measures [Tx.PutEmbedding] write cost including HNSW graph maintenance.
+// Sub-benchmarks vary vector dimension to capture the encode+graph-insert cost curve.
+func BenchmarkAPI_PutEmbedding(b *testing.B) {
+	ctx := context.Background()
+	for _, dim := range []int{32, 128, 384} {
+		b.Run(fmt.Sprintf("dim_%d", dim), func(b *testing.B) {
+			path := filepath.Join(b.TempDir(), fmt.Sprintf("embed_%d.db", dim))
+			db, err := hexxladb.Open(path, &hexxladb.Options{
+				EmbeddingDimension: uint16(dim),
+				DistanceMetric:     hexxladb.DistanceCosine,
+				PageSize:           65536,
+				MaxValueBytes:      65536,
+			})
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(func() { _ = db.Close() })
+
+			vec := make([]float32, dim)
+			for i := range vec {
+				vec[i] = float32(i+1) / float32(dim)
+			}
+			i := 0
+			b.ReportMetric(float64(dim), "dim")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				q := i / 1000
+				r := i % 1000
+				i++
+				p, pErr := lattice.Pack(lattice.Coord{Q: q, R: r})
+				if pErr != nil {
+					b.Fatal(pErr)
+				}
+				err := db.Update(func(tx *hexxladb.Tx) error {
+					if err := tx.PutCell(ctx, record.CellRecord{
+						Key:        p,
+						RawContent: "bench",
+						Provenance: record.ProvenanceWire{SourceID: "bench", Confidence: 1},
+					}); err != nil {
+						return err
+					}
+					return tx.PutEmbedding(p, vec)
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkAPI_QueryCells_Embedding measures [Tx.QueryCells] with an embedding vector,
+// exercising the full HNSW ANN + post-filter pipeline.
+func BenchmarkAPI_QueryCells_Embedding(b *testing.B) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		n   int
+		dim int
+	}{
+		{500, 32},
+		{500, 128},
+	} {
+		b.Run(fmt.Sprintf("n%d_dim%d", tc.n, tc.dim), func(b *testing.B) {
+			path := filepath.Join(b.TempDir(), "qce.db")
+			db, err := hexxladb.Open(path, &hexxladb.Options{
+				EmbeddingDimension: uint16(tc.dim),
+				DistanceMetric:     hexxladb.DistanceCosine,
+				PageSize:           65536,
+				MaxValueBytes:      65536,
+			})
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(func() { _ = db.Close() })
+
+			vec := make([]float32, tc.dim)
+			for i := range vec {
+				vec[i] = float32(i+1) / float32(tc.dim)
+			}
+			for i := range tc.n {
+				q := i / 1000
+				r := i % 1000
+				p, _ := lattice.Pack(lattice.Coord{Q: q, R: r})
+				_ = db.Update(func(tx *hexxladb.Tx) error {
+					_ = tx.PutCell(ctx, record.CellRecord{Key: p, RawContent: "bench", Provenance: record.ProvenanceWire{SourceID: "bench", Confidence: 1}})
+					return tx.PutEmbedding(p, vec)
+				})
+			}
+
+			b.ReportMetric(float64(tc.n), "cells")
+			b.ReportMetric(float64(tc.dim), "dim")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				err := db.View(func(tx *hexxladb.Tx) error {
+					_, err := tx.QueryCells(ctx, hexxladb.CellQuery{
+						Embedding:  vec,
+						MaxResults: 10,
+					})
+					return err
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkAPI_SnapshotDiff measures [DB.SnapshotDiff] over a range of commit sequences.
+// Sub-benchmarks vary the number of cells written in the diff window (10, 100, 500).
+func BenchmarkAPI_SnapshotDiff(b *testing.B) {
+	for _, nWrites := range []int{10, 100, 500} {
+		b.Run(fmt.Sprintf("writes_%d", nWrites), func(b *testing.B) {
+			path := filepath.Join(b.TempDir(), "snapdiff.db")
+			db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(func() { _ = db.Close() })
+			ctx := context.Background()
+			vf := int64(2) * index.WeekNanos
+
+			s0, err := db.StatsMVCC()
+			if err != nil {
+				b.Fatal(err)
+			}
+			fromSeq := s0.CommitSeq
+			for i := range nWrites {
+				p, _ := lattice.Pack(lattice.Coord{Q: i % 200, R: i / 200})
+				_ = db.Update(func(tx *hexxladb.Tx) error {
+					return tx.PutCell(ctx, record.CellRecord{
+						Key:        p,
+						RawContent: fmt.Sprintf("diff-%d", i),
+						Provenance: record.ProvenanceWire{SourceID: "bench", Confidence: 1, CreatedAt: int64(i), UpdatedAt: int64(i)},
+						Validity:   record.ValidityWire{ValidFrom: &vf},
+					})
+				})
+			}
+			s1, err := db.StatsMVCC()
+			if err != nil {
+				b.Fatal(err)
+			}
+			toSeq := s1.CommitSeq
+
+			b.ReportMetric(float64(nWrites), "writes")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				_, err := db.SnapshotDiff(ctx, fromSeq, toSeq, hexxladb.SnapshotDiffConfig{})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkAPI_Compact measures [DB.Compact] copy-compaction cost at varying DB sizes.
+func BenchmarkAPI_Compact(b *testing.B) {
+	for _, n := range []int{512, 2000} {
+		b.Run(fmt.Sprintf("cells_%d", n), func(b *testing.B) {
+			db, _ := benchAPIPreloadCells(b, n)
+			b.Cleanup(func() { _ = db.Close() })
+			ctx := context.Background()
+			b.ReportMetric(float64(n), "cells")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				dest := filepath.Join(b.TempDir(), "compact_out.db")
+				if err := db.Compact(ctx, dest); err != nil {
+					b.Fatal(err)
+				}
+				_ = os.Remove(dest)
+				_ = os.Remove(dest + "-wal")
+			}
+		})
+	}
+}

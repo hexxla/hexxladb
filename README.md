@@ -159,19 +159,65 @@ Full reference: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.m
 
 ## Performance
 
-| Operation             | Latency       | Notes                                                 |
-| --------------------- | ------------- | ----------------------------------------------------- |
-| Ring walk (r=3)       | ~500 µs       | Scales with ring area, not DB size                    |
-| HNSW search           | sub-ms        | 500 vectors × 32d; flat-scan fallback below threshold |
-| Point read            | ~28 µs        | O(log n) B+ tree                                      |
-| Batch write           | ~0.34 ms/cell | Batch 500; vs ~8.3 ms/cell single-write               |
-| FindSeams (zero-seam) | ~26 µs        | Fast-path; down from 2.3 ms (−98.9%)                  |
-
 ```bash
 make bench-api
 ```
 
-_Hardware: Intel Core i9-14900HX, 16 GB, Go 1.26, Linux. Full methodology: [`OPERATIONS.md`](docs/hexxladb/OPERATIONS.md)._
+_Intel Core i9-14900HX · 16 GB · Go 1.26 · Linux · `-benchtime=3s -count=1`_
+
+**Reads and ring traversal**
+
+| Operation                             | Latency | Notes                                    |
+| ------------------------------------- | ------- | ---------------------------------------- |
+| `GetCell` (2k cells)                  | ~20 µs  | O(log n) B+ tree                         |
+| `GetCell` encrypted (2k cells)        | ~21 µs  | AES-256-XTS; ~1 µs overhead vs plaintext |
+| `GetCell` MVCC + encrypted (2k cells) | ~26 µs  | Combined MVCC version scan + decryption  |
+| `WalkRing` r=2 (2k cells)             | ~162 µs | Scales with ring area, not DB size       |
+| `QueryCells` tag-only (2k cells)      | ~15 µs  | Index-only; no page reads                |
+| `QueryCells` spatial r=5 (2k cells)   | ~634 µs | Ring walk + filter                       |
+| `QueryCells` combined (2k cells)      | ~62 ms  | source + spatial + confidence + sort     |
+| `FindSeams` zero-seam fast-path       | ~1.3 µs | Pre-flight check; effectively free       |
+| `FindSeams` 100 seams                 | ~995 µs | Seam index scan                          |
+
+**Context assembly**
+
+| Operation                         | Latency  | Notes                                           |
+| --------------------------------- | -------- | ----------------------------------------------- |
+| `LoadContext` r=3 (2k cells)      | ~753 µs  | Token-budgeted ring walk                        |
+| `LoadContext` r=5 (2k cells)      | ~1.67 ms | Ring area grows as 3r²+3r+1                     |
+| `LoadContextFOV` r=3 (2k cells)   | ~526 µs  | FOV skips occluded cells; faster than plain r=3 |
+| `LoadContextFOV` r=5 (2k cells)   | ~1.30 ms | Open-field (no occlusion) — worst case for FOV  |
+| `LoadContextVoronoi` 2 seeds (2k) | ~2.1 ms  | Non-overlapping region partition                |
+| `LoadContextVoronoi` 4 seeds (2k) | ~4.4 ms  | Scales linearly with seed count                 |
+
+**Writes**
+
+| Operation                           | Latency       | Notes                                       |
+| ----------------------------------- | ------------- | ------------------------------------------- |
+| `PutCell` single write              | ~5.0 ms/op    | Single-writer B+ tree; fsync per commit     |
+| `PutCell` MVCC                      | ~5.7 ms/op    | Version row + changelog overhead            |
+| `BatchPutCells` batch=500           | ~0.09 ms/cell | vs ~5 ms/cell single-write (55× faster)     |
+| `PutEmbedding` dim=32 (HNSW insert) | ~53 ms/op     | Full HNSW graph maintenance per write       |
+| `PutEmbedding` dim=384              | ~74 ms/op     | Encode + graph insert scales with dimension |
+
+**Semantic and lexical search**
+
+| Operation                         | Latency   | Notes                                            |
+| --------------------------------- | --------- | ------------------------------------------------ |
+| `QueryCells` embedding (500×32d)  | ~13 ms    | Full HNSW ANN + post-filter pipeline             |
+| `QueryCells` embedding (500×128d) | ~11 ms    | Higher dim; fewer graph candidates needed        |
+| `SearchCells` lexical (2k cells)  | ~28–41 ms | Full-scan scorer; use tags/source for pre-filter |
+
+**MVCC and maintenance**
+
+| Operation                              | Latency | Notes                                         |
+| -------------------------------------- | ------- | --------------------------------------------- |
+| MVCC version resolution (100 versions) | ~1.1 ms | O(n) version scan per `GetCell`               |
+| MVCC version resolution (500 versions) | ~5.5 ms | Prune old versions to keep this fast          |
+| `SnapshotDiff` (10 writes)             | ~159 µs | Incremental CDC; scales linearly with range   |
+| `SnapshotDiff` (500 writes)            | ~6.9 ms |                                               |
+| `Compact` (512 cells)                  | ~67 ms  | Copy-compaction; run after heavy delete/prune |
+| `Compact` (2k cells)                   | ~236 ms | One-time cost; DB is read-only during copy    |
 
 ---
 
