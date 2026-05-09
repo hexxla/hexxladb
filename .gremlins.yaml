@@ -20,17 +20,18 @@ unleash:
   # 100 gives reliable results: a 50ms baseline becomes 5s timeout per mutant.
   timeout-coefficient: 100
   threshold:
+    # NOTE: gremlins dev build does not exit non-zero on threshold violations
+    # (errors.As unwrap through cobra fails). Thresholds here are documentation
+    # only. Enforcement is done in 06-gremlins.sh by parsing stdout.
+    #
     # Baseline 2026-05-09 (full run, workers=4):
-    #   lattice: efficacy=100% mcover=88%
-    #   record:  efficacy=100% mcover=93%
+    #   lattice:   efficacy=100% mcover=88%
+    #   record:    efficacy=100% mcover=93%
     #   changelog: efficacy=100% mcover=97%
-    #   hnsw:    efficacy=100% mcover=91%
-    #   index:   efficacy=100% mcover=55% (key encode funcs not directly tested)
-    # efficacy=100 locks in "kill everything reachable".
-    # mutant-coverage=54 is just below index's 54.93% — fails if coverage regresses.
-    # Raise mutant-coverage toward 80 once index key encoding tests are added.
-    efficacy: 100
-    mutant-coverage: 54
+    #   hnsw:      efficacy=100% mcover=91%
+    #   index:     efficacy=100% mcover=55% (key encode funcs not directly tested)
+    efficacy: 0
+    mutant-coverage: 0
   exclude-files:
     - ".*_test\\.go"
     - "doc\\.go"
