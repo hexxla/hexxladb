@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/hexxla/hexxladb"
@@ -63,7 +64,7 @@ func cmdKeys(args []string) int {
 // prefixUpperBound returns the lexicographic successor of prefix for range scans.
 func prefixUpperBound(prefix string) []byte {
 	b := []byte(prefix)
-	for i := len(b) - 1; i >= 0; i-- {
+	for i := range slices.Backward(b) {
 		if b[i] < 0xff {
 			b[i]++
 			return b[:i+1]

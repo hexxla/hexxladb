@@ -39,7 +39,7 @@ func TestBTree_ringWalkRangeScanMatchesMortonOrder(t *testing.T) {
 	defer func() { _ = e.Close() }()
 	bt := engine.OpenBTree(e)
 
-	for i := len(packed) - 1; i >= 0; i-- {
+	for i := range slices.Backward(packed) {
 		k := index.CellKey(packed[i])
 		if err := bt.Put(k, []byte{byte(i)}); err != nil {
 			t.Fatal(err)

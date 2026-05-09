@@ -3,6 +3,7 @@ package index
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/oklog/ulid/v2"
 
@@ -161,7 +162,7 @@ func maxPackedKeyBytes() lattice.PackedCoord {
 
 func packedKeyBytesDec(packed []byte) ([]byte, bool) {
 	out := append([]byte(nil), packed...)
-	for i := len(out) - 1; i >= 0; i-- {
+	for i := range slices.Backward(out) {
 		if out[i] != 0 {
 			out[i]--
 			return out, true

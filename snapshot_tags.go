@@ -3,6 +3,7 @@ package hexxladb
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/hexxla/hexxladb/internal/index"
 )
@@ -167,7 +168,7 @@ func (db *DB) resolveSnapTag(label string) (uint64, error) {
 func snapTagPrefixEnd() []byte {
 	prefix := []byte(index.SnapTagPrefix)
 	end := bytes.Clone(prefix)
-	for i := len(end) - 1; i >= 0; i-- {
+	for i := range slices.Backward(end) {
 		end[i]++
 		if end[i] != 0 {
 			return end

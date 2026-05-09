@@ -5,6 +5,7 @@ import (
 	"container/heap"
 	"fmt"
 	"runtime"
+	"slices"
 	"sync"
 
 	"github.com/hexxla/hexxladb/internal/engine"
@@ -164,7 +165,7 @@ func pushOrReplace(h *searchMinHeap, hit searchHit, maxSize int) {
 // heapToResults extracts results from a min-heap in descending score order.
 func heapToResults(h searchMinHeap, _ int) []EmbeddingSearchResult {
 	out := make([]EmbeddingSearchResult, h.Len())
-	for i := len(out) - 1; i >= 0; i-- {
+	for i := range slices.Backward(out) {
 		item := heap.Pop(&h).(searchHit) //nolint:forcetypeassert // heap invariant guarantees searchHit
 		out[i] = EmbeddingSearchResult{Coord: item.coord, Score: item.score}
 	}

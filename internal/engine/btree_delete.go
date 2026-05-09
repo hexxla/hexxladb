@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"fmt"
+	"slices"
 )
 
 // minLeafKeysForPage returns the minimum key count for a non-root leaf at the given page size.
@@ -212,7 +213,7 @@ func (t *BTree) removeInternalChild(parentPID uint64, childIdx int, root uint64)
 // applies. Only ancestors where this subtree is a non-leftmost child (ci > 0) carry a key for it
 // (in.keys[ci-1] is the min of ptrs[ci]).
 func (t *BTree) cascadeNewMinToAncestors(parentPIDs []uint64, childIdxs []int, newMin []byte, root uint64) error {
-	for l := len(parentPIDs) - 1; l >= 0; l-- {
+	for l := range slices.Backward(parentPIDs) {
 		ci := childIdxs[l]
 		if ci > 0 {
 			_, err := t.updateSeparator(parentPIDs[l], ci-1, newMin, root)

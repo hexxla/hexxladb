@@ -9,6 +9,5 @@ import (
 )
 
 func primaryDataSyncFile(f *os.File) error {
-	//nolint:gosec // G115 — kernel FDs from *os.File match int on Linux targets we support.
-	return unix.Fdatasync(int(f.Fd()))
+	return unix.Fdatasync(int(f.Fd())) //nolint:gosec // G115: int(fd) safe on Linux; FD fits int
 }
