@@ -187,23 +187,23 @@ _Intel Core i9-14900HX · 16 GB · Go 1.26 · Linux · `-benchtime=3s -count=1`_
 | `GetCell` (2k cells)                  | ~20 µs  | O(log n) B+ tree                                                          |
 | `GetCell` encrypted (2k cells)        | ~21 µs  | AES-256-XTS; ~1 µs overhead vs plaintext                                  |
 | `GetCell` MVCC + encrypted (2k cells) | ~26 µs  | Combined MVCC version scan + decryption                                   |
-| `WalkRing` r=2 (2k cells)             | ~162 µs | Scales with ring area, not DB size                                        |
+| `WalkRing` r=2 (19 cells/walk, 2k DB) | ~162 µs | Scales with ring area, not DB size                                        |
 | `QueryCells` tag-only (2k cells)      | ~15 µs  | Index-only; no page reads                                                 |
-| `QueryCells` spatial r=5 (2k cells)   | ~634 µs | Ring walk + filter                                                        |
+| `QueryCells` spatial r=5 (2k DB)      | ~634 µs | 91-cell ring area walk + filter (3r²+3r+1)                                |
 | `QueryCells` combined (2k cells)      | ~62 ms  | source + spatial + confidence + sort; use narrower predicates in practice |
 | `FindSeams` zero-seam fast-path       | ~1.3 µs | Pre-flight check; effectively free                                        |
 | `FindSeams` 100 seams                 | ~995 µs | Seam index scan                                                           |
 
 ### Context assembly
 
-| Operation                         | Latency  | Notes                                           |
-| --------------------------------- | -------- | ----------------------------------------------- |
-| `LoadContext` r=3 (2k cells)      | ~753 µs  | Token-budgeted ring walk                        |
-| `LoadContext` r=5 (2k cells)      | ~1.67 ms | Ring area grows as 3r²+3r+1                     |
-| `LoadContextFOV` r=3 (2k cells)   | ~526 µs  | FOV skips occluded cells; faster than plain r=3 |
-| `LoadContextFOV` r=5 (2k cells)   | ~1.30 ms | Open-field (no occlusion) — worst case for FOV  |
-| `LoadContextVoronoi` 2 seeds (2k) | ~2.1 ms  | Non-overlapping region partition                |
-| `LoadContextVoronoi` 4 seeds (2k) | ~4.4 ms  | Scales linearly with seed count                 |
+| Operation                                    | Latency  | Notes                                               |
+| -------------------------------------------- | -------- | --------------------------------------------------- |
+| `LoadContext` r=3 (37 cells/walk, 2k DB)     | ~753 µs  | Token-budgeted; stops early when budget full        |
+| `LoadContext` r=5 (91 cells/walk, 2k DB)     | ~1.67 ms | Ring area = 3r²+3r+1; r=10 → 331 cells              |
+| `LoadContextFOV` r=3 (≤37 cells/walk, 2k DB) | ~526 µs  | FOV prunes occluded cells; faster than plain r=3    |
+| `LoadContextFOV` r=5 (≤91 cells/walk, 2k DB) | ~1.30 ms | Open-field (no occlusion) — worst case for FOV      |
+| `LoadContextVoronoi` 2 seeds (2k DB)         | ~2.1 ms  | Each seed gets up to r=4, 61 cells; non-overlapping |
+| `LoadContextVoronoi` 4 seeds (2k DB)         | ~4.4 ms  | Scales linearly with seed count                     |
 
 ### Writes
 
