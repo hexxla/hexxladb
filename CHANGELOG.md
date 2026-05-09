@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+---
+
+## [0.5.0] - 2026-05-09
+
 ### Added
 
 - **Lazy ring iterators** (`internal/lattice`) — `RingSeq`, `WalkRingsSeq`, `SpiralRangeSeq`, `WalkRingsPackedSeq`, `SpiralRangePackedSeq` return `iter.Seq[Coord]` / `iter.Seq[CoordPacked]`. No backing slice is ever allocated; callers break early when a budget is met. For `MaxRing=100` (31,401 cells) with a 16-cell budget, zero ring computation happens beyond the 16th cell — the same early-exit discipline Badger applies in its `Iterator` (Seek/Next cursor).
