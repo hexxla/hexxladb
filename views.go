@@ -8,47 +8,6 @@ import (
 	"github.com/hexxla/hexxladb/internal/views"
 )
 
-// ── Type aliases ──────────────────────────────────────────────────────────────
-// All view types live in internal/views. These aliases re-export them under the
-// stable public API without duplicating definitions.
-
-// FacetView is a read-oriented facet projection aligned with docs/hexxladb/HEXXLA.md.
-type FacetView = views.FacetView
-
-// EdgeView summarises one directed edge from a cell.
-type EdgeView = views.EdgeView
-
-// SeamRef is a lightweight seam handle for embedding in [CellView].
-type SeamRef = views.SeamRef
-
-// CellView aggregates decoded cell content with optional facets, edges, and seam refs.
-type CellView = views.CellView
-
-// ContextPackStats records assembly statistics for debugging and observability.
-type ContextPackStats = views.ContextPackStats
-
-// CellExplanation records why a cell was included or excluded during context assembly.
-type CellExplanation = views.CellExplanation
-
-// ContextPack matches the neighbourhood summary shape described in HEXXLA.md.
-type ContextPack = views.ContextPack
-
-// TokenBudgeter counts tokens for budgeting (e.g. approximate LLM tokens).
-// Inject domain-specific logic; the default is [ByteLenBudgeter].
-type TokenBudgeter = views.TokenBudgeter
-
-// ByteLenBudgeter counts tokens as UTF-8 byte length (cheap default; not tokenizer-accurate).
-type ByteLenBudgeter = views.ByteLenBudgeter
-
-// AssembleCellViewOpts configures [Tx.AssembleCellView].
-type AssembleCellViewOpts = views.AssembleCellViewOpts
-
-// LoadContextBudgetConfig configures context assembly options for [Tx.LoadContext].
-type LoadContextBudgetConfig = views.LoadContextBudgetConfig
-
-// CellViewPredicate selects [CellView] rows when filtering slices.
-type CellViewPredicate = views.CellViewPredicate
-
 // ── Re-exported constructors / free functions ─────────────────────────────────
 
 // DefaultAssembleCellViewOpts returns defaults: facets on; edges and seams off.
