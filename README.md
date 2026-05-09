@@ -4,7 +4,7 @@
 
 # HexxlaDB
 
-**Embedded database for LLM memory — hex grid, vector search, contradiction tracking.**
+**Embedded database — hex grid, vector search, provenance, contradiction tracking.**
 
 [![CI](https://github.com/hexxla/hexxladb/actions/workflows/ci.yml/badge.svg)](https://github.com/hexxla/hexxladb/actions/workflows/ci.yml)
 [![Integration](https://github.com/hexxla/hexxladb/actions/workflows/integration.yml/badge.svg)](https://github.com/hexxla/hexxladb/actions/workflows/integration.yml)
@@ -18,7 +18,7 @@
 
 ---
 
-HexxlaDB is an embedded Go library for structured agent memory. Memories live at hex grid coordinates — retrieval expands outward in rings, bounded by your token budget. Every memory carries provenance, confidence, and a validity window. Contradictions are stored as seams, not silently overwritten.
+HexxlaDB is an embedded Go library for structured, spatially-organised records. Items live at hex grid coordinates — retrieval expands outward in rings, stays within a budget, and respects validity windows. Every record carries provenance, confidence, and temporal bounds. Contradictions are stored as seams, not silently overwritten.
 
 Single binary, zero network dependencies, no daemon.
 
@@ -26,11 +26,11 @@ Single binary, zero network dependencies, no daemon.
 
 ## How it works
 
-Cells sit at `(q, r)` hex coordinates. Related memories sit nearby. `LoadContext` walks outward ring by ring from seed coordinates, filters superseded and low-confidence content, and returns a token-bounded slice ready to inject into a prompt.
+Cells sit at `(q, r)` hex coordinates. Related records sit nearby. `LoadContext` walks outward ring by ring from seed coordinates, filters superseded and low-confidence content, and returns a budget-bounded slice — a token window for a prompt, a tile range for a game engine, a context pack for an audit query.
 
 | Primitive     | Description                                                                   |
 | ------------- | ----------------------------------------------------------------------------- |
-| **Cell**      | A memory at `(q, r)` — content, tags, provenance, confidence, validity window |
+| **Cell**      | A record at `(q, r)` — content, tags, provenance, confidence, validity window |
 | **Seam**      | Conflict or supersession marker linking two cells                             |
 | **Edge**      | Directed relationship between cells (graph overlay)                           |
 | **Facet**     | Summary or annotation cryptographically bound to a cell                       |
@@ -44,7 +44,7 @@ Cells sit at `(q, r)` hex coordinates. Related memories sit nearby. `LoadContext
 go get github.com/hexxla/hexxladb
 ```
 
-Full runnable example: [`examples/llm_context_engine`](examples/llm_context_engine/).
+Full runnable examples: [`examples/`](examples/) — conversational memory, LLM context engine, spatial algorithms.
 
 ### Open a database
 
@@ -58,7 +58,7 @@ if err != nil {
 defer db.Close()
 ```
 
-### Store a memory and its embedding
+### Store a record and its embedding
 
 ```go
 db.Update(func(tx *hexxladb.Tx) error {
@@ -110,15 +110,30 @@ db.View(func(tx *hexxladb.Tx) error {
 })
 ```
 
-### Track contradictions and preference changes
+### Track contradictions and supersessions
 
 ```go
 db.Update(func(tx *hexxladb.Tx) error {
-    return tx.MarkSupersedes(newPrefCoord, oldPrefCoord, "User changed communication preference")
+    // Mark that newRecord supersedes oldRecord (e.g. updated belief, revised fact, preference change)
+    return tx.MarkSupersedes(newCoord, oldCoord, "revised based on new evidence")
 })
 ```
 
-> **Pipeline:** embed → search → filter → assemble → prompt. All in-process, no network calls.
+> All in-process, no network calls. Embed → search → filter → assemble — one library.
+
+---
+
+## Use cases
+
+The core primitives — spatial locality, provenance, contradiction tracking, budget-bounded retrieval, MVCC snapshots, hybrid search — compose into patterns that are awkward to build on top of general-purpose stores.
+
+- **Agent and LLM memory** — store conversation turns, facts, and preferences at hex coordinates; retrieve token-budgeted context packs ranked by semantic similarity and recency; surface contradictions to the model automatically
+- **Game world state** — hex-native tile storage with FOV for visibility queries, A\* pathfinding over cell edges, LOD for distant regions, MVCC snapshots for save/rollback and replay
+- **Knowledge graphs with temporal validity** — facts that expire or get superseded; belief revision via seams; time-travel to any past snapshot with `ViewAt`
+- **Spatial annotation layers** — sensor readings, events, or annotations at coordinates; proximity queries via ring walks; confidence-weighted retrieval for noisy data
+- **Audit trails and event sourcing** — append-only changelog, `SnapshotDiff` for incremental CDC, MVCC pinning for point-in-time views; all writes are versioned
+- **Personal knowledge management** — notes arranged spatially by topic proximity; contradiction surfacing between linked notes; supersession chains for evolving understanding
+- **Simulation state** — reproducible snapshots between runs, diff for regression detection, spatial queries for proximity-based interactions
 
 ---
 
@@ -165,21 +180,21 @@ make bench-api
 
 _Intel Core i9-14900HX · 16 GB · Go 1.26 · Linux · `-benchtime=3s -count=1`_
 
-**Reads and ring traversal**
+### Reads and ring traversal
 
-| Operation                             | Latency | Notes                                    |
-| ------------------------------------- | ------- | ---------------------------------------- |
-| `GetCell` (2k cells)                  | ~20 µs  | O(log n) B+ tree                         |
-| `GetCell` encrypted (2k cells)        | ~21 µs  | AES-256-XTS; ~1 µs overhead vs plaintext |
-| `GetCell` MVCC + encrypted (2k cells) | ~26 µs  | Combined MVCC version scan + decryption  |
-| `WalkRing` r=2 (2k cells)             | ~162 µs | Scales with ring area, not DB size       |
-| `QueryCells` tag-only (2k cells)      | ~15 µs  | Index-only; no page reads                |
-| `QueryCells` spatial r=5 (2k cells)   | ~634 µs | Ring walk + filter                       |
-| `QueryCells` combined (2k cells)      | ~62 ms  | source + spatial + confidence + sort     |
-| `FindSeams` zero-seam fast-path       | ~1.3 µs | Pre-flight check; effectively free       |
-| `FindSeams` 100 seams                 | ~995 µs | Seam index scan                          |
+| Operation                             | Latency | Notes                                                                     |
+| ------------------------------------- | ------- | ------------------------------------------------------------------------- |
+| `GetCell` (2k cells)                  | ~20 µs  | O(log n) B+ tree                                                          |
+| `GetCell` encrypted (2k cells)        | ~21 µs  | AES-256-XTS; ~1 µs overhead vs plaintext                                  |
+| `GetCell` MVCC + encrypted (2k cells) | ~26 µs  | Combined MVCC version scan + decryption                                   |
+| `WalkRing` r=2 (2k cells)             | ~162 µs | Scales with ring area, not DB size                                        |
+| `QueryCells` tag-only (2k cells)      | ~15 µs  | Index-only; no page reads                                                 |
+| `QueryCells` spatial r=5 (2k cells)   | ~634 µs | Ring walk + filter                                                        |
+| `QueryCells` combined (2k cells)      | ~62 ms  | source + spatial + confidence + sort; use narrower predicates in practice |
+| `FindSeams` zero-seam fast-path       | ~1.3 µs | Pre-flight check; effectively free                                        |
+| `FindSeams` 100 seams                 | ~995 µs | Seam index scan                                                           |
 
-**Context assembly**
+### Context assembly
 
 | Operation                         | Latency  | Notes                                           |
 | --------------------------------- | -------- | ----------------------------------------------- |
@@ -190,7 +205,7 @@ _Intel Core i9-14900HX · 16 GB · Go 1.26 · Linux · `-benchtime=3s -count=1`_
 | `LoadContextVoronoi` 2 seeds (2k) | ~2.1 ms  | Non-overlapping region partition                |
 | `LoadContextVoronoi` 4 seeds (2k) | ~4.4 ms  | Scales linearly with seed count                 |
 
-**Writes**
+### Writes
 
 | Operation                           | Latency       | Notes                                       |
 | ----------------------------------- | ------------- | ------------------------------------------- |
@@ -200,15 +215,15 @@ _Intel Core i9-14900HX · 16 GB · Go 1.26 · Linux · `-benchtime=3s -count=1`_
 | `PutEmbedding` dim=32 (HNSW insert) | ~53 ms/op     | Full HNSW graph maintenance per write       |
 | `PutEmbedding` dim=384              | ~74 ms/op     | Encode + graph insert scales with dimension |
 
-**Semantic and lexical search**
+### Semantic and lexical search
 
-| Operation                         | Latency   | Notes                                            |
-| --------------------------------- | --------- | ------------------------------------------------ |
-| `QueryCells` embedding (500×32d)  | ~13 ms    | Full HNSW ANN + post-filter pipeline             |
-| `QueryCells` embedding (500×128d) | ~11 ms    | Higher dim; fewer graph candidates needed        |
-| `SearchCells` lexical (2k cells)  | ~28–41 ms | Full-scan scorer; use tags/source for pre-filter |
+| Operation                         | Latency   | Notes                                                  |
+| --------------------------------- | --------- | ------------------------------------------------------ |
+| `QueryCells` embedding (500×32d)  | ~13 ms    | Full HNSW ANN + post-filter pipeline                   |
+| `QueryCells` embedding (500×128d) | ~11 ms    | Higher dim; fewer graph candidates needed              |
+| `SearchCells` lexical (2k cells)  | ~28–41 ms | Full-scan scorer; pre-filter with tags or source first |
 
-**MVCC and maintenance**
+### MVCC and maintenance
 
 | Operation                              | Latency | Notes                                         |
 | -------------------------------------- | ------- | --------------------------------------------- |
@@ -218,6 +233,12 @@ _Intel Core i9-14900HX · 16 GB · Go 1.26 · Linux · `-benchtime=3s -count=1`_
 | `SnapshotDiff` (500 writes)            | ~6.9 ms |                                               |
 | `Compact` (512 cells)                  | ~67 ms  | Copy-compaction; run after heavy delete/prune |
 | `Compact` (2k cells)                   | ~236 ms | One-time cost; DB is read-only during copy    |
+
+### Performance context
+
+HexxlaDB's "write" and "read" are not equivalent to a raw KV store operation. A `PutCell` writes a primary record plus 3–4 secondary index rows (source, tag, validity, changelog) in a single fsync'd transaction — comparable to a multi-index SQL insert. A `GetCell` deserialises a structured record (provenance, tags, validity window) on top of the B+ tree lookup. The ~5 ms single-write latency reflects this; `BatchPutCells` amortises the fsync to ~0.09 ms/cell.
+
+The context assembly operations (`LoadContext`, `LoadContextFOV`, `LoadContextVoronoi`) have no direct equivalent in general KV stores — they replace what would otherwise be multiple sequential scans, scoring passes, and manual budget accounting in application code.
 
 ---
 
