@@ -3,23 +3,22 @@
 package engine
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 )
 
 // createTestEngine creates a temporary engine for testing.
-func createTestEngine(t *testing.T) (*Engine, func()) {
+func createTestEngine(t *testing.T) (eng *Engine, cleanup func()) {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.db")
-	eng, err := Open(path, &Options{PageSize: 4096, UseFormatV2: true})
+	var err error
+	eng, err = Open(path, &Options{PageSize: 4096, UseFormatV2: true})
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
 	}
-	cleanup := func() {
-		eng.Close()
-		os.RemoveAll(dir)
+	cleanup = func() {
+		_ = eng.Close()
 	}
 	return eng, cleanup
 }
@@ -35,8 +34,13 @@ func TestInsertIntoLeafCascade_NoSplit(t *testing.T) {
 	vals := [][]byte{make([]byte, 100), make([]byte, 100)}
 
 	// Write initial page
-	page, _ := buildLeafPage(4096, 0, 0, keys, vals)
-	eng.WritePage(1, page)
+	page, err := buildLeafPage(4096, 0, 0, keys, vals)
+	if err != nil {
+		t.Fatalf("buildLeafPage: %v", err)
+	}
+	if err := eng.WritePage(1, page); err != nil {
+		t.Fatalf("WritePage: %v", err)
+	}
 
 	// Insert another small entry - should not split
 	didSplit, result, err := bt.insertIntoLeafCascade(1, page, []byte("key003"), make([]byte, 100))
@@ -68,8 +72,13 @@ func TestInsertIntoLeafCascade_TwoPages(t *testing.T) {
 		vals[i] = make([]byte, 600)
 	}
 
-	page, _ := buildLeafPage(4096, 0, 0, keys, vals)
-	eng.WritePage(1, page)
+	page, err := buildLeafPage(4096, 0, 0, keys, vals)
+	if err != nil {
+		t.Fatalf("buildLeafPage: %v", err)
+	}
+	if err := eng.WritePage(1, page); err != nil {
+		t.Fatalf("WritePage: %v", err)
+	}
 
 	// Insert 7th entry - should trigger two-page split
 	didSplit, result, err := bt.insertIntoLeafCascade(1, page, []byte("key007"), make([]byte, 600))
@@ -180,8 +189,13 @@ func TestInsertIntoLeafCascade_KeyOrder(t *testing.T) {
 		vals[i] = make([]byte, 700) // Large values to trigger split
 	}
 
-	page, _ := buildLeafPage(4096, 0, 0, keys, vals)
-	eng.WritePage(1, page)
+	page, err := buildLeafPage(4096, 0, 0, keys, vals)
+	if err != nil {
+		t.Fatalf("buildLeafPage: %v", err)
+	}
+	if err := eng.WritePage(1, page); err != nil {
+		t.Fatalf("WritePage: %v", err)
+	}
 
 	// Insert in middle
 	didSplit, result, err := bt.insertIntoLeafCascade(1, page, []byte("bbf"), make([]byte, 700))
@@ -213,8 +227,13 @@ func TestInsertIntoLeafCascade_ReplaceExisting(t *testing.T) {
 	keys := [][]byte{[]byte("key001"), []byte("key002")}
 	vals := [][]byte{[]byte("old-value-001"), []byte("old-value-002")}
 
-	page, _ := buildLeafPage(4096, 0, 0, keys, vals)
-	eng.WritePage(1, page)
+	page, err := buildLeafPage(4096, 0, 0, keys, vals)
+	if err != nil {
+		t.Fatalf("buildLeafPage: %v", err)
+	}
+	if err := eng.WritePage(1, page); err != nil {
+		t.Fatalf("WritePage: %v", err)
+	}
 
 	// Replace existing key
 	didSplit, result, err := bt.insertIntoLeafCascade(1, page, []byte("key001"), []byte("new-value-001"))

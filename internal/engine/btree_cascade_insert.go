@@ -5,6 +5,7 @@ package engine
 import (
 	"bytes"
 	"fmt"
+	"slices"
 )
 
 // insertIntoLeafCascade inserts a key/value into a leaf page using cascading splits.
@@ -89,7 +90,7 @@ func (t *BTree) insertIntoLeafCascade(pid uint64, page, key, val []byte) (didSpl
 
 	// Write all pages
 	nextPageID := ld.next // Rightmost page inherits original's next pointer
-	for i := len(result.pages) - 1; i >= 0; i-- {
+	for i := range slices.Backward(result.pages) {
 		cp := &result.pages[i]
 
 		// Allocate new ID if needed
@@ -123,7 +124,7 @@ func (t *BTree) insertIntoLeafCascade(pid uint64, page, key, val []byte) (didSpl
 // insertSorted inserts a key/value into sorted position.
 // Returns new slices (does not modify input).
 // Complexity: O(n) for find position + O(n) for copy = O(n).
-func insertSorted(keys, vals [][]byte, newKey, newVal []byte) ([][]byte, [][]byte, error) {
+func insertSorted(keys, vals [][]byte, newKey, newVal []byte) (outKeys, outVals [][]byte, err error) {
 	n := len(keys)
 
 	// Find insertion position
