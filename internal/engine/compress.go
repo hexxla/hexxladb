@@ -38,8 +38,15 @@ func isCompressedValue(val []byte) bool {
 
 // compressValue compresses val using DEFLATE. Returns the original val unchanged
 // if the input is too short or compression didn't shrink it.
+//
+// Exception: a raw value that would itself be misread as a compression envelope
+// (starts with compressMagic and is long enough for isCompressedValue) MUST be
+// wrapped in the envelope even when compression does not shrink it, otherwise
+// decompressValue would try to inflate raw bytes on read and corrupt the value.
 func compressValue(val []byte) []byte {
-	if len(val) < compressMinInput {
+	mustWrap := isCompressedValue(val)
+
+	if len(val) < compressMinInput && !mustWrap {
 		return val
 	}
 
@@ -55,15 +62,20 @@ func compressValue(val []byte) []byte {
 	// Compress payload.
 	w := flateWriterPool.Get().(*flate.Writer)
 	w.Reset(&buf)
-	_, _ = w.Write(val) // flate.Writer buffers internally; Write error deferred to Close
+	if _, err := w.Write(val); err != nil {
+		_ = w.Close()
+		flateWriterPool.Put(w)
+		return val // compression failed (in-memory writer); store raw
+	}
 	if err := w.Close(); err != nil {
 		flateWriterPool.Put(w)
 		return val // compression failed; store raw
 	}
 	flateWriterPool.Put(w)
 
-	// Only use compressed form if it's actually smaller.
-	if buf.Len() >= len(val) {
+	// Only use compressed form if it's actually smaller, unless the raw value
+	// must be wrapped to avoid being misread as a compression envelope.
+	if buf.Len() >= len(val) && !mustWrap {
 		return val
 	}
 	return buf.Bytes()

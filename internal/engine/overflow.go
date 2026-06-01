@@ -34,12 +34,12 @@ func overflowPayloadPerPage(pageSize int) int {
 // inlineThreshold returns the maximum value size that fits inline in a leaf entry.
 // Values larger than this require overflow pages.
 func inlineThreshold(pageSize int) int {
-	// A single leaf entry occupies: 4 (keyLen+valLen) + key + value.
-	// For overflow to be worthwhile, the value must exceed what can fit in
-	// roughly half a page (leaving room for the key and headers).
-	// We use a conservative threshold: pageSize - btreeHeaderSize - maxKeyBytes - 4 (kv lengths).
-	// This ensures a single inline entry always fits in one page.
-	t := max(pageSize-btreeHeaderSize-maxKeyBytes-4, 64)
+	// Use pageSize/3 to ensure we can fit at least 2-3 entries per page
+	// even with some variance in entry sizes. This prevents the B-tree
+	// split logic from failing when entries are moderately large.
+	// Previous formula (pageSize - header - maxKey - overhead) was too permissive,
+	// allowing entries that individually fit but cumulatively overflow pages.
+	t := max(pageSize/3, 256)
 	return t
 }
 

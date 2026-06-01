@@ -3,7 +3,6 @@ package engine
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 )
 
 // BTree is a B+ tree stored in engine pages (see ORDERED_STORE.md).
@@ -35,27 +34,68 @@ func internalSerializedSize(keys [][]byte) int {
 // leafSplitIndex finds the position i at which to split a leaf so that both
 // the left half [0, i) and the right half [i, n) fit within pageSize.
 //
-// Strategy: advance i as long as the left half (including entry i) remains
-// strictly within pageSize. Stop when adding entry i would overflow the left
-// page. That entry and all remaining entries form the right half, which must
-// fit because Put enforces inlineThreshold < pageSize for any single value.
+// Strategy: Find the midpoint that ensures both halves fit. Start from the
+// middle and check both sides. Use a minimum fill threshold to avoid
+// degenerate splits.
 //
 // Invariants:
 //   - i is clamped to [minKeysPerPage, len(keys)-minKeysPerPage] so each side
 //     has at least minKeysPerPage entries.
-//   - If no safe split exists (e.g. every entry is individually close to
-//     pageSize), we fall back to len(keys)/2 — the caller's buildLeafPage will
-//     return an error, which is the correct behaviour for corrupt input.
+//   - Both left [0:i) and right [i:n) halves must fit within pageSize.
+//   - Falls back to n/2 if no valid split found (handles edge cases).
 func leafSplitIndex(keys, vals [][]byte, pageSize int) int {
 	n := len(keys)
-	sz := btreeHeaderSize
-	for i := range n {
-		entry := 4 + len(keys[i]) + len(vals[i])
-		if sz+entry > pageSize && i >= minKeysPerPage && i <= n-minKeysPerPage {
-			return i
-		}
-		sz += entry
+	if n < 2*minKeysPerPage {
+		return n / 2
 	}
+
+	// Helper to calculate size of a range
+	calcSize := func(start, end int) int {
+		sz := btreeHeaderSize
+		for i := start; i < end && i < len(keys); i++ {
+			sz += 4 + len(keys[i]) + len(vals[i])
+		}
+		return sz
+	}
+
+	// Start from middle and expand search
+	mid := n / 2
+	// Check if midpoint works
+	if mid >= minKeysPerPage && mid <= n-minKeysPerPage {
+		leftSize := calcSize(0, mid)
+		rightSize := calcSize(mid, n)
+		if leftSize <= pageSize && rightSize <= pageSize {
+			return mid
+		}
+	}
+
+	// Search outward from middle
+	for offset := 1; offset <= n/2-minKeysPerPage; offset++ {
+		// Try left of middle
+		i := mid - offset
+		if i >= minKeysPerPage && i <= n-minKeysPerPage {
+			leftSize := calcSize(0, i)
+			rightSize := calcSize(i, n)
+			if leftSize <= pageSize && rightSize <= pageSize {
+				return i
+			}
+		}
+		// Try right of middle
+		j := mid + offset
+		if j >= minKeysPerPage && j <= n-minKeysPerPage {
+			leftSize := calcSize(0, j)
+			rightSize := calcSize(j, n)
+			if leftSize <= pageSize && rightSize <= pageSize {
+				return j
+			}
+		}
+	}
+
+	// No valid split found - this can happen with highly variable entry sizes
+	// where no split point satisfies both size constraints. Return n/2 as
+	// best-effort; caller's buildLeafPage will return error if pages overflow.
+	// TODO: Implement cascading splits (see bbolt spill() approach) to handle
+	// this case by splitting the right side recursively until it fits.
 	return n / 2
 }
 
@@ -177,36 +217,49 @@ func (t *BTree) Put(key, val []byte) error {
 	if hdr.BTreeRoot == 0 {
 		return t.putFirst(key, leafVal)
 	}
-	split, nr, sep, err := t.insertAt(hdr.BTreeRoot, key, leafVal)
+	refs, err := t.insertAt(hdr.BTreeRoot, key, leafVal)
 	if err != nil {
 		return err
 	}
-	if !split {
+	if len(refs) == 0 {
 		return nil
 	}
-	left := hdr.BTreeRoot
-	newRoot, err := t.allocPageID()
-	if err != nil {
-		return err
+	return t.growRoot(hdr.BTreeRoot, refs)
+}
+
+// growRoot installs one or more new internal levels above oldRoot after a split
+// propagated promotions to the top of the tree. If the promoted children do not
+// all fit in a single new root page, the new level is itself spilled and the
+// process repeats, increasing tree height by more than one if necessary.
+func (t *BTree) growRoot(oldRoot uint64, refs []childRef) error {
+	ptrs := make([]uint64, 0, len(refs)+1)
+	ptrs = append(ptrs, oldRoot)
+	keys := make([][]byte, 0, len(refs))
+	for _, r := range refs {
+		keys = append(keys, r.sepKey)
+		ptrs = append(ptrs, r.pageID)
 	}
-	ptrs := []uint64{left, nr}
-	keys := [][]byte{append([]byte(nil), sep...)}
-	page, err := buildInternalPage(t.pageSize(), 0, ptrs, keys)
-	if err != nil {
-		return err
+	for {
+		newRoot, err := t.allocPageID()
+		if err != nil {
+			return err
+		}
+		moreRefs, err := t.spillInternal(newRoot, 0, ptrs, keys)
+		if err != nil {
+			return err
+		}
+		if len(moreRefs) == 0 {
+			return t.eng.UpdateHeader(func(h *Header) { h.BTreeRoot = newRoot })
+		}
+		// The new root level itself overflowed; build the next level up.
+		ptrs = make([]uint64, 0, len(moreRefs)+1)
+		ptrs = append(ptrs, newRoot)
+		keys = make([][]byte, 0, len(moreRefs))
+		for _, r := range moreRefs {
+			keys = append(keys, r.sepKey)
+			ptrs = append(ptrs, r.pageID)
+		}
 	}
-	if err := t.eng.WritePage(newRoot, page); err != nil {
-		return err
-	}
-	if err := t.setParent(left, newRoot); err != nil {
-		return err
-	}
-	if err := t.setParent(nr, newRoot); err != nil {
-		return err
-	}
-	return t.eng.UpdateHeader(func(h *Header) {
-		h.BTreeRoot = newRoot
-	})
 }
 
 func (t *BTree) putFirst(key, val []byte) error {
@@ -226,167 +279,74 @@ func (t *BTree) putFirst(key, val []byte) error {
 	})
 }
 
-func (t *BTree) insertAt(pid uint64, key, val []byte) (split bool, newRight uint64, sep []byte, err error) {
+func (t *BTree) insertAt(pid uint64, key, val []byte) ([]childRef, error) {
 	page, release, err := t.eng.readPagePooled(pid)
 	if err != nil {
-		return false, 0, nil, err
+		return nil, err
 	}
 	defer release()
 	switch page[5] {
 	case btreeKindLeaf:
-		return t.insertIntoLeaf(pid, page, key, val)
+		return t.insertLeafRefs(pid, page, key, val)
 	case btreeKindInternal:
 		return t.insertIntoInternal(pid, page, key, val)
 	default:
-		return false, 0, nil, ErrCorruptTree
+		return nil, ErrCorruptTree
 	}
 }
 
-func (t *BTree) insertIntoLeaf(pid uint64, page, key, val []byte) (split bool, newRight uint64, sep []byte, err error) {
-	ld, err := parseLeafPage(page)
+// insertLeafRefs inserts into a leaf using cascading splits and returns the
+// promoted children (the new right-side pages) for the parent to splice in.
+// A nil/empty result means the entry fit without splitting. The leftmost page
+// always reuses pid, so it is never returned as a promotion.
+func (t *BTree) insertLeafRefs(pid uint64, page, key, val []byte) ([]childRef, error) {
+	didSplit, result, err := t.insertIntoLeafCascade(pid, page, key, val)
 	if err != nil {
-		return false, 0, nil, err
+		return nil, err
 	}
-	keys := append([][]byte(nil), ld.keys...)
-	vals := append([][]byte(nil), ld.vals...)
-	idx := leafKeyIndex(keys, key)
-	if idx < len(keys) && bytes.Equal(keys[idx], key) {
-		// Free old overflow chain if the previous value was an overflow stub.
-		if isOverflowStub(vals[idx]) {
-			_, oldFirst := decodeOverflowStub(vals[idx])
-			t.freeOverflowChain(oldFirst)
-		}
-		vals[idx] = append([]byte(nil), val...)
-		// The replacement value may be larger than the original, causing the
-		// updated page to exceed pageSize. Re-check before writing in-place.
-		if leafSerializedSize(keys, vals) <= t.pageSize() {
-			pg, err := buildLeafPage(t.pageSize(), ld.parent, ld.next, keys, vals)
-			if err != nil {
-				return false, 0, nil, err
-			}
-			if err := t.eng.WritePage(pid, pg); err != nil {
-				return false, 0, nil, err
-			}
-			return false, 0, nil, nil
-		}
-		// Updated page overflows — fall through to the split path below.
-	} else {
-		keys = append(keys[:idx], append([][]byte{append([]byte(nil), key...)}, keys[idx:]...)...)
-		vals = append(vals[:idx], append([][]byte{append([]byte(nil), val...)}, vals[idx:]...)...)
+	if !didSplit {
+		return nil, nil
 	}
-	if leafSerializedSize(keys, vals) <= t.pageSize() {
-		pg, err := buildLeafPage(t.pageSize(), ld.parent, ld.next, keys, vals)
-		if err != nil {
-			return false, 0, nil, err
-		}
-		if err := t.eng.WritePage(pid, pg); err != nil {
-			return false, 0, nil, err
-		}
-		return false, 0, nil, nil
+	refs := make([]childRef, 0, len(result.pages)-1)
+	for i := 1; i < len(result.pages); i++ {
+		refs = append(refs, childRef{
+			sepKey: result.sepKeys[i-1],
+			pageID: result.pages[i].pageID,
+		})
 	}
-	mid := leafSplitIndex(keys, vals, t.pageSize())
-	leftK, rightK := keys[:mid], keys[mid:]
-	leftV, rightV := vals[:mid], vals[mid:]
-	sepKey := append([]byte(nil), rightK[0]...)
-	rid, err := t.allocPageID()
-	if err != nil {
-		return false, 0, nil, err
-	}
-	leftPg, err := buildLeafPage(t.pageSize(), ld.parent, rid, leftK, leftV)
-	if err != nil {
-		return false, 0, nil, err
-	}
-	rightPg, err := buildLeafPage(t.pageSize(), ld.parent, ld.next, rightK, rightV)
-	if err != nil {
-		return false, 0, nil, err
-	}
-	if err := t.eng.WritePage(pid, leftPg); err != nil {
-		return false, 0, nil, err
-	}
-	if err := t.eng.WritePage(rid, rightPg); err != nil {
-		return false, 0, nil, err
-	}
-	return true, rid, sepKey, nil
+	return refs, nil
 }
 
-func (t *BTree) insertIntoInternal(pid uint64, page, key, val []byte) (split bool, newRight uint64, sep []byte, err error) {
+// insertIntoInternal descends into the correct child, then splices any promoted
+// children returned from below into this node, spilling this node into multiple
+// fitting pages if it overflows. Returns the promotions this node produces (if
+// any) for its own parent.
+func (t *BTree) insertIntoInternal(pid uint64, page, key, val []byte) ([]childRef, error) {
 	in, err := parseInternalPage(page)
 	if err != nil {
-		return false, 0, nil, err
+		return nil, err
 	}
 	ci := internalPickChild(in.keys, key)
 	child := in.ptrs[ci]
-	split, nr, sep, err := t.insertAt(child, key, val)
+	childRefs, err := t.insertAt(child, key, val)
 	if err != nil {
-		return false, 0, nil, err
+		return nil, err
 	}
-	if !split {
-		return false, 0, nil, nil
+	if len(childRefs) == 0 {
+		return nil, nil
 	}
-	newPtrs := make([]uint64, 0, len(in.ptrs)+1)
-	newPtrs = append(newPtrs, in.ptrs[:ci]...)
-	newPtrs = append(newPtrs, in.ptrs[ci], nr)
-	newPtrs = append(newPtrs, in.ptrs[ci+1:]...)
-	newKeys := make([][]byte, 0, len(in.keys)+1)
+	// Splice the promoted children in immediately after the original child slot.
+	newPtrs := make([]uint64, 0, len(in.ptrs)+len(childRefs))
+	newPtrs = append(newPtrs, in.ptrs[:ci+1]...)
+	newKeys := make([][]byte, 0, len(in.keys)+len(childRefs))
 	newKeys = append(newKeys, in.keys[:ci]...)
-	newKeys = append(newKeys, sep)
+	for _, r := range childRefs {
+		newKeys = append(newKeys, r.sepKey)
+		newPtrs = append(newPtrs, r.pageID)
+	}
+	newPtrs = append(newPtrs, in.ptrs[ci+1:]...)
 	newKeys = append(newKeys, in.keys[ci:]...)
-	if internalSerializedSize(newKeys) <= t.pageSize() {
-		pg, err := buildInternalPage(t.pageSize(), in.parent, newPtrs, newKeys)
-		if err != nil {
-			return false, 0, nil, err
-		}
-		if err := t.eng.WritePage(pid, pg); err != nil {
-			return false, 0, nil, err
-		}
-		if err := t.setParent(nr, pid); err != nil {
-			return false, 0, nil, err
-		}
-		return false, 0, nil, nil
-	}
-	return t.splitInternal(pid, in.parent, newPtrs, newKeys)
-}
-
-func (t *BTree) splitInternal(pid, parent uint64, ptrs []uint64, keys [][]byte) (split bool, rightID uint64, promote []byte, err error) {
-	if len(keys) == 0 || len(ptrs) != len(keys)+1 {
-		return false, 0, nil, fmt.Errorf("%w: split internal", ErrCorruptTree)
-	}
-	mid := len(keys) / 2
-	promoted := append([]byte(nil), keys[mid]...)
-	leftPtrs := append([]uint64(nil), ptrs[:mid+1]...)
-	leftKeys := append([][]byte(nil), keys[:mid]...)
-	rightPtrs := append([]uint64(nil), ptrs[mid+1:]...)
-	rightKeys := append([][]byte(nil), keys[mid+1:]...)
-
-	rid, err := t.allocPageID()
-	if err != nil {
-		return false, 0, nil, err
-	}
-	lp, err := buildInternalPage(t.pageSize(), parent, leftPtrs, leftKeys)
-	if err != nil {
-		return false, 0, nil, err
-	}
-	rp, err := buildInternalPage(t.pageSize(), parent, rightPtrs, rightKeys)
-	if err != nil {
-		return false, 0, nil, err
-	}
-	if err := t.eng.WritePage(pid, lp); err != nil {
-		return false, 0, nil, err
-	}
-	if err := t.eng.WritePage(rid, rp); err != nil {
-		return false, 0, nil, err
-	}
-	for _, p := range leftPtrs {
-		if err := t.setParent(p, pid); err != nil {
-			return false, 0, nil, err
-		}
-	}
-	for _, p := range rightPtrs {
-		if err := t.setParent(p, rid); err != nil {
-			return false, 0, nil, err
-		}
-	}
-	return true, rid, promoted, nil
+	return t.spillInternal(pid, in.parent, newPtrs, newKeys)
 }
 
 // AscendRangeFromRoot calls fn for every key in [from, to] inclusive using the

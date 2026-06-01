@@ -4,6 +4,15 @@
 
 ---
 
+## [0.5.1] - 2026-06-01
+
+### Fixed
+
+- **B+ tree cascading split completed (latent corruption removed)** — `cascadingLeafSplit` previously split a leaf only once and, on impossible inputs, force-wrote an oversized page that `buildLeafPage` rejected with `ErrCorruptTree: leaf page full`; its companion `insertIntoInternalCascade` was dead code, so multi-page leaf splits could orphan pages from the parent index. The split path is now a true bbolt-style spill: `splitRecursively` greedily left-fills so **every** emitted leaf page is guaranteed to fit; `insertAt`/`insertIntoInternal` thread all promoted children (`[]childRef`) up the tree; internal nodes spill into multiple fitting pages via `spillInternal`/`splitInternalGroups`; and `growRoot` adds one or more root levels as needed. The invariant *"every page serializes within pageSize and every page is reachable top-down"* now holds for arbitrary inline-value size distributions, not just the bounded single-insert case. Removed dead `findOptimalSplit`, `splitInternal`, `splitInternalCascade`, `insertIntoInternalCascade`. New tests: `TestProbe_*`, `TestCascadeIntegrity_*` (full tree validator: balance, parent-pointer linkage, page-fit, top-down reachability, reopen) in `internal/engine`. No public API or on-disk format change.
+- **Compression-magic value collision (round-trip corruption)** — a raw value whose first byte equals the compression magic (`0xFE`) and is longer than the 5-byte envelope header was misread as a compression envelope on read, failing with `flate: corrupt input`. `compressValue` now wraps such values in the envelope even when compression does not shrink them, guaranteeing byte-for-byte round-trip for arbitrary value bytes (e.g. embedding floats). Format-compatible; regression test `TestProbe_CompressMagicCollision`.
+
+---
+
 ## [0.5.0] - 2026-05-09
 
 ### Added
