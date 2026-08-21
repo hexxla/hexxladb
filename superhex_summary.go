@@ -91,7 +91,7 @@ func (s *SuperHexSummaryIndex) Rebuild(ctx context.Context, db *DB) error {
 		if err := tx.scanAllCellsFused(ctx, 0, func(rec record.CellRecord) bool {
 			coord, unpackErr := lattice.Unpack(rec.Key)
 			if unpackErr != nil {
-				scanErr = fmt.Errorf("%w: super-hex cell coordinate: %v", ErrCorruptDatabase, unpackErr)
+				scanErr = fmt.Errorf("%w: super-hex cell coordinate: %w", ErrCorruptDatabase, unpackErr)
 				return false
 			}
 			parent := lattice.SuperHexParentAtLevel(coord, s.level)
@@ -167,10 +167,10 @@ func (s *SuperHexSummaryIndex) Sync(ctx context.Context, db *DB, limit int) (pro
 		case ChangelogOpPutCell, ChangelogOpDeleteCell:
 			packed, parseErr := index.ParseCellKey(rec.Key)
 			if parseErr != nil {
-				return processed, fmt.Errorf("%w: super-hex changelog cell key: %v", ErrCorruptDatabase, parseErr)
+				return processed, fmt.Errorf("%w: super-hex changelog cell key: %w", ErrCorruptDatabase, parseErr)
 			}
 			if _, unpackErr := lattice.Unpack(packed); unpackErr != nil {
-				return processed, fmt.Errorf("%w: super-hex changelog coordinate: %v", ErrCorruptDatabase, unpackErr)
+				return processed, fmt.Errorf("%w: super-hex changelog coordinate: %w", ErrCorruptDatabase, unpackErr)
 			}
 			if rec.Op == ChangelogOpPutCell {
 				s.applyPut(packed, rec.Seq)
@@ -202,7 +202,7 @@ func (s *SuperHexSummaryIndex) SummaryForCoord(coord Coord) (SuperHexSummary, bo
 		return SuperHexSummary{}, false, fmt.Errorf("%w: uninitialized super-hex summary index", ErrInvalidArgument)
 	}
 	if _, err := lattice.Pack(coord); err != nil {
-		return SuperHexSummary{}, false, fmt.Errorf("%w: super-hex coordinate: %v", ErrInvalidArgument, err)
+		return SuperHexSummary{}, false, fmt.Errorf("%w: super-hex coordinate: %w", ErrInvalidArgument, err)
 	}
 	parent := lattice.SuperHexParentAtLevel(coord, s.level)
 	summary, ok := s.Summary(parent)

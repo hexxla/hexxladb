@@ -87,10 +87,10 @@ type evidenceReport struct {
 		CaughtUp         bool           `json:"caught_up"`
 	} `json:"superhex"`
 	Resources struct {
-		TotalAllocBytes int64 `json:"total_alloc_bytes"`
-		DatabaseBytes   int64 `json:"database_bytes"`
-		WALBytes        int64 `json:"wal_bytes"`
-		ChangelogBytes  int64 `json:"changelog_bytes"`
+		TotalAllocBytes uint64 `json:"total_alloc_bytes"`
+		DatabaseBytes   int64  `json:"database_bytes"`
+		WALBytes        int64  `json:"wal_bytes"`
+		ChangelogBytes  int64  `json:"changelog_bytes"`
 	} `json:"resources"`
 }
 
@@ -238,7 +238,7 @@ func run(ctx context.Context, cfg config) (evidenceReport, error) {
 	report.SuperHex.Summaries = len(summaryIndex.Summaries())
 	report.SuperHex.LastSeq = summaryIndex.LastSeq()
 	report.SuperHex.CaughtUp = len(remaining) == 0
-	report.Resources.TotalAllocBytes = int64(memoryAfter.TotalAlloc - memoryBefore.TotalAlloc)
+	report.Resources.TotalAllocBytes = memoryAfter.TotalAlloc - memoryBefore.TotalAlloc
 	report.Resources.DatabaseBytes = fileSize(dbPath)
 	report.Resources.WALBytes = fileSize(dbPath + "-wal")
 	report.Resources.ChangelogBytes = fileSize(dbPath + "-changelog")
@@ -253,7 +253,8 @@ func newGenerator(seed uint64) *generator { return &generator{state: seed} }
 
 func (g *generator) intN(n int) int {
 	g.state = g.state*6364136223846793005 + 1442695040888963407
-	return int((g.state >> 32) % uint64(n))
+	value := int64(g.state >> 32)
+	return int(value % int64(n))
 }
 
 func generateCoords(count int) []hexxladb.Coord {
@@ -317,7 +318,7 @@ func observeDijkstra(ctx context.Context, db *hexxladb.DB, coords []hexxladb.Coo
 	})
 	results.dijkstraLatency = append(results.dijkstraLatency, time.Since(started))
 	if err != nil {
-		return fmt.Errorf("Dijkstra sample: %w", err)
+		return fmt.Errorf("dijkstra sample: %w", err)
 	}
 	if len(path) > 0 {
 		results.pathsFound++

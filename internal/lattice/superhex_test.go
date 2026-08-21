@@ -1,6 +1,7 @@
 package lattice_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
@@ -35,14 +36,7 @@ func TestSuperHexHierarchyPartitionsFineGrid(t *testing.T) {
 		for r := -100; r <= 100; r++ {
 			fine := lattice.Coord{Q: q, R: r}
 			parent := lattice.SuperHexParent(fine)
-			found := false
-			for _, child := range lattice.SuperHexChildren(parent) {
-				if child == fine {
-					found = true
-					break
-				}
-			}
-			if !found {
+			if !slices.Contains(lattice.SuperHexChildren(parent), fine) {
 				t.Fatalf("fine coordinate %v is absent from parent %v children", fine, parent)
 			}
 		}

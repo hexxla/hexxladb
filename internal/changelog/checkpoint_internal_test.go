@@ -72,7 +72,7 @@ func TestOpenRejectsNonContiguousSequence(t *testing.T) {
 	}
 	var length [4]byte
 	binary.BigEndian.PutUint32(length[:], uint32(len(body)))
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // test-owned temporary path
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}

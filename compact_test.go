@@ -1,6 +1,7 @@
 package hexxladb_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -389,7 +390,7 @@ func TestCompactTo_existingDestinationWALIsPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(gotWAL) != string(wantWAL) {
+	if !bytes.Equal(gotWAL, wantWAL) {
 		t.Fatalf("existing WAL changed: got %q, want %q", gotWAL, wantWAL)
 	}
 }

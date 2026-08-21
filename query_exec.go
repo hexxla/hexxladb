@@ -250,56 +250,6 @@ func (tx *Tx) scanBySourceFused(ctx context.Context, sourceID string, maxScanRow
 	return nil
 }
 
-// scanByTimeRangeFused walks the time index and calls yield for each record in [after, before).
-func (tx *Tx) scanByTimeRangeFused(ctx context.Context, after, before time.Time, yield func(record.CellRecord) bool) error {
-	var bucketFrom, bucketTo int64
-	if !after.IsZero() {
-		bucketFrom = after.UnixNano() / index.WeekNanos
-	}
-	if !before.IsZero() {
-		bucketTo = before.UnixNano()/index.WeekNanos + 1
-	} else {
-		bucketTo = 1<<62 - 1
-	}
-
-	from, _ := index.TimeRangePrefix(bucketFrom)
-	_, to := index.TimeRangePrefix(bucketTo)
-
-	seen := make(map[lattice.PackedCoord]struct{})
-
-	if err := tx.AscendRange(from, to, func(k, _ []byte) bool {
-		if ctx.Err() != nil {
-			return false
-		}
-		_, pc, err := index.ParseTimeKey(k)
-		if err != nil {
-			return true
-		}
-		if _, dup := seen[pc]; dup {
-			return true
-		}
-		seen[pc] = struct{}{}
-		rec, ok, e := tx.GetCell(pc)
-		if e != nil || !ok {
-			return true
-		}
-		if rec.Validity.ValidFrom == nil {
-			return true
-		}
-		vf := time.Unix(0, *rec.Validity.ValidFrom).UTC()
-		if !after.IsZero() && !vf.After(after) {
-			return true
-		}
-		if !before.IsZero() && !vf.Before(before) {
-			return true
-		}
-		return yield(rec)
-	}); err != nil {
-		return fmt.Errorf("hexxladb: QueryCells time scan: %w", err)
-	}
-	return ctx.Err()
-}
-
 // scanByRadiusFused walks rings from center up to radius using a lazy iterator
 // and calls yield for each present cell. maxScanRows=0 means unlimited.
 func (tx *Tx) scanByRadiusFused(ctx context.Context, center Coord, radius, maxScanRows int, yield func(record.CellRecord) bool) error {

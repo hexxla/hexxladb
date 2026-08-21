@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- **Super-hex error chains** — coordinate and changelog decoding failures now retain both the public classification error and their underlying cause for `errors.Is`/`errors.As` inspection.
 - **Editor lint configuration** — corrected the case-sensitive Go extension identifier used by VS Code, prevented the optional Trunk extension from auto-initializing an incompatible local toolchain, added repository Markdown lint rules for intentional changelog and HTML patterns, normalized tracked documentation formatting, and repaired shell diagnostics including a syntax error in the coverage hook.
 - **Exclusive database ownership** — `Open` now takes a non-blocking OS file lock and returns `ErrDatabaseLocked` when the same primary file is already open. This prevents two handles or processes from independently replaying and overwriting the shared primary/WAL state.
 - **Safe, exact compaction** — `DB.Compact` reads one stable snapshot for the full copy; `CompactTo` owns the source exclusively; destinations are created with exclusive-create semantics so an existing file is never overwritten or deleted; copying is bounded to 4096-record batches without creating synthetic MVCC commit-timeline rows. Encrypted open-handle compaction now fails closed with `ErrEncryptionKeyRequired`; use offline `CompactTo` with credentials.

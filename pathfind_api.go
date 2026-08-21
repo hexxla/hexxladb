@@ -39,7 +39,7 @@ func (tx *Tx) FindEdgePath(ctx context.Context, start, goal Coord, cfg FindEdgeP
 		return []Coord{start}, nil
 	}
 
-	traversal := newEdgeTraversal(tx, ctx, cfg.Filter, cfg.CostFunc)
+	traversal := newEdgeTraversal(ctx, tx, cfg.Filter, cfg.CostFunc)
 	path := pathfind.Dijkstra(start, goal, traversal.neighbors, traversal.cost, cfg.MaxExpand)
 	if traversal.err != nil {
 		return nil, traversal.err
@@ -63,7 +63,7 @@ func (tx *Tx) WalkEdges(ctx context.Context, start Coord, filter string, maxHops
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	traversal := newEdgeTraversal(tx, ctx, filter, nil)
+	traversal := newEdgeTraversal(ctx, tx, filter, nil)
 	result := pathfind.BFS(start, traversal.neighbors, maxHops, maxNodes)
 	if traversal.err != nil {
 		return result, traversal.err
@@ -92,7 +92,7 @@ type edgeTraversal struct {
 	err      error
 }
 
-func newEdgeTraversal(tx *Tx, ctx context.Context, filter string, override func(from, to Coord) float64) *edgeTraversal {
+func newEdgeTraversal(ctx context.Context, tx *Tx, filter string, override func(from, to Coord) float64) *edgeTraversal {
 	return &edgeTraversal{
 		tx:       tx,
 		ctx:      ctx,
