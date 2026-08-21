@@ -277,7 +277,7 @@ Hexxla is a hexagonal spatial memory operating system for LLMs. Embeddings or le
 
 ## HexxlaDB and HEXXLA (how to use the library today)
 
-**Scope:** This repository ships **HexxlaDB** (`package hexxladb`) — the embedded engine — not the full HEXXLA product (HTTP/JSON gateway, embedding/index services, dashboards). Those live in a **consumer service** that imports `hexxladb` and implements orchestration in **domain** / **app** layers (see **[HEXAGONAL_ARCHITECTURE.md](../context/HEXAGONAL_ARCHITECTURE.md)**). The sections below describe how **today’s** HexxlaDB API fulfills the **normative requirements** in this document until HEXXLA is built as a separate composition root.
+**Scope:** This repository ships **HexxlaDB** (`package hexxladb`) — the embedded engine — not the full HEXXLA product (HTTP/JSON gateway, embedding/index services, dashboards). Those live in a **consumer service** that imports `hexxladb` and implements orchestration in **domain** / **app** layers (see **[HEXAGONAL_ARCHITECTURE.md](../architecture/HEXAGONAL_ARCHITECTURE.md)**). The sections below describe how **today’s** HexxlaDB API fulfills the **normative requirements** in this document until HEXXLA is built as a separate composition root.
 
 ### Mapping: HEXXLA intent → HexxlaDB primitives
 
@@ -316,4 +316,4 @@ The examples are scenario-oriented rather than an exhaustive symbol test. Use **
 3. **Read path:** **`View`** → **`LoadContext(LoadContextConfig{...})`** for prompt assembly, plus **`AscendCellsByTag`** / **`AscendCellsBySource`** for dashboards and analytics.
 4. **Operational:** enable MVCC/changelog/encryption only when the service needs those deployment modes.
 
-This staged use of HexxlaDB matches **HEXXLA.md**’s separation of **memory model** (here) from **storage layout** (**HEXXLA_DB.md**) and keeps the future HEXXLA binary free of **`internal/engine`** imports (**[HEXAGONAL_ARCHITECTURE.md](../context/HEXAGONAL_ARCHITECTURE.md)**).
+This staged use of HexxlaDB matches **HEXXLA.md**’s separation of **memory model** (here) from **storage layout** (**HEXXLA_DB.md**) and keeps the future HEXXLA binary free of **`internal/engine`** imports (**[HEXAGONAL_ARCHITECTURE.md](../architecture/HEXAGONAL_ARCHITECTURE.md)**).

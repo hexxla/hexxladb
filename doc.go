@@ -71,5 +71,5 @@
 // Follow the wiring pattern in cmd/hexxladb/main.go: configuration, structured
 // logging, [Open] with [DB.Close], inject dependencies into your application
 // layer. Outbound adapters should call only types and functions exported from
-// package hexxladb, not internal/engine (see docs/context/HEXAGONAL_ARCHITECTURE.md).
+// package hexxladb, not internal/engine (see docs/architecture/HEXAGONAL_ARCHITECTURE.md).
 package hexxladb

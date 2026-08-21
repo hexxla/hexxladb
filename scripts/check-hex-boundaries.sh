@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Enhanced hexagonal boundary checker based on docs/context/HEXAGONAL_ARCHITECTURE.md
+# Enhanced hexagonal boundary checker based on docs/architecture/HEXAGONAL_ARCHITECTURE.md
 # Validates all dependency rules for hexagonal architecture compliance
 set -euo pipefail
 
@@ -116,7 +116,7 @@ check_port_interface_types() {
 }
 
 echo "==> Enhanced Hexagonal Boundary Check"
-echo "==> Validating against docs/context/HEXAGONAL_ARCHITECTURE.md"
+echo "==> Validating against docs/architecture/HEXAGONAL_ARCHITECTURE.md"
 echo
 
 # 1. Core packages MUST NOT import adapters

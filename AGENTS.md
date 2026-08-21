@@ -1,6 +1,6 @@
 # Project Instructions
 
-**Canonical architecture:** Read **`docs/context/HEXAGONAL_ARCHITECTURE.md`** before adding or moving code under **`internal/`** or **`cmd/`**. Do not duplicate its full content here; the doc is the source of truth.
+**Canonical architecture:** Read **`docs/architecture/HEXAGONAL_ARCHITECTURE.md`** before adding or moving code under **`internal/`** or **`cmd/`**. Do not duplicate its full content here; the doc is the source of truth.
 
 **Non-negotiables (summary):**
 

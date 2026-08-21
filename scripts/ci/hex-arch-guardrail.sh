@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Enhanced Hexagonal Architecture Guardrail
-# Enforces dependency rules for the project structure based on docs/architecture/architecture.md
+# Enforces dependency rules based on docs/architecture/HEXAGONAL_ARCHITECTURE.md
 
 set -euo pipefail
 
@@ -27,7 +27,7 @@ warn() {
 }
 
 echo -e "${CYAN}> Enhanced Hexagonal Architecture Guardrail${NC}"
-echo -e "${CYAN}> Validating against docs/architecture/architecture.md${NC}"
+echo -e "${CYAN}> Validating against docs/architecture/HEXAGONAL_ARCHITECTURE.md${NC}"
 echo
 
 # 1. core/domain/ must remain pure

@@ -5,5 +5,5 @@
 // repository and call package hexxladb or internal/app/domain from their composition root.
 //
 // Outbound persistence uses [domain.Storage]; the reference implementation is internal/adapters/out/hexxladb.
-// See docs/context/HEXAGONAL_ARCHITECTURE.md for boundary guidance.
+// See docs/architecture/HEXAGONAL_ARCHITECTURE.md for boundary guidance.
 package in

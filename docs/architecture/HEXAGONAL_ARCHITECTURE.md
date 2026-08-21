@@ -292,4 +292,4 @@ This template does **not** require DDD aggregates, event sourcing, CQRS, or extr
 | **`.pre-commit-config.yaml`**       | Optional Git `pre-commit` hooks (`make pre-commit-install`).                  |
 | **`AGENTS.md`**                     | Short agent-facing invariants and a pointer to this document.                 |
 
-When automating refactors, treat **`docs/context/HEXAGONAL_ARCHITECTURE.md`** as the **source of truth** for layout and dependency direction.
+When automating refactors, treat **`docs/architecture/HEXAGONAL_ARCHITECTURE.md`** as the **source of truth** for layout and dependency direction.
