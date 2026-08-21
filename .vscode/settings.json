@@ -10,6 +10,7 @@
   "gopls": {
     "staticcheck": true
   },
+  "trunk.autoInit": false,
   "chat.useAgentsMdFile": true,
   "chat.useNestedAgentsMdFiles": true
 }
