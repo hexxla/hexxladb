@@ -1,4 +1,4 @@
-# Logical changefeed (Phase G)
+# Logical changefeed
 
 **Audience:** Operators and **automated consumers** (indexers, agents, orchestrators) that need a **durable, ordered** stream of **semantic** mutations—not page-image WAL records.
 
@@ -33,7 +33,7 @@ The changefeed is **grounded external memory** for what changed in the store: ea
 - **`ChangelogSync` (default when enabled):** append is followed by **`Sync`** on the changelog file (stronger alignment with committed state; slower).
 - **`ChangelogLazy`:** buffered append; **shorter fsync** latency; **possible loss of tail records** on crash if the OS has not flushed. Use only when the product accepts that tradeoff.
 
-If changelog append fails **after** the btree write succeeded, the API may still return an error; the database may contain writes **without** a corresponding log entry (documented limitation for this milestone—operators should monitor and re-reconcile if needed).
+If changelog append fails **after** the btree write succeeded, the API may still return an error; the database may contain writes **without** a corresponding log entry. Operators must monitor finalization failures and reconcile downstream state as described below.
 
 ## Reconciliation runbook (commit succeeded, log append failed)
 

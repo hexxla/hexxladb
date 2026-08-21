@@ -157,7 +157,7 @@ The core primitives — spatial locality, provenance, contradiction tracking, bu
 
 ## API
 
-Full reference: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.md)
+Public API guide: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.md)
 
 | Operation                                               | What it does                                                            |
 | ------------------------------------------------------- | ----------------------------------------------------------------------- |
@@ -270,7 +270,7 @@ The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm 
 | Document                                                           | What's inside                                            |
 | ------------------------------------------------------------------ | -------------------------------------------------------- |
 | [`CONFIGURATION.md`](docs/hexxladb/CONFIGURATION.md)               | All `Options` fields, common configs, encryption setup   |
-| [`API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.md)               | Complete API reference — every exported symbol           |
+| [`API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.md)               | Task-oriented public API guide                           |
 | [`HEXXLA.md`](docs/hexxladb/HEXXLA.md)                             | Memory model: hex lattice, seams, validity, supersession |
 | [`HEXXLA_DB.md`](docs/hexxladb/HEXXLA_DB.md)                       | Storage layout, key encoding, HNSW keyspace              |
 | [`OPERATIONS.md`](docs/hexxladb/OPERATIONS.md)                     | Production ops, benchmarks, backup, encryption           |

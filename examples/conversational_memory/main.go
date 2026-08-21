@@ -1407,7 +1407,7 @@ func run(dbPath string) error {
 	_, _ = dimStyle.Println("    •  Build edge graphs for topic-navigation and graph-based retrieval")
 	_, _ = dimStyle.Println("    •  Enable encryption (Options.Passphrase / Options.EncryptionKey)")
 	_, _ = dimStyle.Println("    •  Tune Options.PageSize (4096/8192/16384/65536) for your workload")
-	_, _ = dimStyle.Println("    •  See docs/hexxladb/API_REFERENCE.md for the full API surface")
+	_, _ = dimStyle.Println("    •  See docs/hexxladb/API_REFERENCE.md for the public API guide")
 	fmt.Println()
 
 	return nil

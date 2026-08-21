@@ -200,7 +200,7 @@ Tune retention and pruning for your workload and soak longer in staging if reten
 
 **Response:** Stop writing; backup files; restore from known-good snapshot. Only use `Update` / primitives — avoid raw `Tx.Put` reordering `cell/` vs `__meta/commit-time/` keys on format v2.
 
-**Note (Unreleased):** The historical `leaf page full` variant of this error — where a leaf split could not rebalance into fitting pages — is fixed. The B+ tree insert path now performs a true cascading (bbolt-style) spill that guarantees every written page fits within `pageSize` and stays reachable from the root for any inline-value size distribution. See the CHANGELOG `[Unreleased]` entry. A persisted `ErrCorruptTree` on a database written by a fixed build indicates genuine media/file corruption, not a split defect — restore from backup.
+The historical `leaf page full` variant caused by an incomplete cascading split is fixed. The B+ tree insert path now guarantees that emitted pages fit within `pageSize` and remain reachable from the root. A persisted `ErrCorruptTree` on a database written by a fixed build indicates genuine file or media corruption, not that historical split defect; restore from backup.
 
 ### 4) Changelog tail corruption
 
@@ -208,6 +208,6 @@ Tune retention and pruning for your workload and soak longer in staging if reten
 
 **Response:** Pause consumers; truncate/repair changelog per ops policy; re-bootstrap derived state from DB truth + [`CHANGEFEED.md`](./CHANGEFEED.md) reconciliation steps.
 
-## Post-v1 backlog
+## Scope boundaries
 
 Cross-node replication, automated prune policy in-process, materialized changefeed consumers, and hybrid embed/service routing are out of the current spec. Track the repository's technical roadmap in [`docs/ROADMAP.md`](../ROADMAP.md).

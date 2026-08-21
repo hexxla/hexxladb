@@ -181,6 +181,6 @@ db.EmbeddingMetric()    // DistanceMetric — distance function
 
 ## See also
 
-- [`API_REFERENCE.md`](API_REFERENCE.md) — complete API surface
+- [`API_REFERENCE.md`](API_REFERENCE.md) — task-oriented public API guide
 - [`OPERATIONS.md`](OPERATIONS.md) — production operations, backup, compaction, benchmarks
 - [`HEXXLA_DB.md`](HEXXLA_DB.md) — storage layout, key encoding

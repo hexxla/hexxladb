@@ -79,23 +79,23 @@ Tests: [`TestOpen_replaysPendingWAL`](../../internal/engine/engine_test.go), [`T
 
 ---
 
-## P3 / future work (implemented vs deferred)
+## Write-path scope
 
-**Implemented (write transaction path, non-group or single-job batch):** In-memory **dirty** pages, **`wal.Sync`** for redo, batched primary `Sync` in [`CommitWriteTxn`](../../internal/engine/writetxn.go) for the non-group path, and the group flusher for the `hexxladb` default.
+**Write transaction path (non-group or single-job batch):** In-memory **dirty** pages, **`wal.Sync`** for redo, batched primary `Sync` in [`CommitWriteTxn`](../../internal/engine/writetxn.go) for the non-group path, and the group flusher for the `hexxladb` default.
 
 **Still per page (separate code path):** The legacy **immediate** `WritePage` path in [`WritePage`](../../internal/engine/engine.go) + [`persistRedoPage`](../../internal/engine/engine.go) still does one primary `WriteAt`+`Sync` (and header) per operation, by design.
 
-**Still out of scope for product v1 here:** **SQLite-style** on-disk WAL merge into the read path (reads combine WAL + primary without a dirty cache).
+**Not supported:** **SQLite-style** on-disk WAL merge into the read path (reads combine WAL + primary without a dirty cache).
 
-**Feasible building block (spike / tests only):** [`TestSpike_twoWALRecordsOneSyncThenPersist`](../../internal/engine/group_commit_spike_test.go) and [`internal/engine/writetxn_test.go`](../../internal/engine/writetxn_test.go) assert ordering.
+[`TestSpike_twoWALRecordsOneSyncThenPersist`](../../internal/engine/group_commit_spike_test.go) and [`internal/engine/writetxn_test.go`](../../internal/engine/writetxn_test.go) assert write ordering.
 
 ---
 
-## Evaluating fewer `db.Sync` calls on the primary (`evaluate-primary-sync`)
+## Primary sync policy
 
 **Write-txn** `CommitWriteTxn` (non-group) does **one** `db.Sync` for all batched data pages. The **legacy** immediate `WritePage` path is unchanged. **Group WAL** can fuse multiple updates into one `wal.Sync` and one primary flush batch.
 
-Optional **future** work on this axis:
+Supported controls and verification:
 
 - **`fdatasync`** vs full-file **`Sync`** on the primary: [`Options.UsePrimaryFdatasync`](../../options.go) enables a data-only flush (e.g. `fdatasync(2)` on Linux) instead of `fsync(2)` for engine primary barriers. On other platforms the engine falls back to `Sync`. Validate on the **same filesystem** as production before defaulting on.
 - **Integration crash harness** (see [`crash_ordering_integration_test.go`](../../crash_ordering_integration_test.go) with `//go:build integration`): set `HEXXLADB_TEST_CRASH_AT` to a named phase, `HEXXLADB_TEST_CRASH_READY` to a marker file path, spawn a test subprocess, wait for the marker, then **SIGKILL**; reopen and assert a non-torn value or absence. Phases: `group_wal_appended`, `group_wal_synced`, `group_primary_written`, `group_primary_synced`, `group_header_written` (group batch); direct engine (non-group) path uses `classic_*` in [`writetxn.go`](../../internal/engine/writetxn.go) for internal tests.

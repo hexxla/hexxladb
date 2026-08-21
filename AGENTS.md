@@ -1,53 +1,45 @@
 # Project Instructions
 
-**Canonical architecture:** Read **`docs/architecture/HEXAGONAL_ARCHITECTURE.md`** before adding or moving code under **`internal/`** or **`cmd/`**. Do not duplicate its full content here; the doc is the source of truth.
+## Architecture and API
 
-**Non-negotiables (summary):**
+Read [`docs/architecture/HEXAGONAL_ARCHITECTURE.md`](docs/architecture/HEXAGONAL_ARCHITECTURE.md) before adding or moving code under `internal/` or `cmd/`. It is the canonical boundary contract; do not duplicate it here.
 
-- **`internal/domain`** and **`internal/app`** define **ports** (interfaces); **`internal/adapters/...`** implements them. Domain and app **must not** import adapter implementation packages.
-- **Port types must not** reference types from **`internal/adapters/...`**.
-- **Boundary:** **`internal/domain`** and **`internal/app`** must **not** import **`internal/engine`** or **`internal/index`**. Persistence and key encoding belong in **`package hexxladb`** (module root) and **`internal/record`** / **`internal/lattice`**; outbound adapters implement ports in **`internal/adapters/out/...`** by calling only the public **`hexxladb`** API.
-- **Business rules** live in domain/app; **`cmd/.../main.go`** only constructs, injects, and runs (composition root).
+- The stable import is `github.com/hexxla/hexxladb` at the module root. `internal/...` is module-private.
+- `internal/domain` and `internal/app` own ports and must not import adapters, `internal/engine`, or `internal/index`.
+- Port types must not reference adapter implementation types.
+- Outbound adapters call only the public root package. Business rules stay in domain/app; `cmd/...` only constructs, injects, and runs.
 
-**Module path:** `github.com/hexxla/hexxladb`
+## Go and verification
 
-**Public API:** The stable import is `github.com/hexxla/hexxladb` (package at repo root). `internal/...` is module-private. Top-level files: `db.go`, `tx.go`, `errors.go`, `options.go`, `doc.go`, `coord_export.go`, etc.
+Honor the minimum Go version in `go.mod` and use the matching project skill when its description applies. Prefer `errors.Is` / `errors.As`, wrap public error causes with `%w`, use `log/slog` in commands and adapters, and use `testing.B.Loop` for ordinary benchmarks.
 
-**Modern Go:** Honor the `go` directive in `go.mod` as minimum language version. Use deliberate features from current Go release notes.
+Run the narrowest relevant checks first, then `make ci` before pushing. Fix lint root causes; use a specific `//nolint` only with a one-line justification.
 
-- **Errors:** Prefer `errors.Is` / `errors.As` and `fmt.Errorf` with `%w` for public API error semantics.
-- **Loops:** Use integer range loops (`for i := range n`) where they simplify code.
-- **Benchmarks:** Use `testing.B.Loop` (Go 1.24+) unless custom loop needed.
-- **Logging:** Use `log/slog` in `cmd/` and adapters (not printf).
-- **CI:** Run `make ci` — includes golangci-lint with modernize analyzer.
-- **Linting:** Fix root causes. Use `//nolint` sparingly with specific linter and one-line justification.
+## Documentation ownership
 
-**Documentation:** Keep these aligned with code changes:
+Update only the documents owned by changed behavior:
 
-| Document                         | Purpose                        |
-| -------------------------------- | ------------------------------ |
-| `docs/hexxladb/HEXXLA_DB.md`     | Storage layout and keys        |
-| `docs/hexxladb/HEXXLA.md`        | Memory model and concepts      |
-| `docs/hexxladb/API_REFERENCE.md` | Exported API surface           |
-| `docs/hexxladb/OPERATIONS.md`    | Production operations          |
-| `docs/ROADMAP.md`                | Roadmap and out-of-scope items |
-| `doc.go`                         | Package-level documentation    |
+| Document                                                 | Responsibility                                         |
+| -------------------------------------------------------- | ------------------------------------------------------ |
+| `docs/architecture/HEXAGONAL_ARCHITECTURE.md`            | Package boundaries and dependency direction            |
+| `docs/hexxladb/API_REFERENCE.md`, `doc.go`               | Public API guidance and package overview               |
+| `docs/hexxladb/HEXXLA_DB.md`                             | Storage families, keys, and physical model             |
+| `docs/hexxladb/HEXXLA.md`                                | Product memory concepts, independent of implementation |
+| `docs/hexxladb/TX.md`, `DURABILITY.md`, `CHANGEFEED.md`  | Transaction, durability, and changefeed contracts      |
+| `docs/hexxladb/CONFIGURATION.md`, `ENCRYPTION.md`        | Configuration and encryption behavior                  |
+| `docs/hexxladb/OPERATIONS.md`, `PERFORMANCE_EVIDENCE.md` | Operations and reproducible performance evidence       |
+| `docs/ROADMAP.md`                                        | Pending or deliberately deferred work only             |
 
-**Session tracking:** Update [`TODO.md`](TODO.md) and [`CHANGELOG.md`](CHANGELOG.md) when working on related items:
+Do not put completed history in the roadmap or `TODO.md`; it belongs in `CHANGELOG.md`.
 
-- **TODO.md** — lightweight session state; move items to Completed as work finishes; add new discoveries to Pending
-- **CHANGELOG.md** — user-facing changes; add entries under `## [Unreleased]` for any user-visible feature, fix, or breaking change
+## Session and release tracking
 
-**Versioning:** Follow [`VERSIONING.md`](VERSIONING.md) (Semantic Versioning 2.0.0). Current: `v0.6.0`.
+- [`TODO.md`](TODO.md) contains only active and pending session work.
+- Add user-visible features, fixes, breaking changes, and material documentation changes under `CHANGELOG.md` → `[Unreleased]`.
+- Follow [`VERSIONING.md`](VERSIONING.md) and Semantic Versioning 2.0.0. During v0.y.z, features increment the minor version and fixes increment the patch version; document pre-v1 breaking changes.
 
-- Propose version bumps based on work: **minor** for features, **patch** for fixes, document breaking changes
-- During v0.y.z phase: increment minor for releases with new features, patch for fixes only
-- Before v1.0.0: breaking changes allowed but must be documented in CHANGELOG
+## Repository workflow
 
-**Git commits:** Keep messages short and simple. Avoid complex quoting, newlines, or special characters that confuse shells. One line preferred. Example: `git commit -m "Add feature X"` not `git commit -m "Add feature X\n\nDetails..."`
+Preserve unrelated work and keep commits focused. Use short, one-line commit messages. Optional hooks are installed with `make pre-commit-install`, but they do not replace `make ci`.
 
-Do not duplicate `HEXAGONAL_ARCHITECTURE.md` — reference it.
-
-**Git hooks (optional):** `.pre-commit-config.yaml` + `make pre-commit-install` — still run `make ci` before pushing.
-
-**Repository skills:** Codex-compatible project skills live under `.agents/skills/<skill-name>/SKILL.md`. Use them when their descriptions match the task. Add skills only for recurring HexxlaDB-specific workflows; keep general engineering policy in this file.
+Codex-compatible project skills live under `.agents/skills/<skill-name>/SKILL.md`. Add one only for a recurring HexxlaDB-specific workflow; keep general engineering policy in this file.

@@ -1,700 +1,191 @@
-# HexxlaDB API reference (full inventory)
+# HexxlaDB public API guide
 
-**Audience:** Anyone integrating **`package hexxladb`** (`github.com/hexxla/hexxladb`).
-**Normative storage:** **[HEXXLA_DB.md](./HEXXLA_DB.md)**. Transactions and snapshots: **[TX.md](./TX.md)**. Memory model: **[HEXXLA.md](./HEXXLA.md)**.
+This guide organizes the stable module-root API by task. It is intentionally not a second copy of every exported declaration. Use [`go doc github.com/hexxla/hexxladb`](https://pkg.go.dev/github.com/hexxla/hexxladb) for the exhaustive, source-derived symbol reference.
 
-This document lists **every exported symbol** in the root package as of the current tree, grouped by role. Use it as the single checklist when auditing coverage (tests, demos, product adapters). Generated docs: [pkg.go.dev](https://pkg.go.dev/github.com/hexxla/hexxladb); the **[`doc.go`](../../doc.go)** package comment stays the short overview.
+All application imports use:
 
----
-
-## Storage limits (engine B+ tree)
-
-Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored in the engine B+ tree. **Maximum key length: 256 bytes.** **Maximum value length: configurable per-database** via [`Options.MaxValueBytes`](../../options.go) — accepted values: **512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576** bytes; **default 8192 (8 KB)**. Values exceeding the page's inline threshold (~3.7 KiB at 4 KiB page size) are stored in **overflow pages** automatically. The limit is persisted in the file header and enforced on every write. Read it at runtime with **[`(*DB).MaxValueBytes`](../../db.go)**. **Page size: configurable per-database** via [`Options.PageSize`](../../options.go) — accepted values: **4096, 8192, 16384, 65536** bytes; **default 4096 (4 KiB)**. Existing databases read the page size from the file header on open. Read it at runtime with **[`(*DB).PageSize`](../../db.go)**. B+ tree leaf capacity is dynamic (fill-based splitting); smaller pages reduce wasted space for small databases. Rationale and format details: **[`ORDERED_STORE.md`](../../internal/engine/ORDERED_STORE.md)**. **Cell** (and other encoded) records must fit in the value budget; larger logical payloads require application-level chunking or external blob storage. **Compression:** DEFLATE (`compress/flate`, Go standard library) is always-on for values ≥ 64 bytes. Incompressible values are stored raw (no overhead). No configuration required.
-
----
-
-## Database lifecycle
-
-| Symbol                                      | Notes                                                                                                                                                                                                       |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`Open`](../../db.go)**                   | Open or create a database file; applies WAL on startup.                                                                                                                                                     |
-| **[`(*DB).Close`](../../db.go)**            | Waits for in-flight transactions; idempotent for nil receiver.                                                                                                                                              |
-| **[`(*DB).Compact`](../../compact.go)**     | Copy-compact open plaintext DB to a new `destPath` (minimal-size file, preserves all data including MVCC history).                                                                                          |
-| **[`CompactTo`](../../compact.go)**         | Standalone copy-compaction from a closed `srcPath` to a new `destPath`; propagates format, encryption, MaxValueBytes.                                                                                       |
-| **[`ErrCorruptDatabase`](../../errors.go)** | Open-time corruption (header/WAL).                                                                                                                                                                          |
-| **[`Options`](../../options.go)**           | `EnableMVCC`, `MVCCRetention`, changelog, encryption, `CellValidator`, `AfterPutCell`, `AfterPutSeam`, `PageSize`, `MaxValueBytes`, `PageCacheSize` (0 = 4 MiB default, -1 = disable), optional page hooks. |
-| **[`(*DB).PageSize`](../../db.go)**         | Returns the active page size (bytes); 4096 default for new databases.                                                                                                                                       |
-| **[`(*DB).MaxValueBytes`](../../db.go)**    | Returns the effective per-database max value size (bytes) from the file header.                                                                                                                             |
-| **[`MVCCRetention`](../../options.go)**     | Retention hint for prune suggestions.                                                                                                                                                                       |
-
----
-
-## Transactions and MVCC snapshots
-
-| Symbol                                 | Notes                                                                  |
-| -------------------------------------- | ---------------------------------------------------------------------- |
-| **[`(*DB).View`](../../tx.go)**        | Read-only; pins MVCC `read_seq` at start when format v2.               |
-| **[`(*DB).Update`](../../tx.go)**      | Exclusive write lock; logical writes via `*Tx`.                        |
-| **[`(*DB).Batch`](../../tx.go)**       | Same as **`Update`** (alias for naming parity).                        |
-| **[`(*DB).ViewAt`](../../tx.go)**      | Pin **`read_seq`** snapshot (MVCC); **`ErrReadSeqFuture`** if too new. |
-| **[`(*DB).ViewAtTime`](../../tx.go)**  | Map wall-clock to latest commit ≤ `as_of`; pins that snapshot.         |
-| **[`(*Tx).Writable`](../../tx.go)**    | True inside **`Update`** / **`Batch`**.                                |
-| **[`(*Tx).Get`](../../tx.go)**         | Raw btree **Get** by byte key.                                         |
-| **[`(*Tx).Put`](../../tx.go)**         | Raw btree **Put** (writes require **`Update`**).                       |
-| **[`(*Tx).AscendRange`](../../tx.go)** | Ordered scan **[from, to)** over byte keys.                            |
-
----
-
-## Cells, seams, rings, context (primitives)
-
-| Symbol                                                                                               | Notes                                                                                                                                                                                     |
-| ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*Tx).PutCell`](../../primitives.go)**                                                           | Cell primary + secondaries (`source/`, `time/`, `tag/`).                                                                                                                                  |
-| **[`(*Tx).GetCell`](../../primitives.go)**                                                           | Decode visible cell at packed coord.                                                                                                                                                      |
-| **[`(*Tx).DeleteCell`](../../delete_cell.go)** / **[`DeleteCellWithOutcome`](../../delete_cell.go)** | Remove cell + secondaries + facets + outbound edges. Idempotent **`DeleteCell`**; **`DeleteCellWithOutcome`** returns whether a visible cell existed. MVCC: tombstone; seams NOT removed. |
-| **[`(*Tx).WalkRing`](../../primitives.go)**                                                          | Visit one ring; raw bytes per coord.                                                                                                                                                      |
-| **[`(*Tx).WalkRingAt`](../../primitives.go)**                                                        | Same order; **`record.ValidAt`** filter at **`asOf`**.                                                                                                                                    |
-| **[`(*Tx).ScanContextRaw`](../../primitives.go)**                                                    | Low-level concentric walk returning raw `[]CellRecord`; **`maxR`**, **`maxCells`**. Prefer **`LoadContext`** for assembled `ContextPack`.                                                 |
-| **[`(*Tx).ScanContextAtRaw`](../../primitives.go)**                                                  | Same as **`ScanContextRaw`** + validity filter (MVCC `asOf`). Low-level primitive.                                                                                                        |
-| **[`(*Tx).WalkRingFacets`](../../primitives.go)**                                                    | Facet_mask ring walk; optional validity on cell.                                                                                                                                          |
-| **[`(*Tx).PutSeam`](../../primitives.go)**                                                           | Seam primary + **`seam-by-cells/`** + seam secondaries.                                                                                                                                   |
-| **[`(*Tx).FindSeams`](../../primitives.go)**                                                         | Query ball using seam index + primaries.                                                                                                                                                  |
-| **[`(*Tx).FindSeamsAt`](../../primitives.go)**                                                       | **`FindSeams`** + seam validity filter.                                                                                                                                                   |
-| **[`(*Tx).MarkConflict`](../../primitives.go)**                                                      | Spec sugar: ULID seam **`mark_conflict`**.                                                                                                                                                |
-| **[`(*Tx).MarkSupersedes`](../../primitives.go)**                                                    | Record directional supersession: superseder replaces superseded; used by **`FilterSuperseded`** context assembly.                                                                         |
-| **[`(*Tx).ResolveSeam`](../../primitives.go)**                                                       | Update resolution fields on **`seam/<ulid>`**.                                                                                                                                            |
-| **`SeamTypeConflict`**, **`SeamTypeSupersedes`**                                                     | Canonical seam type string constants (**`"mark_conflict"`**, **`"supersedes"`**).                                                                                                         |
-
-Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](../../internal/record/validity.go)); external code often reaches it via **`Tx`** helpers above rather than importing **`internal/record`** from outside this module.
-
----
-
-## Facets and edges
-
-| Symbol                                                   | Notes                                                                                            |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| **[`(*Tx).PutFacet`](../../facets_edges.go)**            | Upsert facet record (derivation discipline as per spec).                                         |
-| **[`(*Tx).UpdateFacet`](../../facets_edges.go)**         | Requires derivation hash match; else **`ErrFacetDerivationMismatch`**.                           |
-| **[`(*Tx).GetFacet`](../../facets_edges.go)**            | Lookup by packed coord + facet id.                                                               |
-| **[`(*Tx).AscendFacetsForCell`](../../facets_edges.go)** | All facets at a cell key.                                                                        |
-| **[`(*Tx).PutEdge`](../../facets_edges.go)**             | Directed edge primary.                                                                           |
-| **[`(*Tx).GetEdge`](../../facets_edges.go)**             | Edge lookup by endpoints + relation type.                                                        |
-| **[`(*Tx).AscendEdgesFrom`](../../facets_edges.go)**     | Out-edges from a packed coord.                                                                   |
-| **[`(*Tx).LinkCells`](../../facets_edges.go)**           | Sugar: pack coords + **`PutEdge`**.                                                              |
-| **[`FacetWalkRecord`](../../export.go)**                 | Type alias for **`AscendFacetsForCell`** callbacks (embedding apps avoid **`internal/record`**). |
-| **[`EdgeWalkRecord`](../../export.go)**                  | Type alias for **`AscendEdgesFrom`** callbacks.                                                  |
-
----
-
-## Secondary indexes
-
-| Symbol                                                         | Notes                                                                 |
-| -------------------------------------------------------------- | --------------------------------------------------------------------- |
-| **[`(*Tx).AscendCellsBySource`](../../cell_secondary.go)**     | Prefix on **`source/<source_id>/…`**.                                 |
-| **[`(*Tx).AscendCellsInTimeBucket`](../../cell_secondary.go)** | One UTC week bucket from **`time/`**.                                 |
-| **[`(*Tx).AscendCellsByTag`](../../cell_secondary.go)**        | Prefix on **`tag/<tag>/…`**.                                          |
-| **[`(*Tx).AscendDistinctTags`](../../cell_secondary.go)**      | Distinct tag strings visible at this snapshot (streams via callback). |
-| **[`(*Tx).ListExistingTopics`](../../cell_secondary.go)**      | Sorted distinct tags (topic names) for tools.                         |
-| **[`(*Tx).AscendSeamsBySource`](../../seam_secondary.go)**     | **`seam-source/…`**.                                                  |
-| **[`(*Tx).AscendSeamsInTimeBucket`](../../seam_secondary.go)** | **`seam-time/…`**.                                                    |
-
----
-
-## ASCII hex grid rendering
-
-| Symbol                                                 | Notes                                                       |
-| ------------------------------------------------------ | ----------------------------------------------------------- |
-| **[`RenderHexGrid`](../../hex_render.go)**             | Pure ASCII hex grid from center to maxR with custom labels. |
-| **[`(*Tx).RenderHexGridFromDB`](../../hex_render.go)** | ASCII grid showing occupied (`*`) vs empty (`.`) cells.     |
-| **[`HexGridCell`](../../hex_render.go)**               | Coord + label pair for grid rendering.                      |
-| **[`MaxRenderRadius`](../../hex_render.go)**           | Maximum radius accepted by both renderers (`10`).           |
-
----
-
-## Batch operations and bulk I/O
-
-| Symbol                                        | Notes                                                                                         |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| **[`(*DB).BatchPutCells`](../../batch.go)**   | Batched multi-cell write; counts and progress are reported only after each batch commits.     |
-| **[`BatchPutCellOptions`](../../batch.go)**   | Batch size, progress callback, continue-on-error flag.                                        |
-| **[`BatchPutCellResult`](../../batch.go)**    | Committed write count + per-cell errors.                                                      |
-| **[`BatchPutCellError`](../../batch.go)**     | Input index + error for failed cells; `Error` and `Unwrap` support standard error inspection. |
-| **[`(*Tx).ExportCellsJSON`](../../batch.go)** | Stream visible cells as a JSON array to a writer.                                             |
-| **[`(*DB).ImportCellsJSON`](../../batch.go)** | Stream a JSON array into bounded write batches; non-array input is rejected.                  |
-
----
-
-## Embeddings (vector search)
-
-| Symbol                                                      | Notes                                                                                                      |
-| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| **[`Options.EmbeddingDimension`](../../options.go)**        | Optional pre-set vector dimension. Auto-detected from first **`PutEmbedding`** when 0. Immutable once set. |
-| **[`Options.DistanceMetric`](../../options.go)**            | Similarity function: **`DistanceCosine`** (default), **`DistanceDotProduct`**, **`DistanceL2`**.           |
-| **[`DistanceMetric`](../../embedding.go)**                  | Type alias for the distance metric constants.                                                              |
-| **[`DistanceCosine`](../../embedding.go)**                  | Cosine similarity. Range [-1, 1]; higher = more similar.                                                   |
-| **[`DistanceDotProduct`](../../embedding.go)**              | Raw dot product. Assumes normalized vectors.                                                               |
-| **[`DistanceL2`](../../embedding.go)**                      | Euclidean distance, inverted for ranking.                                                                  |
-| **[`(*DB).EmbeddingDimension`](../../embedding.go)**        | Returns the vector dimension (0 = no embeddings stored yet).                                               |
-| **[`(*DB).EmbeddingMetric`](../../embedding.go)**           | Returns the configured distance metric.                                                                    |
-| **[`(*Tx).PutEmbedding`](../../tx_embedding.go)**           | Store a vector embedding for a cell coordinate. Dimension must match.                                      |
-| **[`(*Tx).GetEmbedding`](../../tx_embedding.go)**           | Retrieve the vector embedding for a cell coordinate.                                                       |
-| **[`(*Tx).DeleteEmbedding`](../../tx_embedding.go)**        | Remove an embedding. Idempotent.                                                                           |
-| **[`(*Tx).SearchByEmbedding`](../../embedding_search.go)**  | HNSW-accelerated nearest-neighbor search (flat-scan fallback). Returns top-K results sorted by score.      |
-| **[`(*Tx).ReindexEmbeddings`](../../embedding_reindex.go)** | Bulk recompute all embeddings via a user-supplied function. Intended for model changes.                    |
-| **[`EmbeddingSearchConfig`](../../embedding_search.go)**    | Search config: `MaxResults` (default 10), `MinScore` threshold.                                            |
-| **[`EmbeddingSearchResult`](../../embedding_search.go)**    | Coord + score pair.                                                                                        |
-| **[`EmbeddingFunc`](../../embedding_reindex.go)**           | Callback type for **`ReindexEmbeddings`**: `(ctx, CellRecord) → ([]float32, error)`.                       |
-| **[`ErrEmbeddingsDisabled`](../../errors.go)**              | Deprecated. Dimension is now auto-detected; no longer returned by standard ops.                            |
-| **[`ErrEmbeddingDimension`](../../errors.go)**              | Vector length does not match **`EmbeddingDimension`**.                                                     |
-
-**`DeleteCell`** cascades to remove the cell's embedding and HNSW node automatically.
-
-**`CellQuery.Embedding`** / **`CellSearchConfig.Embedding`** triggers ANN-accelerated seed selection in **`QueryCells`** / **`SearchCells`**. Embedding similarity is added to the composite relevance score; all other predicates (tags, temporal, spatial) apply as post-filters.
-
----
-
-## Wire format types (public re-exports)
-
-| Symbol                                  | Notes                                                                                                                                                                             |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`CellRecord`](../../export.go)**     | v1 wire shape for cell/<packed_coord> blobs. Re-exported from internal/record for public API access. Used by `ScanContextRaw`, `ScanContextAtRaw`, and low-level cell operations. |
-| **[`ProvenanceWire`](../../export.go)** | Provenance stored in v1 payloads (times as Unix nanoseconds UTC). Re-exported from internal/record.                                                                               |
-| **[`ValidityWire`](../../export.go)**   | Optional validity window (nil = open-ended on that side). Re-exported from internal/record.                                                                                       |
-
-These types allow external packages (e.g., Mosaic) to work with wire formats without importing internal packages. They are re-exported type aliases from `internal/record`.
-
----
-
-## Cell templates
-
-| Symbol                                               | Notes                                                                                                                   |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| **[`NewUserMessageCell`](../../templates.go)**       | Factory for user-message cells with standard tags.                                                                      |
-| **[`NewAssistantResponseCell`](../../templates.go)** | Factory for assistant-response cells with standard tags.                                                                |
-| **[`NewSystemPromptCell`](../../templates.go)**      | Factory for system-prompt cells (confidence 1.0).                                                                       |
-| **[`NewFactCell`](../../templates.go)**              | Factory for extracted-fact cells with category tag.                                                                     |
-| **[`NewProvenanceWire`](../../templates.go)**        | Provenance with **`CreatedAt`** / **`UpdatedAt`** set to now (for **`LinkCells`** / edges from outside **`hexxladb`**). |
-| **[`NewFacetDerived`](../../templates.go)**          | Facet record for **`PutFacet`** without naming **`internal/record`** facet types.                                       |
-
----
-
-## Tag analytics and ring density
-
-| Symbol                                                 | Notes                                                         |
-| ------------------------------------------------------ | ------------------------------------------------------------- |
-| **[`(*Tx).TagCounts`](../../tag_analytics.go)**        | Per-tag cell counts, sorted by count descending.              |
-| **[`(*Tx).TagCooccurrences`](../../tag_analytics.go)** | Tag pairs appearing together on cells, with min-count filter. |
-| **[`(*Tx).UntaggedCells`](../../tag_analytics.go)**    | Coords of visible cells with no tags within a ring radius.    |
-| **[`TagCount`](../../tag_analytics.go)**               | Tag string + count pair.                                      |
-| **[`TagPair`](../../tag_analytics.go)**                | Co-occurring tag pair + count.                                |
-| **[`(*Tx).RingDensityMap`](../../ring_density.go)**    | Per-ring occupied vs total cell counts from center.           |
-| **[`TotalDensity`](../../ring_density.go)**            | Aggregate occupied/total across a `[]RingDensity`.            |
-| **[`RingDensity`](../../ring_density.go)**             | Ring distance + occupied + total counts.                      |
-
-### Super-hex occupancy summaries
-
-| Symbol                                                                     | Notes                                                                                                      |
-| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| **[`NewSuperHexSummaryIndex`](../../superhex_summary.go)**                 | Construct a rebuildable aperture-7 summary index for a hierarchy level.                                    |
-| **[`(*SuperHexSummaryIndex).Rebuild`](../../superhex_summary.go)**         | Build from one consistent cell snapshot and pin the changelog cursor. Requires `Options.ChangelogEnabled`. |
-| **[`(*SuperHexSummaryIndex).Sync`](../../superhex_summary.go)**            | Incrementally consume changelog records; call until it processes zero records.                             |
-| **[`(*SuperHexSummaryIndex).Summary`](../../superhex_summary.go)**         | O(1) lookup by parent coordinate.                                                                          |
-| **[`(*SuperHexSummaryIndex).SummaryForCoord`](../../superhex_summary.go)** | Map a level-0 coordinate to its parent and return the O(1) materialized summary.                           |
-| **[`(*SuperHexSummaryIndex).Summaries`](../../superhex_summary.go)**       | Deterministic parent-coordinate-ordered snapshot of all non-empty summaries.                               |
-| **[`(*SuperHexSummaryIndex).LastSeq`](../../superhex_summary.go)**         | Highest changelog sequence incorporated by the index; zero before a successful rebuild.                    |
-| **[`SuperHexSummary`](../../superhex_summary.go)**                         | `Level`, `Parent`, level-0 `Center`, `OccupiedCells`, `Capacity` (`7^Level`), and `LastUpdatedSeq`.        |
-
-See [`PERFORMANCE_EVIDENCE.md`](PERFORMANCE_EVIDENCE.md) for the correctness
-soak, rebuild/read/sync benchmarks, and metadata-only observation workflow for
-this API.
-
----
-
-## HEXXLA-shaped views and context loading
-
-| Symbol                                                                                                                                                                      | Notes                                                                                                                                                                             |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*Tx).LoadContext`](../../context_load.go)**                                                                                                                            | **Unified context entry point.** Auto-dispatches to ring walk, LOD, graph BFS, or concurrent multi-seed based on `LoadContextConfig`. Always returns `ContextPack`.               |
-| **[`LoadContextConfig`](../../context_load.go)**                                                                                                                            | `Seeds`, `MaxRing`, `MaxTokens`, `Budgeter`, `EdgeFilter`, `MaxHops`, `AsOf`, `Assembly`. The DB selects the algorithm.                                                           |
-| **[`(*Tx).AssembleCellView`](../../views.go)**                                                                                                                              | One coord → **`CellView`** with opts.                                                                                                                                             |
-| **[`CellView`](../../views.go)**, **[`ContextPack`](../../views.go)**, **[`FacetView`](../../views.go)**, **[`EdgeView`](../../views.go)**, **[`SeamRef`](../../views.go)** | View types. **`CellView.SupersededFrom`** is set when a cell substituted a superseded cell during assembly.                                                                       |
-| **[`LoadContextBudgetConfig`](../../views.go)**, **[`AssembleCellViewOpts`](../../views.go)**, **[`DefaultAssembleCellViewOpts`](../../views.go)**                          | Assembly options: seam radius, caps, **`FilterSuperseded`**, `IncludeSeams`, `Explain`.                                                                                           |
-| **[`TokenBudgeter`](../../views.go)**, **[`ByteLenBudgeter`](../../views.go)**                                                                                              | Budget counting.                                                                                                                                                                  |
-| **[`CellViewPredicate`](../../views.go)**, **[`FilterCellViews`](../../views.go)**, **[`TruncateCellViewsToTokenBudget`](../../views.go)**                                  | Post-process assembled views.                                                                                                                                                     |
-| **[`ContextPackStats`](../../views.go)**                                                                                                                                    | Assembly stats: candidates, evicted, max ring.                                                                                                                                    |
-| **[`CellExplanation`](../../views.go)**                                                                                                                                     | Per-cell inclusion/eviction reason (Explain mode). **`Reason`**: `"included"`, `"evicted_low_confidence"`, `"superseded"`. **`SupersededBy`** coord set on superseded exclusions. |
-
----
-
-## Spatial context loading
-
-| Symbol                                                     | Notes                                                                                                                      |
-| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*Tx).LoadContextFOV`](../../fov_context.go)**         | Load cells from origin limited to shadowcasting FOV. Results are deterministic and nearest-first before `MaxCells`.        |
-| **[`FOVContextConfig`](../../fov_context.go)**             | `MaxCells` cap (default 256).                                                                                              |
-| **[`(*Tx).LoadContextVoronoi`](../../voronoi_context.go)** | Multi-source Dijkstra partitions area into non-overlapping regions, one per seed.                                          |
-| **[`VoronoiContextConfig`](../../voronoi_context.go)**     | `MaxRadius`, `MaxCellsPerSeed`, `WeightFunc`. `WeightFunc` steers region boundaries by cost.                               |
-| **[`VoronoiWeightFunc`](../../voronoi_context.go)**        | Type alias for `lattice.WeightFunc`: `func(Coord) float64`. `nil` = uniform cost.                                          |
-| **[`(*Tx).FindEdgePath`](../../pathfind_api.go)**          | Dijkstra shortest path over arbitrary weighted out-edges. Parallel relations use their minimum applicable weight.          |
-| **[`FindEdgePathConfig`](../../pathfind_api.go)**          | `Filter` (relation type), `MaxExpand` (node cap), `CostFunc func(from, to Coord) float64`. `CostFunc nil` = edge `Weight`. |
-| **[`(*Tx).WalkEdges`](../../pathfind_api.go)**             | BFS from start: all reachable coords within `maxHops` hops and `maxNodes` cap.                                             |
-| **[`(*Tx).WalkEdgeCoords`](../../pathfind_api.go)**        | `WalkEdges`-compatible adapter used by graph-aware context loading.                                                        |
-
----
-
-## Lattice exports
-
-| Symbol                                                                                              | Notes                            |
-| --------------------------------------------------------------------------------------------------- | -------------------------------- |
-| **[`Coord`](../../export.go)**, **[`Cube`](../../export.go)**, **[`PackedCoord`](../../export.go)** | Geometry types.                  |
-| **[`MaxAxialAbs`](../../export.go)**                                                                | Packed range bound.              |
-| **[`ErrCoordOutOfRange`](../../export.go)**                                                         | **`Pack`** precondition.         |
-| **[`Pack`](../../export.go)**, **[`Unpack`](../../export.go)**                                      | Morton pack/unpack.              |
-| **[`Ring`](../../export.go)**, **[`WalkRings`](../../export.go)**                                   | Same order as **`LoadContext`**. |
-
-Methods on **`Coord`** / **`PackedCoord`** (e.g. **`Distance`**, **`Neighbors`**) live on re-exported types — see **`internal/lattice`**.
-
-### Internal lattice algorithms (not re-exported)
-
-Used by the public context-loading APIs above; listed here for completeness.
-
-| Package             | Function / Type                                                   | Used by                                         |
-| ------------------- | ----------------------------------------------------------------- | ----------------------------------------------- |
-| `internal/lattice`  | `FieldOfView(origin, maxR, opaque) → []Coord`                     | `Tx.LoadContextFOV` — delegates to shadowcast   |
-| `internal/lattice`  | `FieldOfViewShadowcast(origin, maxR, opaque) → []Coord`           | `FieldOfView` (Albert Ford 2021 hex adaptation) |
-| `internal/lattice`  | `FieldOfViewRaycast(origin, maxR, opaque) → []Coord`              | Regression tests only                           |
-| `internal/lattice`  | `HexLine(a, b) → []Coord`                                         | `FieldOfViewRaycast` (raycasting LOS)           |
-| `internal/lattice`  | `Voronoi(seeds, maxR, weightFn) → ([]VoronoiCell, map[Coord]int)` | `Tx.LoadContextVoronoi`                         |
-| `internal/lattice`  | `WeightFunc` type                                                 | `Voronoi` optional traversal-cost function      |
-| `internal/lattice`  | `SpiralRange(dst, center, minR, maxR) → []Coord`                  | LOD inner walk; annular ring slice              |
-| `internal/lattice`  | `CoarsenCoord`, `RefineCoord`, `CoarsenMulti`                     | `Tx.LoadContext` (LOD auto-dispatch)            |
-| `internal/lattice`  | `WalkRingsPacked`, `WalkRingsCoordPacked`                         | `scanByRadius`                                  |
-| `internal/pathfind` | `AStar`, `Dijkstra`, `BFS`                                        | `Tx.FindEdgePath`, `Tx.WalkEdges`               |
-| `internal/lattice`  | `SuperHexParent*`, `SuperHexCenter*`, `SuperHexChildren`          | Aperture-7 derived occupancy summaries          |
-| `internal/pathfind` | `EuclideanHeuristic`                                              | Available for regular-grid callers              |
-| `internal/pathfind` | `HexDistanceHeuristic`                                            | Available alternative heuristic for callers     |
-
----
-
-## MVCC retention and pruning
-
-| Symbol                                                                                        | Notes                                                                                                                                                                                                         |
-| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*DB).StatsMVCC`](../../mvcc_lifecycle.go)**                                              | Counters for versioned rows.                                                                                                                                                                                  |
-| **[`(*DB).GroupWALStats`](../../db.go)**                                                      | Group-WAL flusher metrics (when group commit is configured).                                                                                                                                                  |
-| **[`(*DB).SuggestedPruneBeforeSeq`](../../mvcc_lifecycle.go)**                                | Policy from **`MVCCRetention`**.                                                                                                                                                                              |
-| **[`(*DB).MVCCPrunePlan`](../../mvcc_lifecycle.go)**                                          | Combine suggestion + batch size profile.                                                                                                                                                                      |
-| **[`(*DB).PruneCellVersions`](../../mvcc_lifecycle.go)**                                      | Delete stale cell versions before **`beforeSeq`**.                                                                                                                                                            |
-| **[`(*DB).PruneCellVersionsByProfile`](../../mvcc_lifecycle.go)**                             | Same with profile-driven **`maxDelete`**.                                                                                                                                                                     |
-| **[`MVCCStats`](../../mvcc_lifecycle.go)**, **[`MVCCPruneProfile`](../../mvcc_lifecycle.go)** | **`MVCCPruneLowLatency`**, **`Balanced`**, **`LongHistory`**. `MVCCStats` fields: `CommitSeq`, `VersionedRows`, `LogicalCells`, `WastedBytes` (freed overflow bytes since open; non-zero signals compaction). |
-| **[`PruneScheduler`](../../mvcc_lifecycle.go)**                                               | **`Tick`**: operator-driven periodic prune helper.                                                                                                                                                            |
-
----
-
-## Snapshot Tags
-
-Human-friendly names for MVCC commit sequences. Tags are stored in the B+ tree under `__meta/snap-tag/<label>` and survive database close/reopen.
-
-| Symbol                                                  | Notes                                                                                                                                        |
-| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*DB).TagSnapshot`](../../snapshot_tags.go)**       | Pin the current head `CommitSeq` under `label`. Overwrites an existing tag with the same name. Label: non-empty, ≤ 200 bytes.                |
-| **[`(*DB).ViewAtTag`](../../snapshot_tags.go)**         | Open a read-only snapshot pinned to the `CommitSeq` recorded by `TagSnapshot`. Returns **`ErrSnapshotTagNotFound`** if label does not exist. |
-| **[`(*DB).ListSnapshotTags`](../../snapshot_tags.go)**  | Return all tags as `[]SnapshotTag` sorted by label.                                                                                          |
-| **[`(*DB).DeleteSnapshotTag`](../../snapshot_tags.go)** | Remove a tag entry. Returns **`ErrSnapshotTagNotFound`** if absent. Does not affect the underlying data.                                     |
-| **[`SnapshotTag`](../../snapshot_tags.go)**             | `Label string`, `CommitSeq uint64`.                                                                                                          |
-| **[`ErrSnapshotTagNotFound`](../../errors.go)**         | Returned by `ViewAtTag` / `DeleteSnapshotTag` when the label has no entry.                                                                   |
-| **[`ErrSnapshotTagLabelTooLong`](../../errors.go)**     | Returned by `TagSnapshot` when `len(label) > 200`.                                                                                           |
-
----
-
-## Logical changefeed
-
-| Symbol                                                                                                                                                             | Notes                                                    |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
-| **[`(*DB).ReadChangelogSince`](../../db_changelog.go)**                                                                                                            | Requires **`Options.ChangelogEnabled`**.                 |
-| **[`(*DB).ReadChangelogFiltered`](../../db_changelog.go)**                                                                                                         | Filtered read by op codes and/or key prefix.             |
-| **[`ChangelogFilter`](../../db_changelog.go)**                                                                                                                     | Filter config: **`Ops []byte`**, **`KeyPrefix []byte`**. |
-| **[`ChangelogRecord`](../../db_changelog.go)**                                                                                                                     | Typed alias of internal record.                          |
-| **`ChangelogOpPutCell`**, **`ChangelogOpPutSeam`**, **`ChangelogOpResolveSeam`**, **`ChangelogOpPutFacet`**, **`ChangelogOpPutEdge`**, **`ChangelogOpDeleteCell`** | Stable op codes.                                         |
-
-See **[CHANGEFEED.md](./CHANGEFEED.md)**.
-
----
-
-## Database health check
-
-| Symbol                                            | Notes                                                                                                                                                       |
-| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*DB).HealthCheck`](../../health.go)**        | Integrity scan: cell count, seam resolution summary, orphaned seam detection, index consistency, MVCC stats.                                                |
-| **[`HealthReport`](../../health.go)**             | Result type: `CellCount`, `SeamCount`, `SeamsResolved`, `SeamsUnresolved`, `OrphanedSeams`, `TagIndexErrors`, `SourceIndexErrors`, `MVCCStats`, `Warnings`. |
-| **[`HealthCheckConfig`](../../health.go)**        | `CheckOrphans`, `CheckTagIndex`, `CheckSourceIndex`, `MaxErrors`.                                                                                           |
-| **[`DefaultHealthCheckConfig`](../../health.go)** | Returns config with all checks enabled.                                                                                                                     |
-
----
-
-## Composable Query Engine
-
-`Tx.QueryCells` is the unified query entry point. All predicate fields are AND-combined; zero/empty values are ignored.
-
-| Symbol                                        | Notes                                                                                                                                                                                                                                   |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*Tx).QueryCells`](../../query_exec.go)** | Execute a `CellQuery` against the snapshot. Planner picks cheapest index; remaining predicates applied in-memory.                                                                                                                       |
-| **[`CellQuery`](../../query.go)**             | Predicate: `Query`, `RequireTags` (AND), `AnyTags` (OR), `ExcludeTags` (NOT), `SourceID`, `MinConfidence`, `MaxConfidence`, `After`/`Before` (temporal), `Center`+`Radius` (spatial), `MaxResults`, `MaxScanRows`, `SortBy`, `Explain`. |
-| **[`CellQueryResult`](../../query.go)**       | `Cell CellView`, `Score float64`, `Explanation string` (when `Explain=true`).                                                                                                                                                           |
-| **[`SortOrder`](../../query.go)**             | `SortByScore` (default), `SortByConfidence`, `SortByRecency`, `SortByCoord`.                                                                                                                                                            |
-
-### Query planner index selection
-
-| Condition               | Primary access path                                          |
-| ----------------------- | ------------------------------------------------------------ |
-| `RequireTags` non-empty | `tag/` secondary index                                       |
-| `SourceID` set          | `source/` secondary index                                    |
-| `After` or `Before` set | Complete primary scan with snapshot-visible version collapse |
-| `Center`+`Radius` set   | Ring walk around `Center`                                    |
-| Fallback                | Complete primary scan                                        |
-
-### Temporal queries
-
-`After`/`Before` filter on cell `ValidFrom`. Cells with no `ValidFrom` are excluded from any temporal query. The executor scans the complete primary cell keyspace so signed pre-epoch and post-epoch week buckets have identical correctness.
-
-`CellQuery.MaxResults <= 0` means unlimited. `SearchCells` retains its convenience default of 20 results when its config leaves the limit unset.
-
----
-
-## Content Search
-
-`SearchCells` is the ergonomic entry point for the search-then-seed pipeline. For full control over sort order, temporal filters, `ExcludeTags`, and `Explain` mode use `QueryCells` directly.
-
-| Symbol                                     | Notes                                                                                                                                                                                       |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*Tx).SearchCells`](../../search.go)** | Wrapper over `QueryCells`. Returns `[]CellSearchResult` sorted by score; access the seed coord via `result.Cell.Coord` for use with `LoadContext`.                                          |
-| **[`CellSearchConfig`](../../search.go)**  | `Query`, `RequireTags` (AND), `AnyTags` (OR), `MinConfidence`, `MaxConfidence`, `SourceID`, `Center`+`Radius`, `MaxResults`, `MaxScanRadius`, `Embedding` (ANN-accelerated seed selection). |
-| **[`CellSearchResult`](../../search.go)**  | `Cell CellView` + `Score float64`.                                                                                                                                                          |
-
-### Content Search scoring
-
-The query is tokenized on whitespace. Each token is scored independently and contributions summed — a cell matching all tokens in a multi-word query scores higher than one matching only some.
-
-| Condition (per token)                               | Score contribution |
-| --------------------------------------------------- | ------------------ |
-| Token matches a tag exactly (case-insensitive)      | +1.0               |
-| Token is a prefix of a tag (case-insensitive)       | +0.8               |
-| Token found verbatim in `RawContent`                | +0.6               |
-| Token found case-insensitively in `RawContent`      | +0.5               |
-| Token matches `SourceID` exactly (case-insensitive) | +0.3               |
-| Confidence bonus (once, regardless of token count)  | +0.1 × Confidence  |
-
-Each tag contributes at most once per token (exact beats prefix). `Explain` mode labels each match as `[tag:exact:tok]`, `[content:verbatim:tok]`, etc.
-
----
-
-## Multi-seed context assembly
-
-A **seed** is a `Coord` — the centre point of a ring-walk expansion. `SearchCells` returns `CellSearchResult` values each carrying a `Coord`; those coords are the seeds passed to `LoadContext`, which assembles all seeds concurrently and merges them under the shared token budget.
-
-### Typical pipeline
-
-```text
-SearchCells(query) → []CellSearchResult → extract .Cell.Coord → LoadContext(LoadContextConfig{Seeds: coords, ...})
+```go
+import "github.com/hexxla/hexxladb"
 ```
 
-Token budget across seeds: each seed expands concurrently (ring walk + `FilterSuperseded`), cells merge into one pool, pool re-ranked by `Confidence` descending, greedy fill to `MaxTokens`.
+Packages below `internal/` are private implementation details.
 
----
+## Open and close
 
-## Pathfinding over edges
+[`Open`](../../db.go) creates or opens one database handle. HexxlaDB permits one open handle per database path across processes; competing opens return [`ErrDatabaseLocked`](../../errors.go).
 
-Graph traversal across the cell-edge topology. Algorithms live in `internal/pathfind`; public API on `*Tx`.
-
-| Symbol                                            | Notes                                                                                                                                                                                                                  |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*Tx).FindEdgePath`](../../pathfind_api.go)** | Dijkstra shortest path between two coords over weighted out-edges. `FindEdgePathConfig.Filter` restricts relation types; an empty filter chooses the minimum weight among parallel relations. Returns the path or nil. |
-| **[`FindEdgePathConfig`](../../pathfind_api.go)** | `Filter`, `MaxExpand`, and optional `CostFunc`. Stored weights <= 0 default to 1; a custom negative cost blocks an edge; non-finite costs are rejected.                                                                |
-| **[`(*Tx).WalkEdges`](../../pathfind_api.go)**    | BFS reachability walk from a coord. Returns all coords reachable within `maxHops` hops over filtered edges.                                                                                                            |
-
-For graph-aware **context loading** (BFS walk + assembled `ContextPack`), set `EdgeFilter` on `LoadContextConfig` and call `Tx.LoadContext`.
-
-### Pathfinding pipeline
-
-```text
-SearchCells(query) → top result → FindEdgePath(result.Coord, target) → path of coords
-                                  WalkEdges(result.Coord, maxHops=3, filter="follow-up") → reachable set
-                                  LoadContext(LoadContextConfig{EdgeFilter: "follow-up", MaxHops: 3}) → ContextPack
+```go
+db, err := hexxladb.Open("memory.db", &hexxladb.Options{
+    EnableMVCC: true,
+})
+if err != nil {
+    return err
+}
+defer db.Close()
 ```
 
----
+[`Options`](../../options.go) controls page and value limits, MVCC, changelog, embeddings, encryption, hooks, and durability tuning. Defaults and supported combinations are documented in [`CONFIGURATION.md`](./CONFIGURATION.md).
 
-## LOD (multi-resolution) context
+## Transactions
 
-Level-of-Detail coarsening is **automatically applied** by `Tx.LoadContext` when `MaxRing >= 10` (single seed). No separate API is needed — set a large `MaxRing` and the DB applies coarsening to outer rings transparently.
+All reads and writes occur through [`Tx`](../../tx.go):
 
-Lattice primitives in `internal/lattice`: `CoarsenCoord`, `RefineCoord`, `CoarsenMulti`, `floorDiv`.
+| Method                                                                                               | Use                                              |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| [`DB.View`](../../tx.go)                                                                             | Read the latest committed state.                 |
+| [`DB.ViewAt`](../../tx.go), [`DB.ViewAtTime`](../../tx.go), [`DB.ViewAtTag`](../../snapshot_tags.go) | Read an MVCC snapshot.                           |
+| [`DB.Update`](../../tx.go)                                                                           | Run one write transaction.                       |
+| [`DB.Batch`](../../tx.go)                                                                            | Alias for `Update`; useful for call-site intent. |
 
----
+Callbacks must not mix or nest read and write transactions on the same `DB`. Commit-outcome uncertainty is reported as [`ErrCommitFinalization`](../../errors.go). See [`TX.md`](./TX.md) for locking, snapshots, validity, and failure semantics.
 
-## Voronoi partitioning (multi-seed context)
+[`Tx.Get`](../../tx.go), [`Tx.Put`](../../tx.go), and [`Tx.AscendRange`](../../tx.go) expose raw byte keys. Prefer the typed lattice operations below so record encodings and secondary indexes remain consistent.
 
-Non-overlapping partitioning of hex space around multiple seeds. Unlike `LoadContext` with multiple seeds (which merges overlapping radial neighborhoods), Voronoi assigns each coordinate to **exactly one** seed via multi-source Dijkstra — giving each seed a fair, non-overlapping share of the context budget.
+## Coordinates and records
 
-| Symbol                                                     | Notes                                                                                                                               |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*Tx).LoadContextVoronoi`](../../voronoi_context.go)** | Partition hex space around seeds, load cells per region. Returns `map[int][]CellRecord` keyed by seed index.                        |
-| **[`VoronoiContextConfig`](../../voronoi_context.go)**     | `MaxRadius` (default 4), `MaxCellsPerSeed` (default 64), and optional `WeightFunc`; nil weight preserves uniform geometric regions. |
+The root package re-exports the stable geometry and wire types applications need:
 
-Lattice primitives in `internal/lattice`: `Voronoi(seeds, maxRadius)`, `VoronoiRegion(cells, seedIdx)`.
+| Surface                                                                                                      | Purpose                                                       |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| [`Coord`, `PackedCoord`, `Cube`, `Pack`, `Unpack`, `Ring`, `WalkRings`](../../export.go)                     | Hex coordinates, packing, and deterministic ring enumeration. |
+| [`CellRecord`, `ProvenanceWire`, `ValidityWire`](../../export.go)                                            | Persistent cell wire representation and metadata.             |
+| [`FacetWalkRecord`, `EdgeWalkRecord`](../../export.go)                                                       | Callback record types for facet and edge walks.               |
+| [`NewProvenanceWire`, `NewFacetDerived`](../../templates.go)                                                 | Helpers for constructing common records.                      |
+| [`NewUserMessageCell`, `NewAssistantResponseCell`, `NewSystemPromptCell`, `NewFactCell`](../../templates.go) | Optional conversational-memory templates.                     |
 
-### When to use Voronoi vs LoadContext with multiple seeds
+Coordinate bounds and packing details are documented in [`internal/lattice/PACKED_COORD.md`](../../internal/lattice/PACKED_COORD.md).
 
-| Concern             | `LoadContext` (multi-seed)                  | `LoadContextVoronoi`                                      |
-| ------------------- | ------------------------------------------- | --------------------------------------------------------- |
-| Overlap             | Seeds share cells (always deduplicated)     | No overlap — each hex assigned to exactly one seed        |
-| Budget distribution | Shared pool, confidence-ranked              | Per-seed cap — each region gets a fair independent budget |
-| Use case            | "Merge everything relevant into one prompt" | "Give each topic its own context slice"                   |
+## Cells, facets, edges, and seams
 
----
+Use these methods inside `View` or `Update` callbacks:
 
-## Field of View (visibility-filtered context)
+| Task                                    | API                                                                                                           |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Store and retrieve a cell               | [`Tx.PutCell`, `Tx.GetCell`](../../primitives.go)                                                             |
+| Delete a cell                           | [`Tx.DeleteCell`, `Tx.DeleteCellWithOutcome`](../../delete_cell.go)                                           |
+| Stream a ring or validity-filtered ring | [`Tx.WalkRing`, `Tx.WalkRingAt`, `Tx.WalkRingFacets`](../../primitives.go)                                    |
+| Store and retrieve facets               | [`Tx.PutFacet`, `Tx.UpdateFacet`, `Tx.GetFacet`, `Tx.AscendFacetsForCell`](../../facets_edges.go)             |
+| Store and retrieve edges                | [`Tx.PutEdge`, `Tx.LinkCells`, `Tx.GetEdge`, `Tx.AscendEdgesFrom`](../../facets_edges.go)                     |
+| Create and query seams                  | [`Tx.PutSeam`, `Tx.MarkConflict`, `Tx.MarkSupersedes`, `Tx.FindSeams`, `Tx.FindSeamsAt`](../../primitives.go) |
+| Resolve a seam                          | [`Tx.ResolveSeam`](../../primitives.go)                                                                       |
 
-Load only cells **visible** from a center via symmetric shadowcasting, skipping cells occluded behind opaque barriers. This improves retrieval accuracy on sparse grids by spending the context budget only on cells connected through a populated neighborhood.
+[`DB.BatchPutCells`](../../batch.go) writes large cell collections in bounded transactions with progress and optional per-cell error collection.
 
-| Symbol                                             | Notes                                                                                                                      |
-| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*Tx).LoadContextFOV`](../../fov_context.go)** | Load cells visible from `center` within `maxR` using symmetric shadowcasting. Results are deterministic and nearest-first. |
-| **[`FOVContextConfig`](../../fov_context.go)**     | `MaxCells` (default 256).                                                                                                  |
+Secondary-index scans avoid full cell or seam scans:
 
-Lattice primitives in `internal/lattice`: `FieldOfView` delegates to `FieldOfViewShadowcast`; `FieldOfViewRaycast` and `HexLine` remain available for regression comparison inside the module.
+- [`Tx.AscendCellsBySource`, `Tx.AscendCellsInTimeBucket`, `Tx.AscendCellsByTag`](../../cell_secondary.go)
+- [`Tx.AscendDistinctTags`, `Tx.ListExistingTopics`](../../cell_secondary.go)
+- [`Tx.AscendSeamsBySource`, `Tx.AscendSeamsInTimeBucket`](../../seam_secondary.go)
 
-### How FOV improves retrieval accuracy
+The canonical record families and key encodings are in [`HEXXLA_DB.md`](./HEXXLA_DB.md).
 
-Standard radial context loading (`LoadContext`) treats the hex grid as uniformly reachable — every cell within radius is a candidate. On **sparse grids** (where many coordinates have no stored cell), or grids with **logical boundaries** (topic changes, empty regions, deleted cells), this wastes the context budget on coordinates that are semantically disconnected from the center.
+## Context assembly and spatial retrieval
 
-FOV filtering solves this by treating empty/deleted cells as "opaque" — cells behind them are not loaded. The result:
+| API                                                                   | Use                                                                                  |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| [`Tx.AssembleCellView`](../../views.go)                               | Hydrate one coordinate into a `CellView`.                                            |
+| [`Tx.LoadContext`](../../context_load.go)                             | Assemble token-budgeted context from one or more seeds.                              |
+| [`FilterCellViews`, `TruncateCellViewsToTokenBudget`](../../views.go) | Apply product policy to already assembled views.                                     |
+| [`Tx.LoadContextFOV`](../../fov_context.go)                           | Deterministic visibility-filtered loading with an application-supplied opacity rule. |
+| [`Tx.LoadContextVoronoi`](../../voronoi_context.go)                   | Partition cells among multiple seeds.                                                |
+| [`Tx.FindEdgePath`](../../pathfind_api.go)                            | Dijkstra shortest path over stored weighted edges.                                   |
+| [`Tx.WalkEdges`](../../pathfind_api.go)                               | Bounded breadth-first traversal over stored edges.                                   |
 
-- **Budget efficiency** — tokens spent only on cells reachable through populated neighborhoods
-- **Topic isolation** — empty regions naturally act as boundaries, preventing context bleed between unrelated topics
-- **Sparse grid performance** — on a grid that is 20% populated, FOV can reduce candidates by 40-60%
+[`LoadContextConfig`](../../context_load.go) controls seeds, ring bounds, validity time, edge expansion, token budget, and assembly. `ViewAt` snapshot time and record validity time are independent; see [`TX.md`](./TX.md).
 
-### Combining FOV with embeddings search
+## Query and content search
 
-The recommended pipeline for high-accuracy retrieval:
+[`Tx.QueryCells`](../../query_exec.go) executes structured [`CellQuery`](../../query.go) filters and uses an applicable secondary index when possible. [`Tx.SearchCells`](../../search.go) provides ranked lexical, substring, tag, source, temporal, and optional embedding-assisted retrieval.
+
+Typical retrieval flow:
 
 ```text
-1. QueryCells(embedding=queryVec)  → top-K seed coords (semantic similarity)
-2. For each seed:
-   LoadContextFOV(seed, maxR=4, opaque=isEmpty)  → visibility-filtered neighborhood
-3. Or: LoadContextVoronoi(seeds, cfg)  → partitioned neighborhoods
-4. Assemble into prompt with token budgeting
+SearchCells or QueryCells
+  -> choose one or more Coord seeds
+  -> LoadContext, LoadContextFOV, or LoadContextVoronoi
+  -> ContextPack
 ```
 
-The `opaque` function is application-defined. Common patterns:
+Use [`RenderHexGrid`](../../hex_render.go) for bounded diagnostic rendering. It is a presentation helper, not a query primitive.
 
-| Pattern                  | `opaque` returns true when…                    | Effect                                                 |
-| ------------------------ | ---------------------------------------------- | ------------------------------------------------------ |
-| **Empty-cell gating**    | No cell exists at the coordinate               | Empty space blocks context propagation                 |
-| **Topic boundaries**     | Cell has a different primary tag than the seed | Context stays within topic                             |
-| **Confidence threshold** | Cell confidence < 0.3                          | Low-confidence cells act as barriers                   |
-| **Temporal cutoff**      | Cell is older than a threshold                 | Stale regions block propagation to even-staler content |
+## Embeddings
 
----
+Embeddings are optional. Configure a dimension and distance metric with [`Options`](../../options.go), or allow the first write to establish the dimension.
 
-## Hex line drawing
+| API                                                                                 | Use                                                            |
+| ----------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| [`Tx.PutEmbedding`, `Tx.GetEmbedding`, `Tx.DeleteEmbedding`](../../tx_embedding.go) | Manage one vector per cell.                                    |
+| [`Tx.SearchByEmbedding`](../../embedding_search.go)                                 | HNSW-assisted nearest-neighbor search with flat-scan fallback. |
+| [`Tx.ReindexEmbeddings`](../../embedding_reindex.go)                                | Recompute stored vectors in a transaction.                     |
 
-| Symbol                                                  | Notes                                                                                                           |
-| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| **`lattice.HexLine(a, b)`** (`internal/lattice/fov.go`) | Cube-coordinate linear interpolation + rounding (Red Blob Games algorithm). Returns all hex coords on the line. |
+`CellQuery.Embedding` and `CellSearchConfig.Embedding` integrate vector similarity into the query and search paths. HexxlaDB remains usable without embeddings through explicit coordinates and indexed metadata.
 
-Not re-exported at root level; access via `internal/lattice` (module-private) or indirectly through `LoadContextFOV`.
+## Derived super-hex occupancy
 
----
+[`NewSuperHexSummaryIndex`](../../superhex_summary.go) creates a rebuildable, process-local aperture-7 occupancy index. Call `Rebuild` from a consistent snapshot, then `Sync` from the logical changelog. It is not persisted and contains occupancy statistics rather than cell content.
 
-## Encryption
+Operational setup and evidence gates are documented in [`OPERATIONS.md`](./OPERATIONS.md) and [`PERFORMANCE_EVIDENCE.md`](./PERFORMANCE_EVIDENCE.md).
 
-| Symbol                                                 | Notes                                          |
-| ------------------------------------------------------ | ---------------------------------------------- |
-| **[`DeriveKeyFromPassphrase`](../../encryption.go)**   | KDF helper for **`Options.Passphrase`**.       |
-| **[`RotateEncryption`](../../rotation.go)**            | Offline re-key / migration entry.              |
-| **[`RotateEncryptionWithOptions`](../../rotation.go)** | Extended rotation + progress.                  |
-| **[`RotateOptions`](../../rotation.go)**               | Batch size / **`OnProgress`** for long copies. |
+## MVCC lifecycle and snapshots
 
-See **[ENCRYPTION.md](./ENCRYPTION.md)**.
+MVCC is enabled only when creating a new database with `Options.EnableMVCC`.
 
----
+| API                                                                                | Use                                                   |
+| ---------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| [`DB.StatsMVCC`, `DB.SuggestedPruneBeforeSeq`](../../mvcc_lifecycle.go)            | Inspect history and derive a retention watermark.     |
+| [`DB.PruneCellVersions`, `DB.PruneCellVersionsByProfile`](../../mvcc_lifecycle.go) | Remove eligible old versions in bounded passes.       |
+| [`PruneScheduler`](../../mvcc_lifecycle.go)                                        | Drive pruning from an application-owned timer.        |
+| [`DB.TagSnapshot`, `DB.ViewAtTag`, `DB.DeleteSnapshotTag`](../../snapshot_tags.go) | Name and revisit commit snapshots.                    |
+| [`DB.SnapshotDiff`](../../snapshot_diff.go)                                        | Compare cell and seam writes across commit sequences. |
 
-## Cell validation
+Pruning does not shrink the primary file. Use compaction after pruning when disk reclamation is required.
 
-| Symbol                                          | Notes                                                           |
-| ----------------------------------------------- | --------------------------------------------------------------- |
-| **[`CellValidator`](../../hooks.go)**           | Interface: **`ValidateCell(CellRecord) error`** pre-write hook. |
-| **[`CellValidatorFunc`](../../hooks.go)**       | Adapter: plain function → **`CellValidator`**.                  |
-| **[`Options.CellValidator`](../../options.go)** | Set on **`Open`** to enable pre-write validation in `PutCell`.  |
+## Changefeed, health, and maintenance
 
----
+| API                                                                          | Use                                                    |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------ |
+| [`DB.ReadChangelogSince`, `DB.ReadChangelogFiltered`](../../db_changelog.go) | Consume the optional at-least-once logical changefeed. |
+| [`DB.HealthCheck`](../../health.go)                                          | Validate database structure and report counts.         |
+| [`DB.GroupWALStats`](../../db.go)                                            | Observe group-WAL batching.                            |
+| [`DB.Compact`, `CompactTo`](../../compact.go)                                | Rewrite live keys into a new compact file.             |
+| [`DeriveKeyFromPassphrase`](../../encryption.go)                             | Derive an encryption key using the database KDF.       |
+| [`RotateEncryption`, `RotateEncryptionWithOptions`](../../rotation.go)       | Perform offline key rotation or encryption migration.  |
 
-## MVCC Snapshot Diff
+See [`CHANGEFEED.md`](./CHANGEFEED.md), [`OPERATIONS.md`](./OPERATIONS.md), [`DURABILITY.md`](./DURABILITY.md), and [`ENCRYPTION.md`](./ENCRYPTION.md) before enabling these deployment features.
 
-Compare database state between two commit sequences. Requires MVCC (format v2). Returns all cell and seam writes in the half-open range `(fromSeq, toSeq]`. Useful for incremental replication, CDC pipelines, and audit trails.
+## Validation and hooks
 
-| Symbol                                             | Notes                                                                                                                     |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*DB).SnapshotDiff`](../../snapshot_diff.go)** | Returns a [SnapshotDiff] with all cell/seam writes in `(fromSeq, toSeq]`. Requires MVCC; **`ErrMVCCRequired`** otherwise. |
-| **[`SnapshotDiff`](../../snapshot_diff.go)**       | `FromSeq`, `ToSeq uint64`; `Cells []CellDiff`; `Seams []SeamDiff`.                                                        |
-| **[`CellDiff`](../../snapshot_diff.go)**           | `Coord`, `CommitSeq`, `Op DiffOp`, `Record record.CellRecord`.                                                            |
-| **[`SeamDiff`](../../snapshot_diff.go)**           | `ID`, `CommitSeq`, `Op DiffOp`, `Record record.SeamRecord`.                                                               |
-| **[`DiffOp`](../../snapshot_diff.go)**             | String kind constants **`DiffOpPut`** and **`DiffOpDelete`**; deletes represent cell tombstones.                          |
-| **[`SnapshotDiffConfig`](../../snapshot_diff.go)** | `IncludeCells *bool`, `IncludeSeams *bool` — omit nil to include both.                                                    |
-| **[`ErrMVCCRequired`](../../errors.go)**           | Returned when `SnapshotDiff` is called on a format-v1 (non-MVCC) database.                                                |
+[`CellValidator`](../../hooks.go) validates cells before persistence. [`AfterPutCellHook`](../../hooks.go) and [`AfterPutSeamHook`](../../hooks.go) run synchronously after their corresponding logical writes. Function adapters are provided for all three interfaces, and hooks are configured through [`Options`](../../options.go).
 
----
+Hook errors are returned to the transaction callback. They do not provide an independent transactional boundary; callers must follow the commit-finalization guidance in [`TX.md`](./TX.md).
 
-## Event Hooks
+## Errors
 
-Post-write callbacks invoked synchronously inside the `Update` callback, after the write succeeds. A non-nil error is returned from the triggering write method. Set on `Open` via `Options`.
+Public sentinel errors are defined in [`errors.go`](../../errors.go). Handle stable error semantics with `errors.Is` and `errors.As`, including:
 
-| Symbol                                         | Notes                                                                                                            |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| **[`AfterPutCellHook`](../../hooks.go)**       | Interface: **`AfterPutCell(ctx, CellRecord) error`** — called after each successful `PutCell`.                   |
-| **[`AfterPutCellHookFunc`](../../hooks.go)**   | Adapter: plain function → **`AfterPutCellHook`**.                                                                |
-| **[`AfterPutSeamHook`](../../hooks.go)**       | Interface: **`AfterPutSeam(ctx, SeamRecord) error`** — called after `PutSeam`, `MarkConflict`, `MarkSupersedes`. |
-| **[`AfterPutSeamHookFunc`](../../hooks.go)**   | Adapter: plain function → **`AfterPutSeamHook`**.                                                                |
-| **[`Options.AfterPutCell`](../../options.go)** | Wire a cell hook at `Open`.                                                                                      |
-| **[`Options.AfterPutSeam`](../../options.go)** | Wire a seam hook at `Open`.                                                                                      |
+- lifecycle and locking errors such as `ErrDatabaseClosed` and `ErrDatabaseLocked`;
+- argument and transaction errors such as `ErrInvalidArgument` and `ErrTxReadOnly`;
+- MVCC errors such as `ErrReadSeqFuture` and `ErrMVCCRequired`;
+- encryption and changelog errors documented in their focused references;
+- `ErrCommitFinalization`, which means the callback's writes may already be durable.
 
----
+Do not compare error strings.
 
-## Sentinel errors (complete)
+## Examples
 
-| Variable                                                                                                                  | When                                                    |
-| ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| **`ErrNotImplemented`**                                                                                                   | Stub API.                                               |
-| **`ErrSeamNotFound`**                                                                                                     | Missing **`seam/<ulid>`**.                              |
-| **`ErrSeamEndpointMismatch`**                                                                                             | Immutable endpoints for ULID.                           |
-| **`ErrInvalidArgument`**                                                                                                  | Bad parameter.                                          |
-| **`ErrClosed`**                                                                                                           | Closed handle.                                          |
-| **`ErrDatabaseClosed`**                                                                                                   | **`DB`** closed.                                        |
-| **`ErrDatabaseLocked`**                                                                                                   | Another handle or process owns the database file.       |
-| **`ErrTxReadOnly`**                                                                                                       | Write in **`View`**.                                    |
-| **`ErrNilCallback`**                                                                                                      | Nil **`View`/`Update`** fn.                             |
-| **`ErrEncryptionKeyRequired`**, **`ErrDatabaseNotEncrypted`**, **`ErrEncryptionOptions`**, **`ErrEncryptionKeyMismatch`** | Encryption options vs file.                             |
-| **`ErrCellNotFound`**                                                                                                     | e.g. **`UpdateFacet`** without cell.                    |
-| **`ErrFacetDerivationMismatch`**                                                                                          | Facet hash vs raw.                                      |
-| **`ErrChangelogDisabled`**, **`ErrChangelogCorrupt`**                                                                     | Changefeed.                                             |
-| **`ErrReadSeqFuture`**                                                                                                    | **`ViewAt`** / **`SnapshotDiff`** seq too new.          |
-| **`ErrCommitFinalization`**                                                                                               | Post-callback failure.                                  |
-| **`ErrMVCCRequired`**                                                                                                     | MVCC-only op on v1 database.                            |
-| **`ErrSnapshotTagNotFound`**                                                                                              | **`ViewAtTag`** / **`DeleteSnapshotTag`** label absent. |
-| **`ErrSnapshotTagLabelTooLong`**                                                                                          | Label > 200 bytes in **`TagSnapshot`**.                 |
-| **`ErrCorruptDatabase`**                                                                                                  | Database/WAL validation or corrupt snapshot-diff row.   |
+- [`examples/conversational_memory`](../../examples/conversational_memory) — cell lifecycle, MVCC, context assembly, hooks, health, diff, compaction, FOV, and graph traversal.
+- [`examples/spatial_algorithms`](../../examples/spatial_algorithms) — FOV, LOD, Voronoi, Dijkstra, BFS, and graph-aware context.
+- [`examples/llm_context_engine`](../../examples/llm_context_engine) — embedding-backed retrieval and prompt assembly; requires Ollama with `all-minilm`.
+- [`examples/performance_evidence`](../../examples/performance_evidence) — controlled evidence collection for spatial algorithms and super-hex occupancy.
 
-Use **`errors.Is` / `errors.As`** for stable handling.
-
----
-
-## Live demos and coverage
-
-- **Conversational memory service:** [`examples/conversational_memory`](../../examples/conversational_memory/) — **`go run ./examples/conversational_memory`** seeds **`./.tmp/conversational_memory/`** (MVCC + changelog + `AfterPutCell` hook) and walks through cell storage, supersession, analytics, queries, MVCC, context assembly, health checks, snapshot diffs, deletion, compaction, deterministic FOV, and Dijkstra/BFS edge traversal. Phases 1–14.
-
-- **LLM Context Engine:** [`examples/llm_context_engine`](../../examples/llm_context_engine/) — **`go run ./examples/llm_context_engine`** (requires Ollama with `all-minilm`). Demonstrates embedding and multi-signal retrieval, preference supersession through `LoadContextConfig.Assembly`, prompt assembly through `Tx.LoadContext`, and FOV comparison. 6 scenarios.
-
-- **Spatial algorithms:** [`examples/spatial_algorithms`](../../examples/spatial_algorithms/) — **`go run ./examples/spatial_algorithms`** runs the self-contained FOV, LOD, weighted Voronoi, Dijkstra, BFS, and graph-aware context demonstrations.
-
-## What `examples/conversational_memory` does _not_ call (and why)
-
-The demo is a **session-shaped production walkthrough**; it stays readable. Omitted APIs fall into a few buckets: **low-level escape hatches**, **validity-specialized variants**, **seam lifecycle / conflict sugar**, **post-assembly helpers**, **operator features**, **encryption ops**.
-
-> **Demonstrated in Phase 11 (added):** `DB.HealthCheck` + `HealthReport`, `DB.SnapshotDiff` + `SnapshotDiff`/`CellDiff`/`SeamDiff`/`SnapshotDiffConfig`, `AfterPutCellHook`/`AfterPutCellHookFunc` (wired in `Options.AfterPutCell`), `DB.MaxValueBytes()` (printed at startup). These were previously in this omissions list.
->
-> **Demonstrated in Phase 12 (added):** `Tx.DeleteCell` (MVCC tombstone, `ViewAt` snapshot isolation, idempotent re-delete, `HealthCheck` cell count drop), `DB.Compact` (bulk write→delete→prune→compact with file size reduction, compacted DB health check).
-
-### Raw btree: `Tx.Get`, `Tx.Put`, `Tx.AscendRange`
-
-- **Why omitted:** The demo targets **logical** cells/seams/facets/edges. Raw keys bypass **`cell/`** layout and indexes unless you duplicate encodings by hand.
-- **Use when:** Custom migrations, debugging the engine, experimental index families, or tooling that walks **`__meta/`** keys — **not** typical product paths.
-
-### Ring primitives: `WalkRing`, `WalkRingAt`, `WalkRingFacets`
-
-- **Why omitted:** **`LoadContext`** already implements the normative “expand from seed” story the demo showcases; per-ring walks add verbosity without changing the narrative.
-- **Use when:** Streaming one ring at a time, UI highlight of a single horizon, targeted facet loads (**`WalkRingFacets`** with **`facetMask`**) without assembling a full **`ContextPack`**.
-
-### `AssembleCellView` alone
-
-- **Why omitted:** **`LoadContext`** calls assembly internally; the demo exercises the **budgeted pack** path products use for prompts.
-- **Use when:** Hydrating **one** coordinate for a detail pane, preview tooltip, or custom ranking after you already chose coords elsewhere.
-
-### `UpdateFacet` vs `PutFacet`
-
-- **Why omitted:** Seeding uses **`PutFacet`** once (derivation hash matches center raw). **`UpdateFacet`** enforces **derivation discipline** on update — extra setup for a teaching script.
-- **Use when:** Production **rotate summary** when raw is unchanged but derived text changes under the same hash rule — **HEXXLA** facet lifecycle (“update only if hash matches”).
-
-### `GetEdge` / `AscendEdgesFrom`
-
-- **Why omitted:** Phase 14 creates multiple relation types with **`PutEdge`** and demonstrates traversal, but does not need individual or streaming edge reads.
-- **Use when:** Answering “what points **from** this cell?” (**`AscendEdgesFrom`**) or retrieving one exact edge identity (**`GetEdge`**).
-
-### `ResolveSeam`, `FindSeamsAt`
-
-- **Why omitted:** `MarkSupersedes` and `MarkConflict` are demonstrated in Phases 3–4. **`ResolveSeam`** is a **follow-up workflow** step. **`FindSeamsAt`** adds **validity** filtering on seams — redundant when seam validity is open/default.
-- **Use when:** Operator/LM resolution (**`ResolveSeam`**); replay "what contradictions existed **as of** time T?" (**`FindSeamsAt`**).
-
-### `AscendSeamsBySource`, `AscendSeamsInTimeBucket`
-
-- **Why omitted:** Demo proves **cell** tag/source indexes; seam secondaries mirror the same pattern for **dashboards on seam provenance/time**.
-- **Use when:** “All seams attributed to **session/assistant**” or “seams in this **week bucket**” without scanning cells.
-
-### `FilterCellViews`, `TruncateCellViewsToTokenBudget`
-
-- **Why omitted:** **`LoadContext`** already applies token eviction; extra filters are **product policy** (redact, drop role X).
-- **Use when:** Post-processing **`CellView`** slices from **custom** assembly (e.g. after **`AssembleCellView`** in a loop) or trimming after manual merges.
-
-### `DB.ViewAt(read_seq)`
-
-- **Why omitted:** **`ViewAtTime`** matches “as of wall clock” product stories; pinning **exact commit sequence** is for **reproducibility** and **tests**.
-- **Use when:** Bit-for-bit replay of a known snapshot, diff tooling, correlating with **`CommitSeq`** from **`StatsMVCC`** / WAL forensics.
-
-### `Batch`
-
-- **Why omitted:** Identical to **`Update`**; no extra behavior to demonstrate.
-- **Use when:** Call-site clarity only.
-
-### Changelog: `ReadChangelogSince`
-
-- **Why omitted:** **`ReadChangelogFiltered`** is shown in the demo; the unfiltered **`ReadChangelogSince`** variant is a simpler subset.
-- **Use when:** Bulk sequential replay without op-type filtering.
-
-### `DB.HealthCheck` / `AfterPutCellHook` / `AfterPutSeamHook` / `DB.MaxValueBytes` / `DB.SnapshotDiff`
-
-Now demonstrated in **Phase 11**. See above.
-
-### `Tx.DeleteCell` / `DB.Compact` / `CompactTo`
-
-Now demonstrated in **Phase 12**. See above.
-
-### MVCC: `StatsMVCC`, `GroupWALStats`, `SuggestedPruneBeforeSeq`, `MVCCPrunePlan`, `PruneCellVersions*`, `PruneScheduler`
-
-- **Why omitted:** Long-running disk retention; demo uses default file without filling history so far that pruning matters.
-- **Use when:** Production **disk** and **latency** governance — **not** prompt assembly.
-
-### Encryption: `DeriveKeyFromPassphrase`, `RotateEncryption*`
-
-- **Why omitted:** Demo defaults to plaintext under **`.tmp/`**; encryption is **[ENCRYPTION.md](./ENCRYPTION.md)** deployment mode.
-- **Use when:** **At-rest** keys, **rotation** without exposing plaintext on disk.
-
----
+Examples demonstrate workflows; they are not expected to call every exported symbol.
 
 ## Related documents
 
-| Doc                                  | Purpose                                                        |
-| ------------------------------------ | -------------------------------------------------------------- |
-| **[HEXXLA_DB.md](./HEXXLA_DB.md)**   | Keyspace, record families, indexes.                            |
-| **[TX.md](./TX.md)**                 | Locking, MVCC snapshot + temporal semantics, validity filters. |
-| **[HEXXLA.md](./HEXXLA.md)**         | Hexxla memory model + library mapping.                         |
-| **[OPERATIONS.md](./OPERATIONS.md)** | Embedding, backups, MVCC retention/prune, incident response.   |
-| **[DURABILITY.md](./DURABILITY.md)** | WAL, group commit, durability barriers.                        |
-| **[ENCRYPTION.md](./ENCRYPTION.md)** | Threat model and key options.                                  |
-| **[CHANGEFEED.md](./CHANGEFEED.md)** | Logical changelog semantics.                                   |
-| **[../ROADMAP.md](../ROADMAP.md)**   | Non-goals, spec-vs-code backlog.                               |
-
----
-
-## Maintenance
-
-When adding exports to **`package hexxladb`**, update this file and the **[README API table](../../README.md)** so **two** navigable inventories stay aligned (`README` remains the contributor landing page; this file is the exhaustive checklist).
+| Document                                 | Owns                                          |
+| ---------------------------------------- | --------------------------------------------- |
+| [`CONFIGURATION.md`](./CONFIGURATION.md) | Options and common configurations             |
+| [`TX.md`](./TX.md)                       | Transaction, snapshot, and validity semantics |
+| [`HEXXLA_DB.md`](./HEXXLA_DB.md)         | Storage layout and key families               |
+| [`HEXXLA.md`](./HEXXLA.md)               | Product memory concepts                       |
+| [`OPERATIONS.md`](./OPERATIONS.md)       | Backup, retention, compaction, and recovery   |

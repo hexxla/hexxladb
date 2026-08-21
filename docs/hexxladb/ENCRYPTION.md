@@ -1,4 +1,4 @@
-# At-rest encryption (M9)
+# At-rest encryption
 
 **Audience:** Callers configuring [`Options`](../../options.go) on [`Open`](../../db.go).
 
@@ -18,7 +18,7 @@ See [`internal/engine/ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md)
 
 ## Key material
 
-- **Raw key:** [`Options.EncryptionKey`](../../options.go) — arbitrary secret; stretched to a **64-byte** XTS key with **HKDF-SHA256** (info label `hexxladb-m9-aes-xts-v1`).
+- **Raw key:** [`Options.EncryptionKey`](../../options.go) — arbitrary secret; stretched to a **64-byte** XTS key with **HKDF-SHA256**. The historical info label `hexxladb-m9-aes-xts-v1` is part of the encrypted-file compatibility contract.
 - **Passphrase:** [`Options.Passphrase`](../../options.go) — **[Argon2id](https://pkg.go.dev/golang.org/x/crypto/argon2)** derives **32 bytes** from the passphrase and **`EncryptionSalt`**; then the same HKDF produces the XTS key. Use [`DeriveKeyFromPassphrase`](../../encryption.go) only if you need the same KDF outside `Open`.
 
 Do **not** use [`EncryptionKey`](../../options.go) and [`Passphrase`](../../options.go) together; [`Open`](../../db.go) returns [`ErrEncryptionOptions`](../../errors.go).
@@ -31,7 +31,7 @@ For encrypted databases, WAL records also carry a keyed **HMAC-SHA256** authenti
 
 **Threat model:** protects **ciphertext at rest** on disk and on the WAL file if both are copied together. It does **not** authenticate plaintext: **XTS does not provide integrity** comparable to an AEAD; a tampered ciphertext may decrypt to arbitrary bytes. Callers who need **tamper detection** should plan a future format that adds authentication (or use external full-disk encryption).
 
-**Runtime:** key material and decrypted pages in memory are **not** hardened against a local attacker with memory access; that is out of scope for M9.
+**Runtime:** key material and decrypted pages in memory are **not** hardened against a local attacker with memory access; that is outside the at-rest threat model.
 
 ## Wrong key
 
@@ -49,7 +49,7 @@ Legacy encrypted files without a verifier are upgraded in-place on successful ke
 
 [`ErrEncryptionKeyMismatch`](../../errors.go) — provided key/passphrase does not match the database verifier.
 
-## Hardening acceptance criteria (M9+)
+## Security invariants
 
 - Wrong key/passphrase fails deterministically at `Open` for encrypted files with an `encryption_key_check`.
 - Corrupt/truncated WAL remains rejected on replay (`ErrCorruptWAL` -> public `ErrCorruptDatabase` path).

@@ -2,12 +2,12 @@
 //
 // Documentation map:
 //   - docs/hexxladb/HEXXLA_DB.md — storage layout and key spec (how it works).
-//   - docs/hexxladb/API_REFERENCE.md — full exported symbol inventory.
+//   - docs/hexxladb/API_REFERENCE.md — task-oriented public API guide.
 //   - docs/hexxladb/TX.md — transactions, primitives, MVCC temporal semantics.
 //   - docs/hexxladb/OPERATIONS.md — embedding, backups, MVCC retention, incident response.
 //   - docs/hexxladb/DURABILITY.md, ENCRYPTION.md, CHANGEFEED.md — focused feature refs.
 //   - docs/hexxladb/HEXXLA.md — memory model reference (product context).
-//   - docs/ROADMAP.md — roadmap, non-goals, spec-vs-code backlog.
+//   - docs/ROADMAP.md — pending and evidence-gated work.
 //
 // Implementation packages under internal/ are private to this module.
 //

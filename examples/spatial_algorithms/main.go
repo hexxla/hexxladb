@@ -589,7 +589,7 @@ func run(dbPath string) error {
 	_, _ = dimStyle.Printf("  Cells:      %d across 7 rings\n", len(cells))
 	_, _ = dimStyle.Printf("  Edges:      %d (sequence + cross-ref)\n", edgeCount)
 	_, _ = dimStyle.Printf("  Algorithms: FOV, LOD, Voronoi, Dijkstra, BFS, edge-context\n")
-	_, _ = dimStyle.Println("  See docs/hexxladb/API_REFERENCE.md for full API documentation")
+	_, _ = dimStyle.Println("  See docs/hexxladb/API_REFERENCE.md for the public API guide")
 	fmt.Println()
 
 	return nil
