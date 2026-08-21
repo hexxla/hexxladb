@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-21
+
 ### Added
 
 - **Editor and Codex project workflow** — tracked VS Code and Zed settings expose the repository's existing build and verification commands, and `.agents/skills/` is reserved for focused HexxlaDB-specific Codex skills. The obsolete Windsurf configuration and generated multi-assistant setup scripts have been removed.
@@ -345,7 +347,11 @@
 
 _First release._
 
-[Unreleased]: https://github.com/hexxla/hexxladb/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/hexxla/hexxladb/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/hexxla/hexxladb/compare/v0.5.1...v0.6.0
+[0.5.1]: https://github.com/hexxla/hexxladb/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/hexxla/hexxladb/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/hexxla/hexxladb/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/hexxla/hexxladb/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hexxla/hexxladb/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/hexxla/hexxladb/releases/tag/v0.1.0
