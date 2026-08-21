@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Single entry point for the same checks CI runs — use before push: ./scripts/ci.sh or `make ci`.
+# Single entry point for the same checks CI runs — use before push: ./scripts/ci.sh or `task ci`.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,7 +24,7 @@ mapfile -t gofiles < <(find . -type f -name '*.go' ! -path './vendor/*' ! -path 
 if ((${#gofiles[@]} > 0)); then
 	out=$(gofmt -l "${gofiles[@]}")
 	if [[ -n "${out}" ]]; then
-		echo "These files need gofmt (run: gofmt -w <file> or make fmt):"
+		echo "These files need gofmt (run: gofmt -w <file> or task fmt):"
 		echo "${out}"
 		exit 1
 	fi
@@ -34,7 +34,7 @@ echo "==> go vet (includes compiler-backed checks on packages)"
 go vet ./...
 
 echo "==> Hex boundaries (full hexagonal architecture validation per HEXAGONAL_ARCHITECTURE.md)"
-./scripts/check-hex-boundaries.sh
+bash scripts/check-hex-boundaries.sh
 
 echo "==> go test (compiles packages + runs tests; -race catches data races)"
 # -parallel 1: internal/engine tests share sync.Pool-backed read buffers; parallel subtests can
@@ -58,7 +58,7 @@ fi
 
 echo "==> Complexity analysis (cyclomatic + cognitive + CRAP; see .complexity.yml)"
 if command -v gocyclo >/dev/null 2>&1 && command -v gocognit >/dev/null 2>&1; then
-	./scripts/ci/pre-push/05-complexity.sh
+	bash scripts/ci/pre-push/05-complexity.sh
 else
 	echo "    gocyclo/gocognit not on PATH — skipping"
 	echo "    Install: go install github.com/fzipp/gocyclo/cmd/gocyclo@latest"

@@ -39,7 +39,7 @@ func stressCellCount(t *testing.T) int {
 }
 
 // TestStress_putManyCells_survivesReopen is like TestIntegration_putManyCells_survivesReopen but
-// at much larger N. Build tag stress only — run: make stress (not default CI or integration).
+// at much larger N. Build tag stress only — run: task stress (not default CI or integration).
 func TestStress_putManyCells_survivesReopen(t *testing.T) {
 	nCells := stressCellCount(t)
 	nq := 500

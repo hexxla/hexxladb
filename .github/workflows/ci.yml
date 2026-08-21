@@ -37,6 +37,7 @@ jobs:
             ~/go/bin/gocognit
             ~/go/bin/gremlins
             ~/go/bin/goda
+            ~/go/bin/task
             ~/.cache/go-build
           key: ${{ runner.os }}-go-tools-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
@@ -59,6 +60,9 @@ jobs:
       - name: Install goda
         run: go install github.com/loov/goda@latest
 
+      - name: Install Task
+        run: go install github.com/go-task/task/v3/cmd/task@v3.53.1
+
       - name: Dependency Review
         if: github.event_name == 'pull_request'
         uses: actions/dependency-review-action@v4
@@ -67,13 +71,7 @@ jobs:
         env:
           CI: "true"
           GOLANGCI_LINT_TIMEOUT: "5m"
-        run: ./scripts/ci.sh
-
-      - name: Run complexity and mutation analysis
-        run: |
-          ./scripts/ci/pre-push/05-complexity.sh
-          ./scripts/ci/pre-push/06-gremlins.sh
-          ./scripts/ci/pre-push/07-coupling.sh
+        run: task ci-full
 
       - name: Generate coverage
         run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...

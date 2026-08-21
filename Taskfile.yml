@@ -1,0 +1,324 @@
+version: "3"
+
+vars:
+  GOOS:
+    sh: go env GOOS
+  GOARCH:
+    sh: go env GOARCH
+  BINDIR: bin/{{.GOOS}}-{{.GOARCH}}
+  EXE: '{{if eq .GOOS "windows"}}.exe{{end}}'
+  DEFAULT_TMPDIR: "{{.ROOT_DIR}}/.tmp"
+  TASK_TMPDIR: "{{.TMPDIR | default .DEFAULT_TMPDIR}}"
+
+tasks:
+  default:
+    desc: Run the full CI pipeline
+    cmds:
+      - task: ci
+
+  help:
+    desc: List available tasks
+    cmds:
+      - task --list
+
+  ci:
+    desc: Run the same full pipeline as GitHub Actions
+    cmds:
+      - bash scripts/ci.sh
+
+  integration:
+    desc: Run optional integration tests serially with the race detector
+    cmds:
+      - go test -count=1 -race -parallel=1 -tags=integration ./...
+
+  bench-tmp:
+    desc: Create the benchmark temporary directory
+    cmds:
+      - mkdir -p "{{.TASK_TMPDIR}}"
+
+  stress:
+    desc: Run the optional very large stress tests
+    deps: [bench-tmp]
+    env:
+      TMPDIR: "{{.TASK_TMPDIR}}"
+    cmds:
+      - go test -count=1 -race -tags=stress ./...
+
+  bench:
+    desc: Run all benchmarks across all packages
+    deps: [bench-tmp]
+    env:
+      TMPDIR: "{{.TASK_TMPDIR}}"
+    cmds:
+      - go test -count=1 -bench=. -benchmem ./...
+
+  bench-api:
+    desc: Run the focused API benchmarks and save their output
+    deps: [bench-tmp]
+    env:
+      TMPDIR: "{{.TASK_TMPDIR}}"
+    cmds:
+      - 'echo "==> HexxlaDB API benchmarks (Go $(go env GOVERSION), $(uname -s) $(uname -m))"'
+      - 'echo "==> Output saved to .tmp/bench-api.txt"'
+      - bash -o pipefail -c "go test -count=1 -bench='BenchmarkAPI_' -benchmem -benchtime=3s -v -run='^$' . 2>&1 | tee .tmp/bench-api.txt"
+
+  bench-stress:
+    desc: Run longer API benchmarks with configurable preload
+    deps: [bench-tmp]
+    env:
+      TMPDIR: "{{.TASK_TMPDIR}}"
+      HEXXLA_BENCH_PRELOAD: '{{.HEXXLA_BENCH_PRELOAD | default "all"}}'
+    cmds:
+      - go test -count=1 -bench='BenchmarkAPI_(GetCell|AscendCellsBySource|LoadContext|LoadContextAt|WalkRing|WalkRingAt)/' -benchmem -benchtime=500ms ./.
+
+  evidence:
+    desc: Run controlled spatial evidence and the aggregate observation workload
+    cmds:
+      - task: evidence-controlled
+      - task: evidence-observe
+
+  evidence-controlled:
+    desc: Run the oracle soak and focused spatial benchmarks
+    cmds:
+      - mkdir -p .tmp/evidence .tmp/go-build
+      - GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go test -count=1 -race -run='TestSuperHexSummaryIndex_RandomizedAgainstOracle$' .
+      - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go test -count=1 -run='^$' -bench='Benchmark(FieldOfViewShadowcast|FieldOfViewRaycast)$' -benchmem -benchtime=1s ./internal/lattice 2>&1 | tee .tmp/evidence/fov-bench.txt"
+      - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go test -count=3 -run='^$' -bench='BenchmarkLog_ReadSinceTail$' -benchmem -benchtime=300ms ./internal/changelog 2>&1 | tee .tmp/evidence/changelog-read-bench.txt"
+      - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go test -count=1 -run='^$' -bench='BenchmarkAPI_(FindEdgePathDegree|LoadContextFOV|SuperHexRebuild|SuperHexSummaryForCoord|SuperHexSummaries)$' -benchmem -benchtime=1s . 2>&1 | tee .tmp/evidence/api-bench.txt"
+      - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp HEXXLA_SYNC_BENCH=1 go test -count=1 -run='^$' -bench='BenchmarkEvidence_SuperHexSyncCatchUp$' -benchmem -benchtime=1x . 2>&1 | tee .tmp/evidence/superhex-sync-bench.txt"
+
+  evidence-observe:
+    desc: Run the seeded aggregate-only evidence workload
+    cmds:
+      - mkdir -p .tmp/evidence .tmp/go-build
+      - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go run ./examples/performance_evidence {{.EVIDENCE_ARGS | default ""}} | tee .tmp/evidence/workload.json"
+
+  fuzz:
+    desc: Run short fuzz smoke tests on internal decoders
+    cmds:
+      - go test ./internal/record -fuzz=FuzzDecodeCell -fuzztime=2s
+      - go test ./internal/engine -fuzz=FuzzDecodeHeaderPage -fuzztime=2s
+      - go test ./internal/engine -fuzz=FuzzParseAndReplayWAL -fuzztime=2s
+
+  build-cli:
+    desc: Build the HexxlaDB operator CLI
+    cmds:
+      - mkdir -p "{{.BINDIR}}"
+      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb{{.EXE}}" ./cmd/hexxladb
+      - 'echo "  → {{.BINDIR}}/hexxladb{{.EXE}}"'
+
+  build-tui:
+    desc: Build the HexxlaDB TUI
+    cmds:
+      - mkdir -p "{{.BINDIR}}"
+      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-tui{{.EXE}}" ./cmd/tui
+      - 'echo "  → {{.BINDIR}}/hexxladb-tui{{.EXE}}"'
+
+  build-demo:
+    desc: Build the conversational-memory example
+    cmds:
+      - mkdir -p "{{.BINDIR}}"
+      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-demo{{.EXE}}" ./examples/conversational_memory
+      - 'echo "  → {{.BINDIR}}/hexxladb-demo{{.EXE}}"'
+
+  build-demo-llm:
+    desc: Build the LLM context-engine example
+    cmds:
+      - mkdir -p "{{.BINDIR}}"
+      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-demo-llm{{.EXE}}" ./examples/llm_context_engine
+      - 'echo "  → {{.BINDIR}}/hexxladb-demo-llm{{.EXE}}"'
+
+  build-examples:
+    desc: Build all examples
+    cmds:
+      - task: build-demo
+      - task: build-demo-llm
+
+  build:
+    desc: Build the CLI, TUI, and examples for the selected OS and architecture
+    cmds:
+      - task: build-cli
+      - task: build-tui
+      - task: build-examples
+      - 'echo "==> Built all targets for {{.GOOS}}/{{.GOARCH}}"'
+
+  build-linux:
+    desc: Build all targets for Linux
+    cmds:
+      - task: build
+        vars: { GOOS: linux, GOARCH: "{{.GOARCH}}" }
+
+  build-darwin:
+    desc: Build all targets for macOS
+    cmds:
+      - task: build
+        vars: { GOOS: darwin, GOARCH: "{{.GOARCH}}" }
+
+  build-windows:
+    desc: Build all targets for Windows
+    cmds:
+      - task: build
+        vars: { GOOS: windows, GOARCH: "{{.GOARCH}}" }
+
+  build-all:
+    desc: Build all targets for Linux, macOS, and Windows
+    cmds:
+      - task: build-linux
+      - task: build-darwin
+      - task: build-windows
+      - 'echo "==> Built all platforms into bin/"'
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -rf bin/
+
+  demo:
+    desc: Run a fresh conversational-memory demonstration
+    env:
+      DEMO_DB: '{{.DEMO_DB | default ""}}'
+    cmds:
+      - mkdir -p .tmp
+      - rm -f .tmp/conversational-memory.db .tmp/conversational-memory.db-wal .tmp/conversational-memory.db-changelog
+      - |
+        if [ -n "$DEMO_DB" ]; then
+          go run ./examples/conversational_memory -db "$DEMO_DB"
+        else
+          go run ./examples/conversational_memory
+        fi
+
+  demo-llm:
+    desc: Run a fresh LLM context-engine demonstration; requires Ollama
+    env:
+      LLM_DB: '{{.LLM_DB | default ""}}'
+    cmds:
+      - mkdir -p .tmp
+      - rm -f .tmp/llm-context-engine.db .tmp/llm-context-engine.db-wal
+      - |
+        if [ -n "$LLM_DB" ]; then
+          go run ./examples/llm_context_engine -db "$LLM_DB"
+        else
+          go run ./examples/llm_context_engine
+        fi
+
+  demo-spatial:
+    desc: Run a fresh spatial-algorithms demonstration
+    env:
+      SPATIAL_DB: '{{.SPATIAL_DB | default ""}}'
+    cmds:
+      - mkdir -p .tmp
+      - rm -f .tmp/spatial-algorithms.db .tmp/spatial-algorithms.db-wal
+      - |
+        if [ -n "$SPATIAL_DB" ]; then
+          go run ./examples/spatial_algorithms -db "$SPATIAL_DB"
+        else
+          go run ./examples/spatial_algorithms
+        fi
+
+  demo-all:
+    desc: Run every demonstration in sequence
+    cmds:
+      - task: demo
+      - task: demo-llm
+      - task: demo-spatial
+
+  seed:
+    desc: Seed the conversational-memory database when absent
+    cmds:
+      - mkdir -p .tmp
+      - |
+        if [ ! -f .tmp/conversational-memory.db ]; then
+          echo "==> Seeding demo database (.tmp/conversational-memory.db)..."
+          go run ./examples/conversational_memory
+        else
+          echo "==> Demo database already exists (.tmp/conversational-memory.db) — skipping seed."
+        fi
+
+  tui:
+    desc: Seed and launch the TUI database explorer
+    env:
+      TUI_DB: '{{.TUI_DB | default ".tmp/conversational-memory.db"}}'
+    cmds:
+      - task: seed
+      - go run ./cmd/tui -path "$TUI_DB"
+
+  govulncheck:
+    desc: Run the Go vulnerability scanner
+    cmds:
+      - go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  complexity:
+    desc: Run cyclomatic, cognitive, and CRAP complexity checks
+    cmds:
+      - bash scripts/ci/pre-push/05-complexity.sh
+
+  pre-commit-install:
+    desc: Install the optional pre-commit hooks
+    cmds:
+      - pre-commit install
+
+  pre-commit-run:
+    desc: Run all optional pre-commit hooks
+    cmds:
+      - pre-commit run --all-files
+
+  pre-commit-update:
+    desc: Update optional pre-commit hook revisions
+    cmds:
+      - pre-commit autoupdate
+
+  test:
+    desc: Run all tests with the race detector
+    cmds:
+      - go test -count=1 -race ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  fmt:
+    desc: Format all Go files with gofmt
+    cmds:
+      - gofmt -w $(find . -type f -name '*.go' ! -path './vendor/*' ! -path './.git/*')
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run ./...
+
+  mod-tidy:
+    desc: Reconcile go.mod and go.sum with the module graph
+    cmds:
+      - go mod tidy
+
+  ci-full:
+    desc: Run CI, complexity, mutation, and coupling analysis
+    cmds:
+      - bash scripts/ci/ci.sh
+
+  mutation-test:
+    desc: Run full Gremlins mutation testing; optionally set TARGET
+    preconditions:
+      - sh: command -v gremlins >/dev/null 2>&1
+        msg: "gremlins not found; install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0"
+    env:
+      TARGET: '{{.TARGET | default ""}}'
+    cmds:
+      - |
+        if [ -n "$TARGET" ]; then
+          echo "==> Running Gremlins mutation testing: $TARGET"
+          gremlins unleash "$TARGET"
+        else
+          echo "==> Running Gremlins mutation testing (all targets, full)..."
+          GREMLINS_FULL=1 bash scripts/ci/pre-push/06-gremlins.sh
+        fi
+
+  mutation-test-dry:
+    desc: Run the fast Gremlins mutation dry-run
+    preconditions:
+      - sh: command -v gremlins >/dev/null 2>&1
+        msg: "gremlins not found; install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0"
+    cmds:
+      - 'echo "==> Running Gremlins mutation testing (dry-run)..."'
+      - bash scripts/ci/pre-push/06-gremlins.sh

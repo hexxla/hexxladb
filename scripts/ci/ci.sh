@@ -6,8 +6,8 @@
 #   - coupling analysis (goda)
 #
 # The base pipeline (format, vet, tests, lint, govulncheck, mod-tidy) lives in
-# scripts/ci.sh and is what `make ci` calls. This script extends it.
-# Run with: ./scripts/ci/ci.sh or `make ci-full`
+# scripts/ci.sh and is what `task ci` calls. This script extends it.
+# Run with: ./scripts/ci/ci.sh or `task ci-full`
 
 set -euo pipefail
 
@@ -24,18 +24,18 @@ die() {
 
 # Run the core CI pipeline first
 echo "==> Running core CI pipeline"
-./scripts/ci.sh
+bash scripts/ci.sh
 
 # Run complexity analysis (uses coverage from test run above)
 echo "==> Running complexity analysis"
-./scripts/ci/pre-push/05-complexity.sh
+bash scripts/ci/pre-push/05-complexity.sh
 
 # Run mutation testing (gremlins, dry-run in CI)
 echo "==> Running mutation testing (gremlins)"
-./scripts/ci/pre-push/06-gremlins.sh
+bash scripts/ci/pre-push/06-gremlins.sh
 
 # Run coupling analysis
 echo "==> Running coupling analysis"
-./scripts/ci/pre-push/07-coupling.sh
+bash scripts/ci/pre-push/07-coupling.sh
 
 echo "==> OK (full pipeline)"

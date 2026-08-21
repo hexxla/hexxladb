@@ -1,32 +1,32 @@
 [
   {
     "label": "HexxlaDB: CI",
-    "command": "make ci",
+    "command": "task ci",
     "save": "all"
   },
   {
     "label": "HexxlaDB: Test",
-    "command": "make test",
+    "command": "task test",
     "save": "all"
   },
   {
     "label": "HexxlaDB: Build",
-    "command": "make build",
+    "command": "task build",
     "save": "all"
   },
   {
     "label": "HexxlaDB: Build Examples",
-    "command": "make build-examples",
+    "command": "task build-examples",
     "save": "all"
   },
   {
     "label": "HexxlaDB: Integration Tests",
-    "command": "make integration",
+    "command": "task integration",
     "save": "all"
   },
   {
     "label": "HexxlaDB: Controlled Evidence",
-    "command": "make evidence-controlled",
+    "command": "task evidence-controlled",
     "save": "all"
   }
 ]

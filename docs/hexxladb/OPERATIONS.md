@@ -151,7 +151,7 @@ Use `SummaryForCoord` when starting from a normal cell coordinate. Use `Summary`
 Use `LastSeq` to expose consumer lag against the changelog head in application metrics.
 
 For repeatable Dijkstra, deterministic FOV, and super-hex evidence collection,
-run `make evidence`. The controlled and aggregate observation streams, privacy
+run `task evidence`. The controlled and aggregate observation streams, privacy
 constraints, output files, and decision gates are documented in
 [`PERFORMANCE_EVIDENCE.md`](PERFORMANCE_EVIDENCE.md).
 
@@ -161,9 +161,9 @@ Use after meaningful storage/MVCC changes or before tagging a release. Capture m
 
 | Step | Command                    | Pass criteria                                                                                                           |
 | ---- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| 1    | `make ci`                  | Exits `0`; includes unit tests + race.                                                                                  |
-| 2    | `make integration`         | Exits `0`; includes `TestIntegration_MVCC_sustainedPutCellSameKey` and `TestIntegration_MVCC_latticeAndHighChurnPrune`. |
-| 3    | _(Optional)_ `make stress` | Large cell load, not MVCC churn; skip on resource-constrained CI.                                                       |
+| 1    | `task ci`                  | Exits `0`; includes unit tests + race.                                                                                  |
+| 2    | `task integration`         | Exits `0`; includes `TestIntegration_MVCC_sustainedPutCellSameKey` and `TestIntegration_MVCC_latticeAndHighChurnPrune`. |
+| 3    | _(Optional)_ `task stress` | Large cell load, not MVCC churn; skip on resource-constrained CI.                                                       |
 | 4    | Disk growth sanity         | Note DB + WAL (+ changelog if enabled) size before/after soak; bounded growth after prune per retention policy above.   |
 
 Tune retention and pruning for your workload and soak longer in staging if retention windows are large.

@@ -46,7 +46,7 @@ declare -A MIN_MCOVER=(
     ["./internal/index"]=50
 )
 
-# CI mode: use --dry-run for speed in pre-push; full runs via `make mutation-test`.
+# CI mode: use --dry-run for speed in pre-push; full runs via `task mutation-test`.
 DRY_RUN=true
 if [[ "${GREMLINS_FULL:-}" == "1" ]]; then
     DRY_RUN=false
@@ -95,12 +95,12 @@ done
 
 if [[ "$overall_ok" == "false" ]]; then
     echo -e "${RED}> Mutation testing FAILED${NC}"
-    echo -e "${YELLOW}> For full mutation testing: make mutation-test${NC}"
+    echo -e "${YELLOW}> For full mutation testing: task mutation-test${NC}"
     exit 1
 fi
 
 if [[ "$DRY_RUN" == "true" ]]; then
-    echo -e "${GREEN}> Mutation dry-run complete (no gates enforced; run 'make mutation-test' for full check)${NC}"
+    echo -e "${GREEN}> Mutation dry-run complete (no gates enforced; run 'task mutation-test' for full check)${NC}"
 else
     echo -e "${GREEN}> Mutation testing passed${NC}"
 fi

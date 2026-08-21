@@ -13,7 +13,7 @@ Read [`docs/architecture/HEXAGONAL_ARCHITECTURE.md`](docs/architecture/HEXAGONAL
 
 Honor the minimum Go version in `go.mod` and use the matching project skill when its description applies. Prefer `errors.Is` / `errors.As`, wrap public error causes with `%w`, use `log/slog` in commands and adapters, and use `testing.B.Loop` for ordinary benchmarks.
 
-Run the narrowest relevant checks first, then `make ci` before pushing. Fix lint root causes; use a specific `//nolint` only with a one-line justification.
+Run the narrowest relevant checks first, then `task ci` before pushing. Fix lint root causes; use a specific `//nolint` only with a one-line justification.
 
 ## Documentation ownership
 
@@ -40,6 +40,6 @@ Do not put completed history in the roadmap or `TODO.md`; it belongs in `CHANGEL
 
 ## Repository workflow
 
-Preserve unrelated work and keep commits focused. Use short, one-line commit messages. Optional hooks are installed with `make pre-commit-install`, but they do not replace `make ci`.
+Preserve unrelated work and keep commits focused. Use short, one-line commit messages. Optional hooks are installed with `task pre-commit-install`, but they do not replace `task ci`.
 
 Codex-compatible project skills live under `.agents/skills/<skill-name>/SKILL.md`. Add one only for a recurring HexxlaDB-specific workflow; keep general engineering policy in this file.

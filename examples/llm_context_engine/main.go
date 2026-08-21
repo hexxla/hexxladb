@@ -15,7 +15,7 @@
 //	ollama pull all-minilm
 //	go run ./examples/llm_context_engine       # default DB at .tmp/llm-context-engine.db
 //	go run ./examples/llm_context_engine -db /path/to/my.db
-//	make demo-llm                              # same as first form via Makefile
+//	task demo-llm                              # same as first form via Taskfile
 package main
 
 import (

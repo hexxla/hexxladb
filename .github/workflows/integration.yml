@@ -1,5 +1,5 @@
 # Slower `//go:build integration` tests — not in default PR CI (see README).
-# Weekly + manual; use `make integration` before releases.
+# Weekly + manual; use `task integration` before releases.
 name: Integration
 
 on:
@@ -29,11 +29,14 @@ jobs:
       - name: Install golangci-lint
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 
+      - name: Install Task
+        run: go install github.com/go-task/task/v3/cmd/task@v3.53.1
+
       - name: Run CI checks
         env:
           CI: "true"
           GOLANGCI_LINT_TIMEOUT: "5m"
-        run: ./scripts/ci/ci.sh
+        run: task ci-full
 
       - name: Run integration tests
-        run: go test -count=1 -race -tags=integration ./...
+        run: task integration

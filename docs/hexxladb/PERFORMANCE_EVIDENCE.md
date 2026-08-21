@@ -20,7 +20,7 @@ individual query inputs.
 ## Quick run
 
 ```bash
-make evidence
+task evidence
 ```
 
 This writes:
@@ -34,15 +34,15 @@ This writes:
 Run the streams separately when iteration time matters:
 
 ```bash
-make evidence-controlled
-make evidence-observe
+task evidence-controlled
+task evidence-observe
 ```
 
 The default observation workload uses 2,000 cells, 100 samples, seed `1`, FOV
 radius `10`, and super-hex level `2`. Override it without changing source:
 
 ```bash
-make evidence-observe \
+task evidence-observe \
   EVIDENCE_ARGS='-cells 10000 -samples 500 -seed 7 -fov-radius 20 -superhex-level 3'
 ```
 
@@ -76,9 +76,9 @@ For a decision-quality series:
 1. Record `git rev-parse HEAD`, `go env GOVERSION`, CPU model, operating system,
    storage type, and whether the machine was otherwise idle.
 2. Use the same seed and workload flags for every comparison.
-3. Run `make evidence-controlled` at least five times. Compare full benchmark
+3. Run `task evidence-controlled` at least five times. Compare full benchmark
    output, including allocation counts; do not promote a change from one run.
-4. Run `make evidence-observe` on a staging host whose CPU and storage resemble
+4. Run `task evidence-observe` on a staging host whose CPU and storage resemble
    production. Retain each JSON file with the commit SHA in its filename.
 5. Treat p95 and maximum latency, catch-up status, and resource growth as
    constraints alongside mean latency. A faster mean does not justify lost

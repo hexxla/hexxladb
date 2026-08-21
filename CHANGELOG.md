@@ -4,6 +4,7 @@
 
 ### Changed
 
+- **Task-based repository workflow** — replaced the Makefile with `Taskfile.yml` while preserving the existing CI, test, benchmark, evidence, build, demo, fuzz, mutation, and pre-commit task names and variable overrides. GitHub Actions pins Task v3.53.1, and VS Code, Zed, contributor guidance, examples, and operational documentation now use `task`. No public Go API or on-disk format change.
 - **Documentation ownership and scope** — replaced the inherited service-template architecture guide with the actual HexxlaDB package-boundary contract; reduced the manually duplicated exported-symbol inventory to a task-oriented API guide; separated product memory concepts from the database storage contract; removed milestone labels, completed-plan history, and speculative backlog material from current reference documents; and made `ROADMAP.md`, `TODO.md`, and `CHANGELOG.md` the sole homes for deferred work, session state, and completed history respectively. No public API or on-disk format change.
 
 ## [0.6.0] - 2026-08-21

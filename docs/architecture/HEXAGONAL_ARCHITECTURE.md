@@ -105,7 +105,7 @@ Run the narrowest relevant tests while developing, then run:
 
 ```bash
 bash scripts/check-hex-boundaries.sh
-make ci
+task ci
 ```
 
 Architecture changes are complete only when dependency checks pass, public signatures remain usable without `internal/...`, and the documentation describing the affected boundary is current.

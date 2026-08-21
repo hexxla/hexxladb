@@ -69,7 +69,7 @@ func benchAPIPreloadCellsWithOptions(b *testing.B, n int, opts *hexxladb.Options
 // apiBenchPreloadSizes returns preload row counts for read/scan API benchmarks.
 // Default is 512 and 2000 so plain `go test -bench=BenchmarkAPI` stays tolerable.
 //
-//   - HEXXLA_BENCH_PRELOAD=all — adds cells_10000 (used by make bench-stress).
+//   - HEXXLA_BENCH_PRELOAD=all — adds cells_10000 (used by task bench-stress).
 //   - HEXXLA_BENCH_PRELOAD=extreme — also adds cells_50000 (many large DBs under $TMPDIR; can fill small /tmp).
 //
 // Set TMPDIR to a volume with plenty of free space when using all or extreme.
@@ -1227,7 +1227,7 @@ func BenchmarkAPI_SuperHexSummaries(b *testing.B) {
 // BenchmarkEvidence_SuperHexSyncCatchUp measures a fixed one-shot changelog
 // catch-up. It is opt-in because every benchmark iteration constructs a fresh
 // database to keep history length constant. Run with HEXXLA_SYNC_BENCH=1 and
-// -benchtime=1x, as make evidence-controlled does.
+// -benchtime=1x, as task evidence-controlled does.
 func BenchmarkEvidence_SuperHexSyncCatchUp(b *testing.B) {
 	if os.Getenv("HEXXLA_SYNC_BENCH") != "1" {
 		b.Skip("set HEXXLA_SYNC_BENCH=1 and use -benchtime=1x")

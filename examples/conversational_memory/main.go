@@ -23,7 +23,7 @@
 //
 //	go run ./examples/conversational_memory           # default DB at .tmp/conversational-memory.db
 //	go run ./examples/conversational_memory -db /path/to/my.db
-//	make demo                                         # same as first form via Makefile
+//	task demo                                         # same as first form via Taskfile
 package main
 
 import (

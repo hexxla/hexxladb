@@ -176,7 +176,7 @@ Public API guide: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE
 ## Performance
 
 ```bash
-make bench-api
+task bench-api
 ```
 
 _Intel Core i9-14900HX · 16 GB · Go 1.26 · Linux · `-benchtime=3s -count=1`_
@@ -247,11 +247,11 @@ The context assembly operations (`LoadContext`, `LoadContextFOV`, `LoadContextVo
 
 | Example                                                  | Run                 | What it covers                                               |
 | -------------------------------------------------------- | ------------------- | ------------------------------------------------------------ |
-| [Conversational Memory](examples/conversational_memory/) | `make demo`         | Cells, seams, tags, MVCC, queries, context, FOV, pathfinding |
-| [LLM Context Engine](examples/llm_context_engine/)       | `make demo-llm`     | Ollama embeddings, semantic search, supersession, FOV        |
-| [Spatial Algorithms](examples/spatial_algorithms/)       | `make demo-spatial` | FOV, LOD, Voronoi, Dijkstra, BFS — side-by-side              |
+| [Conversational Memory](examples/conversational_memory/) | `task demo`         | Cells, seams, tags, MVCC, queries, context, FOV, pathfinding |
+| [LLM Context Engine](examples/llm_context_engine/)       | `task demo-llm`     | Ollama embeddings, semantic search, supersession, FOV        |
+| [Spatial Algorithms](examples/spatial_algorithms/)       | `task demo-spatial` | FOV, LOD, Voronoi, Dijkstra, BFS — side-by-side              |
 
-The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm && make demo-llm`
+The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm && task demo-llm`
 
 ---
 
@@ -294,7 +294,7 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 git clone https://github.com/hexxla/hexxladb.git
 cd hexxladb
 go mod tidy
-make test
+task test
 ```
 
 ---
