@@ -64,15 +64,19 @@ go.work.sum
 .DS_Store
 Thumbs.db
 
-# --- Editor / IDE (uncomment what you use) ---
+# --- Editor / IDE ---
 .idea/
-.vscode/
 *.swp
 *~
 #
-# IDE-specific directories: .cursor/ for Cursor, .windsurf/ for Windsurf (rules, skills, agent notes). Do not ignore them here.
-# Cursor agent plans (local scratch; never commit)
-.cursor/plans/
+
+# VS Code and Zed project settings are tracked in .vscode/ and .zed/.
+# Keep assistant-specific local state out of the repository; shared Codex skills
+# live under .agents/skills/.
+.cursor/
+.claude/
+.continue/
+.codex/
 
 # --- Optional: uncomment when you add these stacks ---
 # node_modules/

@@ -1,0 +1,32 @@
+[
+  {
+    "label": "HexxlaDB: CI",
+    "command": "make ci",
+    "save": "all"
+  },
+  {
+    "label": "HexxlaDB: Test",
+    "command": "make test",
+    "save": "all"
+  },
+  {
+    "label": "HexxlaDB: Build",
+    "command": "make build",
+    "save": "all"
+  },
+  {
+    "label": "HexxlaDB: Build Examples",
+    "command": "make build-examples",
+    "save": "all"
+  },
+  {
+    "label": "HexxlaDB: Integration Tests",
+    "command": "make integration",
+    "save": "all"
+  },
+  {
+    "label": "HexxlaDB: Controlled Evidence",
+    "command": "make evidence-controlled",
+    "save": "all"
+  }
+]

@@ -3,7 +3,7 @@
 # Run on all files: pre-commit run --all-files
 # Update hook revisions: pre-commit autoupdate
 #
-# IDE-specific hooks live in .cursor/hooks.json, .windsurf/hooks.json, .claude/settings.json, or .codex/hooks.json (format-on-save, secret scans).
+# Editor settings live in .vscode/ and .zed/; shared checks remain editor-independent.
 # CI gate: .github/workflows/ci.yml runs ./scripts/ci.sh (includes gofmt -l, go test -race, …).
 
 repos:

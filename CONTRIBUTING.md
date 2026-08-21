@@ -88,13 +88,8 @@ Follow **[`docs/context/HEXAGONAL_ARCHITECTURE.md`](docs/context/HEXAGONAL_ARCHI
 - **Dependabot** — [`.github/dependabot.yml`](.github/dependabot.yml) opens weekly PRs for **`gomod`** dependency updates (tune schedule and limits there).
 - **Secret scanning** — enable **secret scanning** (and push protection if your plan allows) in the repository or organization **Settings → Code security**. That is the primary guard against committed credentials; editor hooks are a convenience, not a substitute.
 
-## IDE / editor assets
+## Editor and agent assets
 
-This repo **tracks** IDE-specific directories for supported AI coding assistants:
+The repository tracks shared settings for **VS Code** in [`.vscode/`](.vscode) and **Zed** in [`.zed/`](.zed). Both editors expose the same repository-native build and validation commands from the `Makefile`; contributors remain free to use any editor.
 
-- **`.cursor/`** — Cursor IDE rules, skills, and hooks
-- **`.windsurf/`** — Windsurf IDE rules, skills, and hooks
-- **`.claude/`** — Claude Code rules, skills, and hooks
-- **`.codex/`** — OpenAI Codex rules, agents, and hooks
-
-These directories are **not** listed in **`.gitignore`** so they're available for forks and contributors using any supported IDE.
+Repository-specific Codex skills belong in [`.agents/skills/`](.agents/skills). Each skill is a directory containing a `SKILL.md`; add one only after a repeated HexxlaDB workflow has demonstrated that project-specific guidance is useful.

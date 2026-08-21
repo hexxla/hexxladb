@@ -3,8 +3,7 @@
 	build build-cli build-tui build-demo build-demo-llm build-examples build-all \
 	build-linux build-darwin build-windows \
 	demo demo-llm demo-spatial demo-all seed tui \
-	llm-setup mutation-test mutation-test-dry ci-full \
-	clean-llm clean-llm-all clean-llm-windsurf clean-llm-cursor clean-llm-claude clean-llm-continue clean-llm-codex
+	mutation-test mutation-test-dry ci-full
 
 # Detect host OS and architecture for output directory naming.
 GOOS   ?= $(shell go env GOOS)
@@ -50,9 +49,6 @@ help:
 	@echo "make tui             Launch TUI explorer (seeds DB first if absent)"
 	@echo "                     Override: make tui TUI_DB=/path/to/my.db"
 	@echo "make pre-commit-*    Optional Git hooks (see CONTRIBUTING.md)"
-	@echo "make llm-setup       Regenerate .windsurf/, .cursor/, .claude/ etc. from scripts/llm/platforms/"
-	@echo "make clean-llm-all   Remove all LLM tool folders (.windsurf, .cursor, .claude, .continue, .codex)"
-	@echo "make clean-llm-windsurf|cursor|claude|continue|codex  Remove individual LLM folders"
 	@echo "make ci-full         Full pipeline: core CI + complexity + mutation testing + coupling analysis"
 	@echo "make mutation-test   Full Gremlins mutation testing (slow, thorough)"
 	@echo "                     Override target: make mutation-test TARGET=internal/domain"
@@ -239,31 +235,6 @@ lint:
 
 mod-tidy:
 	go mod tidy
-
-# LLM Tool Setup — generates .windsurf/, .cursor/, .claude/, etc. from scripts/llm/platforms/*/config.yaml
-llm-setup:
-	@./scripts/llm/llm-setup.sh
-
-# Cleanup LLM tool folders
-clean-llm-cursor:
-	rm -rf .cursor
-
-clean-llm-claude:
-	rm -rf .claude
-
-clean-llm-windsurf:
-	rm -rf .windsurf
-
-clean-llm-continue:
-	rm -rf .continue
-
-clean-llm-codex:
-	rm -rf .codex
-
-clean-llm-all:
-	rm -rf .cursor .claude .windsurf .continue .codex
-
-clean-llm: clean-llm-all
 
 # Full CI pipeline: core CI (incl. complexity) + mutation testing (dry-run)
 ci-full:

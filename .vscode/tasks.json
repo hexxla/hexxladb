@@ -1,0 +1,61 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "HexxlaDB: CI",
+      "type": "process",
+      "command": "make",
+      "args": ["ci"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": ["$go"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "HexxlaDB: Test",
+      "type": "process",
+      "command": "make",
+      "args": ["test"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": ["$go"],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "HexxlaDB: Build",
+      "type": "process",
+      "command": "make",
+      "args": ["build"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "HexxlaDB: Build Examples",
+      "type": "process",
+      "command": "make",
+      "args": ["build-examples"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "HexxlaDB: Integration Tests",
+      "type": "process",
+      "command": "make",
+      "args": ["integration"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "HexxlaDB: Controlled Evidence",
+      "type": "process",
+      "command": "make",
+      "args": ["evidence-controlled"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": ["$go"]
+    }
+  ]
+}

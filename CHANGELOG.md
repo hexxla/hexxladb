@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Editor and Codex project workflow** — tracked VS Code and Zed settings expose the repository's existing build and verification commands, and `.agents/skills/` is reserved for focused HexxlaDB-specific Codex skills. The obsolete Windsurf configuration and generated multi-assistant setup scripts have been removed.
 - **Aperture-7 super-hex occupancy summaries** — `NewSuperHexSummaryIndex` builds a consistent in-memory materialized index from a database snapshot, then `Sync` incrementally applies the existing logical changelog. `Summary`, `SummaryForCoord`, and `Summaries` provide O(1) occupancy reads and deterministic exports; `LastSeq` exposes the applied changelog cursor. The derived index is rebuildable and does not change `PackedCoord` or the on-disk engine format.
 - **Spatial and graph benchmark matrices** — compare ring-order vs Morton-order point reads across radius, density, and page-cache modes; measure `FindEdgePath` as graph out-degree grows.
 - **Reproducible spatial evidence suite** — `make evidence-controlled` runs the seeded super-hex oracle soak plus focused Dijkstra, deterministic FOV, and super-hex benchmarks; `make evidence-observe` emits aggregate-only JSON for a bounded production-style synthetic workload.

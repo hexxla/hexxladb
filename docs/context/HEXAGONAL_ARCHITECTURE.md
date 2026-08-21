@@ -164,7 +164,7 @@ Keep **`pkg/`** **small**. Every exported symbol is a **compatibility** promise;
 ### Versioning and docs
 
 - Treat **`pkg/`** as **stable API**: follow [semantic versioning](https://semver.org/) for module tags; avoid breaking changes without a **major** bump.
-- Document exported packages in **`CONTRIBUTING.md`** or **package doc comments**; add IDE-specific rules (e.g., `.cursor/rules/pkg-public-api.mdc`) when **`pkg/`** exists.
+- Document exported packages in **`CONTRIBUTING.md`** or **package doc comments**. If a recurring agent workflow needs extra guidance, keep that focused procedure in **`.agents/skills/`** rather than duplicating the architecture contract.
 
 This template **does not** create **`pkg/`** by default. Add it when you have a **clear** public surface; until then, **`internal/`** + **`cmd/`** are enough for a service-only repo.
 
@@ -238,7 +238,7 @@ Network client
 
 - **Authoritative gate (same as GitHub Actions):** **`make ci`** (runs **`scripts/ci.sh`**) — `gofmt` check, **`go vet`**, **`go test -race`**, **`govulncheck`**, **`golangci-lint run`**, **`go mod tidy`** (+ git cleanliness for module files when **`CI=true`**).
 - **Optional Git pre-commit:** **`.pre-commit-config.yaml`** ([pre-commit.com](https://pre-commit.com)) runs on `git commit`: file hygiene, **`golangci-lint fmt`** / **`golangci-lint-full`** (pinned like CI), **`go test`** (without `-race` for speed). Install: `pip install pre-commit` and `make pre-commit-install`. This does **not** replace `make ci` before push.
-- **IDE-specific hooks:** Each supported IDE (Cursor, Windsurf, Claude Code, Codex) has its own hook configuration for format-on-save, secret-pattern warnings, and shell guards. See the respective `.cursor/`, `.windsurf/`, `.claude/`, or `.codex/` directories.
+- **Editor integration:** Tracked **`.vscode/`** and **`.zed/`** settings provide format-on-save and tasks that invoke the repository's existing `make` targets. Validation and security checks remain editor-independent.
 
 **Unit tests:** Prefer **fakes** and small **test doubles** for ports; keep the default test run **fast**.
 
@@ -283,14 +283,13 @@ This template does **not** require DDD aggregates, event sourcing, CQRS, or extr
 
 ## Where else to look
 
-| Location                                                                               | Role                                                                                                                              |
-| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| **`.cursor/rules/`, `.windsurf/rules/`, `.claude/rules/`, `.codex/rules/`**            | Project and layering hints for editors/agents.                                                                                    |
-| **`.cursor/skills/`, `.windsurf/skills/`, `.claude/skills/`, `.codex/agents/skills/`** | Short workflows (local checks, CI, hexagonal change).                                                                             |
-| **`Makefile`**, **`scripts/ci.sh`**                                                    | Full local CI parity (`make ci`).                                                                                                 |
-| **`CHANGELOG.md`**                                                                     | How release notes relate to semver; Keep a Changelog–style **examples** (this template does not maintain a version history file). |
-| **`.pre-commit-config.yaml`**                                                          | Optional Git `pre-commit` hooks (`make pre-commit-install`).                                                                      |
-| **`AGENTS.md`**, **`CLAUDE.md`**                                                       | Short agent-facing invariants + pointer to this doc.                                                                              |
-| **IDE-specific rules** (e.g., `.cursor/rules/pkg-public-api.mdc`)                      | When **`pkg/`** exists: stability and export rules for the public library surface.                                                |
+| Location                              | Role                                                                                                                          |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| **`.vscode/`**, **`.zed/`**           | Shared editor settings and tasks backed by repository-native `make` commands.                                                 |
+| **`.agents/skills/`**                  | Focused Codex-compatible workflows for recurring HexxlaDB tasks.                                                              |
+| **`Makefile`**, **`scripts/ci.sh`**    | Full local CI parity (`make ci`).                                                                                             |
+| **`CHANGELOG.md`**                     | User-facing release history and semver-relevant changes.                                                                      |
+| **`.pre-commit-config.yaml`**          | Optional Git `pre-commit` hooks (`make pre-commit-install`).                                                                  |
+| **`AGENTS.md`**                        | Short agent-facing invariants and a pointer to this document.                                                                 |
 
 When automating refactors, treat **`docs/context/HEXAGONAL_ARCHITECTURE.md`** as the **source of truth** for layout and dependency direction.
