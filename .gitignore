@@ -32,7 +32,11 @@ __debug_bin_*
 /tui
 
 # --- Future / common output directories (binaries, releases, packagers) ---
-/bin/
+bin/linux/
+bin/darwin/
+bin/windows/
+bin/*-*/
+bin/*/
 /build/
 /dist/
 /out/
@@ -67,8 +71,6 @@ Thumbs.db
 # --- Editor / IDE ---
 .idea/
 *.swp
-*~
-#
 
 # VS Code and Zed project settings are tracked in .vscode/ and .zed/.
 # Keep assistant-specific local state out of the repository; shared Codex skills
@@ -77,6 +79,15 @@ Thumbs.db
 .claude/
 .continue/
 .codex/
+
+# Generated files
+*.generated.go
+*.pb.go
+*.pb.gw.go
+*.gen.go
+
+# Personal notes
+NOTES.md
 
 # --- Optional: uncomment when you add these stacks ---
 # node_modules/
