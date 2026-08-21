@@ -5,7 +5,8 @@
 The current B+ tree leaf split logic assumes that after a single split, both the left and right halves will fit within a single page. With highly variable entry sizes (e.g., payloads ranging from 1 byte to 10KB), the right side may still overflow the page size (4096 bytes).
 
 **Error observed:**
-```
+
+```text
 leaf page overflow after split: right side has 4 entries totaling 4155 bytes, pageSize=4096
 ```
 
@@ -19,7 +20,7 @@ Implement recursive splitting where if the right side still overflows after an i
 
 ### Phase 1: Data Structures (Day 1)
 
-**1.1 Define split result type**
+#### 1.1 Define split result type
 
 ```go
 // leafSplitResult represents the result of splitting a leaf node.
@@ -37,7 +38,7 @@ type splitPage struct {
 }
 ```
 
-**1.2 Modify leaf split algorithm**
+#### 1.2 Modify leaf split algorithm
 
 Replace `leafSplitIndex()` with `cascadingLeafSplit()`:
 
@@ -89,18 +90,21 @@ func cascadingLeafSplit(keys, vals [][]byte, pageSize int) (*leafSplitResult, er
 **2.1 Modify `insertIntoLeaf()`**
 
 Current signature returns single page ID:
+
 ```go
 func (t *BTree) insertIntoLeaf(pid uint64, ...)
     (split bool, newPID uint64, sepKey []byte, err error)
 ```
 
 New signature returns multiple pages:
+
 ```go
 func (t *BTree) insertIntoLeaf(pid uint64, ...)
     (split bool, newPages []uint64, sepKeys [][]byte, err error)
 ```
 
 **Implementation steps:**
+
 1. Build leaf data (keys/vals) from page
 2. Insert new key/value at correct position
 3. Check if page overflows
@@ -120,13 +124,15 @@ func (t *BTree) insertIntoInternal(pid uint64, idx int,
 ```
 
 **Implementation:**
+
 - Insert multiple separator keys and child pointers
 - Check if internal node overflows
 - If overflow, split internal node (may cascade up to root)
 
-**2.3 Propagation to root**
+#### 2.3 Propagation to root
 
 If internal node splits propagate to root:
+
 - Tree height may increase
 - New root created with two children
 
@@ -152,9 +158,10 @@ for i, page := range result.pages {
 }
 ```
 
-**3.2 Update overflow handling**
+#### 3.2 Update overflow handling
 
 If right side overflows, instead of error:
+
 - Continue splitting
 - Track all pages created
 - Update parent with all new page references
@@ -163,23 +170,23 @@ If right side overflows, instead of error:
 
 **4.1 Unit tests for `cascadingLeafSplit()`**
 
-| Test Case | Description |
-|-----------|-------------|
-| `TestCascadingSplit_TwoPages` | Normal case: 2 pages after split |
-| `TestCascadingSplit_ThreePages` | High variance: 3+ pages |
-| `TestCascadingSplit_EqualSizes` | Low variance: exactly 2 pages |
-| `TestCascadingSplit_MinKeys` | Edge case: minimum keys per page |
+| Test Case                       | Description                      |
+| ------------------------------- | -------------------------------- |
+| `TestCascadingSplit_TwoPages`   | Normal case: 2 pages after split |
+| `TestCascadingSplit_ThreePages` | High variance: 3+ pages          |
+| `TestCascadingSplit_EqualSizes` | Low variance: exactly 2 pages    |
+| `TestCascadingSplit_MinKeys`    | Edge case: minimum keys per page |
 
-**4.2 Integration tests**
+#### 4.2 Integration tests
 
-| Test Case | Description |
-|-----------|-------------|
-| `TestStress_concurrentReaders` | Original failing test |
-| `TestStress_variablePayloadChaos` | Random payloads 1B-10KB |
-| `TestStress_ascendingSizes` | Systematically increasing sizes |
-| `TestStress_descendingSizes` | Systematically decreasing sizes |
+| Test Case                         | Description                     |
+| --------------------------------- | ------------------------------- |
+| `TestStress_concurrentReaders`    | Original failing test           |
+| `TestStress_variablePayloadChaos` | Random payloads 1B-10KB         |
+| `TestStress_ascendingSizes`       | Systematically increasing sizes |
+| `TestStress_descendingSizes`      | Systematically decreasing sizes |
 
-**4.3 Regression tests**
+#### 4.3 Regression tests
 
 - Run all existing `btree_*_test.go` tests
 - Verify 500K cell test still passes
@@ -187,14 +194,14 @@ If right side overflows, instead of error:
 
 ### Phase 5: Edge Cases & Validation (Day 3-4)
 
-**5.1 Edge cases to handle**
+#### 5.1 Edge cases to handle
 
 - Single entry larger than page (should use overflow pages via MaxValueBytes)
 - All entries exactly same size (uniform split)
 - Empty page handling
 - Minimum keys constraint violation
 
-**5.2 Validation checks**
+#### 5.2 Validation checks
 
 ```go
 // After split, verify:
@@ -231,24 +238,24 @@ func (n *node) spill() error {
 
 ## Risks & Mitigations
 
-| Risk | Mitigation |
-|------|------------|
-| Performance regression | Benchmark before/after with `btree_bench_test.go` |
-| Tree height explosion | Limit cascade depth, monitor with metrics |
+| Risk                     | Mitigation                                        |
+| ------------------------ | ------------------------------------------------- |
+| Performance regression   | Benchmark before/after with `btree_bench_test.go` |
+| Tree height explosion    | Limit cascade depth, monitor with metrics         |
 | Backward incompatibility | Existing DBs unaffected (only affects new splits) |
-| Complex bugs | Extensive testing, property-based tests |
+| Complex bugs             | Extensive testing, property-based tests           |
 
 ## Timeline
 
-| Phase | Days | Deliverable |
-|-------|------|-------------|
-| 1 | 1 | Data structures, cascading algorithm |
-| 2 | 1-2 | Core B-tree modifications |
-| 3 | 1 | Page building updates |
-| 4 | 1 | Comprehensive test suite |
-| 5 | 0.5-1 | Edge cases, validation |
+| Phase | Days  | Deliverable                          |
+| ----- | ----- | ------------------------------------ |
+| 1     | 1     | Data structures, cascading algorithm |
+| 2     | 1-2   | Core B-tree modifications            |
+| 3     | 1     | Page building updates                |
+| 4     | 1     | Comprehensive test suite             |
+| 5     | 0.5-1 | Edge cases, validation               |
 
-**Total: 4.5-6 days**
+Total: 4.5-6 days
 
 ## Next Steps
 

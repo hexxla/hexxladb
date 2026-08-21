@@ -51,12 +51,12 @@ radius 512. This keeps an accidentally oversized observation run bounded.
 
 ## What is measured
 
-| Area | Controlled evidence | Observation evidence |
-| --- | --- | --- |
-| Dijkstra | API latency and allocations as graph out-degree grows | p50/p95/max/mean latency, paths found, and aggregate hop count over seeded route queries |
-| Deterministic FOV | Shadowcast algorithm, retained raycast comparison, and full `LoadContextFOV` API latency | p50/p95/max/mean latency and aggregate number of returned cells with deterministic blockers |
-| Super-hex | Rebuild, O(1) coordinate lookup, deterministic export, direct changelog tail reads across 512–100k historical records, and fixed-history one-shot catch-up | rebuild/write/sync distributions, changes processed, summary count, applied sequence, and caught-up state |
-| Resources | Go allocation counts per benchmark operation | total bytes allocated plus final database, WAL, and changelog sizes |
+| Area              | Controlled evidence                                                                                                                                        | Observation evidence                                                                                      |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Dijkstra          | API latency and allocations as graph out-degree grows                                                                                                      | p50/p95/max/mean latency, paths found, and aggregate hop count over seeded route queries                  |
+| Deterministic FOV | Shadowcast algorithm, retained raycast comparison, and full `LoadContextFOV` API latency                                                                   | p50/p95/max/mean latency and aggregate number of returned cells with deterministic blockers               |
+| Super-hex         | Rebuild, O(1) coordinate lookup, deterministic export, direct changelog tail reads across 512–100k historical records, and fixed-history one-shot catch-up | rebuild/write/sync distributions, changes processed, summary count, applied sequence, and caught-up state |
+| Resources         | Go allocation counts per benchmark operation                                                                                                               | total bytes allocated plus final database, WAL, and changelog sizes                                       |
 
 The super-hex correctness soak applies deterministic randomized puts, repeated
 updates, and deletes at hierarchy levels 1, 2, and 3. After every batch it fully

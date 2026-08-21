@@ -64,12 +64,12 @@ One event per successful **mutation** on [`Tx`](../../tx.go) / primitives. Stabl
 
 There is **no** in-process metrics registry in HexxlaDB itself; exporters should instrument the embedding service.
 
-| Signal | Meaning |
-|--------|---------|
-| `changelog_records_lag` | Difference between latest applied DB `CommitSeq` (or app-level mutation counter) and last fully processed changelog sequence (your consumer cursor). |
-| `changelog_read_errors_total` | Count of [`ErrChangelogCorrupt`](../../errors.go) or I/O failures from [`ReadChangelogSince`](../../db_changelog.go). |
+| Signal                             | Meaning                                                                                                                                                       |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `changelog_records_lag`            | Difference between latest applied DB `CommitSeq` (or app-level mutation counter) and last fully processed changelog sequence (your consumer cursor).          |
+| `changelog_read_errors_total`      | Count of [`ErrChangelogCorrupt`](../../errors.go) or I/O failures from [`ReadChangelogSince`](../../db_changelog.go).                                         |
 | `commit_finalization_errors_total` | [`ErrCommitFinalization`](../../errors.go) from [`Update`](../../tx.go) (possible **data committed without changelog row**—see reconciliation runbook above). |
-| `changelog_append_latency_ms` | Time spent in changelog append path per commit (detect fsync stalls when sync mode is on). |
+| `changelog_append_latency_ms`      | Time spent in changelog append path per commit (detect fsync stalls when sync mode is on).                                                                    |
 
 **Dashboards:** plot lag over time; alert when lag grows unbounded or corrupt-tail errors spike.
 

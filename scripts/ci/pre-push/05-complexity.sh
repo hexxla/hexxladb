@@ -89,7 +89,8 @@ get_threshold() {
     local metric="$2"
 
     if [[ -f ".complexity.yml" ]]; then
-        local val=$(grep -A 5 "${layer}:" .complexity.yml 2>/dev/null | grep "${metric}:" | head -1 | awk '{print $2}' || true)
+        local val
+        val=$(grep -A 5 "${layer}:" .complexity.yml 2>/dev/null | grep "${metric}:" | head -1 | awk '{print $2}' || true)
         if [[ -n "$val" ]]; then
             echo "$val"
             return
@@ -117,7 +118,8 @@ get_threshold() {
 # Get CRAP threshold
 get_crap_threshold() {
     if [[ -f ".complexity.yml" ]]; then
-        local val=$(grep -A 8 "crap:" .complexity.yml 2>/dev/null | grep "threshold:" | head -1 | awk '{print $2}' || true)
+        local val
+        val=$(grep -A 8 "crap:" .complexity.yml 2>/dev/null | grep "threshold:" | head -1 | awk '{print $2}' || true)
         if [[ -n "$val" ]]; then
             echo "$val"
             return
@@ -209,7 +211,6 @@ while IFS= read -r line; do
 
     # Parse: <complexity> <package> <function> <file:line>
     comp=$(echo "$line" | awk '{print $1}')
-    pkg=$(echo "$line" | awk '{print $2}')
     func=$(echo "$line" | awk '{print $3}')
     loc=$(echo "$line" | awk '{print $4}')
     file=$(echo "$loc" | cut -d: -f1)
@@ -236,7 +237,6 @@ while IFS= read -r line; do
     [[ -z "$line" ]] && continue
 
     comp=$(echo "$line" | awk '{print $1}')
-    pkg=$(echo "$line" | awk '{print $2}')
     func=$(echo "$line" | awk '{print $3}')
     loc=$(echo "$line" | awk '{print $4}')
     file=$(echo "$loc" | cut -d: -f1)
@@ -262,7 +262,6 @@ while IFS= read -r line; do
     [[ -z "$line" ]] && continue
 
     cyclo=$(echo "$line" | awk '{print $1}')
-    pkg=$(echo "$line" | awk '{print $2}')
     func=$(echo "$line" | awk '{print $3}')
     loc=$(echo "$line" | awk '{print $4}')
     file=$(echo "$loc" | cut -d: -f1)

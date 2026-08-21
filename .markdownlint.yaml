@@ -1,0 +1,8 @@
+extends: markdownlint/style/prettier
+MD024:
+  siblings_only: true
+MD033:
+  allowed_elements:
+    - div
+    - img
+MD041: false

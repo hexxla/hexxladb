@@ -77,11 +77,13 @@ check_import_cycles() {
     fi
 
     # Simple cycle detection - look for packages that import each other
-    local packages=($(find "$dir" -name "*.go" -exec dirname {} \; | sort -u))
+    local -a packages
+    mapfile -t packages < <(find "$dir" -name "*.go" -exec dirname {} \; | sort -u)
 
     for pkg in "${packages[@]}"; do
-        local imports=$(grep -h --include='*.go' '^import' "$pkg"/*.go 2>/dev/null | grep -o '"[^"]*internal/[^"]*"' | sort -u || true)
-        for imp in $imports; do
+        local -a imports
+        mapfile -t imports < <(grep -h --include='*.go' '^import' "$pkg"/*.go 2>/dev/null | grep -o '"[^"]*internal/[^"]*"' | sort -u || true)
+        for imp in "${imports[@]}"; do
             local imp_path="${imp//\"/}"
             local imp_dir="$ROOT/$imp_path"
             if [[ -d "$imp_dir" ]] && [[ "$imp_dir" != "$pkg" ]]; then
@@ -103,9 +105,10 @@ check_port_interface_types() {
     fi
 
     # Look for interface definitions that reference adapter types
-    local interfaces=$(find "$port_dir" -name "*.go" -exec grep -l "type.*interface" {} \;)
+    local -a interfaces
+    mapfile -t interfaces < <(find "$port_dir" -name "*.go" -exec grep -l "type.*interface" {} \;)
 
-    for intf_file in $interfaces; do
+    for intf_file in "${interfaces[@]}"; do
         if grep -q "github.com/hexxla/hexxladb/internal/adapters" "$intf_file"; then
             die "Port interface $intf_file references adapter types (forbidden by hexagonal architecture)"
         fi
@@ -212,7 +215,13 @@ if [[ -n "$framework_imports" ]]; then
 fi
 
 # Rule: Port interfaces MUST NOT reference adapter types
-port_violations=$(find internal/domain internal/app -name "*.go" -exec grep -l "interface" {} \; | xargs grep -l "github.com/hexxla/hexxladb/internal/adapters" 2>/dev/null || true)
+port_violations=$(
+    while IFS= read -r file; do
+        if grep -q "github.com/hexxla/hexxladb/internal/adapters" "$file"; then
+            printf '%s\n' "$file"
+        fi
+    done < <(find internal/domain internal/app -name "*.go" -exec grep -l "interface" {} \;)
+)
 if [[ -n "$port_violations" ]]; then
     die "Port interfaces referencing adapter types:"
     echo "$port_violations"

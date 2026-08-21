@@ -283,13 +283,13 @@ This template does **not** require DDD aggregates, event sourcing, CQRS, or extr
 
 ## Where else to look
 
-| Location                              | Role                                                                                                                          |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| **`.vscode/`**, **`.zed/`**           | Shared editor settings and tasks backed by repository-native `make` commands.                                                 |
-| **`.agents/skills/`**                  | Focused Codex-compatible workflows for recurring HexxlaDB tasks.                                                              |
-| **`Makefile`**, **`scripts/ci.sh`**    | Full local CI parity (`make ci`).                                                                                             |
-| **`CHANGELOG.md`**                     | User-facing release history and semver-relevant changes.                                                                      |
-| **`.pre-commit-config.yaml`**          | Optional Git `pre-commit` hooks (`make pre-commit-install`).                                                                  |
-| **`AGENTS.md`**                        | Short agent-facing invariants and a pointer to this document.                                                                 |
+| Location                            | Role                                                                          |
+| ----------------------------------- | ----------------------------------------------------------------------------- |
+| **`.vscode/`**, **`.zed/`**         | Shared editor settings and tasks backed by repository-native `make` commands. |
+| **`.agents/skills/`**               | Focused Codex-compatible workflows for recurring HexxlaDB tasks.              |
+| **`Makefile`**, **`scripts/ci.sh`** | Full local CI parity (`make ci`).                                             |
+| **`CHANGELOG.md`**                  | User-facing release history and semver-relevant changes.                      |
+| **`.pre-commit-config.yaml`**       | Optional Git `pre-commit` hooks (`make pre-commit-install`).                  |
+| **`AGENTS.md`**                     | Short agent-facing invariants and a pointer to this document.                 |
 
 When automating refactors, treat **`docs/context/HEXAGONAL_ARCHITECTURE.md`** as the **source of truth** for layout and dependency direction.

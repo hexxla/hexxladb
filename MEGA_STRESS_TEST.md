@@ -2,12 +2,12 @@
 
 ## Current Test Coverage
 
-| Test Type | Status | Notes |
-|-----------|--------|-------|
-| Unit tests | ✅ Good | Race detector enabled |
-| Crash tests | ⚠️ Limited | SIGKILL at 5 phases only |
-| Stress tests | ⚠️ Limited | 100K-500K cells max |
-| Fuzz tests | ⚠️ Basic | Header + WAL decode only |
+| Test Type        | Status     | Notes                                                                                                                                                                                                                                                      |
+| ---------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unit tests       | ✅ Good    | Race detector enabled                                                                                                                                                                                                                                      |
+| Crash tests      | ⚠️ Limited | SIGKILL at 5 phases only                                                                                                                                                                                                                                   |
+| Stress tests     | ⚠️ Limited | 100K-500K cells max                                                                                                                                                                                                                                        |
+| Fuzz tests       | ⚠️ Basic   | Header + WAL decode only                                                                                                                                                                                                                                   |
 | Corruption tests | ⚠️ Partial | B+ tree cascade/split integrity covered: `TestProbe_*`, `TestCascadeIntegrity_*` (tree validator: balance, parent linkage, page-fit, top-down reachability, reopen) + `TestProbe_CompressMagicCollision`. Page-level byte corruption injection still TODO. |
 
 ## MEGA Stress Test Checklist

@@ -9,11 +9,7 @@
       "formatter": "language_server"
     }
   },
-  "file_scan_exclusions": [
-    "**/.git",
-    "**/.tmp",
-    "**/bin"
-  ],
+  "file_scan_exclusions": ["**/.git", "**/.tmp", "**/bin"],
   "lsp": {
     "gopls": {
       "settings": {

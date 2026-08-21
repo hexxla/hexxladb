@@ -23,9 +23,6 @@ errors=0
 
 # Check each adapter file
 for file in $adapter_files; do
-    # Extract the package name from the adapter
-    adapter_pkg=$(grep -m1 "^package " "$file" | sed 's/package //')
-
     # Look for struct definitions in adapter
     structs=$(grep -E "^type [A-Z].* struct" "$file" | awk '{print $2}' || true)
 

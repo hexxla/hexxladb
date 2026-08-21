@@ -1,6 +1,6 @@
 {
   "[go]": {
-    "editor.defaultFormatter": "golang.Go",
+    "editor.defaultFormatter": "golang.go",
     "editor.formatOnSave": true,
     "editor.codeActionsOnSave": {
       "source.organizeImports": "explicit"

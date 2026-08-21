@@ -16,9 +16,9 @@ fi
 
 echo -e "${CYAN}> Running tests${NC}"
 
-# Use GO_TEST_FLAGS env var or default to -short for pre-commit
-FLAGS=${GO_TEST_FLAGS:--short}
+# Use GO_TEST_FLAGS env var or default to -short for pre-commit.
+read -r -a test_flags <<< "${GO_TEST_FLAGS:--short}"
 
-go test $FLAGS ./...
+go test "${test_flags[@]}" ./...
 echo -e "${GREEN}Tests: OK${NC}"
 echo

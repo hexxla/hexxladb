@@ -52,7 +52,7 @@ Each cell has exactly six symmetric neighbors. Ring walks and radius-bounded exp
 
 ### Core Objects
 
-**Coord**
+#### Coord
 
 ```go
 type Coord struct {
@@ -63,7 +63,7 @@ type Coord struct {
 
 Methods: `Cube()`, `Distance(other Coord) int`, `Neighbors() []Coord`, `Ring(radius int) []Coord`.
 
-**Cell**
+#### Cell
 
 ```go
 type Cell struct {
@@ -80,7 +80,7 @@ type Cell struct {
 }
 ```
 
-**FacetView**
+#### FacetView
 
 ```go
 type FacetView struct {
@@ -91,7 +91,7 @@ type FacetView struct {
 }
 ```
 
-**Seam**
+#### Seam
 
 ```go
 type Seam struct {
@@ -107,7 +107,7 @@ type Seam struct {
 }
 ```
 
-**ValidityWindow**
+#### ValidityWindow
 
 ```go
 type ValidityWindow struct {
@@ -116,7 +116,7 @@ type ValidityWindow struct {
 }
 ```
 
-**Provenance**
+#### Provenance
 
 ```go
 type Provenance struct {
@@ -281,23 +281,23 @@ Hexxla is a hexagonal spatial memory operating system for LLMs. Embeddings or le
 
 ### Mapping: HEXXLA intent → HexxlaDB primitives
 
-| HEXXLA concept (this doc)                  | HexxlaDB surface (stable, root package)                                                                                                       | Notes                                                                                                                          |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Spatial addressing `(q,r)` / packed keys   | **`Coord`**, **`Pack`**, **`Unpack`**, **`Ring`**, **`WalkRings`**                                                                            | Stable root-package geometry and Morton-key helpers.                                                                           |
-| Persist a memory cell                      | **`Tx.PutCell`** → stores **`record.CellRecord`** (wire types in **`internal/record`**)                                                       | Immutable raw + provenance + validity + tags; secondaries **`source/`**, **`time/`**, **`tag/`** maintained automatically.     |
-| Read one cell                              | **`Tx.GetCell`**                                                                                                                              | Snapshot-visible version when MVCC enabled.                                                                                    |
-| Neighborhood + token-budget `ContextPack`  | **`Tx.LoadContext`**, **`LoadContextConfig`**, **`TokenBudgeter`** (for example **`ByteLenBudgeter`**)                                         | `Seeds`, `MaxRing`, `MaxTokens`, optional validity `AsOf`, edge BFS, and assembly controls; distinct from MVCC **`DB.ViewAt`**. |
-| Facets (derived views, hash discipline)    | **`Tx.PutFacet`**, **`Tx.UpdateFacet`**, **`Tx.GetFacet`**, **`Tx.AscendFacetsForCell`**, **`Tx.WalkRingFacets`**                             | Product maps **FacetView** from assembled **`CellView`**.                                                                      |
-| Edges (adjacency / conversation graph)     | **`Tx.LinkCells`** (sugar) or **`Tx.PutEdge`**, **`Tx.GetEdge`**, **`Tx.AscendEdgesFrom`**                                                    | Distinct from seams.                                                                                                           |
-| Weighted edge routing                      | **`Tx.FindEdgePath`**, **`FindEdgePathConfig`**, **`Tx.WalkEdges`**                                                                           | Dijkstra shortest path and BFS reachability over directed stored edges.                                                        |
-| Visibility / region context                | **`Tx.LoadContextFOV`**, **`Tx.LoadContextVoronoi`**                                                                                           | Deterministic shadowcasting FOV and weighted multi-source Voronoi.                                                             |
-| Hierarchical occupancy                     | **`NewSuperHexSummaryIndex`**, **`SuperHexSummaryIndex`**                                                                                      | Rebuildable in-memory aperture-7 summaries maintained from the changelog.                                                      |
-| Contradictions / seams                     | **`Tx.PutSeam`**, **`Tx.FindSeams`**, **`Tx.FindSeamsAt`**, **`Tx.ResolveSeam`**, **`Tx.MarkConflict`**                                       | Storage: **`seam/<ulid>`** + **`seam-by-cells/…`**; seam secondaries **`AscendSeamsBySource`**, **`AscendSeamsInTimeBucket`**. |
-| Secondary discovery (no full lattice walk) | **`Tx.AscendCellsBySource`**, **`Tx.AscendCellsInTimeBucket`**, **`Tx.AscendCellsByTag`**, **`Tx.AscendDistinctTags`**, **`Tx.ListExistingTopics`** | Same for seams where indexed.                                                                                                  |
-| MVCC “as of” snapshot (engine time)        | **`DB.ViewAt`**, **`DB.ViewAtTime`**, **`DB.Update`**                                                                                         | Orthogonal to **validity** windows on records; see **MVCC temporal semantics** in [`TX.md`](./TX.md).                          |
-| Retention / observability (optional)       | **`DB.StatsMVCC`**, **`DB.PruneCellVersions`**, **`DB.SuggestedPruneBeforeSeq`**, **`DB.ReadChangelogSince`** (if enabled)                    | Operational; not required for core memory semantics.                                                                           |
-| At-rest encryption (optional)              | **`Options`** encryption fields, **`DeriveKeyFromPassphrase`**, **`RotateEncryption`**                                                        | See **ENCRYPTION.md**.                                                                                                         |
-| Raw btree escape hatch                     | **`Tx.Get`**, **`Tx.Put`**, **`Tx.AscendRange`**                                                                                              | Rare; prefer lattice primitives for HEXXLA-shaped code.                                                                        |
+| HEXXLA concept (this doc)                  | HexxlaDB surface (stable, root package)                                                                                                             | Notes                                                                                                                           |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Spatial addressing `(q,r)` / packed keys   | **`Coord`**, **`Pack`**, **`Unpack`**, **`Ring`**, **`WalkRings`**                                                                                  | Stable root-package geometry and Morton-key helpers.                                                                            |
+| Persist a memory cell                      | **`Tx.PutCell`** → stores **`record.CellRecord`** (wire types in **`internal/record`**)                                                             | Immutable raw + provenance + validity + tags; secondaries **`source/`**, **`time/`**, **`tag/`** maintained automatically.      |
+| Read one cell                              | **`Tx.GetCell`**                                                                                                                                    | Snapshot-visible version when MVCC enabled.                                                                                     |
+| Neighborhood + token-budget `ContextPack`  | **`Tx.LoadContext`**, **`LoadContextConfig`**, **`TokenBudgeter`** (for example **`ByteLenBudgeter`**)                                              | `Seeds`, `MaxRing`, `MaxTokens`, optional validity `AsOf`, edge BFS, and assembly controls; distinct from MVCC **`DB.ViewAt`**. |
+| Facets (derived views, hash discipline)    | **`Tx.PutFacet`**, **`Tx.UpdateFacet`**, **`Tx.GetFacet`**, **`Tx.AscendFacetsForCell`**, **`Tx.WalkRingFacets`**                                   | Product maps **FacetView** from assembled **`CellView`**.                                                                       |
+| Edges (adjacency / conversation graph)     | **`Tx.LinkCells`** (sugar) or **`Tx.PutEdge`**, **`Tx.GetEdge`**, **`Tx.AscendEdgesFrom`**                                                          | Distinct from seams.                                                                                                            |
+| Weighted edge routing                      | **`Tx.FindEdgePath`**, **`FindEdgePathConfig`**, **`Tx.WalkEdges`**                                                                                 | Dijkstra shortest path and BFS reachability over directed stored edges.                                                         |
+| Visibility / region context                | **`Tx.LoadContextFOV`**, **`Tx.LoadContextVoronoi`**                                                                                                | Deterministic shadowcasting FOV and weighted multi-source Voronoi.                                                              |
+| Hierarchical occupancy                     | **`NewSuperHexSummaryIndex`**, **`SuperHexSummaryIndex`**                                                                                           | Rebuildable in-memory aperture-7 summaries maintained from the changelog.                                                       |
+| Contradictions / seams                     | **`Tx.PutSeam`**, **`Tx.FindSeams`**, **`Tx.FindSeamsAt`**, **`Tx.ResolveSeam`**, **`Tx.MarkConflict`**                                             | Storage: **`seam/<ulid>`** + **`seam-by-cells/…`**; seam secondaries **`AscendSeamsBySource`**, **`AscendSeamsInTimeBucket`**.  |
+| Secondary discovery (no full lattice walk) | **`Tx.AscendCellsBySource`**, **`Tx.AscendCellsInTimeBucket`**, **`Tx.AscendCellsByTag`**, **`Tx.AscendDistinctTags`**, **`Tx.ListExistingTopics`** | Same for seams where indexed.                                                                                                   |
+| MVCC “as of” snapshot (engine time)        | **`DB.ViewAt`**, **`DB.ViewAtTime`**, **`DB.Update`**                                                                                               | Orthogonal to **validity** windows on records; see **MVCC temporal semantics** in [`TX.md`](./TX.md).                           |
+| Retention / observability (optional)       | **`DB.StatsMVCC`**, **`DB.PruneCellVersions`**, **`DB.SuggestedPruneBeforeSeq`**, **`DB.ReadChangelogSince`** (if enabled)                          | Operational; not required for core memory semantics.                                                                            |
+| At-rest encryption (optional)              | **`Options`** encryption fields, **`DeriveKeyFromPassphrase`**, **`RotateEncryption`**                                                              | See **ENCRYPTION.md**.                                                                                                          |
+| Raw btree escape hatch                     | **`Tx.Get`**, **`Tx.Put`**, **`Tx.AscendRange`**                                                                                                    | Rare; prefer lattice primitives for HEXXLA-shaped code.                                                                         |
 
 Canonical key layout and primitive behavior: **[HEXXLA_DB.md](./HEXXLA_DB.md)**. Every exported **`hexxladb`** symbol: **[API_REFERENCE.md](./API_REFERENCE.md)**.
 

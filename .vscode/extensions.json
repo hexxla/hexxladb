@@ -1,6 +1,6 @@
 {
   "recommendations": [
-    "golang.Go",
+    "golang.go",
     "redhat.vscode-yaml",
     "timonwong.shellcheck",
     "DavidAnson.vscode-markdownlint"

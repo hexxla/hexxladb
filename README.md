@@ -147,7 +147,7 @@ The core primitives — spatial locality, provenance, contradiction tracking, bu
 | Supersession chains                |    ✓     |     —      |     —     |     —      |
 | Token-budgeted context assembly    |    ✓     |     —      |     —     |     —      |
 | Spatial locality (ring walks)      |    ✓     |     —      |     —     |     —      |
-| Graph pathfinding (Dijkstra, BFS)   |    ✓     |     —      |     ✓     |     —      |
+| Graph pathfinding (Dijkstra, BFS)  |    ✓     |     —      |     ✓     |     —      |
 | MVCC time-travel                   |    ✓     |     —      |     —     |  partial   |
 | Provenance + confidence per memory |    ✓     |     —      |     —     |     —      |
 | Embedded (no network)              |    ✓     |     —      |     —     |     ✓      |
@@ -249,7 +249,7 @@ The context assembly operations (`LoadContext`, `LoadContextFOV`, `LoadContextVo
 | -------------------------------------------------------- | ------------------- | ------------------------------------------------------------ |
 | [Conversational Memory](examples/conversational_memory/) | `make demo`         | Cells, seams, tags, MVCC, queries, context, FOV, pathfinding |
 | [LLM Context Engine](examples/llm_context_engine/)       | `make demo-llm`     | Ollama embeddings, semantic search, supersession, FOV        |
-| [Spatial Algorithms](examples/spatial_algorithms/)       | `make demo-spatial` | FOV, LOD, Voronoi, Dijkstra, BFS — side-by-side            |
+| [Spatial Algorithms](examples/spatial_algorithms/)       | `make demo-spatial` | FOV, LOD, Voronoi, Dijkstra, BFS — side-by-side              |
 
 The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm && make demo-llm`
 
@@ -267,15 +267,15 @@ The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm 
 
 ## Documentation
 
-| Document                                             | What's inside                                            |
-| ---------------------------------------------------- | -------------------------------------------------------- |
-| [`CONFIGURATION.md`](docs/hexxladb/CONFIGURATION.md) | All `Options` fields, common configs, encryption setup   |
-| [`API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.md) | Complete API reference — every exported symbol           |
-| [`HEXXLA.md`](docs/hexxladb/HEXXLA.md)               | Memory model: hex lattice, seams, validity, supersession |
-| [`HEXXLA_DB.md`](docs/hexxladb/HEXXLA_DB.md)         | Storage layout, key encoding, HNSW keyspace              |
-| [`OPERATIONS.md`](docs/hexxladb/OPERATIONS.md)       | Production ops, benchmarks, backup, encryption           |
-| [`PERFORMANCE_EVIDENCE.md`](docs/hexxladb/PERFORMANCE_EVIDENCE.md) | Reproducible Dijkstra, FOV, and super-hex evidence runs |
-| [`ROADMAP.md`](docs/ROADMAP.md)                      | What's next and what's out of scope                      |
+| Document                                                           | What's inside                                            |
+| ------------------------------------------------------------------ | -------------------------------------------------------- |
+| [`CONFIGURATION.md`](docs/hexxladb/CONFIGURATION.md)               | All `Options` fields, common configs, encryption setup   |
+| [`API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.md)               | Complete API reference — every exported symbol           |
+| [`HEXXLA.md`](docs/hexxladb/HEXXLA.md)                             | Memory model: hex lattice, seams, validity, supersession |
+| [`HEXXLA_DB.md`](docs/hexxladb/HEXXLA_DB.md)                       | Storage layout, key encoding, HNSW keyspace              |
+| [`OPERATIONS.md`](docs/hexxladb/OPERATIONS.md)                     | Production ops, benchmarks, backup, encryption           |
+| [`PERFORMANCE_EVIDENCE.md`](docs/hexxladb/PERFORMANCE_EVIDENCE.md) | Reproducible Dijkstra, FOV, and super-hex evidence runs  |
+| [`ROADMAP.md`](docs/ROADMAP.md)                                    | What's next and what's out of scope                      |
 
 ---
 

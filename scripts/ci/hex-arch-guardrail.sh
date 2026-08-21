@@ -26,10 +26,6 @@ warn() {
     ((warnings++))
 }
 
-success() {
-    echo -e "${GREEN}success:${NC} $*"
-}
-
 echo -e "${CYAN}> Enhanced Hexagonal Architecture Guardrail${NC}"
 echo -e "${CYAN}> Validating against docs/architecture/architecture.md${NC}"
 echo
@@ -103,7 +99,7 @@ for dir in internal/core/domain internal/core/ports internal/core/services; do
         dir_imports=$(go list -f '{{.ImportPath}}: {{join .Imports " "}}' ./$dir/... 2>/dev/null || true)
         for pkg in $dir_imports; do
             for framework in $framework_packages; do
-                if [[ "$pkg" =~ "$framework" ]]; then
+                if [[ "$pkg" =~ $framework ]]; then
                     die "Framework or database package $framework found in core ($dir)"
                 fi
             done
@@ -130,10 +126,12 @@ check_import_cycles() {
     local dir="$1"
     [[ -d "$dir" ]] || return 0
 
-    local packages=($(find "$dir" -name "*.go" -exec dirname {} \; 2>/dev/null | sort -u))
+    local -a packages
+    mapfile -t packages < <(find "$dir" -name "*.go" -exec dirname {} \; 2>/dev/null | sort -u)
     for pkg in "${packages[@]}"; do
-        local imports=$(grep -h --include='*.go' '^import' "$pkg"/*.go 2>/dev/null | grep -o '"[^"]*internal/[^"]*"' | sort -u || true)
-        for imp in $imports; do
+        local -a imports
+        mapfile -t imports < <(grep -h --include='*.go' '^import' "$pkg"/*.go 2>/dev/null | grep -o '"[^"]*internal/[^"]*"' | sort -u || true)
+        for imp in "${imports[@]}"; do
             local imp_path="${imp//\"/}"
             local imp_dir="$ROOT/$imp_path"
             if [[ -d "$imp_dir" ]] && [[ "$imp_dir" != "$pkg" ]]; then
@@ -179,4 +177,3 @@ else
     echo "  - No import cycles detected"
     exit 0
 fi
-echo

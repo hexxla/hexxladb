@@ -45,7 +45,7 @@ for file in $domain_files; do
     exported_funcs=$(grep -E "^func [A-Z]" "$file" | awk '{print $2}' | sed 's/(.*//' || true)
 
     for func in $exported_funcs; do
-        func_name=$(echo "$func" | sed 's/(.*//')
+        func_name=${func%%(*}
         # Skip common constructors and public API functions
         if [[ "$func_name" =~ ^(New|Create|Get|Update|Delete|Find|List) ]]; then
             continue

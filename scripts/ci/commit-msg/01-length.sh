@@ -46,7 +46,7 @@ done <<< "$msg"
 # Check total message size (excluding comments) for conciseness
 total_chars=${#msg}
 MAX_TOTAL_CHARS=500
-if [ $total_chars -gt $MAX_TOTAL_CHARS ]; then
+if [ "$total_chars" -gt "$MAX_TOTAL_CHARS" ]; then
     echo -e "${RED}error:${NC} Commit message is too long ($total_chars chars). Max $MAX_TOTAL_CHARS chars."
     echo "Please be concise. Use multiple commits for unrelated changes."
     exit 1

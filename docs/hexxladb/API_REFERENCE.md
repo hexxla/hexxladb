@@ -15,17 +15,17 @@ Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored 
 
 ## Database lifecycle
 
-| Symbol                                   | Notes                                                                                                                                                                                                       |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`Open`](../../db.go)**                | Open or create a database file; applies WAL on startup.                                                                                                                                                     |
-| **[`(*DB).Close`](../../db.go)**         | Waits for in-flight transactions; idempotent for nil receiver.                                                                                                                                              |
-| **[`(*DB).Compact`](../../compact.go)**  | Copy-compact open plaintext DB to a new `destPath` (minimal-size file, preserves all data including MVCC history).                                                                                           |
-| **[`CompactTo`](../../compact.go)**      | Standalone copy-compaction from a closed `srcPath` to a new `destPath`; propagates format, encryption, MaxValueBytes.                                                                                        |
-| **[`ErrCorruptDatabase`](../../errors.go)** | Open-time corruption (header/WAL).                                                                                                                                                                       |
-| **[`Options`](../../options.go)**        | `EnableMVCC`, `MVCCRetention`, changelog, encryption, `CellValidator`, `AfterPutCell`, `AfterPutSeam`, `PageSize`, `MaxValueBytes`, `PageCacheSize` (0 = 4 MiB default, -1 = disable), optional page hooks. |
-| **[`(*DB).PageSize`](../../db.go)**      | Returns the active page size (bytes); 4096 default for new databases.                                                                                                                                       |
-| **[`(*DB).MaxValueBytes`](../../db.go)** | Returns the effective per-database max value size (bytes) from the file header.                                                                                                                             |
-| **[`MVCCRetention`](../../options.go)**  | Retention hint for prune suggestions.                                                                                                                                                                       |
+| Symbol                                      | Notes                                                                                                                                                                                                       |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`Open`](../../db.go)**                   | Open or create a database file; applies WAL on startup.                                                                                                                                                     |
+| **[`(*DB).Close`](../../db.go)**            | Waits for in-flight transactions; idempotent for nil receiver.                                                                                                                                              |
+| **[`(*DB).Compact`](../../compact.go)**     | Copy-compact open plaintext DB to a new `destPath` (minimal-size file, preserves all data including MVCC history).                                                                                          |
+| **[`CompactTo`](../../compact.go)**         | Standalone copy-compaction from a closed `srcPath` to a new `destPath`; propagates format, encryption, MaxValueBytes.                                                                                       |
+| **[`ErrCorruptDatabase`](../../errors.go)** | Open-time corruption (header/WAL).                                                                                                                                                                          |
+| **[`Options`](../../options.go)**           | `EnableMVCC`, `MVCCRetention`, changelog, encryption, `CellValidator`, `AfterPutCell`, `AfterPutSeam`, `PageSize`, `MaxValueBytes`, `PageCacheSize` (0 = 4 MiB default, -1 = disable), optional page hooks. |
+| **[`(*DB).PageSize`](../../db.go)**         | Returns the active page size (bytes); 4096 default for new databases.                                                                                                                                       |
+| **[`(*DB).MaxValueBytes`](../../db.go)**    | Returns the effective per-database max value size (bytes) from the file header.                                                                                                                             |
+| **[`MVCCRetention`](../../options.go)**     | Retention hint for prune suggestions.                                                                                                                                                                       |
 
 ---
 
@@ -81,8 +81,8 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 | **[`(*Tx).GetEdge`](../../facets_edges.go)**             | Edge lookup by endpoints + relation type.                                                        |
 | **[`(*Tx).AscendEdgesFrom`](../../facets_edges.go)**     | Out-edges from a packed coord.                                                                   |
 | **[`(*Tx).LinkCells`](../../facets_edges.go)**           | Sugar: pack coords + **`PutEdge`**.                                                              |
-| **[`FacetWalkRecord`](../../export.go)**    | Type alias for **`AscendFacetsForCell`** callbacks (embedding apps avoid **`internal/record`**). |
-| **[`EdgeWalkRecord`](../../export.go)**     | Type alias for **`AscendEdgesFrom`** callbacks.                                                  |
+| **[`FacetWalkRecord`](../../export.go)**                 | Type alias for **`AscendFacetsForCell`** callbacks (embedding apps avoid **`internal/record`**). |
+| **[`EdgeWalkRecord`](../../export.go)**                  | Type alias for **`AscendEdgesFrom`** callbacks.                                                  |
 
 ---
 
@@ -113,14 +113,14 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 
 ## Batch operations and bulk I/O
 
-| Symbol                                          | Notes                                                         |
-| ----------------------------------------------- | ------------------------------------------------------------- |
-| **[`(*DB).BatchPutCells`](../../batch.go)** | Batched multi-cell write; counts and progress are reported only after each batch commits. |
-| **[`BatchPutCellOptions`](../../batch.go)** | Batch size, progress callback, continue-on-error flag.                            |
-| **[`BatchPutCellResult`](../../batch.go)**  | Committed write count + per-cell errors.                                          |
-| **[`BatchPutCellError`](../../batch.go)**   | Input index + error for failed cells; `Error` and `Unwrap` support standard error inspection. |
-| **[`(*Tx).ExportCellsJSON`](../../batch.go)** | Stream visible cells as a JSON array to a writer.                               |
-| **[`(*DB).ImportCellsJSON`](../../batch.go)** | Stream a JSON array into bounded write batches; non-array input is rejected.     |
+| Symbol                                        | Notes                                                                                         |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| **[`(*DB).BatchPutCells`](../../batch.go)**   | Batched multi-cell write; counts and progress are reported only after each batch commits.     |
+| **[`BatchPutCellOptions`](../../batch.go)**   | Batch size, progress callback, continue-on-error flag.                                        |
+| **[`BatchPutCellResult`](../../batch.go)**    | Committed write count + per-cell errors.                                                      |
+| **[`BatchPutCellError`](../../batch.go)**     | Input index + error for failed cells; `Error` and `Unwrap` support standard error inspection. |
+| **[`(*Tx).ExportCellsJSON`](../../batch.go)** | Stream visible cells as a JSON array to a writer.                                             |
+| **[`(*DB).ImportCellsJSON`](../../batch.go)** | Stream a JSON array into bounded write batches; non-array input is rejected.                  |
 
 ---
 
@@ -155,8 +155,8 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 
 ## Wire format types (public re-exports)
 
-| Symbol                                         | Notes                                                                                                                                                                             |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Symbol                                  | Notes                                                                                                                                                                             |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **[`CellRecord`](../../export.go)**     | v1 wire shape for cell/<packed_coord> blobs. Re-exported from internal/record for public API access. Used by `ScanContextRaw`, `ScanContextAtRaw`, and low-level cell operations. |
 | **[`ProvenanceWire`](../../export.go)** | Provenance stored in v1 payloads (times as Unix nanoseconds UTC). Re-exported from internal/record.                                                                               |
 | **[`ValidityWire`](../../export.go)**   | Optional validity window (nil = open-ended on that side). Re-exported from internal/record.                                                                                       |
@@ -193,16 +193,16 @@ These types allow external packages (e.g., Mosaic) to work with wire formats wit
 
 ### Super-hex occupancy summaries
 
-| Symbol                                                                     | Notes                                                                                                                                             |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`NewSuperHexSummaryIndex`](../../superhex_summary.go)**                 | Construct a rebuildable aperture-7 summary index for a hierarchy level.                                                                            |
-| **[`(*SuperHexSummaryIndex).Rebuild`](../../superhex_summary.go)**         | Build from one consistent cell snapshot and pin the changelog cursor. Requires `Options.ChangelogEnabled`.                                         |
-| **[`(*SuperHexSummaryIndex).Sync`](../../superhex_summary.go)**            | Incrementally consume changelog records; call until it processes zero records.                                                                     |
-| **[`(*SuperHexSummaryIndex).Summary`](../../superhex_summary.go)**         | O(1) lookup by parent coordinate.                                                                                                                   |
-| **[`(*SuperHexSummaryIndex).SummaryForCoord`](../../superhex_summary.go)** | Map a level-0 coordinate to its parent and return the O(1) materialized summary.                                                                     |
-| **[`(*SuperHexSummaryIndex).Summaries`](../../superhex_summary.go)**       | Deterministic parent-coordinate-ordered snapshot of all non-empty summaries.                                                                        |
-| **[`(*SuperHexSummaryIndex).LastSeq`](../../superhex_summary.go)**         | Highest changelog sequence incorporated by the index; zero before a successful rebuild.                                                             |
-| **[`SuperHexSummary`](../../superhex_summary.go)**                         | `Level`, `Parent`, level-0 `Center`, `OccupiedCells`, `Capacity` (`7^Level`), and `LastUpdatedSeq`.                                                  |
+| Symbol                                                                     | Notes                                                                                                      |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| **[`NewSuperHexSummaryIndex`](../../superhex_summary.go)**                 | Construct a rebuildable aperture-7 summary index for a hierarchy level.                                    |
+| **[`(*SuperHexSummaryIndex).Rebuild`](../../superhex_summary.go)**         | Build from one consistent cell snapshot and pin the changelog cursor. Requires `Options.ChangelogEnabled`. |
+| **[`(*SuperHexSummaryIndex).Sync`](../../superhex_summary.go)**            | Incrementally consume changelog records; call until it processes zero records.                             |
+| **[`(*SuperHexSummaryIndex).Summary`](../../superhex_summary.go)**         | O(1) lookup by parent coordinate.                                                                          |
+| **[`(*SuperHexSummaryIndex).SummaryForCoord`](../../superhex_summary.go)** | Map a level-0 coordinate to its parent and return the O(1) materialized summary.                           |
+| **[`(*SuperHexSummaryIndex).Summaries`](../../superhex_summary.go)**       | Deterministic parent-coordinate-ordered snapshot of all non-empty summaries.                               |
+| **[`(*SuperHexSummaryIndex).LastSeq`](../../superhex_summary.go)**         | Highest changelog sequence incorporated by the index; zero before a successful rebuild.                    |
+| **[`SuperHexSummary`](../../superhex_summary.go)**                         | `Level`, `Parent`, level-0 `Center`, `OccupiedCells`, `Capacity` (`7^Level`), and `LastUpdatedSeq`.        |
 
 See [`PERFORMANCE_EVIDENCE.md`](PERFORMANCE_EVIDENCE.md) for the correctness
 soak, rebuild/read/sync benchmarks, and metadata-only observation workflow for
@@ -244,13 +244,13 @@ this API.
 
 ## Lattice exports
 
-| Symbol                                                                                                                | Notes                            |
-| --------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| Symbol                                                                                              | Notes                            |
+| --------------------------------------------------------------------------------------------------- | -------------------------------- |
 | **[`Coord`](../../export.go)**, **[`Cube`](../../export.go)**, **[`PackedCoord`](../../export.go)** | Geometry types.                  |
-| **[`MaxAxialAbs`](../../export.go)**                                                          | Packed range bound.              |
-| **[`ErrCoordOutOfRange`](../../export.go)**                                                   | **`Pack`** precondition.         |
-| **[`Pack`](../../export.go)**, **[`Unpack`](../../export.go)**                                | Morton pack/unpack.              |
-| **[`Ring`](../../export.go)**, **[`WalkRings`](../../export.go)**                             | Same order as **`LoadContext`**. |
+| **[`MaxAxialAbs`](../../export.go)**                                                                | Packed range bound.              |
+| **[`ErrCoordOutOfRange`](../../export.go)**                                                         | **`Pack`** precondition.         |
+| **[`Pack`](../../export.go)**, **[`Unpack`](../../export.go)**                                      | Morton pack/unpack.              |
+| **[`Ring`](../../export.go)**, **[`WalkRings`](../../export.go)**                                   | Same order as **`LoadContext`**. |
 
 Methods on **`Coord`** / **`PackedCoord`** (e.g. **`Distance`**, **`Neighbors`**) live on re-exported types — see **`internal/lattice`**.
 
@@ -258,21 +258,21 @@ Methods on **`Coord`** / **`PackedCoord`** (e.g. **`Distance`**, **`Neighbors`**
 
 Used by the public context-loading APIs above; listed here for completeness.
 
-| Package             | Function / Type                                                   | Used by                                          |
-| ------------------- | ----------------------------------------------------------------- | ------------------------------------------------ |
-| `internal/lattice`  | `FieldOfView(origin, maxR, opaque) → []Coord`                     | `Tx.LoadContextFOV` — delegates to shadowcast    |
-| `internal/lattice`  | `FieldOfViewShadowcast(origin, maxR, opaque) → []Coord`           | `FieldOfView` (Albert Ford 2021 hex adaptation)  |
-| `internal/lattice`  | `FieldOfViewRaycast(origin, maxR, opaque) → []Coord`              | Regression tests only                            |
-| `internal/lattice`  | `HexLine(a, b) → []Coord`                                         | `FieldOfViewRaycast` (raycasting LOS)            |
-| `internal/lattice`  | `Voronoi(seeds, maxR, weightFn) → ([]VoronoiCell, map[Coord]int)` | `Tx.LoadContextVoronoi`                          |
-| `internal/lattice`  | `WeightFunc` type                                                 | `Voronoi` optional traversal-cost function       |
-| `internal/lattice`  | `SpiralRange(dst, center, minR, maxR) → []Coord`                  | LOD inner walk; annular ring slice               |
-| `internal/lattice`  | `CoarsenCoord`, `RefineCoord`, `CoarsenMulti`                     | `Tx.LoadContext` (LOD auto-dispatch)             |
-| `internal/lattice`  | `WalkRingsPacked`, `WalkRingsCoordPacked`                         | `scanByRadius`                                   |
-| `internal/pathfind` | `AStar`, `Dijkstra`, `BFS`                                        | `Tx.FindEdgePath`, `Tx.WalkEdges`                |
-| `internal/lattice`  | `SuperHexParent*`, `SuperHexCenter*`, `SuperHexChildren`           | Aperture-7 derived occupancy summaries           |
-| `internal/pathfind` | `EuclideanHeuristic`                                              | Available for regular-grid callers               |
-| `internal/pathfind` | `HexDistanceHeuristic`                                            | Available alternative heuristic for callers      |
+| Package             | Function / Type                                                   | Used by                                         |
+| ------------------- | ----------------------------------------------------------------- | ----------------------------------------------- |
+| `internal/lattice`  | `FieldOfView(origin, maxR, opaque) → []Coord`                     | `Tx.LoadContextFOV` — delegates to shadowcast   |
+| `internal/lattice`  | `FieldOfViewShadowcast(origin, maxR, opaque) → []Coord`           | `FieldOfView` (Albert Ford 2021 hex adaptation) |
+| `internal/lattice`  | `FieldOfViewRaycast(origin, maxR, opaque) → []Coord`              | Regression tests only                           |
+| `internal/lattice`  | `HexLine(a, b) → []Coord`                                         | `FieldOfViewRaycast` (raycasting LOS)           |
+| `internal/lattice`  | `Voronoi(seeds, maxR, weightFn) → ([]VoronoiCell, map[Coord]int)` | `Tx.LoadContextVoronoi`                         |
+| `internal/lattice`  | `WeightFunc` type                                                 | `Voronoi` optional traversal-cost function      |
+| `internal/lattice`  | `SpiralRange(dst, center, minR, maxR) → []Coord`                  | LOD inner walk; annular ring slice              |
+| `internal/lattice`  | `CoarsenCoord`, `RefineCoord`, `CoarsenMulti`                     | `Tx.LoadContext` (LOD auto-dispatch)            |
+| `internal/lattice`  | `WalkRingsPacked`, `WalkRingsCoordPacked`                         | `scanByRadius`                                  |
+| `internal/pathfind` | `AStar`, `Dijkstra`, `BFS`                                        | `Tx.FindEdgePath`, `Tx.WalkEdges`               |
+| `internal/lattice`  | `SuperHexParent*`, `SuperHexCenter*`, `SuperHexChildren`          | Aperture-7 derived occupancy summaries          |
+| `internal/pathfind` | `EuclideanHeuristic`                                              | Available for regular-grid callers              |
+| `internal/pathfind` | `HexDistanceHeuristic`                                            | Available alternative heuristic for callers     |
 
 ---
 
@@ -345,13 +345,13 @@ See **[CHANGEFEED.md](./CHANGEFEED.md)**.
 
 ### Query planner index selection
 
-| Condition               | Primary access path                                           |
-| ----------------------- | ------------------------------------------------------------- |
-| `RequireTags` non-empty | `tag/` secondary index                                        |
-| `SourceID` set          | `source/` secondary index                                     |
+| Condition               | Primary access path                                          |
+| ----------------------- | ------------------------------------------------------------ |
+| `RequireTags` non-empty | `tag/` secondary index                                       |
+| `SourceID` set          | `source/` secondary index                                    |
 | `After` or `Before` set | Complete primary scan with snapshot-visible version collapse |
-| `Center`+`Radius` set   | Ring walk around `Center`                                     |
-| Fallback                | Complete primary scan                                         |
+| `Center`+`Radius` set   | Ring walk around `Center`                                    |
+| Fallback                | Complete primary scan                                        |
 
 ### Temporal queries
 
@@ -406,11 +406,11 @@ Token budget across seeds: each seed expands concurrently (ring walk + `FilterSu
 
 Graph traversal across the cell-edge topology. Algorithms live in `internal/pathfind`; public API on `*Tx`.
 
-| Symbol                                            | Notes                                                                                                                           |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Symbol                                            | Notes                                                                                                                                                                                                                  |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **[`(*Tx).FindEdgePath`](../../pathfind_api.go)** | Dijkstra shortest path between two coords over weighted out-edges. `FindEdgePathConfig.Filter` restricts relation types; an empty filter chooses the minimum weight among parallel relations. Returns the path or nil. |
-| **[`FindEdgePathConfig`](../../pathfind_api.go)** | `Filter`, `MaxExpand`, and optional `CostFunc`. Stored weights <= 0 default to 1; a custom negative cost blocks an edge; non-finite costs are rejected.                                                |
-| **[`(*Tx).WalkEdges`](../../pathfind_api.go)**    | BFS reachability walk from a coord. Returns all coords reachable within `maxHops` hops over filtered edges.                                                                                                  |
+| **[`FindEdgePathConfig`](../../pathfind_api.go)** | `Filter`, `MaxExpand`, and optional `CostFunc`. Stored weights <= 0 default to 1; a custom negative cost blocks an edge; non-finite costs are rejected.                                                                |
+| **[`(*Tx).WalkEdges`](../../pathfind_api.go)**    | BFS reachability walk from a coord. Returns all coords reachable within `maxHops` hops over filtered edges.                                                                                                            |
 
 For graph-aware **context loading** (BFS walk + assembled `ContextPack`), set `EdgeFilter` on `LoadContextConfig` and call `Tx.LoadContext`.
 
@@ -436,9 +436,9 @@ Lattice primitives in `internal/lattice`: `CoarsenCoord`, `RefineCoord`, `Coarse
 
 Non-overlapping partitioning of hex space around multiple seeds. Unlike `LoadContext` with multiple seeds (which merges overlapping radial neighborhoods), Voronoi assigns each coordinate to **exactly one** seed via multi-source Dijkstra — giving each seed a fair, non-overlapping share of the context budget.
 
-| Symbol                                                     | Notes                                                                                                        |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **[`(*Tx).LoadContextVoronoi`](../../voronoi_context.go)** | Partition hex space around seeds, load cells per region. Returns `map[int][]CellRecord` keyed by seed index. |
+| Symbol                                                     | Notes                                                                                                                               |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **[`(*Tx).LoadContextVoronoi`](../../voronoi_context.go)** | Partition hex space around seeds, load cells per region. Returns `map[int][]CellRecord` keyed by seed index.                        |
 | **[`VoronoiContextConfig`](../../voronoi_context.go)**     | `MaxRadius` (default 4), `MaxCellsPerSeed` (default 64), and optional `WeightFunc`; nil weight preserves uniform geometric regions. |
 
 Lattice primitives in `internal/lattice`: `Voronoi(seeds, maxRadius)`, `VoronoiRegion(cells, seedIdx)`.
@@ -524,8 +524,8 @@ See **[ENCRYPTION.md](./ENCRYPTION.md)**.
 
 | Symbol                                          | Notes                                                           |
 | ----------------------------------------------- | --------------------------------------------------------------- |
-| **[`CellValidator`](../../hooks.go)**      | Interface: **`ValidateCell(CellRecord) error`** pre-write hook. |
-| **[`CellValidatorFunc`](../../hooks.go)**  | Adapter: plain function → **`CellValidator`**.                  |
+| **[`CellValidator`](../../hooks.go)**           | Interface: **`ValidateCell(CellRecord) error`** pre-write hook. |
+| **[`CellValidatorFunc`](../../hooks.go)**       | Adapter: plain function → **`CellValidator`**.                  |
 | **[`Options.CellValidator`](../../options.go)** | Set on **`Open`** to enable pre-write validation in `PutCell`.  |
 
 ---
@@ -540,7 +540,7 @@ Compare database state between two commit sequences. Requires MVCC (format v2). 
 | **[`SnapshotDiff`](../../snapshot_diff.go)**       | `FromSeq`, `ToSeq uint64`; `Cells []CellDiff`; `Seams []SeamDiff`.                                                        |
 | **[`CellDiff`](../../snapshot_diff.go)**           | `Coord`, `CommitSeq`, `Op DiffOp`, `Record record.CellRecord`.                                                            |
 | **[`SeamDiff`](../../snapshot_diff.go)**           | `ID`, `CommitSeq`, `Op DiffOp`, `Record record.SeamRecord`.                                                               |
-| **[`DiffOp`](../../snapshot_diff.go)**             | String kind constants **`DiffOpPut`** and **`DiffOpDelete`**; deletes represent cell tombstones.                           |
+| **[`DiffOp`](../../snapshot_diff.go)**             | String kind constants **`DiffOpPut`** and **`DiffOpDelete`**; deletes represent cell tombstones.                          |
 | **[`SnapshotDiffConfig`](../../snapshot_diff.go)** | `IncludeCells *bool`, `IncludeSeams *bool` — omit nil to include both.                                                    |
 | **[`ErrMVCCRequired`](../../errors.go)**           | Returned when `SnapshotDiff` is called on a format-v1 (non-MVCC) database.                                                |
 

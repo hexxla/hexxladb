@@ -50,8 +50,7 @@ if [ "$result" = "0" ]; then
     exit 1
 fi
 
-echo -e "${GREEN}Coverage: OK${NC}"
-echo (${coverage}%)${NC}"
+echo -e "${GREEN}Coverage: OK (${coverage}%)${NC}"
 
 # Clean up
 rm -f coverage.out

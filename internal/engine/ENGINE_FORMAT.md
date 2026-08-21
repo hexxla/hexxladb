@@ -47,13 +47,13 @@ Unrecognized **format_version** → open fails (forward-only policy; migration t
 
 ### WAL record (v1)
 
-| Field       | Type                  | Notes                                                                                                                                                               |
+| Field | Type | Notes |
 | ----------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | ------- | --- | -------------------------------------------------------- |
-| **seq**     | `uint64`              | Monotonic per database; must be **last_wal_seq + 1** for new appends after recovery                                                                                 |
-| **page_id** | `uint64`              | Target page; **≥ 1** (page 0 is not WAL-patched by shell tests)                                                                                                     |
-| **crc32**   | `uint32`              | IEEE CRC-32 of **payload**                                                                                                                                          |
-| **payload** | `[pageSize]byte`      | Full page image (length equals the database's page size — **ciphertext** when encryption hooks are enabled; see [ENCRYPTION.md](../../docs/hexxladb/ENCRYPTION.md)) |
-| **mac**     | `[32]byte` (optional) | Present when header feature bit 1 is set. HMAC-SHA256 over `seq                                                                                                     |     | page_id |     | payload` using key derived from encryption key material. |
+| **seq** | `uint64` | Monotonic per database; must be **last_wal_seq + 1** for new appends after recovery |
+| **page_id** | `uint64` | Target page; **≥ 1** (page 0 is not WAL-patched by shell tests) |
+| **crc32** | `uint32` | IEEE CRC-32 of **payload** |
+| **payload** | `[pageSize]byte` | Full page image (length equals the database's page size — **ciphertext** when encryption hooks are enabled; see [ENCRYPTION.md](../../docs/hexxladb/ENCRYPTION.md)) |
+| **mac** | `[32]byte` (optional) | Present when header feature bit 1 is set. HMAC-SHA256 over `seq                                                                                                     |     | page_id |     | payload` using key derived from encryption key material. |
 
 Records are read sequentially from the start of the WAL file. Partial tail → **`ErrCorruptWAL`**.
 

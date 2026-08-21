@@ -54,16 +54,9 @@ for file in $go_files; do
     fi
 
     # Check 6: No bare returns in complex functions
-    if grep -q "^func [A-Z]" "$file"; then
-        # Check for bare return in functions with multiple return values
-        func_lines=$(grep -n "^func [A-Z]" "$file" | cut -d: -f1)
-        for line_num in $func_lines; do
-            func_end=$(sed -n "$((line_num + 1)),/^}/p" "$file" | wc -l)
-            if grep -q "^return$" "$file"; then
-                echo -e "${YELLOW}warning:${NC} $file: Contains bare return - prefer explicit return values for clarity"
-                ((warnings++))
-            fi
-        done
+    if grep -q "^func [A-Z]" "$file" && grep -q "^return$" "$file"; then
+        echo -e "${YELLOW}warning:${NC} $file: Contains bare return - prefer explicit return values for clarity"
+        ((warnings++))
     fi
 
     # Check 7: No exported errors without Error() method

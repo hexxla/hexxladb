@@ -87,7 +87,8 @@ get_threshold() {
     if [[ -f ".complexity.yml" ]]; then
         # Extract threshold using simple grep/awk
         # Format: cyclomatic: 5 (indented under layer)
-        local val=$(grep -A 5 "${layer}:" .complexity.yml 2>/dev/null | grep "${metric}:" | head -1 | awk '{print $2}' || true)
+        local val
+        val=$(grep -A 5 "${layer}:" .complexity.yml 2>/dev/null | grep "${metric}:" | head -1 | awk '{print $2}' || true)
         if [[ -n "$val" ]]; then
             echo "$val"
             return
@@ -115,18 +116,24 @@ get_threshold() {
 # Check cyclomatic complexity
 check_cyclomatic() {
     local file="$1"
-    local layer=$(detect_layer "$file")
-    local max=$(get_threshold "$layer" "cyclomatic")
+    local layer
+    local max
+    local violations
+    layer=$(detect_layer "$file")
+    max=$(get_threshold "$layer" "cyclomatic")
 
     # gocyclo outputs: <complexity> <package> <function> <file:line>
-    local violations=$(gocyclo "$file" 2>/dev/null | awk -v max="$max" '$1 > max {print}' || true)
+    violations=$(gocyclo "$file" 2>/dev/null | awk -v max="$max" '$1 > max {print}' || true)
 
     if [[ -n "$violations" ]]; then
         echo -e "${RED}Cyclomatic complexity violation in $file (layer: $layer, max: $max):${NC}"
         echo "$violations" | while read -r line; do
-            local comp=$(echo "$line" | awk '{print $1}')
-            local func=$(echo "$line" | awk '{print $3}')
-            local loc=$(echo "$line" | awk '{print $4}')
+            local comp
+            local func
+            local loc
+            comp=$(echo "$line" | awk '{print $1}')
+            func=$(echo "$line" | awk '{print $3}')
+            loc=$(echo "$line" | awk '{print $4}')
             echo "  $func: $comp (max: $max) at $loc"
         done
         ((errors++))
@@ -136,18 +143,24 @@ check_cyclomatic() {
 # Check cognitive complexity
 check_cognitive() {
     local file="$1"
-    local layer=$(detect_layer "$file")
-    local max=$(get_threshold "$layer" "cognitive")
+    local layer
+    local max
+    local violations
+    layer=$(detect_layer "$file")
+    max=$(get_threshold "$layer" "cognitive")
 
     # gocognit outputs similar format
-    local violations=$(gocognit "$file" 2>/dev/null | awk -v max="$max" '$1 > max {print}' || true)
+    violations=$(gocognit "$file" 2>/dev/null | awk -v max="$max" '$1 > max {print}' || true)
 
     if [[ -n "$violations" ]]; then
         echo -e "${RED}Cognitive complexity violation in $file (layer: $layer, max: $max):${NC}"
         echo "$violations" | while read -r line; do
-            local comp=$(echo "$line" | awk '{print $1}')
-            local func=$(echo "$line" | awk '{print $3}')
-            local loc=$(echo "$line" | awk '{print $4}')
+            local comp
+            local func
+            local loc
+            comp=$(echo "$line" | awk '{print $1}')
+            func=$(echo "$line" | awk '{print $3}')
+            loc=$(echo "$line" | awk '{print $4}')
             echo "  $func: $comp (max: $max) at $loc"
         done
         ((errors++))
