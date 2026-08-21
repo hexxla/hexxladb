@@ -33,7 +33,12 @@ func WeekBucketFromValidity(v record.ValidityWire) (bucket int64, ok bool) {
 	if v.ValidFrom == nil {
 		return 0, false
 	}
-	return *v.ValidFrom / WeekNanos, true
+	nanos := *v.ValidFrom
+	bucket = nanos / WeekNanos
+	if nanos < 0 && nanos%WeekNanos != 0 {
+		bucket--
+	}
+	return bucket, true
 }
 
 // TimeRangePrefix returns inclusive [from, to] byte bounds for [BTree.AscendRange] over one week bucket.

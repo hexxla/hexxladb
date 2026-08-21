@@ -165,12 +165,12 @@ Optional append-only **changelog** for consumers lives in a **sidecar file** `{p
 
 **Seed selection is orthogonal to HexxlaDB’s core primitives:** the system only needs a starting **`Coord`** (or small set of candidates). Embeddings are **one** supported option for step 1; others include **explicit coordinates**, **lexical or tag-based lookup**, **`source_id`**, or **agent-driven navigation**. Everything **after** the seed is **deterministic** on the lattice—no embeddings required inside the DB.
 
-**Content Search as seed selection:** `Tx.SearchCells` (Near-term) provides ranked `[]CellSearchResult` — each carries a scored `Coord` suitable for direct use as seeds in step 2. The `CellSearchConfig` API is designed to be forward-compatible: `Query string` for lexical/substring search today; `Embedding []float32` can be added as an optional field later for ANN-accelerated seed selection without breaking existing callers. Multiple seeds from search can be passed to `LoadMultiContextPack` for merged, deduplicated context assembly under a shared token budget.
+**Content search as seed selection:** `Tx.SearchCells` provides ranked `[]CellSearchResult`; each carries a scored `Coord` suitable for direct use as a seed in step 2. `CellSearchConfig` supports lexical/substring `Query` and optional `Embedding []float32` for ANN-accelerated seed selection. Pass multiple result coordinates through `LoadContextConfig.Seeds` for merged, deduplicated context assembly under a shared token budget.
 
 1. **Seed phase:** orchestration layer (not the storage engine) may use semantic similarity, lexical search (`SearchCells`), vector search, or explicit coordinates to choose candidate coordinates.
 2. **Spatial expansion phase:** `walk_ring` or bounded radius traversal from seeds.
 3. **Filtering and ranking phase:** apply provenance, validity, facet, seam, and tag filters.
-4. **Context packing phase:** `load_context` or `LoadMultiContextPack` assembles a token-aware neighborhood from one or multiple seeds under a shared budget.
+4. **Context packing phase:** `Tx.LoadContext` assembles a token-aware neighborhood from one or multiple `LoadContextConfig.Seeds` under a shared budget.
 
 ### Example Ring Walk
 
@@ -184,11 +184,12 @@ AND optional seam filters apply
 
 - **MVCC** snapshots for consistent lattice views (see [`TX.md`](./TX.md) § MVCC temporal semantics).
 - Optional **logical changefeed** (`{db}-changelog`) when configured ([`CHANGEFEED.md`](./CHANGEFEED.md)).
+- Rebuildable in-memory **aperture-7 super-hex occupancy summaries** derived from a consistent snapshot and incrementally maintained from that changefeed. They add no B+ tree key family and do not alter `PackedCoord`.
 
 **Future / product-tier (not required for embedded v1):**
 
 - Locality-preserving **sharding** by super-hex or region prefixes.
-- **Materialized views** for summary cells and cluster promotions (often fed by changefeed consumers).
+- Persistent/content-bearing **materialized views** for summary cells and cluster promotions. The shipped in-memory occupancy prototype validates hierarchy and incremental-consumer semantics; persistent summary payloads remain future work.
 - **Hot/cold tiering**: active rings in memory, cold data on SSD or object storage.
 
 **Repository tracking** of out-of-scope items, near-term candidates, and **spec vs implementation** notes: **[`../ROADMAP.md`](../ROADMAP.md)**.
@@ -199,7 +200,7 @@ AND optional seam filters apply
 - Hex distance calculation, as defined in **HEXXLA.md** (Geometric Model).
 - Ring enumeration and spiral traversal.
 - Six-direction neighbor traversal.
-- **`ClusterHint`** on cells for product-level clustering hints; **super-hex aggregation** as a first-class engine algorithm is **not** shipped in v1 (orchestration / future milestone).
+- **`ClusterHint`** on cells for product-level clustering hints. `SuperHexSummaryIndex` provides rebuildable in-memory aperture-7 occupancy aggregation; persistent/content-bearing super-hex pages are not shipped in v1.
 - Facet rotation as a **client/view** concern (`ActiveFacet` is not a dedicated disk field; the library exposes raw facet APIs via **`Tx.PutFacet`** / **`Tx.GetFacet`**).
 
 ## v1 Scope and Non-Goals

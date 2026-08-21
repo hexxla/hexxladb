@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/hexxla/hexxladb/internal/changelog"
 	"github.com/hexxla/hexxladb/internal/index"
@@ -132,6 +133,9 @@ func (tx *Tx) PutEdge(rec record.EdgeRecord) error {
 	if rec.RelationType == "" {
 		return ErrInvalidArgument
 	}
+	if math.IsNaN(rec.Weight) || math.IsInf(rec.Weight, 0) {
+		return fmt.Errorf("%w: edge weight must be finite", ErrInvalidArgument)
+	}
 	data, err := record.EncodeEdge(rec)
 	if err != nil {
 		return err
@@ -189,16 +193,22 @@ func (tx *Tx) AscendEdgesFrom(from lattice.PackedCoord, fn func(record.EdgeRecor
 		return ErrDatabaseClosed
 	}
 	prefix := index.EdgeFromPrefix(from)
-	return tx.AscendRange(prefix, nil, func(k, v []byte) bool {
+	var decodeErr error
+	err := tx.AscendRange(prefix, nil, func(k, v []byte) bool {
 		if !bytes.HasPrefix(k, prefix) {
 			return false
 		}
 		rec, err := record.DecodeEdge(v)
 		if err != nil {
+			decodeErr = err
 			return false
 		}
 		return fn(rec)
 	})
+	if err != nil {
+		return err
+	}
+	return decodeErr
 }
 
 // LinkCells is the spec-shaped helper for link_cells: packs endpoints and [Tx.PutEdge].

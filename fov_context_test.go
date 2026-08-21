@@ -3,6 +3,7 @@ package hexxladb_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/hexxla/hexxladb"
@@ -112,6 +113,46 @@ func TestLoadContextFOV_maxCells(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLoadContextFOV_maxCellsDeterministicNearestFirst(t *testing.T) {
+	t.Parallel()
+	db := openFOVTestDB(t)
+	populateFOVCells(t, db, 3)
+
+	var want []lattice.PackedCoord
+	for range 20 {
+		if err := db.View(func(tx *hexxladb.Tx) error {
+			recs, err := tx.LoadContextFOV(t.Context(), lattice.Coord{}, 3,
+				func(lattice.Coord) bool { return false },
+				hexxladb.FOVContextConfig{MaxCells: 5})
+			if err != nil {
+				return err
+			}
+			got := make([]lattice.PackedCoord, len(recs))
+			for i := range recs {
+				got[i] = recs[i].Key
+				coord, unpackErr := lattice.Unpack(recs[i].Key)
+				if unpackErr != nil {
+					return unpackErr
+				}
+				if i == 0 && coord != (lattice.Coord{}) {
+					t.Fatalf("first capped FOV cell = %v, want origin", coord)
+				}
+				if coord.Distance(lattice.Coord{}) > 1 {
+					t.Fatalf("capped FOV selected distance-%d cell before ring 1 was exhausted", coord.Distance(lattice.Coord{}))
+				}
+			}
+			if want == nil {
+				want = got
+			} else if !slices.Equal(got, want) {
+				t.Fatalf("capped FOV changed between calls: first=%v next=%v", want, got)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

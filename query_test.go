@@ -2,6 +2,7 @@ package hexxladb_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -162,6 +163,85 @@ func TestQueryCells_ContentQuery(t *testing.T) {
 		}
 		if len(results) != 1 {
 			t.Errorf("got %d results, want 1", len(results))
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestQueryCells_FallbackScansCompleteKeyspace(t *testing.T) {
+	t.Parallel()
+	db := openQueryDB(t)
+	putQueryCell(t, db, hexxladb.Coord{Q: 100, R: 0}, "far-away needle", "src", nil, 0.9, time.Time{})
+
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		results, err := tx.QueryCells(t.Context(), hexxladb.CellQuery{Query: "needle"})
+		if err != nil {
+			return err
+		}
+		if len(results) != 1 || results[0].Cell.Coord != (hexxladb.Coord{Q: 100, R: 0}) {
+			t.Fatalf("complete fallback scan: got %#v", results)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestQueryCells_ZeroMaxResultsIsUnlimited(t *testing.T) {
+	t.Parallel()
+	db := openQueryDB(t)
+	for i := range 25 {
+		putQueryCell(t, db, hexxladb.Coord{Q: 100 + i, R: 0}, "all", "src", nil, 0.9, time.Time{})
+	}
+
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		results, err := tx.QueryCells(t.Context(), hexxladb.CellQuery{Query: "all"})
+		if err != nil {
+			return err
+		}
+		if len(results) != 25 {
+			t.Fatalf("MaxResults=0: got %d results, want 25", len(results))
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestQueryCells_RejectsUnpackableRadius(t *testing.T) {
+	t.Parallel()
+	db := openQueryDB(t)
+
+	err := db.View(func(tx *hexxladb.Tx) error {
+		_, err := tx.QueryCells(t.Context(), hexxladb.CellQuery{
+			Center: hexxladb.Coord{Q: hexxladb.MaxAxialAbs, R: 0},
+			Radius: 1,
+		})
+		return err
+	})
+	if !errors.Is(err, hexxladb.ErrInvalidArgument) {
+		t.Fatalf("QueryCells boundary error = %v, want ErrInvalidArgument", err)
+	}
+}
+
+func TestQueryCells_PreEpochTimeRange(t *testing.T) {
+	t.Parallel()
+	db := openQueryDB(t)
+	valid := time.Unix(-8*24*60*60, 0).UTC()
+	putQueryCell(t, db, hexxladb.Coord{}, "pre-epoch", "src", nil, 0.9, valid)
+
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		results, err := tx.QueryCells(t.Context(), hexxladb.CellQuery{
+			After:  time.Unix(-9*24*60*60, 0).UTC(),
+			Before: time.Unix(-7*24*60*60, 0).UTC(),
+		})
+		if err != nil {
+			return err
+		}
+		if len(results) != 1 || results[0].Cell.RawContent != "pre-epoch" {
+			t.Fatalf("pre-epoch query: got %#v", results)
 		}
 		return nil
 	}); err != nil {

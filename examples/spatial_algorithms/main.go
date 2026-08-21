@@ -6,7 +6,7 @@
 //   - Phase 2  Field of View (LoadContextFOV) — symmetric shadowcasting visibility filtering
 //   - Phase 3  Level of Detail (LoadContext, MaxRing>=10) — auto-dispatched multi-resolution loading
 //   - Phase 4  Voronoi Partitioning (LoadContextVoronoi) — fair, non-overlapping regions
-//   - Phase 5  Pathfinding (FindEdgePath A*, WalkEdges BFS, LoadContext with EdgeFilter)
+//   - Phase 5  Pathfinding (FindEdgePath Dijkstra, WalkEdges BFS, LoadContext with EdgeFilter)
 //   - Phase 6  Comparison — radial vs FOV vs LOD (auto) vs Voronoi vs edge-based
 //
 // No external dependencies required — runs on a self-contained in-memory-like DB.
@@ -410,12 +410,12 @@ func run(dbPath string) error {
 	// ════════════════════════════════════════════════════════════════
 	// PHASE 5: Pathfinding
 	// ════════════════════════════════════════════════════════════════
-	printHeader("Phase 5: Pathfinding (A* / BFS / Edge Context)")
-	printNote("Edges form a graph overlay. A* (EuclideanHeuristic default) finds shortest paths; BFS discovers reachable sets.")
+	printHeader("Phase 5: Pathfinding (Dijkstra / BFS / Edge Context)")
+	printNote("Edges form a graph overlay. Dijkstra finds weighted shortest paths; BFS discovers reachable sets.")
 	fmt.Println()
 
-	// A* path
-	printStep("FindEdgePath — A* shortest path")
+	// Dijkstra path
+	printStep("FindEdgePath — weighted shortest path")
 	if len(cells) > 50 {
 		start, goal := cells[0], cells[50]
 		_, _ = infoStyle.Printf("  Start: (%d,%d)  Goal: (%d,%d)\n", start.Q, start.R, goal.Q, goal.R)
@@ -588,7 +588,7 @@ func run(dbPath string) error {
 	_, _ = dimStyle.Printf("  Database:   %s\n", dbPath)
 	_, _ = dimStyle.Printf("  Cells:      %d across 7 rings\n", len(cells))
 	_, _ = dimStyle.Printf("  Edges:      %d (sequence + cross-ref)\n", edgeCount)
-	_, _ = dimStyle.Printf("  Algorithms: FOV, LOD, Voronoi, A*, BFS, edge-context\n")
+	_, _ = dimStyle.Printf("  Algorithms: FOV, LOD, Voronoi, Dijkstra, BFS, edge-context\n")
 	_, _ = dimStyle.Println("  See docs/hexxladb/API_REFERENCE.md for full API documentation")
 	fmt.Println()
 

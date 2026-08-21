@@ -3,6 +3,7 @@ package hexxladb
 import (
 	"bytes"
 	"context"
+	"fmt"
 
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
@@ -15,6 +16,8 @@ type DiffOp string
 const (
 	// DiffOpPut means the cell or seam was written (created or updated) in the diff window.
 	DiffOpPut DiffOp = "put"
+	// DiffOpDelete means a cell tombstone was written in the diff window.
+	DiffOpDelete DiffOp = "delete"
 )
 
 // CellDiff records a single cell write observed between two MVCC commit sequences.
@@ -23,7 +26,7 @@ type CellDiff struct {
 	Coord Coord
 	// CommitSeq is the commit sequence at which this version was written.
 	CommitSeq uint64
-	// Op is the operation type (currently always [DiffOpPut]).
+	// Op is [DiffOpPut] for a write or [DiffOpDelete] for a tombstone.
 	Op DiffOp
 	// Record is the decoded cell at this version.
 	Record record.CellRecord
@@ -69,14 +72,11 @@ func diffInclude(p *bool) bool { return p == nil || *p }
 //
 // Note: pruned versions (removed by [DB.PruneCellVersions]) will not appear in the diff.
 func (db *DB) SnapshotDiff(ctx context.Context, fromSeq, toSeq uint64, cfg SnapshotDiffConfig) (SnapshotDiff, error) {
-	if db == nil {
+	if db == nil || db.closed.Load() {
 		return SnapshotDiff{}, ErrDatabaseClosed
 	}
 	if err := ctx.Err(); err != nil {
 		return SnapshotDiff{}, err
-	}
-	if !db.useMVCC {
-		return SnapshotDiff{}, ErrMVCCRequired
 	}
 	if fromSeq > toSeq {
 		return SnapshotDiff{}, ErrInvalidArgument
@@ -84,6 +84,12 @@ func (db *DB) SnapshotDiff(ctx context.Context, fromSeq, toSeq uint64, cfg Snaps
 
 	db.mu.RLock()
 	defer db.mu.RUnlock()
+	if db.activeEng() == nil {
+		return SnapshotDiff{}, ErrDatabaseClosed
+	}
+	if !db.useMVCC {
+		return SnapshotDiff{}, ErrMVCCRequired
+	}
 
 	hdr, err := db.eng.ReadHeader()
 	if err != nil {
@@ -132,18 +138,25 @@ func diffScanCells(ctx context.Context, db *DB, fromSeq, toSeq uint64) ([]CellDi
 		// Only MVCC keys have the version suffix (len = CellPrefix + 16 packed + 8 seq)
 		packed, seq, err := index.ParseCellVersionKey(k)
 		if err != nil {
-			return true // v1 key or secondary — skip
+			scanErr = fmt.Errorf("%w: invalid cell version key: %w", ErrCorruptDatabase, err)
+			return false
 		}
 		if seq <= fromSeq || seq > toSeq {
 			return true
 		}
-		rec, err := record.DecodeCell(v)
-		if err != nil {
-			return true // corrupt entry — skip
-		}
 		coord, err := lattice.Unpack(packed)
 		if err != nil {
+			scanErr = fmt.Errorf("%w: invalid packed cell coordinate: %w", ErrCorruptDatabase, err)
+			return false
+		}
+		if len(v) == 0 {
+			out = append(out, CellDiff{Coord: coord, CommitSeq: seq, Op: DiffOpDelete})
 			return true
+		}
+		rec, err := record.DecodeCell(v)
+		if err != nil {
+			scanErr = fmt.Errorf("%w: decode cell version: %w", ErrCorruptDatabase, err)
+			return false
 		}
 		out = append(out, CellDiff{
 			Coord:     coord,
@@ -185,7 +198,8 @@ func diffScanSeams(ctx context.Context, db *DB, fromSeq, toSeq uint64) ([]SeamDi
 		}
 		rec, err := record.DecodeSeam(v)
 		if err != nil {
-			return true
+			scanErr = fmt.Errorf("%w: decode seam version: %w", ErrCorruptDatabase, err)
+			return false
 		}
 		out = append(out, SeamDiff{
 			ID:        ulidStr,

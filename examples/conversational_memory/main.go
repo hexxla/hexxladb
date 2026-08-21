@@ -15,7 +15,7 @@
 //   - Phase 11  Health check (DB.HealthCheck) + MVCC Snapshot Diff
 //   - Phase 12  DeleteCell + Compact (MVCC tombstones, snapshot isolation, copy-compaction)
 //   - Phase 13  Field of View — visibility-filtered context (LoadContextFOV)
-//   - Phase 14  Pathfinding over edges (PutEdge, FindEdgePath A*, WalkEdges BFS, LoadContext with EdgeFilter)
+//   - Phase 14  Pathfinding over edges (PutEdge, FindEdgePath Dijkstra, WalkEdges BFS, LoadContext with EdgeFilter)
 //
 // For embedding-based semantic search, see examples/llm_context_engine.
 //
@@ -1173,7 +1173,7 @@ func run(dbPath string) error {
 	// ═══════════════════════════════════════════════════════════════
 	printHeader("Phase 13: Field of View — Visibility-Filtered Context")
 
-	printNote("LoadContextFOV uses LOS ray casting to skip cells hidden behind empty regions.")
+	printNote("LoadContextFOV uses symmetric shadowcasting to skip cells hidden behind empty regions.")
 	printNote("Compared to a radial ring walk, FOV spends budget only on reachable cells.")
 	fmt.Println()
 
@@ -1248,10 +1248,10 @@ func run(dbPath string) error {
 	// ═══════════════════════════════════════════════════════════════
 	// PHASE 14: Pathfinding Over Edges
 	// ═══════════════════════════════════════════════════════════════
-	printHeader("Phase 14: Pathfinding Over Edges (A* / BFS)")
+	printHeader("Phase 14: Pathfinding Over Edges (Dijkstra / BFS)")
 
 	printNote("Edges create a graph overlay on the hex grid. PutEdge links cells,")
-	printNote("FindEdgePath finds shortest A* paths, WalkEdges does BFS reachability.")
+	printNote("FindEdgePath finds weighted shortest paths, WalkEdges does BFS reachability.")
 	fmt.Println()
 
 	// Create edges between some cells to form a graph
@@ -1303,8 +1303,8 @@ func run(dbPath string) error {
 	}
 	fmt.Println()
 
-	// A* shortest path
-	printSubHeader("Step 2 — FindEdgePath (A* shortest path)")
+	// Dijkstra shortest path
+	printSubHeader("Step 2 — FindEdgePath (weighted shortest path)")
 	if len(cells) > 20 {
 		start, goal := cells[0], cells[5]
 		_, _ = infoStyle.Printf("  Finding shortest path: (%d,%d) → (%d,%d)\n", start.Q, start.R, goal.Q, goal.R)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 
+	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
@@ -48,6 +49,7 @@ type TagPair struct {
 // sorted by co-occurrence count descending. Only pairs with count ≥ minCount are returned.
 func (tx *Tx) TagCooccurrences(ctx context.Context, minCount int) ([]TagPair, error) {
 	counts := make(map[[2]string]int)
+	processed := make(map[lattice.PackedCoord]struct{})
 	tags, err := tx.ListExistingTopics(ctx)
 	if err != nil {
 		return nil, err
@@ -57,6 +59,10 @@ func (tx *Tx) TagCooccurrences(ctx context.Context, minCount int) ([]TagPair, er
 			return nil, err
 		}
 		if err := tx.AscendCellsByTag(ctx, tag, func(rec record.CellRecord) bool {
+			if _, ok := processed[rec.Key]; ok {
+				return true
+			}
+			processed[rec.Key] = struct{}{}
 			sorted := record.UniqueSortedTags(rec.Tags)
 			for i := range sorted {
 				for j := i + 1; j < len(sorted); j++ {
@@ -84,27 +90,21 @@ func (tx *Tx) UntaggedCells(ctx context.Context, center Coord, maxR int) ([]Coor
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if err := validatePackedRadius(center, maxR); err != nil {
+		return nil, err
+	}
 	var out []Coord
-	coords := WalkRings(nil, center, maxR)
-	for _, c := range coords {
+	for cp := range lattice.WalkRingsPackedSeq(center, maxR) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		rec, ok, err := tx.GetCell(mustPack(c))
+		rec, ok, err := tx.GetCell(cp.Packed)
 		if err != nil {
 			return nil, err
 		}
 		if ok && len(rec.Tags) == 0 {
-			out = append(out, c)
+			out = append(out, cp.Coord)
 		}
 	}
 	return out, nil
-}
-
-func mustPack(c Coord) PackedCoord {
-	p, err := Pack(c)
-	if err != nil {
-		panic(err)
-	}
-	return p
 }

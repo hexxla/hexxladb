@@ -10,6 +10,7 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"github.com/hexxla/hexxladb"
+	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
 )
@@ -242,6 +243,48 @@ func TestSnapshotDiff_CommitSeqOrdering(t *testing.T) {
 		if diff.Cells[i].CommitSeq < diff.Cells[i-1].CommitSeq {
 			t.Errorf("cell diffs not in ascending commit order at index %d", i)
 		}
+	}
+}
+
+func TestSnapshotDiff_IncludesCellDeletion(t *testing.T) {
+	t.Parallel()
+	db := openDiffDB(t, true)
+	putDiffCell(t, db, 0, 0, "delete-me")
+	before, err := db.StatsMVCC()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := packDiffCoord(t, 0, 0)
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.DeleteCell(t.Context(), p) }); err != nil {
+		t.Fatal(err)
+	}
+	after, err := db.StatsMVCC()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := db.SnapshotDiff(t.Context(), before.CommitSeq, after.CommitSeq, hexxladb.SnapshotDiffConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diff.Cells) != 1 || diff.Cells[0].Op != hexxladb.DiffOpDelete {
+		t.Fatalf("cell deletion diff: got %#v", diff.Cells)
+	}
+}
+
+func TestSnapshotDiff_ReportsCorruptCellVersion(t *testing.T) {
+	t.Parallel()
+	db := openDiffDB(t, true)
+	p := packDiffCoord(t, 0, 0)
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.Put(index.CellKeyWithVersion(p, 1), []byte("not-a-cell-record"))
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := db.SnapshotDiff(t.Context(), 0, 1, hexxladb.SnapshotDiffConfig{})
+	if !errors.Is(err, hexxladb.ErrCorruptDatabase) {
+		t.Fatalf("corrupt cell diff: want ErrCorruptDatabase, got %v", err)
 	}
 }
 

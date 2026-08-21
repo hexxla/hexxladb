@@ -1,6 +1,7 @@
 package lattice_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
@@ -227,6 +228,35 @@ func TestFieldOfViewShadowcast_countOpen(t *testing.T) {
 		want := 1 + 3*r*(r+1)
 		if len(got) != want {
 			t.Fatalf("r=%d: got %d cells, want %d (ball formula)", r, len(got), want)
+		}
+	}
+}
+
+func TestFieldOfViewShadowcast_deterministicNearestFirst(t *testing.T) {
+	t.Parallel()
+	origin := lattice.Coord{Q: 2, R: -1}
+	opaque := func(c lattice.Coord) bool {
+		return c == (lattice.Coord{Q: 3, R: -1})
+	}
+
+	want := lattice.FieldOfViewShadowcast(origin, 4, opaque)
+	for range 20 {
+		got := lattice.FieldOfViewShadowcast(origin, 4, opaque)
+		if !slices.Equal(got, want) {
+			t.Fatalf("FOV order changed between identical calls:\nfirst=%v\nnext=%v", want, got)
+		}
+	}
+	for i := 1; i < len(want); i++ {
+		previousDistance := origin.Distance(want[i-1])
+		currentDistance := origin.Distance(want[i])
+		if currentDistance < previousDistance {
+			t.Fatalf("distance decreased at %d: %d then %d", i, previousDistance, currentDistance)
+		}
+		if currentDistance == previousDistance {
+			previous, current := want[i-1], want[i]
+			if current.Q < previous.Q || current.Q == previous.Q && current.R < previous.R {
+				t.Fatalf("coordinate tie-break is not ascending at %d: %v then %v", i, previous, current)
+			}
 		}
 	}
 }

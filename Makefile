@@ -1,4 +1,4 @@
-.PHONY: help ci integration stress bench bench-api bench-stress fuzz test vet fmt lint mod-tidy govulncheck complexity clean bench-tmp \
+.PHONY: help ci integration stress bench bench-api bench-stress evidence evidence-controlled evidence-observe fuzz test vet fmt lint mod-tidy govulncheck complexity clean bench-tmp \
 	pre-commit-install pre-commit-run pre-commit-update \
 	build build-cli build-tui build-demo build-demo-llm build-examples build-all \
 	build-linux build-darwin build-windows \
@@ -23,6 +23,9 @@ help:
 	@echo "make bench           Run all benchmarks across all packages (not in CI)"
 	@echo "make bench-api       Run API-level benchmarks only — the ones shown in README (faster; not in CI)"
 	@echo "make bench-stress    Longer API benches (default preload=all: 512..10k; HEXXLA_BENCH_PRELOAD=extreme for 50k; not CI)"
+	@echo "make evidence        Run controlled spatial evidence + aggregate observation workload (not CI)"
+	@echo "make evidence-controlled  Race-tested superhex soak and focused benchmarks"
+	@echo "make evidence-observe     Seeded production-style workload; aggregate JSON only"
 	@echo "make fuzz            Short fuzz smoke (internal/record + internal/engine; not in CI)"
 	@echo "make test|vet|fmt    Tests (-race), vet, gofmt -w"
 	@echo "make lint            golangci-lint (binary on PATH)"
@@ -89,6 +92,23 @@ bench-api:
 bench-stress:
 	@$(MAKE) bench-tmp
 	TMPDIR=$(or $(TMPDIR),$(CURDIR)/.tmp) HEXXLA_BENCH_PRELOAD=$(or $(HEXXLA_BENCH_PRELOAD),all) go test -count=1 -bench='BenchmarkAPI_(GetCell|AscendCellsBySource|LoadContext|LoadContextAt|WalkRing|WalkRingAt)/' -benchmem -benchtime=500ms ./.
+
+# Evidence suite for Dijkstra, deterministic FOV, and the super-hex occupancy
+# prototype. Outputs are gitignored under .tmp/evidence. Override workload size
+# with EVIDENCE_ARGS, for example EVIDENCE_ARGS='-cells 10000 -samples 500'.
+evidence: evidence-controlled evidence-observe
+
+evidence-controlled: bench-tmp
+	@mkdir -p .tmp/evidence .tmp/go-build
+	GOCACHE=$(CURDIR)/.tmp/go-build TMPDIR=$(CURDIR)/.tmp go test -count=1 -race -run='TestSuperHexSummaryIndex_RandomizedAgainstOracle$$' .
+	@bash -o pipefail -c "GOCACHE=$(CURDIR)/.tmp/go-build TMPDIR=$(CURDIR)/.tmp go test -count=1 -run='^$$' -bench='Benchmark(FieldOfViewShadowcast|FieldOfViewRaycast)$$' -benchmem -benchtime=1s ./internal/lattice 2>&1 | tee .tmp/evidence/fov-bench.txt"
+	@bash -o pipefail -c "GOCACHE=$(CURDIR)/.tmp/go-build TMPDIR=$(CURDIR)/.tmp go test -count=3 -run='^$$' -bench='BenchmarkLog_ReadSinceTail$$' -benchmem -benchtime=300ms ./internal/changelog 2>&1 | tee .tmp/evidence/changelog-read-bench.txt"
+	@bash -o pipefail -c "GOCACHE=$(CURDIR)/.tmp/go-build TMPDIR=$(CURDIR)/.tmp go test -count=1 -run='^$$' -bench='BenchmarkAPI_(FindEdgePathDegree|LoadContextFOV|SuperHexRebuild|SuperHexSummaryForCoord|SuperHexSummaries)$$' -benchmem -benchtime=1s . 2>&1 | tee .tmp/evidence/api-bench.txt"
+	@bash -o pipefail -c "GOCACHE=$(CURDIR)/.tmp/go-build TMPDIR=$(CURDIR)/.tmp HEXXLA_SYNC_BENCH=1 go test -count=1 -run='^$$' -bench='BenchmarkEvidence_SuperHexSyncCatchUp$$' -benchmem -benchtime=1x . 2>&1 | tee .tmp/evidence/superhex-sync-bench.txt"
+
+evidence-observe: bench-tmp
+	@mkdir -p .tmp/evidence .tmp/go-build
+	@bash -o pipefail -c "GOCACHE=$(CURDIR)/.tmp/go-build TMPDIR=$(CURDIR)/.tmp go run ./examples/performance_evidence $(EVIDENCE_ARGS) | tee .tmp/evidence/workload.json"
 
 # Short fuzz smoke — not part of default CI. For longer runs: go test -fuzz=... -fuzztime=30s ./path
 fuzz:

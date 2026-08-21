@@ -16,7 +16,7 @@ if err != nil {
 defer db.Close()
 ```
 
-`Open` creates the file if it doesn't exist, or opens an existing one. On open it replays any pending WAL entries. Passing `nil` for options uses defaults (no MVCC, no embeddings, 4 KiB pages).
+`Open` creates the file if it doesn't exist, or opens an existing one. On open it replays any pending WAL entries. Passing `nil` for options uses defaults (no MVCC, embedding dimension auto-detected on first write, 4 KiB pages).
 
 ---
 
@@ -99,7 +99,7 @@ Convenience adapters: `CellValidatorFunc`, `AfterPutCellHookFunc`, `AfterPutSeam
 db, _ := hexxladb.Open("data.db", nil)
 ```
 
-No MVCC, no embeddings, 4 KiB pages, 8 KiB max value. Good for simple key-value usage.
+No MVCC, embedding dimension auto-detected on first vector write, 4 KiB pages, 8 KiB max value. Good for simple key-value usage.
 
 ### LLM memory with embeddings
 
@@ -173,7 +173,7 @@ After opening, read back configuration:
 ```go
 db.PageSize()           // uint32 — active page size
 db.MaxValueBytes()      // uint32 — max value size
-db.EmbeddingDimension() // uint16 — vector dimension (0 = disabled)
+db.EmbeddingDimension() // uint16 — vector dimension (0 = no embeddings stored yet)
 db.EmbeddingMetric()    // DistanceMetric — distance function
 ```
 

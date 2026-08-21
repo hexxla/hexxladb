@@ -53,30 +53,42 @@ func (db *DB) ReadChangelogFiltered(afterSeq uint64, limit int, filter Changelog
 	if db.changelog == nil {
 		return nil, ErrChangelogDisabled
 	}
-	// Over-read then filter; changelog is sequential so we read a generous batch.
-	fetchLimit := max(limit*4, 256)
-	all, err := db.changelog.ReadSince(afterSeq, fetchLimit)
-	if err != nil {
-		return nil, err
+	if limit <= 0 {
+		return nil, nil
 	}
+	const fetchLimit = 256
 	opSet := make(map[byte]struct{}, len(filter.Ops))
 	for _, op := range filter.Ops {
 		opSet[op] = struct{}{}
 	}
-	out := make([]ChangelogRecord, 0, min(limit, len(all)))
-	for i := range all {
-		if len(out) >= limit {
+	out := make([]ChangelogRecord, 0, limit)
+	cursor := afterSeq
+	for len(out) < limit {
+		all, err := db.changelog.ReadSince(cursor, fetchLimit)
+		if err != nil {
+			return nil, err
+		}
+		if len(all) == 0 {
 			break
 		}
-		if len(opSet) > 0 {
-			if _, ok := opSet[all[i].Op]; !ok {
+		for i := range all {
+			if len(opSet) > 0 {
+				if _, ok := opSet[all[i].Op]; !ok {
+					continue
+				}
+			}
+			if len(filter.KeyPrefix) > 0 && !bytes.HasPrefix(all[i].Key, filter.KeyPrefix) {
 				continue
 			}
+			out = append(out, all[i])
+			if len(out) == limit {
+				break
+			}
 		}
-		if len(filter.KeyPrefix) > 0 && !bytes.HasPrefix(all[i].Key, filter.KeyPrefix) {
-			continue
+		cursor = all[len(all)-1].Seq
+		if len(all) < fetchLimit {
+			break
 		}
-		out = append(out, all[i])
 	}
 	return out, nil
 }

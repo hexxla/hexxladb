@@ -82,7 +82,7 @@ type CellQuery struct {
 
 	// --- Output ---
 
-	// MaxResults caps the number of returned results. Zero means unlimited.
+	// MaxResults caps the number of returned results. Non-positive means unlimited.
 	MaxResults int
 
 	// SortBy controls result ordering. Defaults to SortByScore.

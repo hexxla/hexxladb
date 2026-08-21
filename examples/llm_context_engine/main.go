@@ -649,7 +649,7 @@ func run(dbPath string) error {
 	// SCENARIO 7: FOV-Filtered Retrieval
 	// ================================================================
 	//
-	// LoadContextFOV uses line-of-sight ray casting on the hex grid.
+	// LoadContextFOV uses symmetric shadowcasting on the hex grid.
 	// Empty cells act as opaque barriers — only cells the "observer" can
 	// see through populated neighborhoods are returned. This is smarter
 	// than blind radial loading for sparse grids where large empty gaps

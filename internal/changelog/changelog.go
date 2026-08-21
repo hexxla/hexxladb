@@ -11,6 +11,7 @@ import (
 	"hash/crc32"
 	"io"
 	"os"
+	"sort"
 )
 
 const (
@@ -23,6 +24,11 @@ const (
 	headerSize  = 16
 	headerMagic = "HXCHGv01"
 	formatVer   = uint32(1)
+
+	// checkpointStride bounds the number of historical frames ReadSince must
+	// decode before reaching its cursor. Checkpoints are rebuilt during the
+	// mandatory open scan and are not persisted.
+	checkpointStride = uint64(256)
 )
 
 // Operation codes (must stay stable for consumers).
@@ -54,7 +60,7 @@ type Record struct {
 	EncodedLen uint32 // logical encoded record size (for hash-only large rows)
 }
 
-// ErrCorrupt is returned when the changelog file is truncated or CRC fails.
+// ErrCorrupt is returned when changelog framing, sequence order, or CRC validation fails.
 var ErrCorrupt = errors.New("changelog: corrupt file")
 
 // Entry is one mutation to append in a batch (same wall-clock time).
@@ -64,12 +70,20 @@ type Entry struct {
 	Encoded []byte
 }
 
+// checkpoint maps an applied sequence to the offset of the following frame.
+// The initial checkpoint maps sequence zero to the first frame.
+type checkpoint struct {
+	seq    uint64
+	offset int64
+}
+
 // Log is an open changelog file (append + read).
 type Log struct {
-	path   string
-	f      *os.File
-	sync   bool
-	maxSeq uint64
+	path        string
+	f           *os.File
+	sync        bool
+	maxSeq      uint64
+	checkpoints []checkpoint
 }
 
 // Open opens or creates a changelog file, validates the header, and scans for maxSeq.
@@ -83,7 +97,12 @@ func Open(path string, syncWrites bool) (*Log, error) {
 		_ = f.Close()
 		return nil, err
 	}
-	l := &Log{path: path, f: f, sync: syncWrites}
+	l := &Log{
+		path:        path,
+		f:           f,
+		sync:        syncWrites,
+		checkpoints: []checkpoint{{seq: 0, offset: headerSize}},
+	}
 	if st.Size() == 0 {
 		if err := l.writeHeader(); err != nil {
 			_ = f.Close()
@@ -122,47 +141,53 @@ func (l *Log) readHeaderAndScan() error {
 	if binary.BigEndian.Uint32(h[8:]) != formatVer {
 		return fmt.Errorf("%w: unknown format", ErrCorrupt)
 	}
-	highSeq, err := scanMaxSeq(l.f, headerSize)
+	highSeq, checkpoints, err := scanMaxSeq(l.f, headerSize)
 	if err != nil {
 		return err
 	}
 	l.maxSeq = highSeq
+	l.checkpoints = checkpoints
 	return nil
 }
 
-func scanMaxSeq(f *os.File, start int64) (uint64, error) {
+func scanMaxSeq(f *os.File, start int64) (uint64, []checkpoint, error) {
 	st, err := f.Stat()
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	off := start
 	var highSeq uint64
+	checkpoints := []checkpoint{{seq: 0, offset: start}}
 	for off < st.Size() {
 		var lenBuf [4]byte
 		if _, err := f.ReadAt(lenBuf[:], off); err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 		n := int64(binary.BigEndian.Uint32(lenBuf[:]))
 		if n < 28 { // minimum frame (empty key, no payload hash path still needs encLen+crc)
-			return 0, ErrCorrupt
+			return 0, nil, ErrCorrupt
 		}
 		if off+4+n > st.Size() {
-			return 0, ErrCorrupt
+			return 0, nil, ErrCorrupt
 		}
 		body := make([]byte, n)
 		if _, err := f.ReadAt(body, off+4); err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 		rec, err := decodeInner(body)
 		if err != nil {
-			return 0, err
+			return 0, nil, err
 		}
-		if rec.Seq > highSeq {
-			highSeq = rec.Seq
+		if rec.Seq != highSeq+1 {
+			return 0, nil, fmt.Errorf("%w: non-contiguous sequence", ErrCorrupt)
 		}
+		highSeq = rec.Seq
 		off += 4 + n
+		if highSeq%checkpointStride == 0 {
+			checkpoints = append(checkpoints, checkpoint{seq: highSeq, offset: off})
+		}
 	}
-	return highSeq, nil
+	return highSeq, checkpoints, nil
 }
 
 // Close releases the file handle.
@@ -211,7 +236,8 @@ func (l *Log) Append(wallUnixNs int64, op byte, key, encoded []byte) error {
 	}
 	lenBuf := make([]byte, 4)
 	binary.BigEndian.PutUint32(lenBuf, uint32(len(body))) //nolint:gosec // bounded by maxBodyBytes
-	if _, err := l.f.Seek(0, io.SeekEnd); err != nil {
+	startOffset, err := l.f.Seek(0, io.SeekEnd)
+	if err != nil {
 		l.maxSeq--
 		return err
 	}
@@ -223,6 +249,7 @@ func (l *Log) Append(wallUnixNs int64, op byte, key, encoded []byte) error {
 		l.maxSeq--
 		return err
 	}
+	l.addCheckpoint(seq, startOffset+int64(len(lenBuf))+int64(len(body)))
 	if l.sync {
 		return l.f.Sync()
 	}
@@ -239,6 +266,7 @@ func (l *Log) AppendBatch(wallUnixNs int64, entries []Entry) error {
 	}
 	startSeq := l.maxSeq
 	var buf bytes.Buffer
+	var pendingCheckpoints []checkpoint
 	for i := range entries {
 		e := &entries[i]
 		if len(e.Key) > 65535 {
@@ -260,21 +288,30 @@ func (l *Log) AppendBatch(wallUnixNs int64, entries []Entry) error {
 		if _, err := buf.Write(body); err != nil {
 			return err
 		}
+		if seq%checkpointStride == 0 {
+			pendingCheckpoints = append(pendingCheckpoints, checkpoint{seq: seq, offset: int64(buf.Len())})
+		}
 	}
-	if _, err := l.f.Seek(0, io.SeekEnd); err != nil {
+	startOffset, err := l.f.Seek(0, io.SeekEnd)
+	if err != nil {
 		return err
 	}
 	if _, err := l.f.Write(buf.Bytes()); err != nil {
 		return err
 	}
 	l.maxSeq = startSeq + uint64(len(entries))
+	for i := range pendingCheckpoints {
+		pendingCheckpoints[i].offset += startOffset
+		l.checkpoints = append(l.checkpoints, pendingCheckpoints[i])
+	}
 	if l.sync {
 		return l.f.Sync()
 	}
 	return nil
 }
 
-// ReadSince returns records with Seq > afterSeq, up to limit entries, scanning from the start of the log.
+// ReadSince returns records with Seq > afterSeq, up to limit entries. It seeks
+// to the nearest in-memory checkpoint, then scans forward.
 func (l *Log) ReadSince(afterSeq uint64, limit int) ([]Record, error) {
 	if l == nil || l.f == nil {
 		return nil, errors.New("changelog: closed")
@@ -287,7 +324,10 @@ func (l *Log) ReadSince(afterSeq uint64, limit int) ([]Record, error) {
 		return nil, err
 	}
 	var out []Record
-	off := int64(headerSize)
+	off := l.offsetAfter(afterSeq)
+	if off < headerSize || off > st.Size() {
+		return nil, ErrCorrupt
+	}
 	for off < st.Size() && len(out) < limit {
 		var lenBuf [4]byte
 		if _, err := l.f.ReadAt(lenBuf[:], off); err != nil {
@@ -311,6 +351,22 @@ func (l *Log) ReadSince(afterSeq uint64, limit int) ([]Record, error) {
 		off += 4 + n
 	}
 	return out, nil
+}
+
+func (l *Log) addCheckpoint(seq uint64, offset int64) {
+	if seq%checkpointStride == 0 {
+		l.checkpoints = append(l.checkpoints, checkpoint{seq: seq, offset: offset})
+	}
+}
+
+func (l *Log) offsetAfter(afterSeq uint64) int64 {
+	i := sort.Search(len(l.checkpoints), func(i int) bool {
+		return l.checkpoints[i].seq > afterSeq
+	})
+	if i == 0 {
+		return headerSize
+	}
+	return l.checkpoints[i-1].offset
 }
 
 func encodeInner(seq uint64, wallUnixNs int64, op byte, key, encoded []byte) ([]byte, error) {

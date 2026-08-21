@@ -3,6 +3,7 @@ package changelog_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -152,5 +153,51 @@ func TestCorrupt_badMagic(t *testing.T) {
 	}
 	if !errors.Is(err, changelog.ErrCorrupt) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func BenchmarkLog_ReadSinceTail(b *testing.B) {
+	for _, history := range []int{512, 2_000, 10_000, 100_000} {
+		path := filepath.Join(b.TempDir(), fmt.Sprintf("history-%d", history))
+		log, err := changelog.Open(path, false)
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.Cleanup(func() { _ = log.Close() })
+
+		const appendBatchSize = 4_096
+		for start := 0; start < history; start += appendBatchSize {
+			end := min(start+appendBatchSize, history)
+			entries := make([]changelog.Entry, end-start)
+			for i := range entries {
+				entries[i] = changelog.Entry{
+					Op:      changelog.OpPutCell,
+					Key:     fmt.Appendf(nil, "cell/%016x", start+i),
+					Encoded: []byte("value"),
+				}
+			}
+			if err := log.AppendBatch(1, entries); err != nil {
+				b.Fatal(err)
+			}
+		}
+
+		for _, limit := range []int{1, 256} {
+			b.Run(fmt.Sprintf("history_%d/limit_%d", history, limit), func(b *testing.B) {
+				afterSeq := uint64(history - limit)
+				b.ReportMetric(float64(history), "history-records")
+				b.ReportMetric(float64(limit), "records/op")
+				b.ReportAllocs()
+				b.ResetTimer()
+				for b.Loop() {
+					records, err := log.ReadSince(afterSeq, limit)
+					if err != nil {
+						b.Fatal(err)
+					}
+					if len(records) != limit {
+						b.Fatalf("ReadSince returned %d records, want %d", len(records), limit)
+					}
+				}
+			})
+		}
 	}
 }

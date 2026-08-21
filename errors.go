@@ -27,6 +27,10 @@ var (
 	// ErrDatabaseClosed indicates the database was closed ([DB.Close]) and is no longer usable.
 	ErrDatabaseClosed = errors.New("hexxladb: database closed")
 
+	// ErrDatabaseLocked indicates another process or handle already has the database open.
+	// HexxlaDB permits one open handle per database path to protect the primary file and WAL.
+	ErrDatabaseLocked = errors.New("hexxladb: database is locked")
+
 	// ErrTxReadOnly means a write was attempted inside [DB.View] (read-only transaction).
 	ErrTxReadOnly = errors.New("hexxladb: transaction is read-only")
 

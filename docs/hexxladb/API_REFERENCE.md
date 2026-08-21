@@ -19,9 +19,9 @@ Opaque keys and values passed through **[`(*Tx).Put`](../../tx.go)** are stored 
 | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **[`Open`](../../db.go)**                | Open or create a database file; applies WAL on startup.                                                                                                                                                     |
 | **[`(*DB).Close`](../../db.go)**         | Waits for in-flight transactions; idempotent for nil receiver.                                                                                                                                              |
-| **[`(*DB).Compact`](../../compact.go)**  | Copy-compact open DB to destPath (minimal-size file, preserves all data including MVCC history).                                                                                                            |
-| **[`CompactTo`](../../compact.go)**      | Standalone copy-compaction from srcPath to destPath; propagates format, encryption, MaxValueBytes.                                                                                                          |
-| **[`ErrCorruptDatabase`](../../db.go)**  | Open-time corruption (header/WAL).                                                                                                                                                                          |
+| **[`(*DB).Compact`](../../compact.go)**  | Copy-compact open plaintext DB to a new `destPath` (minimal-size file, preserves all data including MVCC history).                                                                                           |
+| **[`CompactTo`](../../compact.go)**      | Standalone copy-compaction from a closed `srcPath` to a new `destPath`; propagates format, encryption, MaxValueBytes.                                                                                        |
+| **[`ErrCorruptDatabase`](../../errors.go)** | Open-time corruption (header/WAL).                                                                                                                                                                       |
 | **[`Options`](../../options.go)**        | `EnableMVCC`, `MVCCRetention`, changelog, encryption, `CellValidator`, `AfterPutCell`, `AfterPutSeam`, `PageSize`, `MaxValueBytes`, `PageCacheSize` (0 = 4 MiB default, -1 = disable), optional page hooks. |
 | **[`(*DB).PageSize`](../../db.go)**      | Returns the active page size (bytes); 4096 default for new databases.                                                                                                                                       |
 | **[`(*DB).MaxValueBytes`](../../db.go)** | Returns the effective per-database max value size (bytes) from the file header.                                                                                                                             |
@@ -81,8 +81,8 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 | **[`(*Tx).GetEdge`](../../facets_edges.go)**             | Edge lookup by endpoints + relation type.                                                        |
 | **[`(*Tx).AscendEdgesFrom`](../../facets_edges.go)**     | Out-edges from a packed coord.                                                                   |
 | **[`(*Tx).LinkCells`](../../facets_edges.go)**           | Sugar: pack coords + **`PutEdge`**.                                                              |
-| **[`FacetWalkRecord`](../../walk_export_aliases.go)**    | Type alias for **`AscendFacetsForCell`** callbacks (embedding apps avoid **`internal/record`**). |
-| **[`EdgeWalkRecord`](../../walk_export_aliases.go)**     | Type alias for **`AscendEdgesFrom`** callbacks.                                                  |
+| **[`FacetWalkRecord`](../../export.go)**    | Type alias for **`AscendFacetsForCell`** callbacks (embedding apps avoid **`internal/record`**). |
+| **[`EdgeWalkRecord`](../../export.go)**     | Type alias for **`AscendEdgesFrom`** callbacks.                                                  |
 
 ---
 
@@ -107,6 +107,7 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 | **[`RenderHexGrid`](../../hex_render.go)**             | Pure ASCII hex grid from center to maxR with custom labels. |
 | **[`(*Tx).RenderHexGridFromDB`](../../hex_render.go)** | ASCII grid showing occupied (`*`) vs empty (`.`) cells.     |
 | **[`HexGridCell`](../../hex_render.go)**               | Coord + label pair for grid rendering.                      |
+| **[`MaxRenderRadius`](../../hex_render.go)**           | Maximum radius accepted by both renderers (`10`).           |
 
 ---
 
@@ -114,12 +115,12 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 
 | Symbol                                          | Notes                                                         |
 | ----------------------------------------------- | ------------------------------------------------------------- |
-| **[`(*DB).BatchPutCells`](../../batch_put.go)** | Batched multi-cell write with progress and continue-on-error. |
-| **[`BatchPutCellOptions`](../../batch_put.go)** | Batch size, progress callback, continue-on-error flag.        |
-| **[`BatchPutCellResult`](../../batch_put.go)**  | Written count + per-cell errors.                              |
-| **[`BatchPutCellError`](../../batch_put.go)**   | Index + error for failed cells.                               |
-| **[`(*Tx).ExportCellsJSON`](../../bulk_io.go)** | Stream visible cells as JSON array to writer.                 |
-| **[`(*DB).ImportCellsJSON`](../../bulk_io.go)** | Read JSON array of cells and batch-write via PutCell.         |
+| **[`(*DB).BatchPutCells`](../../batch.go)** | Batched multi-cell write; counts and progress are reported only after each batch commits. |
+| **[`BatchPutCellOptions`](../../batch.go)** | Batch size, progress callback, continue-on-error flag.                            |
+| **[`BatchPutCellResult`](../../batch.go)**  | Committed write count + per-cell errors.                                          |
+| **[`BatchPutCellError`](../../batch.go)**   | Input index + error for failed cells; `Error` and `Unwrap` support standard error inspection. |
+| **[`(*Tx).ExportCellsJSON`](../../batch.go)** | Stream visible cells as a JSON array to a writer.                               |
+| **[`(*DB).ImportCellsJSON`](../../batch.go)** | Stream a JSON array into bounded write batches; non-array input is rejected.     |
 
 ---
 
@@ -156,9 +157,9 @@ Validity filtering uses **`record.ValidAt`** ([`internal/record/validity.go`](..
 
 | Symbol                                         | Notes                                                                                                                                                                             |
 | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **[`CellRecord`](../../record_export.go)**     | v1 wire shape for cell/<packed_coord> blobs. Re-exported from internal/record for public API access. Used by `ScanContextRaw`, `ScanContextAtRaw`, and low-level cell operations. |
-| **[`ProvenanceWire`](../../record_export.go)** | Provenance stored in v1 payloads (times as Unix nanoseconds UTC). Re-exported from internal/record.                                                                               |
-| **[`ValidityWire`](../../record_export.go)**   | Optional validity window (nil = open-ended on that side). Re-exported from internal/record.                                                                                       |
+| **[`CellRecord`](../../export.go)**     | v1 wire shape for cell/<packed_coord> blobs. Re-exported from internal/record for public API access. Used by `ScanContextRaw`, `ScanContextAtRaw`, and low-level cell operations. |
+| **[`ProvenanceWire`](../../export.go)** | Provenance stored in v1 payloads (times as Unix nanoseconds UTC). Re-exported from internal/record.                                                                               |
+| **[`ValidityWire`](../../export.go)**   | Optional validity window (nil = open-ended on that side). Re-exported from internal/record.                                                                                       |
 
 These types allow external packages (e.g., Mosaic) to work with wire formats without importing internal packages. They are re-exported type aliases from `internal/record`.
 
@@ -190,6 +191,23 @@ These types allow external packages (e.g., Mosaic) to work with wire formats wit
 | **[`TotalDensity`](../../ring_density.go)**            | Aggregate occupied/total across a `[]RingDensity`.            |
 | **[`RingDensity`](../../ring_density.go)**             | Ring distance + occupied + total counts.                      |
 
+### Super-hex occupancy summaries
+
+| Symbol                                                                     | Notes                                                                                                                                             |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`NewSuperHexSummaryIndex`](../../superhex_summary.go)**                 | Construct a rebuildable aperture-7 summary index for a hierarchy level.                                                                            |
+| **[`(*SuperHexSummaryIndex).Rebuild`](../../superhex_summary.go)**         | Build from one consistent cell snapshot and pin the changelog cursor. Requires `Options.ChangelogEnabled`.                                         |
+| **[`(*SuperHexSummaryIndex).Sync`](../../superhex_summary.go)**            | Incrementally consume changelog records; call until it processes zero records.                                                                     |
+| **[`(*SuperHexSummaryIndex).Summary`](../../superhex_summary.go)**         | O(1) lookup by parent coordinate.                                                                                                                   |
+| **[`(*SuperHexSummaryIndex).SummaryForCoord`](../../superhex_summary.go)** | Map a level-0 coordinate to its parent and return the O(1) materialized summary.                                                                     |
+| **[`(*SuperHexSummaryIndex).Summaries`](../../superhex_summary.go)**       | Deterministic parent-coordinate-ordered snapshot of all non-empty summaries.                                                                        |
+| **[`(*SuperHexSummaryIndex).LastSeq`](../../superhex_summary.go)**         | Highest changelog sequence incorporated by the index; zero before a successful rebuild.                                                             |
+| **[`SuperHexSummary`](../../superhex_summary.go)**                         | `Level`, `Parent`, level-0 `Center`, `OccupiedCells`, `Capacity` (`7^Level`), and `LastUpdatedSeq`.                                                  |
+
+See [`PERFORMANCE_EVIDENCE.md`](PERFORMANCE_EVIDENCE.md) for the correctness
+soak, rebuild/read/sync benchmarks, and metadata-only observation workflow for
+this API.
+
 ---
 
 ## HEXXLA-shaped views and context loading
@@ -212,14 +230,15 @@ These types allow external packages (e.g., Mosaic) to work with wire formats wit
 
 | Symbol                                                     | Notes                                                                                                                      |
 | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*Tx).LoadContextFOV`](../../fov_context.go)**         | Load cells from origin limited to shadowcasting field-of-view. `opaque` func determines walls.                             |
+| **[`(*Tx).LoadContextFOV`](../../fov_context.go)**         | Load cells from origin limited to shadowcasting FOV. Results are deterministic and nearest-first before `MaxCells`.        |
 | **[`FOVContextConfig`](../../fov_context.go)**             | `MaxCells` cap (default 256).                                                                                              |
 | **[`(*Tx).LoadContextVoronoi`](../../voronoi_context.go)** | Multi-source Dijkstra partitions area into non-overlapping regions, one per seed.                                          |
 | **[`VoronoiContextConfig`](../../voronoi_context.go)**     | `MaxRadius`, `MaxCellsPerSeed`, `WeightFunc`. `WeightFunc` steers region boundaries by cost.                               |
 | **[`VoronoiWeightFunc`](../../voronoi_context.go)**        | Type alias for `lattice.WeightFunc`: `func(Coord) float64`. `nil` = uniform cost.                                          |
-| **[`(*Tx).FindEdgePath`](../../pathfind_api.go)**          | A\* shortest path from start to goal over edges. Returns `nil` if no path exists.                                          |
+| **[`(*Tx).FindEdgePath`](../../pathfind_api.go)**          | Dijkstra shortest path over arbitrary weighted out-edges. Parallel relations use their minimum applicable weight.          |
 | **[`FindEdgePathConfig`](../../pathfind_api.go)**          | `Filter` (relation type), `MaxExpand` (node cap), `CostFunc func(from, to Coord) float64`. `CostFunc nil` = edge `Weight`. |
 | **[`(*Tx).WalkEdges`](../../pathfind_api.go)**             | BFS from start: all reachable coords within `maxHops` hops and `maxNodes` cap.                                             |
+| **[`(*Tx).WalkEdgeCoords`](../../pathfind_api.go)**        | `WalkEdges`-compatible adapter used by graph-aware context loading.                                                        |
 
 ---
 
@@ -227,11 +246,11 @@ These types allow external packages (e.g., Mosaic) to work with wire formats wit
 
 | Symbol                                                                                                                | Notes                            |
 | --------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| **[`Coord`](../../coord_export.go)**, **[`Cube`](../../coord_export.go)**, **[`PackedCoord`](../../coord_export.go)** | Geometry types.                  |
-| **[`MaxAxialAbs`](../../coord_export.go)**                                                                            | Packed range bound.              |
-| **[`ErrCoordOutOfRange`](../../coord_export.go)**                                                                     | **`Pack`** precondition.         |
-| **[`Pack`](../../coord_export.go)**, **[`Unpack`](../../coord_export.go)**                                            | Morton pack/unpack.              |
-| **[`Ring`](../../coord_export.go)**, **[`WalkRings`](../../coord_export.go)**                                         | Same order as **`LoadContext`**. |
+| **[`Coord`](../../export.go)**, **[`Cube`](../../export.go)**, **[`PackedCoord`](../../export.go)** | Geometry types.                  |
+| **[`MaxAxialAbs`](../../export.go)**                                                          | Packed range bound.              |
+| **[`ErrCoordOutOfRange`](../../export.go)**                                                   | **`Pack`** precondition.         |
+| **[`Pack`](../../export.go)**, **[`Unpack`](../../export.go)**                                | Morton pack/unpack.              |
+| **[`Ring`](../../export.go)**, **[`WalkRings`](../../export.go)**                             | Same order as **`LoadContext`**. |
 
 Methods on **`Coord`** / **`PackedCoord`** (e.g. **`Distance`**, **`Neighbors`**) live on re-exported types — see **`internal/lattice`**.
 
@@ -251,7 +270,8 @@ Used by the public context-loading APIs above; listed here for completeness.
 | `internal/lattice`  | `CoarsenCoord`, `RefineCoord`, `CoarsenMulti`                     | `Tx.LoadContext` (LOD auto-dispatch)             |
 | `internal/lattice`  | `WalkRingsPacked`, `WalkRingsCoordPacked`                         | `scanByRadius`                                   |
 | `internal/pathfind` | `AStar`, `Dijkstra`, `BFS`                                        | `Tx.FindEdgePath`, `Tx.WalkEdges`                |
-| `internal/pathfind` | `EuclideanHeuristic`                                              | `Tx.FindEdgePath` default; tighter than hex dist |
+| `internal/lattice`  | `SuperHexParent*`, `SuperHexCenter*`, `SuperHexChildren`           | Aperture-7 derived occupancy summaries           |
+| `internal/pathfind` | `EuclideanHeuristic`                                              | Available for regular-grid callers               |
 | `internal/pathfind` | `HexDistanceHeuristic`                                            | Available alternative heuristic for callers      |
 
 ---
@@ -325,17 +345,19 @@ See **[CHANGEFEED.md](./CHANGEFEED.md)**.
 
 ### Query planner index selection
 
-| Condition               | Primary index                                                  |
-| ----------------------- | -------------------------------------------------------------- |
-| `RequireTags` non-empty | `tag/` secondary index                                         |
-| `SourceID` set          | `source/` secondary index                                      |
-| `After` or `Before` set | `time/` week-bucket index (single `AscendRange`, no full scan) |
-| `Center`+`Radius` set   | Ring walk around `Center`                                      |
-| Fallback                | Full scan (ring walk from origin, radius 32)                   |
+| Condition               | Primary access path                                           |
+| ----------------------- | ------------------------------------------------------------- |
+| `RequireTags` non-empty | `tag/` secondary index                                        |
+| `SourceID` set          | `source/` secondary index                                     |
+| `After` or `Before` set | Complete primary scan with snapshot-visible version collapse |
+| `Center`+`Radius` set   | Ring walk around `Center`                                     |
+| Fallback                | Complete primary scan                                         |
 
 ### Temporal queries
 
-`After`/`Before` filter on cell `ValidFrom`. Cells with no `ValidFrom` are excluded from any temporal query. Uses the existing `time/` weekly-bucket index.
+`After`/`Before` filter on cell `ValidFrom`. Cells with no `ValidFrom` are excluded from any temporal query. The executor scans the complete primary cell keyspace so signed pre-epoch and post-epoch week buckets have identical correctness.
+
+`CellQuery.MaxResults <= 0` means unlimited. `SearchCells` retains its convenience default of 20 results when its config leaves the limit unset.
 
 ---
 
@@ -386,8 +408,9 @@ Graph traversal across the cell-edge topology. Algorithms live in `internal/path
 
 | Symbol                                            | Notes                                                                                                                           |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*Tx).FindEdgePath`](../../pathfind_api.go)** | A\* shortest path between two coords over out-edges. Optional `filter` restricts relation types. Returns `[]Coord` path or nil. |
-| **[`(*Tx).WalkEdges`](../../pathfind_api.go)**    | BFS reachability walk from a coord. Returns all coords reachable within `maxHops` hops over filtered edges.                     |
+| **[`(*Tx).FindEdgePath`](../../pathfind_api.go)** | Dijkstra shortest path between two coords over weighted out-edges. `FindEdgePathConfig.Filter` restricts relation types; an empty filter chooses the minimum weight among parallel relations. Returns the path or nil. |
+| **[`FindEdgePathConfig`](../../pathfind_api.go)** | `Filter`, `MaxExpand`, and optional `CostFunc`. Stored weights <= 0 default to 1; a custom negative cost blocks an edge; non-finite costs are rejected.                                                |
+| **[`(*Tx).WalkEdges`](../../pathfind_api.go)**    | BFS reachability walk from a coord. Returns all coords reachable within `maxHops` hops over filtered edges.                                                                                                  |
 
 For graph-aware **context loading** (BFS walk + assembled `ContextPack`), set `EdgeFilter` on `LoadContextConfig` and call `Tx.LoadContext`.
 
@@ -411,12 +434,12 @@ Lattice primitives in `internal/lattice`: `CoarsenCoord`, `RefineCoord`, `Coarse
 
 ## Voronoi partitioning (multi-seed context)
 
-Non-overlapping partitioning of hex space around multiple seeds. Unlike `LoadContext` with multiple seeds (which merges overlapping radial neighborhoods), Voronoi assigns each coordinate to **exactly one** seed via multi-source BFS — giving each seed a fair, non-overlapping share of the context budget.
+Non-overlapping partitioning of hex space around multiple seeds. Unlike `LoadContext` with multiple seeds (which merges overlapping radial neighborhoods), Voronoi assigns each coordinate to **exactly one** seed via multi-source Dijkstra — giving each seed a fair, non-overlapping share of the context budget.
 
 | Symbol                                                     | Notes                                                                                                        |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | **[`(*Tx).LoadContextVoronoi`](../../voronoi_context.go)** | Partition hex space around seeds, load cells per region. Returns `map[int][]CellRecord` keyed by seed index. |
-| **[`VoronoiContextConfig`](../../voronoi_context.go)**     | `MaxRadius` (default 4), `MaxCellsPerSeed` (default 64).                                                     |
+| **[`VoronoiContextConfig`](../../voronoi_context.go)**     | `MaxRadius` (default 4), `MaxCellsPerSeed` (default 64), and optional `WeightFunc`; nil weight preserves uniform geometric regions. |
 
 Lattice primitives in `internal/lattice`: `Voronoi(seeds, maxRadius)`, `VoronoiRegion(cells, seedIdx)`.
 
@@ -432,14 +455,14 @@ Lattice primitives in `internal/lattice`: `Voronoi(seeds, maxRadius)`, `VoronoiR
 
 ## Field of View (visibility-filtered context)
 
-Load only cells **visible** from a center via line-of-sight, skipping cells occluded behind opaque barriers. This improves retrieval accuracy on sparse grids by spending the context budget only on cells connected through a populated neighborhood.
+Load only cells **visible** from a center via symmetric shadowcasting, skipping cells occluded behind opaque barriers. This improves retrieval accuracy on sparse grids by spending the context budget only on cells connected through a populated neighborhood.
 
 | Symbol                                             | Notes                                                                                                                      |
 | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **[`(*Tx).LoadContextFOV`](../../fov_context.go)** | Load cells visible from `center` within `maxR`, filtering by LOS. `opaque` predicate determines which coords block vision. |
+| **[`(*Tx).LoadContextFOV`](../../fov_context.go)** | Load cells visible from `center` within `maxR` using symmetric shadowcasting. Results are deterministic and nearest-first. |
 | **[`FOVContextConfig`](../../fov_context.go)**     | `MaxCells` (default 256).                                                                                                  |
 
-Lattice primitives in `internal/lattice`: `FieldOfView(origin, maxR, opaque)`, `HexLine(a, b)`, `checkLOS`, `cubeRound`, `cubeLerp`.
+Lattice primitives in `internal/lattice`: `FieldOfView` delegates to `FieldOfViewShadowcast`; `FieldOfViewRaycast` and `HexLine` remain available for regression comparison inside the module.
 
 ### How FOV improves retrieval accuracy
 
@@ -501,8 +524,8 @@ See **[ENCRYPTION.md](./ENCRYPTION.md)**.
 
 | Symbol                                          | Notes                                                           |
 | ----------------------------------------------- | --------------------------------------------------------------- |
-| **[`CellValidator`](../../validation.go)**      | Interface: **`ValidateCell(CellRecord) error`** pre-write hook. |
-| **[`CellValidatorFunc`](../../validation.go)**  | Adapter: plain function → **`CellValidator`**.                  |
+| **[`CellValidator`](../../hooks.go)**      | Interface: **`ValidateCell(CellRecord) error`** pre-write hook. |
+| **[`CellValidatorFunc`](../../hooks.go)**  | Adapter: plain function → **`CellValidator`**.                  |
 | **[`Options.CellValidator`](../../options.go)** | Set on **`Open`** to enable pre-write validation in `PutCell`.  |
 
 ---
@@ -517,7 +540,7 @@ Compare database state between two commit sequences. Requires MVCC (format v2). 
 | **[`SnapshotDiff`](../../snapshot_diff.go)**       | `FromSeq`, `ToSeq uint64`; `Cells []CellDiff`; `Seams []SeamDiff`.                                                        |
 | **[`CellDiff`](../../snapshot_diff.go)**           | `Coord`, `CommitSeq`, `Op DiffOp`, `Record record.CellRecord`.                                                            |
 | **[`SeamDiff`](../../snapshot_diff.go)**           | `ID`, `CommitSeq`, `Op DiffOp`, `Record record.SeamRecord`.                                                               |
-| **[`DiffOp`](../../snapshot_diff.go)**             | String kind constant; currently only **`DiffOpPut`**.                                                                     |
+| **[`DiffOp`](../../snapshot_diff.go)**             | String kind constants **`DiffOpPut`** and **`DiffOpDelete`**; deletes represent cell tombstones.                           |
 | **[`SnapshotDiffConfig`](../../snapshot_diff.go)** | `IncludeCells *bool`, `IncludeSeams *bool` — omit nil to include both.                                                    |
 | **[`ErrMVCCRequired`](../../errors.go)**           | Returned when `SnapshotDiff` is called on a format-v1 (non-MVCC) database.                                                |
 
@@ -548,6 +571,7 @@ Post-write callbacks invoked synchronously inside the `Update` callback, after t
 | **`ErrInvalidArgument`**                                                                                                  | Bad parameter.                                          |
 | **`ErrClosed`**                                                                                                           | Closed handle.                                          |
 | **`ErrDatabaseClosed`**                                                                                                   | **`DB`** closed.                                        |
+| **`ErrDatabaseLocked`**                                                                                                   | Another handle or process owns the database file.       |
 | **`ErrTxReadOnly`**                                                                                                       | Write in **`View`**.                                    |
 | **`ErrNilCallback`**                                                                                                      | Nil **`View`/`Update`** fn.                             |
 | **`ErrEncryptionKeyRequired`**, **`ErrDatabaseNotEncrypted`**, **`ErrEncryptionOptions`**, **`ErrEncryptionKeyMismatch`** | Encryption options vs file.                             |
@@ -559,7 +583,7 @@ Post-write callbacks invoked synchronously inside the `Update` callback, after t
 | **`ErrMVCCRequired`**                                                                                                     | MVCC-only op on v1 database.                            |
 | **`ErrSnapshotTagNotFound`**                                                                                              | **`ViewAtTag`** / **`DeleteSnapshotTag`** label absent. |
 | **`ErrSnapshotTagLabelTooLong`**                                                                                          | Label > 200 bytes in **`TagSnapshot`**.                 |
-| **`ErrCorruptDatabase`**                                                                                                  | Open failure.                                           |
+| **`ErrCorruptDatabase`**                                                                                                  | Database/WAL validation or corrupt snapshot-diff row.   |
 
 Use **`errors.Is` / `errors.As`** for stable handling.
 
@@ -567,9 +591,11 @@ Use **`errors.Is` / `errors.As`** for stable handling.
 
 ## Live demos and coverage
 
-- **Conversational memory service:** [`examples/conversational_memory`](../../examples/conversational_memory/) — **`go run ./examples/conversational_memory`** seeds **`./.tmp/conversational_memory/`** (MVCC + changelog + `AfterPutCell` hook) and walks through: cell storage (templates + batch), supersession, tag analytics + co-occurrences, query patterns (`QueryCells` + `SearchCells`), MVCC time-travel, ASCII grid + ring density, filtered changelog, multi-seed context assembly, **database health check** (`HealthCheck`), **event hook telemetry** (`AfterPutCell`), **MaxValueBytes** (per-database limit printed at startup), **MVCC Snapshot Diff** (`SnapshotDiff` full range + narrow diff), **`Tx.DeleteCell`** (MVCC tombstone + snapshot isolation + idempotent re-delete), and **`DB.Compact`** (bulk write→delete→prune→compact with file size reduction). Phases 1–12.
+- **Conversational memory service:** [`examples/conversational_memory`](../../examples/conversational_memory/) — **`go run ./examples/conversational_memory`** seeds **`./.tmp/conversational_memory/`** (MVCC + changelog + `AfterPutCell` hook) and walks through cell storage, supersession, analytics, queries, MVCC, context assembly, health checks, snapshot diffs, deletion, compaction, deterministic FOV, and Dijkstra/BFS edge traversal. Phases 1–14.
 
-- **LLM Context Engine:** [`examples/llm_context_engine`](../../examples/llm_context_engine/) — **`go run ./examples/llm_context_engine`** (requires Ollama with `all-minilm`). Realistic LLM memory retrieval workflow: ingest 20 turns with 384-dim embeddings (`PutEmbedding`), semantic retrieval with 3 distinct queries (`SearchByEmbedding`, `QueryCells` + `Embedding`), multi-signal retrieval (embeddings + `RequireTags` + `MinConfidence` + `SourceID`), preference supersession (`MarkSupersedes` + `FilterSuperseded` in `LoadContextPackFrom`), full LLM prompt assembly pipeline, and a comparison of HexxlaDB capabilities vs stateless LLMs. 6 scenarios.
+- **LLM Context Engine:** [`examples/llm_context_engine`](../../examples/llm_context_engine/) — **`go run ./examples/llm_context_engine`** (requires Ollama with `all-minilm`). Demonstrates embedding and multi-signal retrieval, preference supersession through `LoadContextConfig.Assembly`, prompt assembly through `Tx.LoadContext`, and FOV comparison. 6 scenarios.
+
+- **Spatial algorithms:** [`examples/spatial_algorithms`](../../examples/spatial_algorithms/) — **`go run ./examples/spatial_algorithms`** runs the self-contained FOV, LOD, weighted Voronoi, Dijkstra, BFS, and graph-aware context demonstrations.
 
 ## What `examples/conversational_memory` does _not_ call (and why)
 
@@ -586,12 +612,12 @@ The demo is a **session-shaped production walkthrough**; it stays readable. Omit
 
 ### Ring primitives: `WalkRing`, `WalkRingAt`, `WalkRingFacets`
 
-- **Why omitted:** **`LoadContext`** / **`LoadContextPack`** already implement the normative “expand from seed” story the demo showcases; per-ring walks add verbosity without changing the narrative.
+- **Why omitted:** **`LoadContext`** already implements the normative “expand from seed” story the demo showcases; per-ring walks add verbosity without changing the narrative.
 - **Use when:** Streaming one ring at a time, UI highlight of a single horizon, targeted facet loads (**`WalkRingFacets`** with **`facetMask`**) without assembling a full **`ContextPack`**.
 
 ### `AssembleCellView` alone
 
-- **Why omitted:** **`LoadContextPack`** calls assembly internally; the demo exercises the **budgeted pack** path products use for prompts.
+- **Why omitted:** **`LoadContext`** calls assembly internally; the demo exercises the **budgeted pack** path products use for prompts.
 - **Use when:** Hydrating **one** coordinate for a detail pane, preview tooltip, or custom ranking after you already chose coords elsewhere.
 
 ### `UpdateFacet` vs `PutFacet`
@@ -599,14 +625,14 @@ The demo is a **session-shaped production walkthrough**; it stays readable. Omit
 - **Why omitted:** Seeding uses **`PutFacet`** once (derivation hash matches center raw). **`UpdateFacet`** enforces **derivation discipline** on update — extra setup for a teaching script.
 - **Use when:** Production **rotate summary** when raw is unchanged but derived text changes under the same hash rule — **HEXXLA** facet lifecycle (“update only if hash matches”).
 
-### Explicit `PutEdge` / `GetEdge` / `AscendEdgesFrom` (besides `LinkCells`)
+### `GetEdge` / `AscendEdgesFrom`
 
-- **Why omitted:** **`LinkCells`** is the spec-named sugar for **conversation_turn**-style edges; the demo does not need multiple relation types or edge reads.
-- **Use when:** Non-adjacent graphs, multiple **relation types**, answering “what points **from** this cell?” (**`AscendEdgesFrom`**), idempotent edge upserts (**`PutEdge`**).
+- **Why omitted:** Phase 14 creates multiple relation types with **`PutEdge`** and demonstrates traversal, but does not need individual or streaming edge reads.
+- **Use when:** Answering “what points **from** this cell?” (**`AscendEdgesFrom`**) or retrieving one exact edge identity (**`GetEdge`**).
 
-### `MarkConflict`, `ResolveSeam`, `FindSeamsAt`
+### `ResolveSeam`, `FindSeamsAt`
 
-- **Why omitted:** `MarkSupersedes` and `MarkConflict` are both demonstrated (Phase 3+4). **`ResolveSeam`** is a **follow-up workflow** step. **`FindSeamsAt`** adds **validity** filtering on seams — redundant when seam validity is open/default.
+- **Why omitted:** `MarkSupersedes` and `MarkConflict` are demonstrated in Phases 3–4. **`ResolveSeam`** is a **follow-up workflow** step. **`FindSeamsAt`** adds **validity** filtering on seams — redundant when seam validity is open/default.
 - **Use when:** Operator/LM resolution (**`ResolveSeam`**); replay "what contradictions existed **as of** time T?" (**`FindSeamsAt`**).
 
 ### `AscendSeamsBySource`, `AscendSeamsInTimeBucket`
@@ -616,7 +642,7 @@ The demo is a **session-shaped production walkthrough**; it stays readable. Omit
 
 ### `FilterCellViews`, `TruncateCellViewsToTokenBudget`
 
-- **Why omitted:** **`LoadContextPack`** already applies token eviction; extra filters are **product policy** (redact, drop role X).
+- **Why omitted:** **`LoadContext`** already applies token eviction; extra filters are **product policy** (redact, drop role X).
 - **Use when:** Post-processing **`CellView`** slices from **custom** assembly (e.g. after **`AssembleCellView`** in a loop) or trimming after manual merges.
 
 ### `DB.ViewAt(read_seq)`

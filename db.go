@@ -49,6 +49,10 @@ var ErrCorruptDatabase = errors.New("hexxladb: corrupt database")
 
 // Open opens or creates a database at path. On success, any redo WAL is applied.
 func Open(path string, opts *Options) (*DB, error) {
+	return openDB(path, opts, false)
+}
+
+func openDB(path string, opts *Options, createExclusive bool) (*DB, error) {
 	eopts, err := buildEngineOptions(path, opts)
 	if err != nil {
 		return nil, err
@@ -59,6 +63,10 @@ func Open(path string, opts *Options) (*DB, error) {
 	eopts = mergeEngineMaxValueBytes(eopts, opts)
 	eopts = mergeEnginePageCache(eopts, opts)
 	eopts = mergeEngineEmbedding(eopts, opts)
+	if eopts == nil {
+		eopts = &engine.Options{}
+	}
+	eopts.CreateExclusive = createExclusive
 	eng, err := engine.Open(path, eopts)
 	if err != nil {
 		if errors.Is(err, engine.ErrCorruptHeader) || errors.Is(err, engine.ErrCorruptWAL) {
@@ -75,6 +83,9 @@ func Open(path string, opts *Options) (*DB, error) {
 		}
 		if errors.Is(err, engine.ErrInvalidEmbeddingConfig) {
 			return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+		}
+		if errors.Is(err, engine.ErrDatabaseLocked) {
+			return nil, fmt.Errorf("%w: %s", ErrDatabaseLocked, path)
 		}
 		return nil, err
 	}

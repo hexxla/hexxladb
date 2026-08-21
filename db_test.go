@@ -1,6 +1,7 @@
 package hexxladb_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"github.com/hexxla/hexxladb"
+	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
 )
@@ -33,6 +35,25 @@ func TestOpen_close_roundTrip(t *testing.T) {
 	}
 	if err := db2.Close(); err != nil {
 		t.Fatalf("Close again: %v", err)
+	}
+}
+
+func TestOpen_rejectsSecondHandle(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "locked.db")
+	db, err := hexxladb.Open(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	second, err := hexxladb.Open(path, nil)
+	if second != nil {
+		_ = second.Close()
+		t.Fatal("second Open unexpectedly returned a handle")
+	}
+	if !errors.Is(err, hexxladb.ErrDatabaseLocked) {
+		t.Fatalf("second Open: want ErrDatabaseLocked, got %v", err)
 	}
 }
 
@@ -253,6 +274,40 @@ func TestDB_ReadChangelogSince_PutCell(t *testing.T) {
 	}
 	if len(more) != 0 {
 		t.Fatalf("expected no tail after seq, got %d", len(more))
+	}
+}
+
+func TestDB_ReadChangelogFiltered_ScansPastNonMatches(t *testing.T) {
+	t.Parallel()
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "filtered.db"), &hexxladb.Options{ChangelogEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	var match lattice.PackedCoord
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		for i := range 258 {
+			p, err := lattice.Pack(lattice.Coord{Q: i, R: 0})
+			if err != nil {
+				return err
+			}
+			if err := tx.PutCell(t.Context(), record.CellRecord{Key: p, RawContent: "entry"}); err != nil {
+				return err
+			}
+			match = p
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := db.ReadChangelogFiltered(0, 1, hexxladb.ChangelogFilter{KeyPrefix: index.CellKey(match)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || !bytes.Equal(records[0].Key, index.CellKey(match)) {
+		t.Fatalf("filtered changelog: got %#v", records)
 	}
 }
 

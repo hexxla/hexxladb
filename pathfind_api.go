@@ -2,6 +2,8 @@ package hexxladb
 
 import (
 	"context"
+	"fmt"
+	"math"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/pathfind"
@@ -13,7 +15,8 @@ type FindEdgePathConfig struct {
 	// Filter restricts traversal to edges whose relationType matches this value.
 	// Empty string traverses all edges.
 	Filter string
-	// MaxExpand limits the number of nodes expanded by A* (0 = unlimited).
+	// MaxExpand limits the number of nodes expanded by the shortest-path search
+	// (0 = unlimited).
 	MaxExpand int
 	// CostFunc overrides edge-weight-based traversal cost.
 	// Receives the from and to coordinates; return a negative value to mark an
@@ -29,19 +32,21 @@ func (tx *Tx) FindEdgePath(ctx context.Context, start, goal Coord, cfg FindEdgeP
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if start == goal {
 		return []Coord{start}, nil
 	}
 
-	neighbors := tx.edgeNeighborFunc(ctx, cfg.Filter)
-	var cost pathfind.CostFunc
-	if cfg.CostFunc != nil {
-		cost = cfg.CostFunc
-	} else {
-		cost = tx.edgeCostFunc(cfg.Filter)
+	traversal := newEdgeTraversal(tx, ctx, cfg.Filter, cfg.CostFunc)
+	path := pathfind.Dijkstra(start, goal, traversal.neighbors, traversal.cost, cfg.MaxExpand)
+	if traversal.err != nil {
+		return nil, traversal.err
 	}
-
-	path := pathfind.AStar(start, goal, neighbors, cost, pathfind.EuclideanHeuristic, cfg.MaxExpand)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if path == nil {
 		return nil, nil
 	}
@@ -55,9 +60,15 @@ func (tx *Tx) WalkEdges(ctx context.Context, start Coord, filter string, maxHops
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
 	}
-	neighbors := tx.edgeNeighborFunc(ctx, filter)
-	result := pathfind.BFS(start, neighbors, maxHops, maxNodes)
-	return result, nil
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	traversal := newEdgeTraversal(tx, ctx, filter, nil)
+	result := pathfind.BFS(start, traversal.neighbors, maxHops, maxNodes)
+	if traversal.err != nil {
+		return result, traversal.err
+	}
+	return result, ctx.Err()
 }
 
 // WalkEdgeCoords performs BFS from start following edges matching filter,
@@ -67,62 +78,102 @@ func (tx *Tx) WalkEdgeCoords(ctx context.Context, start Coord, filter string, ma
 	return tx.WalkEdges(ctx, start, filter, maxHops, maxCoords)
 }
 
-// edgeNeighborFunc returns a NeighborFunc that resolves neighbors via edge records.
-func (tx *Tx) edgeNeighborFunc(ctx context.Context, filter string) pathfind.NeighborFunc {
-	return func(c lattice.Coord) []lattice.Coord {
-		if ctx.Err() != nil {
-			return nil
-		}
-		p, err := lattice.Pack(c)
-		if err != nil {
-			return nil
-		}
-		var neighbors []lattice.Coord
-		_ = tx.AscendEdgesFrom(p, func(edge record.EdgeRecord) bool {
-			if filter != "" && edge.RelationType != filter {
-				return true
-			}
-			coord, err := lattice.Unpack(edge.To)
-			if err != nil {
-				return true
-			}
-			neighbors = append(neighbors, coord)
-			return true
-		})
-		return neighbors
+// edgeTraversal resolves and caches one weighted adjacency list per expanded
+// coordinate. The shortest-path search asks for neighbors before asking for
+// their costs, so one edge-prefix scan serves the whole expansion instead of
+// rescanning once per edge.
+type edgeTraversal struct {
+	tx       *Tx
+	ctx      context.Context
+	filter   string
+	override func(from, to Coord) float64
+	adj      map[lattice.Coord]map[lattice.Coord]float64
+	order    map[lattice.Coord][]lattice.Coord
+	err      error
+}
+
+func newEdgeTraversal(tx *Tx, ctx context.Context, filter string, override func(from, to Coord) float64) *edgeTraversal {
+	return &edgeTraversal{
+		tx:       tx,
+		ctx:      ctx,
+		filter:   filter,
+		override: override,
+		adj:      make(map[lattice.Coord]map[lattice.Coord]float64),
+		order:    make(map[lattice.Coord][]lattice.Coord),
 	}
 }
 
-// edgeCostFunc returns a CostFunc that uses edge weights.
-func (tx *Tx) edgeCostFunc(filter string) pathfind.CostFunc {
-	return func(from, to lattice.Coord) float64 {
-		pf, err := lattice.Pack(from)
-		if err != nil {
-			return -1
-		}
-		pt, err := lattice.Pack(to)
-		if err != nil {
-			return -1
-		}
-		var weight float64
-		found := false
-		_ = tx.AscendEdgesFrom(pf, func(edge record.EdgeRecord) bool {
-			if edge.To != pt {
-				return true
-			}
-			if filter != "" && edge.RelationType != filter {
-				return true
-			}
-			weight = edge.Weight
-			if weight <= 0 {
-				weight = 1.0
-			}
-			found = true
-			return false
-		})
-		if !found {
-			return -1
-		}
-		return weight
+func (t *edgeTraversal) neighbors(from lattice.Coord) []lattice.Coord {
+	t.load(from)
+	return t.order[from]
+}
+
+func (t *edgeTraversal) cost(from, to lattice.Coord) float64 {
+	t.load(from)
+	if t.err != nil {
+		return -1
 	}
+	if _, ok := t.adj[from][to]; !ok {
+		return -1
+	}
+	if t.override != nil {
+		value := t.override(from, to)
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			t.err = fmt.Errorf("%w: path cost must be finite", ErrInvalidArgument)
+			return -1
+		}
+		return value
+	}
+	return t.adj[from][to]
+}
+
+func (t *edgeTraversal) load(from lattice.Coord) {
+	if t.err != nil {
+		return
+	}
+	if _, loaded := t.adj[from]; loaded {
+		return
+	}
+	if err := t.ctx.Err(); err != nil {
+		t.err = err
+		return
+	}
+	packed, err := lattice.Pack(from)
+	if err != nil {
+		t.err = err
+		return
+	}
+
+	weights := make(map[lattice.Coord]float64)
+	var neighbors []lattice.Coord
+	err = t.tx.AscendEdgesFrom(packed, func(edge record.EdgeRecord) bool {
+		if t.filter != "" && edge.RelationType != t.filter {
+			return true
+		}
+		to, unpackErr := lattice.Unpack(edge.To)
+		if unpackErr != nil {
+			t.err = unpackErr
+			return false
+		}
+		weight := edge.Weight
+		if weight <= 0 {
+			weight = 1
+		}
+		previous, duplicate := weights[to]
+		if !duplicate {
+			neighbors = append(neighbors, to)
+		}
+		if !duplicate || weight < previous {
+			weights[to] = weight
+		}
+		return true
+	})
+	if err != nil && t.err == nil {
+		t.err = err
+	}
+	if t.err != nil {
+		return
+	}
+	t.adj[from] = weights
+	t.order[from] = neighbors
 }

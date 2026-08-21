@@ -128,7 +128,7 @@ db.Update(func(tx *hexxladb.Tx) error {
 The core primitives — spatial locality, provenance, contradiction tracking, budget-bounded retrieval, MVCC snapshots, hybrid search — compose into patterns that are awkward to build on top of general-purpose stores.
 
 - **Agent and LLM memory** — store conversation turns, facts, and preferences at hex coordinates; retrieve token-budgeted context packs ranked by semantic similarity and recency; surface contradictions to the model automatically
-- **Game world state** — hex-native tile storage with FOV for visibility queries, A\* pathfinding over cell edges, LOD for distant regions, MVCC snapshots for save/rollback and replay
+- **Game world state** — hex-native tile storage with FOV for visibility queries, Dijkstra pathfinding over weighted cell edges, LOD for distant regions, MVCC snapshots for save/rollback and replay
 - **Knowledge graphs with temporal validity** — facts that expire or get superseded; belief revision via seams; time-travel to any past snapshot with `ViewAt`
 - **Spatial annotation layers** — sensor readings, events, or annotations at coordinates; proximity queries via ring walks; confidence-weighted retrieval for noisy data
 - **Audit trails and event sourcing** — append-only changelog, `SnapshotDiff` for incremental CDC, MVCC pinning for point-in-time views; all writes are versioned
@@ -147,7 +147,7 @@ The core primitives — spatial locality, provenance, contradiction tracking, bu
 | Supersession chains                |    ✓     |     —      |     —     |     —      |
 | Token-budgeted context assembly    |    ✓     |     —      |     —     |     —      |
 | Spatial locality (ring walks)      |    ✓     |     —      |     —     |     —      |
-| Graph pathfinding (A\*, BFS)       |    ✓     |     —      |     ✓     |     —      |
+| Graph pathfinding (Dijkstra, BFS)   |    ✓     |     —      |     ✓     |     —      |
 | MVCC time-travel                   |    ✓     |     —      |     —     |  partial   |
 | Provenance + confidence per memory |    ✓     |     —      |     —     |     —      |
 | Embedded (no network)              |    ✓     |     —      |     —     |     ✓      |
@@ -165,7 +165,8 @@ Full reference: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE.m
 | `PutEmbedding` / `SearchByEmbedding`                    | Store a vector; HNSW nearest-neighbor search                            |
 | `QueryCells` / `SearchCells`                            | Hybrid ANN+filter search or multi-term lexical search                   |
 | `LoadContext` / `LoadContextFOV` / `LoadContextVoronoi` | Token-budgeted context assembly — ring walk, FOV, or multi-seed Voronoi |
-| `FindEdgePath` / `WalkEdges`                            | A\* shortest path and BFS reachability over cell edges                  |
+| `FindEdgePath` / `WalkEdges`                            | Weighted shortest path and BFS reachability over cell edges             |
+| `NewSuperHexSummaryIndex` + summary methods             | Rebuildable aperture-7 occupancy summaries maintained from changelog    |
 | `MarkConflict` / `MarkSupersedes` / `FindSeams`         | Record and retrieve contradictions and supersessions                    |
 | `ViewAt` / `SnapshotDiff`                               | MVCC time-travel and change detection                                   |
 | `Compact` / `HealthCheck`                               | Copy-compaction and structural integrity check                          |
@@ -248,7 +249,7 @@ The context assembly operations (`LoadContext`, `LoadContextFOV`, `LoadContextVo
 | -------------------------------------------------------- | ------------------- | ------------------------------------------------------------ |
 | [Conversational Memory](examples/conversational_memory/) | `make demo`         | Cells, seams, tags, MVCC, queries, context, FOV, pathfinding |
 | [LLM Context Engine](examples/llm_context_engine/)       | `make demo-llm`     | Ollama embeddings, semantic search, supersession, FOV        |
-| [Spatial Algorithms](examples/spatial_algorithms/)       | `make demo-spatial` | FOV, LOD, Voronoi, A\*, BFS — side-by-side                   |
+| [Spatial Algorithms](examples/spatial_algorithms/)       | `make demo-spatial` | FOV, LOD, Voronoi, Dijkstra, BFS — side-by-side            |
 
 The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm && make demo-llm`
 
@@ -273,6 +274,7 @@ The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm 
 | [`HEXXLA.md`](docs/hexxladb/HEXXLA.md)               | Memory model: hex lattice, seams, validity, supersession |
 | [`HEXXLA_DB.md`](docs/hexxladb/HEXXLA_DB.md)         | Storage layout, key encoding, HNSW keyspace              |
 | [`OPERATIONS.md`](docs/hexxladb/OPERATIONS.md)       | Production ops, benchmarks, backup, encryption           |
+| [`PERFORMANCE_EVIDENCE.md`](docs/hexxladb/PERFORMANCE_EVIDENCE.md) | Reproducible Dijkstra, FOV, and super-hex evidence runs |
 | [`ROADMAP.md`](docs/ROADMAP.md)                      | What's next and what's out of scope                      |
 
 ---

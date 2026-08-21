@@ -13,6 +13,9 @@ type GroupWAL struct {
 
 // Options configures the embedded storage engine.
 type Options struct {
+	// CreateExclusive requires path not to exist. It is used by maintenance operations
+	// that must never merge into or overwrite an existing database.
+	CreateExclusive bool
 	// Hooks optional page transforms (e.g. encryption).
 	Hooks *PageHooks
 	// NewEncryptedDB sets FeatureEncryptedDataPages on newly created database files.

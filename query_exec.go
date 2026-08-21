@@ -1,12 +1,14 @@
 package hexxladb
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/hexxla/hexxladb/internal/engine"
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
@@ -22,9 +24,9 @@ const defaultQueryScanRadius = 32
 //   - Embedding set    →  ANN via [Tx.SearchByEmbedding] (HNSW or flat scan)
 //   - RequireTags set  →  tag secondary index (most selective tag first)
 //   - SourceID set     →  source secondary index
-//   - After/Before set →  time/ week-bucket index
+//   - After/Before set →  complete primary scan (correct across signed time buckets)
 //   - Center+Radius    →  ring walk around Center
-//   - fallback         →  full scan via ring walk from origin
+//   - fallback         →  complete primary scan
 //
 // After the primary index narrows the candidate set, all remaining predicates
 // are applied as in-memory filters. Results are scored and sorted according to
@@ -36,11 +38,16 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
 	}
+	if q.Radius < 0 {
+		return nil, fmt.Errorf("%w: radius must be non-negative", ErrInvalidArgument)
+	}
+	if q.Radius > 0 {
+		if err := validatePackedRadius(q.Center, q.Radius); err != nil {
+			return nil, err
+		}
+	}
 
 	maxResults := q.MaxResults
-	if maxResults <= 0 {
-		maxResults = defaultQueryMaxResults
-	}
 
 	queryLow := strings.ToLower(strings.TrimSpace(q.Query))
 
@@ -86,11 +93,14 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
 		case q.SourceID != "":
 			err = tx.scanBySourceFused(ctx, q.SourceID, q.MaxScanRows, yield)
 		case !q.After.IsZero() || !q.Before.IsZero():
-			err = tx.scanByTimeRangeFused(ctx, q.After, q.Before, yield)
+			// A signed week bucket is not lexicographically ordered by its
+			// on-disk uint64 representation. Scan primary cells so ranges that
+			// cross the Unix epoch remain complete without changing the format.
+			err = tx.scanAllCellsFused(ctx, q.MaxScanRows, yield)
 		case q.Radius > 0:
 			err = tx.scanByRadiusFused(ctx, q.Center, q.Radius, q.MaxScanRows, yield)
 		default:
-			err = tx.scanByRadiusFused(ctx, Coord{}, defaultQueryScanRadius, q.MaxScanRows, yield)
+			err = tx.scanAllCellsFused(ctx, q.MaxScanRows, yield)
 		}
 		if err != nil {
 			return nil, err
@@ -104,10 +114,58 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
 	sortResults(results, q.SortBy)
 
 	// ── limit ─────────────────────────────────────────────────────────────────
-	if len(results) > maxResults {
+	if maxResults > 0 && len(results) > maxResults {
 		results = results[:maxResults]
 	}
 	return results, nil
+}
+
+// scanAllCellsFused walks the complete cell/ primary keyspace and yields each
+// snapshot-visible logical cell once. maxScanRows=0 means unlimited.
+func (tx *Tx) scanAllCellsFused(ctx context.Context, maxScanRows int, yield func(record.CellRecord) bool) error {
+	from := []byte(index.CellPrefix)
+	to := []byte("cell0") // sorts immediately after every cell/ key
+	v1Len := len(index.CellPrefix) + index.PackedCoordKeyLen
+	var previous lattice.PackedCoord
+	havePrevious := false
+	scanned := 0
+	var scanErr error
+
+	err := tx.AscendRange(from, to, func(k, _ []byte) bool {
+		if err := ctx.Err(); err != nil {
+			scanErr = err
+			return false
+		}
+		if !bytes.HasPrefix(k, from) || len(k) < v1Len {
+			return true
+		}
+		coord, err := index.ParseCellKey(k[:v1Len])
+		if err != nil {
+			return true
+		}
+		if havePrevious && coord == previous {
+			return true
+		}
+		previous = coord
+		havePrevious = true
+		rec, ok, err := tx.GetCell(coord)
+		if err != nil {
+			scanErr = err
+			return false
+		}
+		if !ok {
+			return true
+		}
+		scanned++
+		if !yield(rec) {
+			return false
+		}
+		return maxScanRows <= 0 || scanned < maxScanRows
+	})
+	if err != nil {
+		return fmt.Errorf("hexxladb: QueryCells full scan: %w", err)
+	}
+	return scanErr
 }
 
 // scoreRecord applies predicates, scores, and builds a CellQueryResult.
@@ -272,6 +330,9 @@ func (tx *Tx) scanByRadiusFused(ctx context.Context, center Coord, radius, maxSc
 // The embedding path is inherently bounded and needs the scores map,
 // so it keeps the small intermediate slice.
 func (tx *Tx) scanByEmbedding(vec []float32, maxResults int) ([]record.CellRecord, map[lattice.PackedCoord]float64, error) {
+	if maxResults <= 0 {
+		return tx.scanAllEmbeddings(vec)
+	}
 	fetchK := max(maxResults*2, 20)
 	hits, err := tx.SearchByEmbedding(vec, EmbeddingSearchConfig{MaxResults: fetchK})
 	if err != nil {
@@ -286,6 +347,38 @@ func (tx *Tx) scanByEmbedding(vec []float32, maxResults int) ([]record.CellRecor
 		}
 		recs = append(recs, rec)
 		scores[rec.Key] = h.Score
+	}
+	return recs, scores, nil
+}
+
+func (tx *Tx) scanAllEmbeddings(vec []float32) ([]record.CellRecord, map[lattice.PackedCoord]float64, error) {
+	if err := validateEmbeddingVector(vec); err != nil {
+		return nil, nil, err
+	}
+	dim := tx.db.eng.EmbeddingDim()
+	if dim == 0 {
+		return nil, nil, nil
+	}
+	if len(vec) != int(dim) {
+		return nil, nil, fmt.Errorf("%w: want %d, got %d", ErrEmbeddingDimension, dim, len(vec))
+	}
+	candidates, err := tx.collectEmbeddingCandidates()
+	if err != nil {
+		return nil, nil, err
+	}
+	recs := make([]record.CellRecord, 0, len(candidates))
+	scores := make(map[lattice.PackedCoord]float64, len(candidates))
+	metric := tx.db.eng.EmbeddingMetric()
+	for _, candidate := range candidates {
+		rec, ok, err := tx.GetCell(candidate.coord)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !ok {
+			continue
+		}
+		recs = append(recs, rec)
+		scores[candidate.coord] = engine.Similarity(vec, candidate.vec, metric)
 	}
 	return recs, scores, nil
 }

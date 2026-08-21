@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/hexxla/hexxladb"
@@ -70,6 +71,91 @@ func TestFindEdgePath_basic(t *testing.T) {
 		return nil
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFindEdgePath_SubunitWeightsRemainOptimal(t *testing.T) {
+	t.Parallel()
+	db := openPathfindTestDB(t)
+	start := lattice.Coord{Q: 0, R: 0}
+	via := lattice.Coord{Q: 0, R: 1}
+	goal := lattice.Coord{Q: 10, R: 0}
+
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		for _, edge := range []struct {
+			from, to lattice.Coord
+			weight   float64
+		}{{start, goal, 2}, {start, via, 0.1}, {via, goal, 0.1}} {
+			if err := tx.LinkCells(edge.from, edge.to, "weighted", edge.weight, record.ProvenanceWire{}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		path, err := tx.FindEdgePath(t.Context(), start, goal, hexxladb.FindEdgePathConfig{})
+		if err != nil {
+			return err
+		}
+		want := []hexxladb.Coord{start, via, goal}
+		if !slices.Equal(path, want) {
+			t.Fatalf("weighted shortest path: got %v, want %v", path, want)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFindEdgePath_UnfilteredUsesCheapestRelation(t *testing.T) {
+	t.Parallel()
+	db := openPathfindTestDB(t)
+	start := lattice.Coord{Q: 0, R: 0}
+	via := lattice.Coord{Q: 1, R: 0}
+	goal := lattice.Coord{Q: 2, R: 0}
+
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		for _, c := range []lattice.Coord{start, via, goal} {
+			if err := putCell(tx, c, "cell"); err != nil {
+				return err
+			}
+		}
+		// Relation types are distinct edge identities. The shorter name sorts
+		// first in the edge key but is deliberately more expensive.
+		for _, edge := range []struct {
+			from, to lattice.Coord
+			relation string
+			weight   float64
+		}{
+			{start, goal, "x", 10},
+			{start, goal, "cheapest", 1},
+			{start, via, "route", 2},
+			{via, goal, "route", 2},
+		} {
+			if err := tx.LinkCells(edge.from, edge.to, edge.relation, edge.weight, record.ProvenanceWire{}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		path, err := tx.FindEdgePath(t.Context(), start, goal, hexxladb.FindEdgePathConfig{})
+		if err != nil {
+			return err
+		}
+		want := []hexxladb.Coord{start, goal}
+		if !slices.Equal(path, want) {
+			t.Fatalf("unfiltered path: got %v, want cheapest direct edge %v", path, want)
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 }

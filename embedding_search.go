@@ -38,6 +38,9 @@ func (tx *Tx) SearchByEmbedding(vec []float32, cfg EmbeddingSearchConfig) ([]Emb
 	if tx.db.activeEng() == nil {
 		return nil, ErrDatabaseClosed
 	}
+	if err := validateEmbeddingVector(vec); err != nil {
+		return nil, err
+	}
 	dim := tx.db.eng.EmbeddingDim()
 	if dim == 0 {
 		return nil, nil // no embeddings stored yet

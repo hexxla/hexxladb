@@ -136,6 +136,28 @@ func TestEmbedding_DimensionMismatch(t *testing.T) {
 	}
 }
 
+func TestEmbedding_RejectsNonFiniteComponents(t *testing.T) {
+	t.Parallel()
+	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
+	p := mustPackEmb(t, 0, 0)
+	for _, vector := range [][]float32{
+		{1, float32(math.NaN()), 0},
+		{1, float32(math.Inf(1)), 0},
+	} {
+		err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutEmbedding(p, vector) })
+		if !errors.Is(err, hexxladb.ErrInvalidArgument) {
+			t.Fatalf("PutEmbedding(%v): want ErrInvalidArgument, got %v", vector, err)
+		}
+	}
+
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		_, err := tx.SearchByEmbedding([]float32{1, float32(math.NaN()), 0}, hexxladb.EmbeddingSearchConfig{})
+		return err
+	}); !errors.Is(err, hexxladb.ErrInvalidArgument) {
+		t.Fatalf("SearchByEmbedding NaN: want ErrInvalidArgument, got %v", err)
+	}
+}
+
 func TestEmbedding_AutoDetectDimension(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -771,5 +793,19 @@ func TestEmbedding_DimensionMismatchOnReopen(t *testing.T) {
 	_, err = hexxladb.Open(path, &hexxladb.Options{EmbeddingDimension: 256})
 	if !errors.Is(err, hexxladb.ErrInvalidArgument) {
 		t.Fatalf("expected ErrInvalidArgument, got %v", err)
+	}
+}
+
+func TestEmbedding_AccessorsAfterClose(t *testing.T) {
+	t.Parallel()
+	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := db.EmbeddingDimension(); got != 0 {
+		t.Fatalf("EmbeddingDimension after Close: got %d, want 0", got)
+	}
+	if got := db.EmbeddingMetric(); got != hexxladb.DistanceCosine {
+		t.Fatalf("EmbeddingMetric after Close: got %v, want DistanceCosine", got)
 	}
 }

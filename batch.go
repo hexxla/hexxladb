@@ -3,8 +3,10 @@ package hexxladb
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 
+	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
@@ -58,6 +60,8 @@ func (db *DB) BatchPutCells(ctx context.Context, cells []record.CellRecord, opts
 		}
 		end := min(start+batchSize, len(cells))
 		batch := cells[start:end]
+		batchWritten := 0
+		progressIndices := make([]int, 0, len(batch))
 		err := db.Update(func(tx *Tx) error {
 			for i, rec := range batch {
 				if err := ctx.Err(); err != nil {
@@ -73,15 +77,19 @@ func (db *DB) BatchPutCells(ctx context.Context, cells []record.CellRecord, opts
 					}
 					return err
 				}
-				result.Written++
-				if onProgress != nil {
-					onProgress(start + i)
-				}
+				batchWritten++
+				progressIndices = append(progressIndices, start+i)
 			}
 			return nil
 		})
 		if err != nil {
 			return result, err
+		}
+		result.Written += batchWritten
+		if onProgress != nil {
+			for _, index := range progressIndices {
+				onProgress(index)
+			}
 		}
 	}
 	return result, nil
@@ -98,18 +106,19 @@ func (tx *Tx) ExportCellsJSON(ctx context.Context, center Coord, maxR int, w io.
 	if tx == nil || tx.db == nil {
 		return 0, ErrClosed
 	}
+	if err := validatePackedRadius(center, maxR); err != nil {
+		return 0, err
+	}
 	enc := json.NewEncoder(w)
 	if _, err := w.Write([]byte("[\n")); err != nil {
 		return 0, err
 	}
-	coords := WalkRings(nil, center, maxR)
 	n := 0
-	for _, c := range coords {
+	for cp := range lattice.WalkRingsPackedSeq(center, maxR) {
 		if err := ctx.Err(); err != nil {
 			return n, err
 		}
-		p := mustPack(c)
-		rec, ok, err := tx.GetCell(p)
+		rec, ok, err := tx.GetCell(cp.Packed)
 		if err != nil {
 			return n, err
 		}
@@ -138,13 +147,53 @@ func (db *DB) ImportCellsJSON(ctx context.Context, r io.Reader) (int, error) {
 	if db == nil {
 		return 0, ErrDatabaseClosed
 	}
-	var cells []record.CellRecord
-	if err := json.NewDecoder(r).Decode(&cells); err != nil {
+	dec := json.NewDecoder(r)
+	token, err := dec.Token()
+	if err != nil {
 		return 0, err
 	}
-	result, err := db.BatchPutCells(ctx, cells, &BatchPutCellOptions{BatchSize: 128})
-	if err != nil {
-		return result.Written, err
+	if delim, ok := token.(json.Delim); !ok || delim != '[' {
+		return 0, fmt.Errorf("%w: cell import must be a JSON array", ErrInvalidArgument)
 	}
-	return result.Written, nil
+
+	const batchSize = 128
+	written := 0
+	batch := make([]record.CellRecord, 0, batchSize)
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		result, err := db.BatchPutCells(ctx, batch, &BatchPutCellOptions{BatchSize: batchSize})
+		written += result.Written
+		batch = batch[:0]
+		return err
+	}
+	for dec.More() {
+		if err := ctx.Err(); err != nil {
+			return written, err
+		}
+		var cell record.CellRecord
+		if err := dec.Decode(&cell); err != nil {
+			return written, err
+		}
+		batch = append(batch, cell)
+		if len(batch) == batchSize {
+			if err := flush(); err != nil {
+				return written, err
+			}
+		}
+	}
+	if _, err := dec.Token(); err != nil {
+		return written, err
+	}
+	if err := flush(); err != nil {
+		return written, err
+	}
+	if token, err := dec.Token(); err != io.EOF {
+		if err != nil {
+			return written, err
+		}
+		return written, fmt.Errorf("%w: unexpected trailing JSON token %v", ErrInvalidArgument, token)
+	}
+	return written, nil
 }

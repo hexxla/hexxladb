@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1016,5 +1017,272 @@ func BenchmarkAPI_Compact(b *testing.B) {
 				_ = os.Remove(dest + "-wal")
 			}
 		})
+	}
+}
+
+// BenchmarkAPI_SpatialLookupOrder compares the current nearest-first ring access
+// order with Morton-sorted access to the same coordinate set. Dense and sparse
+// stores expose the hit/miss trade-off; disabling the page cache makes repeated
+// B+ tree traversal costs visible without changing query semantics.
+func BenchmarkAPI_SpatialLookupOrder(b *testing.B) {
+	center := lattice.Coord{}
+	for _, cache := range []struct {
+		name string
+		size int64
+	}{{"cache_default", 0}, {"cache_disabled", -1}} {
+		for _, stride := range []int{1, 4} {
+			densityName := "dense"
+			if stride > 1 {
+				densityName = "sparse_25pct"
+			}
+			db := benchPreloadSpatial(b, center, 32, stride, &hexxladb.Options{PageCacheSize: cache.size})
+			b.Cleanup(func() { _ = db.Close() })
+
+			for _, radius := range []int{10, 32} {
+				ringKeys := lattice.WalkRingsPacked(center, radius)
+				mortonKeys := slices.Clone(ringKeys)
+				slices.SortFunc(mortonKeys, func(a, z lattice.PackedCoord) int { return a.Compare(z) })
+
+				for _, order := range []struct {
+					name string
+					keys []lattice.PackedCoord
+				}{{"ring", ringKeys}, {"morton", mortonKeys}} {
+					name := fmt.Sprintf("%s/%s/r%d/%s", cache.name, densityName, radius, order.name)
+					b.Run(name, func(b *testing.B) {
+						b.ReportMetric(float64(len(order.keys)), "lookups/op")
+						b.ReportAllocs()
+						b.ResetTimer()
+						for b.Loop() {
+							if err := db.View(func(tx *hexxladb.Tx) error {
+								for _, key := range order.keys {
+									if _, _, err := tx.GetCell(key); err != nil {
+										return err
+									}
+								}
+								return nil
+							}); err != nil {
+								b.Fatal(err)
+							}
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+func benchPreloadSpatial(b *testing.B, center lattice.Coord, radius, stride int, opts *hexxladb.Options) *hexxladb.DB {
+	b.Helper()
+	db, err := hexxladb.Open(filepath.Join(b.TempDir(), "spatial.db"), opts)
+	if err != nil {
+		b.Fatal(err)
+	}
+	coords := lattice.WalkRings(nil, center, radius)
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		for i, coord := range coords {
+			if i%stride != 0 {
+				continue
+			}
+			key, err := lattice.Pack(coord)
+			if err != nil {
+				return err
+			}
+			if err := tx.PutCell(context.Background(), record.CellRecord{Key: key, RawContent: "spatial"}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		_ = db.Close()
+		b.Fatal(err)
+	}
+	return db
+}
+
+// BenchmarkAPI_FindEdgePathDegree measures graph routing as out-degree grows.
+// Every spoke must be expanded before the equal-cost goal, exercising one
+// weighted adjacency scan per expanded coordinate.
+func BenchmarkAPI_FindEdgePathDegree(b *testing.B) {
+	for _, degree := range []int{8, 32, 128} {
+		b.Run(fmt.Sprintf("degree_%d", degree), func(b *testing.B) {
+			db, err := hexxladb.Open(filepath.Join(b.TempDir(), "path.db"), nil)
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(func() { _ = db.Close() })
+			start := lattice.Coord{}
+			goal := lattice.Coord{Q: degree + 2, R: 0}
+			if err := db.Update(func(tx *hexxladb.Tx) error {
+				for i := range degree {
+					spoke := lattice.Coord{Q: i + 1, R: 1}
+					if err := tx.LinkCells(start, spoke, "route", 1, record.ProvenanceWire{}); err != nil {
+						return err
+					}
+					if err := tx.LinkCells(spoke, goal, "route", 1, record.ProvenanceWire{}); err != nil {
+						return err
+					}
+				}
+				return nil
+			}); err != nil {
+				b.Fatal(err)
+			}
+
+			b.ReportMetric(float64(degree), "degree")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				if err := db.View(func(tx *hexxladb.Tx) error {
+					_, err := tx.FindEdgePath(context.Background(), start, goal, hexxladb.FindEdgePathConfig{})
+					return err
+				}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkAPI_SuperHexRebuild measures a complete occupancy-index rebuild
+// from the primary cell keyspace at representative hierarchy levels.
+func BenchmarkAPI_SuperHexRebuild(b *testing.B) {
+	for _, n := range apiBenchPreloadSizes(b) {
+		for _, level := range []int{1, 3} {
+			b.Run(fmt.Sprintf("cells_%d/level_%d", n, level), func(b *testing.B) {
+				db, _ := benchAPIPreloadCellsWithOptions(b, n, &hexxladb.Options{
+					ChangelogEnabled: true,
+					ChangelogLazy:    true,
+				})
+				b.Cleanup(func() { _ = db.Close() })
+				idx, err := hexxladb.NewSuperHexSummaryIndex(level)
+				if err != nil {
+					b.Fatal(err)
+				}
+				b.ReportMetric(float64(n), "cells/op")
+				b.ReportAllocs()
+				b.ResetTimer()
+				for b.Loop() {
+					if err := idx.Rebuild(context.Background(), db); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
+// BenchmarkAPI_SuperHexSummaryForCoord measures the constant-time point lookup
+// used by request paths after the derived index has been built.
+func BenchmarkAPI_SuperHexSummaryForCoord(b *testing.B) {
+	db, first := benchAPIPreloadCellsWithOptions(b, 2000, &hexxladb.Options{
+		ChangelogEnabled: true,
+		ChangelogLazy:    true,
+	})
+	b.Cleanup(func() { _ = db.Close() })
+	coord, err := lattice.Unpack(first)
+	if err != nil {
+		b.Fatal(err)
+	}
+	idx, err := hexxladb.NewSuperHexSummaryIndex(2)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if err := idx.Rebuild(context.Background(), db); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportMetric(2000, "cells")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if _, ok, err := idx.SummaryForCoord(coord); err != nil || !ok {
+			b.Fatalf("SummaryForCoord: ok=%v err=%v", ok, err)
+		}
+	}
+}
+
+// BenchmarkAPI_SuperHexSummaries measures deterministic export, including the
+// parent-coordinate sort required by the public contract.
+func BenchmarkAPI_SuperHexSummaries(b *testing.B) {
+	db, _ := benchAPIPreloadCellsWithOptions(b, 2000, &hexxladb.Options{
+		ChangelogEnabled: true,
+		ChangelogLazy:    true,
+	})
+	b.Cleanup(func() { _ = db.Close() })
+	idx, err := hexxladb.NewSuperHexSummaryIndex(2)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if err := idx.Rebuild(context.Background(), db); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportMetric(float64(len(idx.Summaries())), "summaries/op")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		_ = idx.Summaries()
+	}
+}
+
+// BenchmarkEvidence_SuperHexSyncCatchUp measures a fixed one-shot changelog
+// catch-up. It is opt-in because every benchmark iteration constructs a fresh
+// database to keep history length constant. Run with HEXXLA_SYNC_BENCH=1 and
+// -benchtime=1x, as make evidence-controlled does.
+func BenchmarkEvidence_SuperHexSyncCatchUp(b *testing.B) {
+	if os.Getenv("HEXXLA_SYNC_BENCH") != "1" {
+		b.Skip("set HEXXLA_SYNC_BENCH=1 and use -benchtime=1x")
+	}
+	for _, history := range []int{512, 2000} {
+		for _, batchSize := range []int{1, 256} {
+			b.Run(fmt.Sprintf("history_%d/batch_%d", history, batchSize), func(b *testing.B) {
+				b.ReportMetric(float64(history), "history-records")
+				b.ReportMetric(float64(batchSize), "records/op")
+				b.ReportAllocs()
+				for b.Loop() {
+					b.StopTimer()
+					db, _ := benchAPIPreloadCellsWithOptions(b, history, &hexxladb.Options{
+						ChangelogEnabled: true,
+						ChangelogLazy:    true,
+					})
+					idx, err := hexxladb.NewSuperHexSummaryIndex(2)
+					if err != nil {
+						b.Fatal(err)
+					}
+					if err := idx.Rebuild(context.Background(), db); err != nil {
+						b.Fatal(err)
+					}
+					if err := db.Update(func(tx *hexxladb.Tx) error {
+						for i := range batchSize {
+							packed, err := lattice.Pack(lattice.Coord{Q: i % 200, R: i / 200})
+							if err != nil {
+								return err
+							}
+							if err := tx.PutCell(context.Background(), record.CellRecord{Key: packed, RawContent: "sync"}); err != nil {
+								return err
+							}
+						}
+						return nil
+					}); err != nil {
+						b.Fatal(err)
+					}
+
+					b.StartTimer()
+					processed, err := idx.Sync(context.Background(), db, batchSize)
+					b.StopTimer()
+					if closeErr := db.Close(); closeErr != nil {
+						b.Fatal(closeErr)
+					}
+					if err != nil {
+						b.Fatal(err)
+					}
+					if processed != batchSize {
+						b.Fatalf("processed=%d, want %d", processed, batchSize)
+					}
+					// B.Loop requires the timer to be running at the loop boundary.
+					// Setup and validation remain excluded from the measured sample.
+					b.StartTimer()
+				}
+			})
+		}
 	}
 }

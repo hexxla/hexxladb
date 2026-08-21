@@ -76,9 +76,31 @@ func Open(path string, opts *Options) (*Engine, error) {
 	}
 	usePrimaryFdatasync := opts != nil && opts.UsePrimaryFdatasync
 
+	flags := os.O_RDWR | os.O_CREATE
+	if opts != nil && opts.CreateExclusive {
+		flags |= os.O_EXCL
+	}
 	// #nosec G304 -- path is the caller-chosen database file (public Open API).
-	db, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	db, err := os.OpenFile(path, flags, 0o600)
 	if err != nil {
+		return nil, err
+	}
+	exclusiveOpen := opts != nil && opts.CreateExclusive
+	exclusiveComplete := !exclusiveOpen
+	walPath := WalPath(path)
+	walCreated := false
+	defer func() {
+		if exclusiveComplete {
+			return
+		}
+		_ = db.Close()
+		_ = os.Remove(path)
+		if walCreated {
+			_ = os.Remove(walPath)
+		}
+	}()
+	if err := lockDatabaseFile(db); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 
@@ -104,13 +126,17 @@ func Open(path string, opts *Options) (*Engine, error) {
 		return nil, err
 	}
 
-	walPath := WalPath(path)
+	walFlags := os.O_RDWR | os.O_CREATE
+	if exclusiveOpen {
+		walFlags |= os.O_EXCL
+	}
 	// #nosec G304 -- WAL path is derived from the primary DB path (same contract as primary).
-	wal, err := os.OpenFile(walPath, os.O_RDWR|os.O_CREATE, 0o600)
+	wal, err := os.OpenFile(walPath, walFlags, 0o600)
 	if err != nil {
 		_ = db.Close()
 		return nil, err
 	}
+	walCreated = exclusiveOpen
 
 	newLast, walMACEnabled, walMACKey, err := openReplayWAL(db, wal, &hdr, opts, effectivePageSize, usePrimaryFdatasync)
 	if err != nil {
@@ -160,6 +186,7 @@ func Open(path string, opts *Options) (*Engine, error) {
 	if e.groupWALCfg.Enabled {
 		e.startGroupWALFlusher()
 	}
+	exclusiveComplete = true
 	return e, nil
 }
 

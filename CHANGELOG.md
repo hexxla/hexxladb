@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Aperture-7 super-hex occupancy summaries** — `NewSuperHexSummaryIndex` builds a consistent in-memory materialized index from a database snapshot, then `Sync` incrementally applies the existing logical changelog. `Summary`, `SummaryForCoord`, and `Summaries` provide O(1) occupancy reads and deterministic exports; `LastSeq` exposes the applied changelog cursor. The derived index is rebuildable and does not change `PackedCoord` or the on-disk engine format.
+- **Spatial and graph benchmark matrices** — compare ring-order vs Morton-order point reads across radius, density, and page-cache modes; measure `FindEdgePath` as graph out-degree grows.
+- **Reproducible spatial evidence suite** — `make evidence-controlled` runs the seeded super-hex oracle soak plus focused Dijkstra, deterministic FOV, and super-hex benchmarks; `make evidence-observe` emits aggregate-only JSON for a bounded production-style synthetic workload.
+- **Bounded changelog cursor reads** — sparse in-memory sequence-to-offset checkpoints are built during the existing validation scan and maintained after appends. Tail reads now decode at most 255 historical frames before the requested cursor instead of rescanning the full changelog; the public API and on-disk format are unchanged.
+
+### Fixed
+
+- **Exclusive database ownership** — `Open` now takes a non-blocking OS file lock and returns `ErrDatabaseLocked` when the same primary file is already open. This prevents two handles or processes from independently replaying and overwriting the shared primary/WAL state.
+- **Safe, exact compaction** — `DB.Compact` reads one stable snapshot for the full copy; `CompactTo` owns the source exclusively; destinations are created with exclusive-create semantics so an existing file is never overwritten or deleted; copying is bounded to 4096-record batches without creating synthetic MVCC commit-timeline rows. Encrypted open-handle compaction now fails closed with `ErrEncryptionKeyRequired`; use offline `CompactTo` with credentials.
+- **Complete query execution** — zero `CellQuery.MaxResults` now means unlimited as documented, unconstrained fallback scans cover the complete primary keyspace instead of radius 32, temporal queries correctly include pre-epoch timestamps, and unlimited embedding queries use an exact complete scan.
+- **Graph and numeric correctness** — edge pathfinding is optimal for any finite positive weight (including weights below 1), traversal/decode errors are propagated, and non-finite edge weights, custom costs, and embedding components are rejected. Each expanded coordinate now performs one outgoing-edge scan; parallel relation types to the same destination are deduplicated and the minimum applicable stored weight is used.
+- **Deterministic FOV budgets** — shadowcasting results are ordered by distance and coordinate before `MaxCells` is applied, so capped context loads consistently prefer the nearest visible cells.
+- **Boundary-safe spatial APIs** — ring-density, untagged export, JSON export, and hex rendering validate packable coordinate/radius bounds and return `ErrInvalidArgument` instead of panicking.
+- **Data and audit integrity** — batched writes report success and invoke progress only after commit; tag co-occurrences count each cell once; filtered changelog reads paginate past non-matches; snapshot diffs include cell tombstones as `DiffOpDelete` and report corrupt cell versions; JSON imports stream in bounded batches and reject non-array input.
+- **Closed-handle consistency** — embedding configuration accessors remain safe after close, and `SnapshotDiff` returns `ErrDatabaseClosed` instead of dereferencing a closed engine.
+
 ---
 
 ## [0.5.1] - 2026-06-01

@@ -42,4 +42,10 @@ var (
 
 	// ErrInvalidEmbeddingConfig means the embedding configuration is invalid or conflicts with the stored header.
 	ErrInvalidEmbeddingConfig = errors.New("engine: invalid embedding configuration")
+
+	// ErrDatabaseLocked means another process or handle owns the database file.
+	ErrDatabaseLocked = errors.New("engine: database is locked")
+
+	// ErrFileLockUnsupported means this platform cannot provide the exclusive file lock required for safe writes.
+	ErrFileLockUnsupported = errors.New("engine: database file locking is unsupported on this platform")
 )

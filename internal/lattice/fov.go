@@ -17,7 +17,7 @@ func FieldOfView(origin Coord, maxRadius int, opaque func(Coord) bool) []Coord {
 // FieldOfViewShadowcast computes visible coordinates using symmetric shadowcasting
 // (Albert Ford 2021, hex adaptation). Six sextants cover the hex grid around origin.
 // Within each sextant, shadow slopes track blocked angular ranges, scanning outward
-// row by row. Each cell is visited at most once: O(visible cells).
+// row by row. Visible coordinates are returned in deterministic nearest-first order.
 //
 // Guarantees full symmetry: if A sees B then B sees A (for floor tiles).
 // Opaque cells at the boundary are included (the wall is seen but blocks behind it).
@@ -38,6 +38,27 @@ func FieldOfViewShadowcast(origin Coord, maxRadius int, opaque func(Coord) bool)
 	for c := range visible {
 		out = append(out, c)
 	}
+	slices.SortFunc(out, func(a, b Coord) int {
+		da, db := origin.Distance(a), origin.Distance(b)
+		switch {
+		case da < db:
+			return -1
+		case da > db:
+			return 1
+		}
+		switch {
+		case a.Q < b.Q:
+			return -1
+		case a.Q > b.Q:
+			return 1
+		case a.R < b.R:
+			return -1
+		case a.R > b.R:
+			return 1
+		default:
+			return 0
+		}
+	})
 	return out
 }
 

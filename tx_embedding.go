@@ -20,8 +20,8 @@ func (tx *Tx) PutEmbedding(coord lattice.PackedCoord, vec []float32) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}
-	if len(vec) == 0 {
-		return fmt.Errorf("%w: empty vector", ErrEmbeddingDimension)
+	if err := validateEmbeddingVector(vec); err != nil {
+		return err
 	}
 	dim := tx.db.eng.EmbeddingDim()
 	if dim == 0 {
@@ -47,6 +47,18 @@ func (tx *Tx) PutEmbedding(coord lattice.PackedCoord, vec []float32) error {
 	// Update HNSW graph.
 	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.DistanceMetric(tx.db.eng.EmbeddingMetric()))
 	return g.Insert(coord, vec)
+}
+
+func validateEmbeddingVector(vec []float32) error {
+	if len(vec) == 0 || len(vec) > math.MaxUint16 {
+		return fmt.Errorf("%w: dimension must be between 1 and %d", ErrEmbeddingDimension, uint16(math.MaxUint16))
+	}
+	for _, value := range vec {
+		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+			return fmt.Errorf("%w: embedding components must be finite", ErrInvalidArgument)
+		}
+	}
+	return nil
 }
 
 // GetEmbedding returns the vector embedding for the cell at coord, or (nil, false, nil) if none stored.

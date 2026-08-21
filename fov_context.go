@@ -20,7 +20,8 @@ func (cfg *FOVContextConfig) withDefaults() {
 }
 
 // LoadContextFOV loads cells around center using field-of-view filtering.
-// Only cells that are visible from center (via hex line-of-sight) are included.
+// Only cells that are visible from center (via deterministic symmetric
+// shadowcasting) are included.
 // The opaque function determines which coordinates block vision; cells for which
 // opaque returns true are themselves included (the wall is visible) but block
 // cells behind them.
@@ -45,7 +46,8 @@ func (tx *Tx) LoadContextFOV(ctx context.Context, center Coord, maxR int, opaque
 	return tx.fetchVisibleCells(ctx, visible, cfg.MaxCells)
 }
 
-// fetchVisibleCells packs and fetches cells from a list of visible coordinates.
+// fetchVisibleCells packs and fetches cells from a deterministic nearest-first
+// list of visible coordinates.
 func (tx *Tx) fetchVisibleCells(ctx context.Context, coords []Coord, maxCells int) ([]record.CellRecord, error) {
 	out := make([]record.CellRecord, 0, min(len(coords), maxCells))
 	for _, c := range coords {

@@ -12,13 +12,13 @@ Both primary and WAL matter for durability: the engine appends redo records to t
 
 ### File growth (extend-only allocation)
 
-The engine uses an **extend-only** page allocator: deleted or pruned records reclaim logical space inside the B+ tree **as free space for reuse**, but the primary file length does **not** shrink automatically. Expect monotonic **file size** under churn until you compact via [`DB.Compact`](../../compact.go) or [`CompactTo`](../../compact.go) (see **Compaction** below). See [`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md) for the page/WAL layout.
+The engine uses an **extend-only** page allocator with no freelist: pages made unreachable by deletes, pruning, or tree rewrites become dead space and are not reused. The primary file length therefore does **not** shrink automatically. Expect monotonic **file size** under churn until you compact via [`DB.Compact`](../../compact.go) or [`CompactTo`](../../compact.go) (see **Compaction** below). See [`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md) for the page/WAL layout.
 
 ### Deletes, tombstones, and why the file size barely moves
 
 On **format v2 (MVCC)**, [`DeleteCell`](../../delete_cell.go) does **not** remove the cell’s primary history: it appends a **tombstone** row (zero-length value at a new `commit_seq`). That **adds** a physical btree entry and usually **grows** WAL and sometimes the primary (new pages or split pages), even while the **visible** cell count drops.
 
-So a pattern like “82 cells → delete 10 → file still **576 KiB**” is **normal**: freed space is mostly **internal reuse**, not a shorter file. To **reduce bytes on disk**:
+So a pattern like “82 cells → delete 10 → file still **576 KiB**” is **normal**: obsolete pages remain allocated until compaction. To **reduce bytes on disk**:
 
 1. Optionally [**`PruneCellVersions`**](../../mvcc_lifecycle.go) to drop **old** non-latest versions (cannot remove the latest tombstone for a coord while that key still exists).
 2. Then [**`Compact`**](../../compact.go) to rewrite into a tight file (reclaims freelist/low-fill pages).
@@ -45,6 +45,8 @@ Without **prune + compact**, expect similar **file** size; [`StatsMVCC`](../../m
 Confirm with **HealthCheck `cell_count`**, or enumerate coords before/after.
 
 ## Backup and copy
+
+HexxlaDB permits exactly one open handle per primary database file, across handles and processes. A competing [`Open`](../../db.go) fails immediately with [`ErrDatabaseLocked`](../../errors.go); do not bypass this lock or independently manipulate the WAL. Close the owning handle before using offline tools such as [`CompactTo`](../../compact.go) or encryption rotation.
 
 - **Preferred:** Close the database ([`DB.Close`](../../db.go)) so files are consistent, then copy **both** primary and WAL (if present and non-empty), or copy the directory after close.
 - **Filesystem snapshots:** Snapshot the volume containing both files at the same logical point in time. Copying only the primary without the WAL (or mixing files from different times) can yield **corruption** or lost data.
@@ -85,7 +87,7 @@ Recommended cadence: during low-traffic windows, loop `PruneScheduler.Tick` or `
 
 ## Compaction
 
-Copy-compaction rewrites all B+ tree keys sequentially into a fresh file, reclaiming freelist gaps and pages with low fill factor. All data — including MVCC version rows and tombstones — is copied verbatim, preserving full snapshot history.
+Copy-compaction rewrites all B+ tree keys sequentially into a fresh file, reclaiming unreachable and low-fill pages. All data — including MVCC version rows, commit-timeline rows, and tombstones — is copied verbatim, preserving full snapshot history.
 
 ### Quick reference
 
@@ -115,8 +117,43 @@ db.Compact(ctx, destPath)                // rewrite without dead pages
 ### Notes
 
 - **Format preservation:** destination inherits format version, MVCC flag, `MaxValueBytes`, and encryption from the source header. Encryption credentials must be supplied via `opts` for encrypted sources.
+- **Exclusive paths:** `destPath` must not exist and is never overwritten. `CompactTo` also requires `srcPath` to be closed because it acquires the database lock itself.
+- **Encrypted open handles:** `DB.Compact` cannot recover caller credentials from an open handle and returns `ErrEncryptionKeyRequired` for encrypted databases. Close it and use `CompactTo(ctx, srcPath, destPath, opts)` with the original credentials.
 - **Context cancellation:** partial destination is removed on abort.
 - **Changelog:** the destination does not carry over the source changelog file. Re-enable changelog on the reopened destination if needed.
+
+## Super-hex derived occupancy index
+
+`SuperHexSummaryIndex` is process-local and rebuildable; it is not stored in the primary database. Open the database with `Options.ChangelogEnabled`, construct the desired aperture-7 level, call `Rebuild` once, then call `Sync` until it returns `processed == 0`:
+
+```go
+idx, err := hexxladb.NewSuperHexSummaryIndex(2)
+if err != nil {
+    return err
+}
+if err := idx.Rebuild(ctx, db); err != nil {
+    return err
+}
+for {
+    processed, err := idx.Sync(ctx, db, 256)
+    if err != nil {
+        return err
+    }
+    if processed == 0 {
+        break
+    }
+}
+```
+
+Rebuild after process restart, after changing hierarchy level, or after replacing/compacting the source database. An index is bound to the `*DB` used for `Rebuild`; syncing it from another handle fails rather than mixing histories.
+
+Use `SummaryForCoord` when starting from a normal cell coordinate. Use `Summary` when the parent coordinate came from a previous `SuperHexSummary` or `Summaries` result.
+Use `LastSeq` to expose consumer lag against the changelog head in application metrics.
+
+For repeatable Dijkstra, deterministic FOV, and super-hex evidence collection,
+run `make evidence`. The controlled and aggregate observation streams, privacy
+constraints, output files, and decision gates are documented in
+[`PERFORMANCE_EVIDENCE.md`](PERFORMANCE_EVIDENCE.md).
 
 ## Pre-release soak checklist
 

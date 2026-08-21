@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
 // MaxRenderRadius is the largest maxR accepted by [RenderHexGrid] and [RenderHexGridFromDB].
@@ -132,19 +134,23 @@ func (tx *Tx) RenderHexGridFromDB(ctx context.Context, center Coord, maxR int) (
 	if tx == nil || tx.db == nil {
 		return "", ErrClosed
 	}
+	if maxR > MaxRenderRadius {
+		maxR = MaxRenderRadius
+	}
+	if err := validatePackedRadius(center, maxR); err != nil {
+		return "", err
+	}
 	occupied := make(map[Coord]bool)
-	coords := WalkRings(nil, center, maxR)
-	for _, c := range coords {
+	for cp := range lattice.WalkRingsPackedSeq(center, maxR) {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		p := mustPack(c)
-		_, ok, err := tx.GetCell(p)
+		_, ok, err := tx.GetCell(cp.Packed)
 		if err != nil {
 			return "", err
 		}
 		if ok {
-			occupied[c] = true
+			occupied[cp.Coord] = true
 		}
 	}
 	result := RenderHexGrid(ctx, center, maxR, func(c Coord) string {

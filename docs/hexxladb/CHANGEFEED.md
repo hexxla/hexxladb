@@ -52,7 +52,8 @@ This keeps downstream memory/context indexes consistent even when logical log du
 
 ## Recovery
 
-- On open, the implementation scans the log to determine the **next sequence number** and validate frames.
+- On open, the implementation scans the log to determine the **next sequence number**, validate frames, and build sparse in-memory sequence-to-offset checkpoints. The checkpoints are not persisted and do not change the file format.
+- `ReadChangelogSince` seeks to the nearest checkpoint and scans forward. At most 255 records before the requested cursor are decoded, rather than the entire history.
 - Corrupt tail: returns **[`ErrChangelogCorrupt`](../../errors.go)** (or partial repair policy as implemented).
 
 ## Operations emitted

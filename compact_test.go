@@ -2,6 +2,7 @@ package hexxladb_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,10 +42,32 @@ func putCompactCell(t *testing.T, db *hexxladb.DB, q, r int, content string) lat
 	return p
 }
 
+func closeCompactDB(t *testing.T, db *hexxladb.DB) {
+	t.Helper()
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func countCompactKeys(t *testing.T, db *hexxladb.DB) int {
+	t.Helper()
+	count := 0
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		return tx.AscendRange(nil, nil, func(_, _ []byte) bool {
+			count++
+			return true
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
 // TestCompactTo_emptyDB verifies compaction of an empty database produces a valid empty DB.
 func TestCompactTo_emptyDB(t *testing.T) {
 	t.Parallel()
-	_, srcPath := openCompactDB(t, nil)
+	db, srcPath := openCompactDB(t, nil)
+	closeCompactDB(t, db)
 	destPath := filepath.Join(t.TempDir(), "dest.db")
 
 	if err := hexxladb.CompactTo(context.Background(), srcPath, destPath, nil); err != nil {
@@ -91,6 +114,7 @@ func TestCompactTo_preservesData(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	closeCompactDB(t, db)
 
 	destPath := filepath.Join(t.TempDir(), "dest.db")
 	if err := hexxladb.CompactTo(ctx, srcPath, destPath, nil); err != nil {
@@ -166,6 +190,8 @@ func TestCompactTo_MVCC_preservesHistory(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	sourceKeyCount := countCompactKeys(t, db)
+	closeCompactDB(t, db)
 
 	destPath := filepath.Join(t.TempDir(), "dest.db")
 	if err := hexxladb.CompactTo(ctx, srcPath, destPath, opts); err != nil {
@@ -177,6 +203,9 @@ func TestCompactTo_MVCC_preservesHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = dest.Close() })
+	if got := countCompactKeys(t, dest); got != sourceKeyCount {
+		t.Fatalf("compacted physical key count = %d, want exact source count %d", got, sourceKeyCount)
+	}
 
 	// Current snapshot sees v2.
 	_ = dest.View(func(tx *hexxladb.Tx) error {
@@ -212,6 +241,7 @@ func TestCompactTo_encrypted(t *testing.T) {
 	opts := &hexxladb.Options{EncryptionKey: key}
 	db, srcPath := openCompactDB(t, opts)
 	putCompactCell(t, db, 0, 0, "secret")
+	closeCompactDB(t, db)
 
 	destPath := filepath.Join(t.TempDir(), "dest.db")
 	if err := hexxladb.CompactTo(context.Background(), srcPath, destPath, opts); err != nil {
@@ -244,6 +274,7 @@ func TestCompactTo_ctxCancellation(t *testing.T) {
 	for i := range 100 {
 		putCompactCell(t, db, i, 0, "filler")
 	}
+	closeCompactDB(t, db)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel
@@ -281,6 +312,7 @@ func TestCompactTo_fileSizeReduction(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	closeCompactDB(t, db)
 
 	destPath := filepath.Join(t.TempDir(), "dest.db")
 	if err := hexxladb.CompactTo(ctx, srcPath, destPath, nil); err != nil {
@@ -291,6 +323,74 @@ func TestCompactTo_fileSizeReduction(t *testing.T) {
 	destStat, _ := os.Stat(destPath)
 	if destStat.Size() > srcStat.Size() {
 		t.Errorf("dest %d bytes > src %d bytes", destStat.Size(), srcStat.Size())
+	}
+}
+
+func TestCompactTo_existingDestinationIsPreserved(t *testing.T) {
+	t.Parallel()
+	db, srcPath := openCompactDB(t, nil)
+	putCompactCell(t, db, 0, 0, "source")
+	closeCompactDB(t, db)
+
+	destPath := filepath.Join(t.TempDir(), "existing.db")
+	dest, err := hexxladb.Open(destPath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	putCompactCell(t, dest, 1, 0, "existing")
+	closeCompactDB(t, dest)
+
+	err = hexxladb.CompactTo(t.Context(), srcPath, destPath, nil)
+	if !errors.Is(err, os.ErrExist) {
+		t.Fatalf("CompactTo existing destination: want os.ErrExist, got %v", err)
+	}
+
+	dest, err = hexxladb.Open(destPath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dest.Close() //nolint:errcheck // test cleanup
+	p, _ := lattice.Pack(lattice.Coord{Q: 1, R: 0})
+	if err := dest.View(func(tx *hexxladb.Tx) error {
+		rec, ok, err := tx.GetCell(p)
+		if err != nil {
+			return err
+		}
+		if !ok || rec.RawContent != "existing" {
+			t.Fatalf("existing destination changed: ok=%v content=%q", ok, rec.RawContent)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCompactTo_existingDestinationWALIsPreserved(t *testing.T) {
+	t.Parallel()
+	db, srcPath := openCompactDB(t, nil)
+	putCompactCell(t, db, 0, 0, "source")
+	closeCompactDB(t, db)
+
+	destPath := filepath.Join(t.TempDir(), "stale-sidecar.db")
+	walPath := destPath + "-wal"
+	wantWAL := []byte("existing sidecar")
+	if err := os.WriteFile(walPath, wantWAL, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := hexxladb.CompactTo(t.Context(), srcPath, destPath, nil)
+	if !errors.Is(err, os.ErrExist) {
+		t.Fatalf("CompactTo existing WAL: want os.ErrExist, got %v", err)
+	}
+	if _, err := os.Stat(destPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed compact left destination primary behind: %v", err)
+	}
+	gotWAL, err := os.ReadFile(walPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotWAL) != string(wantWAL) {
+		t.Fatalf("existing WAL changed: got %q, want %q", gotWAL, wantWAL)
 	}
 }
 
@@ -331,6 +431,7 @@ func TestCompactTo_healthCheckClean(t *testing.T) {
 	db, srcPath := openCompactDB(t, nil)
 	ctx := context.Background()
 	putCompactCell(t, db, 0, 0, "health")
+	closeCompactDB(t, db)
 
 	destPath := filepath.Join(t.TempDir(), "dest.db")
 	if err := hexxladb.CompactTo(ctx, srcPath, destPath, nil); err != nil {

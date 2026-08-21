@@ -28,9 +28,9 @@ func removeDBFiles(path string) {
 // history. Callers who want to strip old versions should [DB.PruneCellVersions]
 // before compacting.
 //
-// The source database is opened read-only for the duration of the copy; destPath
-// must not already exist. On error or context cancellation the partial destPath
-// file is removed.
+// The source database is opened exclusively for the duration of the copy, so it
+// must not already be open in this or another process. destPath must not already
+// exist. On error or context cancellation the partial destPath file is removed.
 //
 // Options from the source header (format version, MVCC flag, encryption,
 // MaxValueBytes) are propagated to the destination automatically. The opts
@@ -41,13 +41,6 @@ func CompactTo(ctx context.Context, srcPath, destPath string, opts *Options) err
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-
-	// Read source header to derive destination options.
-	srcHdr, err := engine.ReadHeaderFile(srcPath)
-	if err != nil {
-		return fmt.Errorf("compact: read source header: %w", err)
-	}
-	destOpts := compactDestOpts(srcHdr, opts)
 
 	// Open source with cache disabled: sequential read-once scan gets zero cache benefit
 	// but would fill the 4 MiB shard pool, evicting useful hot pages.
@@ -65,33 +58,15 @@ func CompactTo(ctx context.Context, srcPath, destPath string, opts *Options) err
 	}
 	defer src.Close() //nolint:errcheck // best-effort close on read-only source
 
-	// Create destination.
-	dest, err := Open(destPath, destOpts)
+	src.mu.RLock()
+	defer src.mu.RUnlock()
+	srcHdr, err := src.eng.ReadHeader()
 	if err != nil {
-		return fmt.Errorf("compact: create dest: %w", err)
+		return fmt.Errorf("compact: read source header: %w", err)
 	}
-
-	// Copy all keys inside a View (read lock) on src and Update on dest.
-	copyErr := compactCopy(ctx, src, dest)
-	closeErr := dest.Close()
-	if copyErr != nil {
-		removeDBFiles(destPath)
-		return copyErr
-	}
-	if closeErr != nil {
-		removeDBFiles(destPath)
-		return fmt.Errorf("compact: close dest: %w", closeErr)
-	}
-
-	// Propagate source CommitSeq to dest header so MVCC snapshots align.
-	if srcHdr.FormatVersion >= 2 {
-		if err := propagateCommitSeq(destPath, destOpts, srcHdr.CommitSeq); err != nil {
-			removeDBFiles(destPath)
-			return err
-		}
-	}
-
-	return nil
+	ch := src.cachedHdr.Load()
+	srcTx := &Tx{db: src, readSeq: ch.commitSeq, cachedBTreeRoot: ch.btreeRoot}
+	return compactFromTx(ctx, srcTx, destPath, compactDestOpts(srcHdr, opts), srcHdr)
 }
 
 // Compact creates a compacted copy of the open database at destPath. The source
@@ -113,13 +88,20 @@ func (db *DB) Compact(ctx context.Context, destPath string) error {
 	}
 
 	db.mu.RLock()
-	eng := db.activeEng()
-	db.mu.RUnlock()
-	if eng == nil {
+	defer db.mu.RUnlock()
+	if db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
-
-	return CompactTo(ctx, eng.Path(), destPath, nil)
+	srcHdr, err := db.eng.ReadHeader()
+	if err != nil {
+		return fmt.Errorf("compact: read source header: %w", err)
+	}
+	if srcHdr.Features&engine.FeatureEncryptedDataPages != 0 {
+		return ErrEncryptionKeyRequired
+	}
+	ch := db.cachedHdr.Load()
+	srcTx := &Tx{db: db, readSeq: ch.commitSeq, cachedBTreeRoot: ch.btreeRoot}
+	return compactFromTx(ctx, srcTx, destPath, compactDestOpts(srcHdr, nil), srcHdr)
 }
 
 // compactDestOpts builds Options for the destination DB from the source header.
@@ -140,66 +122,122 @@ func compactDestOpts(hdr engine.Header, srcOpts *Options) *Options {
 // compactCopy performs the key-by-key copy from src to dest in batches of
 // [compactBatchSize] keys per write transaction. Batching caps WAL burst per
 // commit and prevents holding the write lock for the full duration of a large compact.
-func compactCopy(ctx context.Context, src, dest *DB) error {
-	// Collect all keys from a single stable snapshot of src.
-	type kv struct{ k, v []byte }
-	var pairs []kv
-	if err := src.View(func(srcTx *Tx) error {
-		return srcTx.AscendRange(nil, nil, func(k, v []byte) bool {
-			pairs = append(pairs, kv{
-				k: append([]byte(nil), k...),
-				v: append([]byte(nil), v...),
-			})
-			return true
+type compactPair struct{ k, v []byte }
+
+func compactFromTx(ctx context.Context, srcTx *Tx, destPath string, destOpts *Options, srcHdr engine.Header) (retErr error) {
+	dest, err := openDB(destPath, destOpts, true)
+	if err != nil {
+		return fmt.Errorf("compact: create dest: %w", err)
+	}
+	complete := false
+	defer func() {
+		if err := dest.Close(); retErr == nil && err != nil {
+			retErr = fmt.Errorf("compact: close dest: %w", err)
+		}
+		if !complete || retErr != nil {
+			removeDBFiles(destPath)
+		}
+	}()
+
+	if err := compactCopyTx(ctx, srcTx, dest); err != nil {
+		return err
+	}
+	if srcHdr.FormatVersion >= 2 {
+		dest.mu.Lock()
+		err = dest.eng.UpdateHeader(func(h *engine.Header) {
+			h.CommitSeq = srcHdr.CommitSeq
 		})
-	}); err != nil {
-		return fmt.Errorf("compact: scan src: %w", err)
+		if err == nil {
+			dest.writeSeqNext.Store(srcHdr.CommitSeq)
+			dest.storeCachedHeader(srcHdr.CommitSeq, dest.cachedHdr.Load().btreeRoot)
+		}
+		dest.mu.Unlock()
+		if err != nil {
+			return fmt.Errorf("compact: update dest header: %w", err)
+		}
+	}
+	complete = true
+	return nil
+}
+
+func compactCopyTx(ctx context.Context, srcTx *Tx, dest *DB) error {
+	batch := make([]compactPair, 0, compactBatchSize)
+	var copyErr error
+	flush := func() bool {
+		if len(batch) == 0 {
+			return true
+		}
+		copyErr = writeCompactBatch(ctx, dest, batch)
+		batch = batch[:0]
+		return copyErr == nil
 	}
 
-	// Write in batches so each commit is bounded in WAL size.
-	for len(pairs) > 0 {
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("compact: copy: %w", err)
-		}
-		batch := pairs
-		if len(batch) > compactBatchSize {
-			batch = pairs[:compactBatchSize]
-		}
-		pairs = pairs[len(batch):]
-		if err := dest.Update(func(destTx *Tx) error {
-			for i, p := range batch {
-				if i%compactCtxCheckInterval == 0 {
-					if err := ctx.Err(); err != nil {
-						return err
-					}
-				}
-				if err := destTx.putDirect(p.k, p.v); err != nil {
-					return err
-				}
+	err := srcTx.AscendRange(nil, nil, func(k, v []byte) bool {
+		if len(batch)%compactCtxCheckInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				copyErr = err
+				return false
 			}
-			return nil
-		}); err != nil {
-			return fmt.Errorf("compact: copy batch: %w", err)
 		}
+		batch = append(batch, compactPair{
+			k: append([]byte(nil), k...),
+			v: append([]byte(nil), v...),
+		})
+		return len(batch) < compactBatchSize || flush()
+	})
+	if err != nil {
+		return fmt.Errorf("compact: scan src: %w", err)
+	}
+	if copyErr != nil {
+		return fmt.Errorf("compact: copy: %w", copyErr)
+	}
+	if !flush() {
+		return fmt.Errorf("compact: copy: %w", copyErr)
 	}
 	return nil
 }
 
-// propagateCommitSeq opens the dest briefly to set the MVCC CommitSeq header to
-// match the source, so ViewAt snapshots are valid on the compacted copy.
-func propagateCommitSeq(destPath string, opts *Options, commitSeq uint64) error {
-	d, err := Open(destPath, opts)
-	if err != nil {
-		return fmt.Errorf("compact: reopen dest for header: %w", err)
+func writeCompactBatch(ctx context.Context, dest *DB, batch []compactPair) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	defer d.Close() //nolint:errcheck // best-effort close after header update
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if err := d.eng.UpdateHeader(func(h *engine.Header) {
-		h.CommitSeq = commitSeq
-	}); err != nil {
-		return fmt.Errorf("compact: update dest header: %w", err)
+
+	// Compaction copies physical records verbatim. Using DB.Update here would
+	// synthesize an MVCC commit-time row for every batch, making the destination
+	// observably different from the source and potentially advancing its history.
+	dest.mu.Lock()
+	defer dest.mu.Unlock()
+	if dest.activeEng() == nil {
+		return ErrDatabaseClosed
 	}
-	d.writeSeqNext.Store(commitSeq)
+	if err := dest.eng.BeginWriteTxn(); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			dest.eng.AbortWriteTxn()
+		}
+	}()
+
+	for i, p := range batch {
+		if i%compactCtxCheckInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if err := dest.btree.Put(p.k, p.v); err != nil {
+			return err
+		}
+	}
+	if err := dest.eng.CommitWriteTxn(); err != nil {
+		return err
+	}
+	committed = true
+	if hdr, err := dest.eng.ReadHeader(); err == nil {
+		dest.storeCachedHeader(hdr.CommitSeq, hdr.BTreeRoot)
+	} else {
+		return err
+	}
 	return nil
 }
