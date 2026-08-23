@@ -16,10 +16,10 @@ HexxlaDB’s embedded engine uses a **redo WAL** beside the primary file. This d
 
 The shared library path uses a **group WAL flusher** (see also [`TX.md`](./TX.md) for lock scope):
 
-1. A successful commit enqueues a **flusher job** via [`Engine.CommitWriteTxnBeginAsync`](../../internal/engine/writetxn.go) (or the synchronous handoff in [`Engine.CommitWriteTxn`](../../internal/engine/writetxn.go) when grouped). Redo is written and barriers applied in **batches** that may include **more than one** logical `DB.Update` per batch.
+1. A successful commit enqueues a **flusher job** via [`Engine.CommitWriteTxnBeginAsync`](../../internal/engine/writetxn.go) (or the synchronous handoff in [`Engine.CommitWriteTxn`](../../internal/engine/writetxn.go) when grouped). The public `DB` serializes write transactions through finalization, so each public `DB.Update` is currently applied as its own flusher batch. Direct internal engine users can enqueue multiple jobs for one batch.
 2. For each **applied batch** of flusher work, ordering is: **all** `wal.Write` for all redo in the batch, then **one** `wal.Sync`, then all primary data `WriteAt`s, then **one** primary `Sync`, then **one** `writeHeaderAt` (merged `LastWALSeq` and header) and a final primary `Sync`.
 
-Coalescing and `MaxBatchWait` (via [`Options.GroupWALMaxBatchWait`](../../options.go)) are documented under **Tuning** below. Redo sequence allocation is **monotonic**; until a batch is on disk, data pages are served from an **overlay** and the post-commit header may be **staged** for consistent reads (see [Group WAL invariants](#group-wal-invariants)). If a commit or later finalization fails, the API may return **`ErrCommitFinalization`** (see [`errors.go`](../../errors.go) and [`tx.go`](../../tx.go)).
+Engine-level coalescing and `MaxBatchWait` (via [`Options.GroupWALMaxBatchWait`](../../options.go)) are documented under **Tuning** below. Redo sequence allocation is **monotonic**; until a batch is on disk, data pages are served from an **overlay** and the post-commit header may be **staged** for consistent engine reads (see [Group WAL invariants](#group-wal-invariants)). If a commit or later finalization fails, the API may return **`ErrCommitFinalization`** (see [`errors.go`](../../errors.go) and [`tx.go`](../../tx.go)).
 
 **Direct** use of the engine (tests, internal tooling) can call `WritePage` **without** `BeginWriteTxn`: each call uses the **immediate** path below (one WAL sync per page). Internal tests may open the engine with **group WAL disabled** to exercise the non-group `CommitWriteTxn` path.
 
@@ -31,9 +31,9 @@ Coalescing and `MaxBatchWait` (via [`Options.GroupWALMaxBatchWait`](../../option
 
 2. **Barriers (per applied batch):** `wal.Write` for all records in the batch, then one `wal.Sync`, then all affected primary `WriteAt`s, one primary `Sync`, one `writeHeaderAt` (last job’s header merged, `LastWALSeq` = max redo `seq` in the batch) and final primary `Sync`.
 
-3. **Visibility (engine):** With no active `wtxn`, [`readPagePooled`](../../internal/engine/engine.go) may serve the **overlay**; [`visibleHeader`](../../internal/engine/engine.go) can merge the **staged** header with on-disk so readers and the next `BeginWriteTxn` see a consistent tree.
+3. **Visibility (engine):** With no active `wtxn`, [`readPagePooled`](../../internal/engine/engine.go) may serve the **overlay**; [`visibleHeader`](../../internal/engine/engine.go) can merge the **staged** header with on-disk for direct internal engine consumers.
 
-4. **Visibility (DB + MVCC):** [`View`](../../tx.go) may run while an [`Update`](../../tx.go) has **released** `db.mu` during the async `wait` after `CommitWriteTxnBeginAsync`—see [`TX.md`](./TX.md). [`UpdateHeader(CommitSeq)`](../../tx.go) runs with `db.mu` held after `wait` returns, so `CommitSeq` is not published until that point. [`writeSeq`](../../tx.go) is assigned with [`writeSeqNext`](../../db.go) so MVCC `writeSeq` values stay unique when `Update`s overlap.
+4. **Visibility (DB + MVCC):** [`Update`](../../tx.go) holds `db.mu` through the async engine wait and [`UpdateHeader(CommitSeq)`](../../tx.go). A later `View` or writer cannot begin from staged B+ tree pages or a header that has not completed DB-level finalization. [`writeSeq`](../../tx.go) is assigned with [`writeSeqNext`](../../db.go) and is published as `CommitSeq` before the lock is released.
 
 5. **Failure:** If a batch operation fails, the flusher signals all jobs, clears staging, and drops overlay state for the failed work. `Close` stops the flusher and drains work.
 
@@ -45,7 +45,7 @@ Coalescing and `MaxBatchWait` (via [`Options.GroupWALMaxBatchWait`](../../option
 
 ### Tuning
 
-- [`Options.GroupWALMaxBatchWait`](../../options.go) sets the flusher’s coalescing window (default **2ms** in the engine when zero).
+- [`Options.GroupWALMaxBatchWait`](../../options.go) sets the engine flusher’s collection window (default **2ms** in the engine when zero). Public `DB.Update` calls are serialized through finalization, so this currently affects per-commit latency but does not coalesce concurrent public updates. Direct internal engine users can still use the window to batch multiple jobs.
 
 ---
 
@@ -72,7 +72,7 @@ Tests: [`TestOpen_replaysPendingWAL`](../../internal/engine/engine_test.go), [`T
 
 ## `DB` commit vs header-only paths
 
-- **With group WAL (API default):** Multiple `DB.Update` calls can share a single `wal.Sync` in one flusher batch. Per-update guarantees remain **durable** when `Update` returns success.
+- **With group WAL (API default):** Each serialized `DB.Update` currently uses one flusher batch and is **durable** when `Update` returns success. The engine retains multi-job batching for direct internal use.
 - **Without group WAL (direct engine / tests only):** One `wal.Sync` + primary barriers per committed `CommitWriteTxn` as in the non-group code path in [`CommitWriteTxn`](../../internal/engine/writetxn.go).
 
 **MVCC:** After a successful engine commit, **changelog** append and **`CommitSeq`** ([`UpdateHeader`](../../internal/engine/engine.go) on the open engine) run as in [`TX.md`](./TX.md).
@@ -93,7 +93,7 @@ Tests: [`TestOpen_replaysPendingWAL`](../../internal/engine/engine_test.go), [`T
 
 ## Primary sync policy
 
-**Write-txn** `CommitWriteTxn` (non-group) does **one** `db.Sync` for all batched data pages. The **legacy** immediate `WritePage` path is unchanged. **Group WAL** can fuse multiple updates into one `wal.Sync` and one primary flush batch.
+**Write-txn** `CommitWriteTxn` (non-group) does **one** `db.Sync` for all dirty data pages in the transaction. The **legacy** immediate `WritePage` path is unchanged. **Group WAL** can fuse multiple direct engine jobs into one `wal.Sync` and one primary flush batch; serialized public `DB.Update` calls do not currently share a batch.
 
 Supported controls and verification:
 

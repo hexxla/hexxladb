@@ -19,8 +19,8 @@ type dbCachedHeader struct {
 }
 
 // DB is a handle to an embedded HexxlaDB database. Construction is via [Open].
-// Concurrent [View] calls are serialized with readers. [Update] and [Batch] hold the DB lock around
-// the callback; see [docs/hexxladb/TX.md] for group-WAL wait semantics during engine commit.
+// Concurrent [View] calls may run together. [Update] and [Batch] hold the exclusive DB lock through
+// their callback, engine commit, and DB-level finalization; see [docs/hexxladb/TX.md].
 type DB struct {
 	mu            sync.RWMutex
 	eng           *engine.Engine
@@ -76,7 +76,7 @@ func openDB(path string, opts *Options, createExclusive bool) (*DB, error) {
 			return nil, ErrEncryptionKeyMismatch
 		}
 		if errors.Is(err, engine.ErrInvalidMaxValueBytes) {
-			return nil, fmt.Errorf("%w: MaxValueBytes must be 512, 1024, 2048, 4096, 8192, or 16384", ErrInvalidArgument)
+			return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 		}
 		if errors.Is(err, engine.ErrInvalidPageSize) {
 			return nil, fmt.Errorf("%w: PageSize must be 4096, 8192, 16384, or 65536", ErrInvalidArgument)

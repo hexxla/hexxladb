@@ -52,6 +52,10 @@ type ValidityWire = record.ValidityWire
 // Used by [Tx.ScanContextRaw], [Tx.ScanContextAtRaw], and low-level cell operations.
 type CellRecord = record.CellRecord
 
+// SeamRecord is the v1 wire shape for seam/<ulid> blobs.
+// Re-exported from internal/record so seam APIs and hooks are usable through the stable root import.
+type SeamRecord = record.SeamRecord
+
 // FacetWalkRecord is an alias of the facet wire record so embedding apps (e.g. MCP adapters) can write
 // [Tx.AscendFacetsForCell] callbacks without importing internal packages.
 type FacetWalkRecord = record.FacetRecord

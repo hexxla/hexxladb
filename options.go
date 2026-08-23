@@ -80,8 +80,10 @@ type Options struct {
 	// platforms (e.g. Linux) instead of fsync(2) for engine durability barriers. Default false; see
 	// [docs/hexxladb/DURABILITY.md] before enabling in production.
 	UsePrimaryFdatasync bool
-	// GroupWALMaxBatchWait is passed to the engine group-WAL flusher as the coalescing window after
-	// the first job in a batch. Zero means a 2ms default in the engine. See [docs/hexxladb/DURABILITY.md].
+	// GroupWALMaxBatchWait is passed to the engine group-WAL flusher as its collection window.
+	// Zero means a 2ms default in the engine. Public [DB.Update] calls are serialized through
+	// finalization, so this affects latency but does not coalesce concurrent public updates.
+	// See [docs/hexxladb/DURABILITY.md].
 	GroupWALMaxBatchWait time.Duration
 
 	// EmbeddingDimension optionally pre-sets the fixed vector dimension for new databases.

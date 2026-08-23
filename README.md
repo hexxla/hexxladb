@@ -61,21 +61,26 @@ defer db.Close()
 ### Store a record and its embedding
 
 ```go
-db.Update(func(tx *hexxladb.Tx) error {
+if err := db.Update(func(tx *hexxladb.Tx) error {
     coord := hexxladb.Coord{Q: 3, R: 1}
-    pk, _ := lattice.Pack(coord)
+    pk, err := hexxladb.Pack(coord)
+    if err != nil {
+        return err
+    }
 
-    err := tx.PutCell(ctx, record.CellRecord{
+    err = tx.PutCell(ctx, hexxladb.CellRecord{
         Key:        pk,
         RawContent: "Use testcontainers-go for integration tests with real Postgres.",
         Tags:       []string{"fact", "testing", "database"},
-        Provenance: record.ProvenanceWire{SourceID: "session-2", Confidence: 0.95},
+        Provenance: hexxladb.ProvenanceWire{SourceID: "session-2", Confidence: 0.95},
     })
     if err != nil {
         return err
     }
     return tx.PutEmbedding(pk, vectorFromYourModel) // HNSW index maintained automatically
-})
+}); err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### Search by meaning

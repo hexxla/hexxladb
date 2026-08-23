@@ -2,10 +2,21 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-23
+
 ### Changed
 
 - **Task-based repository workflow** — replaced the Makefile with `Taskfile.yml` while preserving the existing CI, test, benchmark, evidence, build, demo, fuzz, mutation, and pre-commit task names and variable overrides. GitHub Actions pins Task v3.53.1, and VS Code, Zed, contributor guidance, examples, and operational documentation now use `task`. No public Go API or on-disk format change.
 - **Documentation ownership and scope** — replaced the inherited service-template architecture guide with the actual HexxlaDB package-boundary contract; reduced the manually duplicated exported-symbol inventory to a task-oriented API guide; separated product memory concepts from the database storage contract; removed milestone labels, completed-plan history, and speculative backlog material from current reference documents; and made `ROADMAP.md`, `TODO.md`, and `CHANGELOG.md` the sole homes for deferred work, session state, and completed history respectively. No public API or on-disk format change.
+
+### Fixed
+
+- **Concurrent group-WAL update integrity** — public `Update` and `Batch` calls now remain exclusively serialized through engine commit and DB-level finalization, preventing a later writer from building on staged B+ tree state and losing either successful update. This is a pre-v1 behavioral compatibility change: views and writers no longer overlap a public update's commit wait. A regression test verifies both writes and commit sequences before and after reopen.
+- **Stable seam API boundary** — `SeamRecord` is now exported from the root package and used by public seam writes, queries, hooks, secondary walks, and snapshot diffs, so external modules no longer need the inaccessible `internal/record` package.
+- **Release and integration validation** — release jobs now install the complexity tools required by the core CI script, while scheduled integration jobs install every additional tool required by `task ci-full`. The race-enabled integration task also has an explicit 30-minute budget for its 6,000-commit MVCC churn case, preventing deterministic missing-command and default-timeout failures.
+- **Enforced security scans** — Trivy and Gosec now fail their jobs on unsuppressed findings, always retain SARIF reports as workflow artifacts, run from immutable verified release commits, and use only read access to repository contents.
+- **Bounded Ollama calls** — the TUI and LLM context-engine example now use explicit 10-second HTTP clients and context-bearing requests for health and embedding calls, preventing an unavailable local model server from hanging commands indefinitely.
+- **Accurate public guidance** — invalid `MaxValueBytes` errors now list the complete supported range through 1 MiB and retain the engine cause, while the README storage example uses only root-package coordinate and record types and handles write errors.
 
 ## [0.6.0] - 2026-08-21
 
@@ -352,7 +363,8 @@
 
 _First release._
 
-[Unreleased]: https://github.com/hexxla/hexxladb/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/hexxla/hexxladb/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/hexxla/hexxladb/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/hexxla/hexxladb/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/hexxla/hexxladb/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/hexxla/hexxladb/compare/v0.4.0...v0.5.0

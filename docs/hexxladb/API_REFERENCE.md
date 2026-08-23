@@ -48,7 +48,7 @@ The root package re-exports the stable geometry and wire types applications need
 | Surface                                                                                                      | Purpose                                                       |
 | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
 | [`Coord`, `PackedCoord`, `Cube`, `Pack`, `Unpack`, `Ring`, `WalkRings`](../../export.go)                     | Hex coordinates, packing, and deterministic ring enumeration. |
-| [`CellRecord`, `ProvenanceWire`, `ValidityWire`](../../export.go)                                            | Persistent cell wire representation and metadata.             |
+| [`CellRecord`, `SeamRecord`, `ProvenanceWire`, `ValidityWire`](../../export.go)                              | Persistent cell/seam wire representations and metadata.       |
 | [`FacetWalkRecord`, `EdgeWalkRecord`](../../export.go)                                                       | Callback record types for facet and edge walks.               |
 | [`NewProvenanceWire`, `NewFacetDerived`](../../templates.go)                                                 | Helpers for constructing common records.                      |
 | [`NewUserMessageCell`, `NewAssistantResponseCell`, `NewSystemPromptCell`, `NewFactCell`](../../templates.go) | Optional conversational-memory templates.                     |

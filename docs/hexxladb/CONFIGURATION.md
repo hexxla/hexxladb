@@ -80,7 +80,7 @@ Convenience adapters: `CellValidatorFunc`, `AfterPutCellHookFunc`, `AfterPutSeam
 | Field                  | Type            | Default | Description                                                                                |
 | ---------------------- | --------------- | ------- | ------------------------------------------------------------------------------------------ |
 | `UsePrimaryFdatasync`  | `bool`          | `false` | Use `fdatasync(2)` instead of `fsync(2)` on the primary file (Linux). See `DURABILITY.md`. |
-| `GroupWALMaxBatchWait` | `time.Duration` | `2ms`   | WAL flusher coalescing window. Lower = less latency; higher = more batching.               |
+| `GroupWALMaxBatchWait` | `time.Duration` | `2ms`   | Engine flusher collection window. Public updates are serialized, so higher values add latency without cross-update batching. |
 
 ### Page hooks (advanced)
 

@@ -48,13 +48,13 @@ func (f AfterPutCellHookFunc) AfterPutCell(ctx context.Context, rec record.CellR
 // to new seam detection — e.g. alerting on new conflicts, triggering review workflows,
 // or updating semantic graphs.
 type AfterPutSeamHook interface {
-	AfterPutSeam(ctx context.Context, rec record.SeamRecord) error
+	AfterPutSeam(ctx context.Context, rec SeamRecord) error
 }
 
 // AfterPutSeamHookFunc adapts a plain function to [AfterPutSeamHook].
-type AfterPutSeamHookFunc func(ctx context.Context, rec record.SeamRecord) error
+type AfterPutSeamHookFunc func(ctx context.Context, rec SeamRecord) error
 
 // AfterPutSeam implements [AfterPutSeamHook].
-func (f AfterPutSeamHookFunc) AfterPutSeam(ctx context.Context, rec record.SeamRecord) error {
+func (f AfterPutSeamHookFunc) AfterPutSeam(ctx context.Context, rec SeamRecord) error {
 	return f(ctx, rec)
 }

@@ -17,7 +17,15 @@ func TestExportedWalkAliasesAndTemplateHelpers(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "export_aliases.db")
-	db, err := hexxladb.Open(path, nil)
+	var hookedSeams int
+	db, err := hexxladb.Open(path, &hexxladb.Options{
+		AfterPutSeam: hexxladb.AfterPutSeamHookFunc(func(_ context.Context, rec hexxladb.SeamRecord) error {
+			if rec.ID == "01ARZ3NDEKTSV4RRFFQ69G5FAV" {
+				hookedSeams++
+			}
+			return nil
+		}),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,9 +56,21 @@ func TestExportedWalkAliasesAndTemplateHelpers(t *testing.T) {
 			return err
 		}
 		prov := hexxladb.NewProvenanceWire("mcp-test", 1)
-		return tx.LinkCells(a, b, "rel", 1, prov)
+		if err := tx.LinkCells(a, b, "rel", 1, prov); err != nil {
+			return err
+		}
+		return tx.PutSeam(ctx, hexxladb.SeamRecord{
+			ID:         "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+			CellA:      pkA,
+			CellB:      pkB,
+			SeamType:   hexxladb.SeamTypeConflict,
+			Provenance: prov,
+		})
 	}); err != nil {
 		t.Fatal(err)
+	}
+	if hookedSeams != 1 {
+		t.Fatalf("AfterPutSeamHookFunc: want 1 seam, got %d", hookedSeams)
 	}
 
 	var facets int
@@ -83,5 +103,21 @@ func TestExportedWalkAliasesAndTemplateHelpers(t *testing.T) {
 	}
 	if edges != 1 {
 		t.Fatalf("AscendEdgesFrom EdgeWalkRecord callback: want 1 edge, got %d", edges)
+	}
+
+	var seams int
+	err = db.View(func(tx *hexxladb.Tx) error {
+		return tx.AscendSeamsBySource(ctx, "mcp-test", func(rec hexxladb.SeamRecord) bool {
+			if rec.ID == "01ARZ3NDEKTSV4RRFFQ69G5FAV" {
+				seams++
+			}
+			return true
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seams != 1 {
+		t.Fatalf("AscendSeamsBySource SeamRecord callback: want 1 seam, got %d", seams)
 	}
 }

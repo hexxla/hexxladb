@@ -10,8 +10,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
-  actions: read
 
 jobs:
   govulncheck:
@@ -38,16 +36,23 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: "fs"
           scan-ref: "."
           format: "sarif"
           output: "trivy-results.sarif"
+          exit-code: "1"
           severity: "CRITICAL,HIGH"
 
-      # Note: SARIF upload disabled - requires code scanning to be enabled in repository settings
-      # To enable: Repository Settings > Security and analysis > Code scanning"
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-sarif
+          path: trivy-results.sarif
+          if-no-files-found: error
+          retention-days: 14
 
   gosec:
     name: Gosec Security Scan
@@ -63,9 +68,15 @@ jobs:
           cache: true
 
       - name: Run Gosec
-        uses: securego/gosec@master
+        uses: securego/gosec@9e75c0576c9878035d4221392108d458abe10fc3 # v2.28.0
         with:
-          args: "-no-fail -fmt sarif -out gosec-results.sarif ./..."
+          args: "-fmt sarif -out gosec-results.sarif ./..."
 
-      # Note: SARIF upload disabled - requires code scanning to be enabled in repository settings
-      # To enable: Repository Settings > Security and analysis > Code scanning
+      - name: Upload Gosec SARIF
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gosec-sarif
+          path: gosec-results.sarif
+          if-no-files-found: error
+          retention-days: 14

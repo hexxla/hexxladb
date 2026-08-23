@@ -181,7 +181,7 @@ func (tx *Tx) WalkRingAt(ctx context.Context, center lattice.Coord, ring int, as
 //
 // The logical changefeed records this as [ChangelogOpPutSeam]. [Tx.ResolveSeam] uses the same
 // storage path but logs [ChangelogOpResolveSeam].
-func (tx *Tx) PutSeam(ctx context.Context, rec record.SeamRecord) error {
+func (tx *Tx) PutSeam(ctx context.Context, rec SeamRecord) error {
 	return tx.putSeamWithOp(ctx, rec, changelog.OpPutSeam)
 }
 
@@ -280,7 +280,7 @@ func checkSeamEndpoints(old, updated record.SeamRecord) error {
 }
 
 // SeamType constants for well-known seam relationships.
-// SeamType is a free string on [record.SeamRecord]; these constants define the
+// SeamType is a free string on [SeamRecord]; these constants define the
 // canonical values used by built-in helpers and context assembly.
 const (
 	// SeamTypeConflict is written by [Tx.MarkConflict].
@@ -367,13 +367,13 @@ func (tx *Tx) MarkSupersedes(superseder, superseded lattice.Coord, reason string
 // The implementation uses the seam-by-cells secondary index: for each cell in the
 // ball of radius R around center, range scans list incident seams; results are
 // deduplicated by ULID.
-func (tx *Tx) FindSeams(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool) ([]record.SeamRecord, error) {
+func (tx *Tx) FindSeams(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool) ([]SeamRecord, error) {
 	return tx.findSeams(ctx, center, radius, unresolvedOnly, nil)
 }
 
-// FindSeamsAt is like [Tx.FindSeams] but only includes seams whose [record.ValidityWire]
+// FindSeamsAt is like [Tx.FindSeams] but only includes seams whose [ValidityWire]
 // contains asOf (single-version read filter; not MVCC).
-func (tx *Tx) FindSeamsAt(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool, asOf time.Time) ([]record.SeamRecord, error) {
+func (tx *Tx) FindSeamsAt(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool, asOf time.Time) ([]SeamRecord, error) {
 	return tx.findSeams(ctx, center, radius, unresolvedOnly, &asOf)
 }
 

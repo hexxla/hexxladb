@@ -12,64 +12,112 @@ import (
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
-// TestGroupWAL_secondUpdateCanOverlapFirstWait checks that a second [DB.Update] can run (and
-// reach its callback) while the first is blocked in the group-WAL wait after releasing [db.mu].
-func TestGroupWAL_secondUpdateCanOverlapFirstWait(t *testing.T) {
+// TestGroupWAL_concurrentUpdatesPreserveWrites verifies that concurrent callers remain
+// serialized through durable commit finalization. A second writer must not build on
+// unflushed B+ tree state from the first writer.
+func TestGroupWAL_concurrentUpdatesPreserveWrites(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gw.db")
-	db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(path, &hexxladb.Options{
+		EnableMVCC:           true,
+		GroupWALMaxBatchWait: 50 * time.Millisecond,
+		PageCacheSize:        -1,
+	})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer func() {
-		if err := db.Close(); err != nil {
-			t.Errorf("Close: %v", err)
-		}
-	}()
 
-	p := lattice.PackedCoord{7, 8}
-	rec := record.CellRecord{Key: p, RawContent: "a"}
-	ctx := context.Background()
+	firstKey, err := hexxladb.Pack(hexxladb.Coord{Q: 7, R: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondKey, err := hexxladb.Pack(hexxladb.Coord{Q: 8, R: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
 
 	unblock := make(chan struct{})
 	started := make(chan struct{})
 	g2cb := make(chan struct{})
+	firstReturned := make(chan struct{})
+	var overlapped bool
 
 	var wg sync.WaitGroup
-	errCh := make(chan error, 2)
+	var firstErr, secondErr error
 	wg.Go(func() {
-		errCh <- db.Update(func(tx *hexxladb.Tx) error {
-			if err := tx.PutCell(ctx, rec); err != nil {
+		firstErr = db.Update(func(tx *hexxladb.Tx) error {
+			if err := tx.PutCell(ctx, hexxladb.CellRecord{Key: firstKey, RawContent: "first"}); err != nil {
 				return err
 			}
 			close(started)
 			<-unblock
 			return nil
 		})
+		close(firstReturned)
 	})
 
 	<-started
 	wg.Go(func() {
-		errCh <- db.Update(func(tx *hexxladb.Tx) error {
+		secondErr = db.Update(func(tx *hexxladb.Tx) error {
+			select {
+			case <-firstReturned:
+			default:
+				overlapped = true
+			}
 			close(g2cb)
-			return nil
+			return tx.PutCell(ctx, hexxladb.CellRecord{Key: secondKey, RawContent: "second"})
 		})
 	})
 
-	// Let G1 finish its callback and enter the async group-WAL wait (releases [db.mu]).
 	close(unblock)
 	select {
 	case <-g2cb:
 	case <-time.After(3 * time.Second):
-		t.Fatal("second Update did not reach its callback while the first was in group-WAL wait")
+		t.Fatal("second Update did not reach its callback after the first callback was released")
 	}
 	wg.Wait()
-	if e := <-errCh; e != nil {
-		t.Fatalf("Update: %v", e)
+	if firstErr != nil || secondErr != nil {
+		t.Fatalf("Update: first=%v second=%v", firstErr, secondErr)
 	}
-	if e := <-errCh; e != nil {
-		t.Fatalf("Update: %v", e)
+	if overlapped {
+		t.Fatal("second Update callback entered before the first Update returned")
+	}
+	assertGroupWALCells(t, db, firstKey, secondKey, 2)
+
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	db, err = hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true, PageCacheSize: -1})
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	assertGroupWALCells(t, db, firstKey, secondKey, 2)
+}
+
+func assertGroupWALCells(t *testing.T, db *hexxladb.DB, firstKey, secondKey hexxladb.PackedCoord, wantSeq uint64) {
+	t.Helper()
+	stats, err := db.StatsMVCC()
+	if err != nil {
+		t.Fatalf("StatsMVCC: %v", err)
+	}
+	if stats.CommitSeq != wantSeq {
+		t.Errorf("CommitSeq: got %d want %d", stats.CommitSeq, wantSeq)
+	}
+	err = db.View(func(tx *hexxladb.Tx) error {
+		for _, key := range []hexxladb.PackedCoord{firstKey, secondKey} {
+			if _, ok, err := tx.GetCell(key); err != nil {
+				return err
+			} else if !ok {
+				t.Errorf("GetCell(%v): not found", key)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("View: %v", err)
 	}
 }
 

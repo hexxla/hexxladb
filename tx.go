@@ -99,8 +99,8 @@ func (db *DB) ViewAtTime(asOf time.Time, fn func(*Tx) error) error {
 	return fn(tx)
 }
 
-// Update runs fn inside a read-write transaction. The callback is exclusive; engine commit may
-// release the DB lock briefly—see [docs/hexxladb/TX.md].
+// Update runs fn inside an exclusive read-write transaction. The database lock remains held
+// through engine commit and finalization; see [docs/hexxladb/TX.md].
 func (db *DB) Update(fn func(*Tx) error) error {
 	if fn == nil {
 		return ErrNilCallback
@@ -153,15 +153,13 @@ func (db *DB) Update(fn func(*Tx) error) error {
 		}
 		return fnErr
 	}
-	// Group WAL (always on in [hexxladb]): enqueue then [Unlock] [db.mu] so another [Update] can
-	// run and enqueue a second flusher job; re-lock before MVCC + changelog.
+	// Keep db.mu held while the group-WAL job is applied. A later writer must not begin from
+	// staged B+ tree pages or a header that has not completed DB-level finalization.
 	wait, wErr := db.eng.CommitWriteTxnBeginAsync()
 	if wErr != nil {
 		return fmt.Errorf("%w: engine commit: %w", ErrCommitFinalization, wErr)
 	}
-	db.mu.Unlock()
 	cErr := wait()
-	db.mu.Lock()
 	if cErr != nil {
 		return fmt.Errorf("%w: engine commit: %w", ErrCommitFinalization, cErr)
 	}

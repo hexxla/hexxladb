@@ -29,7 +29,7 @@ tasks:
   integration:
     desc: Run optional integration tests serially with the race detector
     cmds:
-      - go test -count=1 -race -parallel=1 -tags=integration ./...
+      - go test -count=1 -race -parallel=1 -timeout=30m -tags=integration ./...
 
   bench-tmp:
     desc: Create the benchmark temporary directory

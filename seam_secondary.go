@@ -110,7 +110,7 @@ func (tx *Tx) seamTimeScanBounds(bucket int64) (from, to []byte) {
 }
 
 // AscendSeamsBySource scans the seam-source/ secondary index for sourceID and loads each seam primary by ULID.
-func (tx *Tx) AscendSeamsBySource(ctx context.Context, sourceID string, fn func(record.SeamRecord) bool) error {
+func (tx *Tx) AscendSeamsBySource(ctx context.Context, sourceID string, fn func(SeamRecord) bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -163,7 +163,7 @@ func (tx *Tx) AscendSeamsBySource(ctx context.Context, sourceID string, fn func(
 }
 
 // AscendSeamsInTimeBucket scans the seam-time/ secondary index for the UTC week bucket and loads each seam primary.
-func (tx *Tx) AscendSeamsInTimeBucket(ctx context.Context, bucket int64, fn func(record.SeamRecord) bool) error {
+func (tx *Tx) AscendSeamsInTimeBucket(ctx context.Context, bucket int64, fn func(SeamRecord) bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

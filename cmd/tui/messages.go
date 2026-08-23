@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/hexxla/hexxladb"
 	"github.com/hexxla/hexxladb/internal/index"
@@ -243,10 +244,23 @@ func loadCells(db *hexxladb.DB, limit int) []hexxladb.CellView {
 
 // ── Ollama embedding helpers ────────────────────────────────────────────────
 
-const ollamaBase = "http://localhost:11434"
+const (
+	ollamaBase           = "http://localhost:11434"
+	ollamaRequestTimeout = 10 * time.Second
+)
+
+var ollamaHTTPClient = &http.Client{Timeout: ollamaRequestTimeout}
 
 func ollamaReachable() bool {
-	resp, err := http.Get(ollamaBase) //nolint:noctx // context not required for simple health check
+	return ollamaReachableWithClient(ollamaHTTPClient, ollamaBase)
+}
+
+func ollamaReachableWithClient(client *http.Client, baseURL string) bool {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return false
 	}
@@ -255,8 +269,17 @@ func ollamaReachable() bool {
 }
 
 func embed(text string) ([]float32, error) {
+	return embedWithClient(ollamaHTTPClient, ollamaBase, text)
+}
+
+func embedWithClient(client *http.Client, baseURL, text string) ([]float32, error) {
 	body, _ := json.Marshal(map[string]string{"model": "all-minilm", "prompt": text})
-	resp, err := http.Post(ollamaBase+"/api/embeddings", "application/json", bytes.NewReader(body)) //nolint:noctx // context not required for simple blocking call
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/embeddings", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("ollama request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("ollama: %w", err)
 	}

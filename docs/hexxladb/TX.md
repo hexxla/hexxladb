@@ -4,9 +4,9 @@
 
 ## Locking
 
-- **`View`** acquires a **read lock**: many concurrent **`View`** calls can run; they block only while an **`Update`** or **`Batch`** holds the **database** lock for the parts of the call that require it (see **Group WAL** below).
-- **`Update`** acquires the **database** lock at **start** and **end** of the call. While the callback runs, the lock is held (no concurrent **`View`**, **`Update`**, or **`Batch`**). For the **engine commit** step, **`hexxladb`** uses the **group WAL** path by default (see **[`DURABILITY.md`](./DURABILITY.md)**): after the callback succeeds, [`CommitWriteTxnBeginAsync`](../../internal/engine/writetxn.go) enqueues work and the implementation may **`Unlock`** `db.mu` while the caller **waits** on the flusher (same durability when `Update` returns). In that **wait** window, a concurrent **`View`** or another **`Update`** may run—another **`Update`** can enqueue a second flusher job that may **batch** with the first. The caller then **re-locks** `db.mu` and runs **changelog** + **[`UpdateHeader(CommitSeq)`](../../db.go)** for MVCC before returning, so new commits do not publish a higher `CommitSeq` until after the engine commit and re-lock.
-- **`Batch`** is **equivalent** to **`Update`** (same lock and semantics). It exists for alignment with the spec’s `Batch` name and ecosystem expectations. Each successful **`Update`** / **`Batch`** uses one engine **write transaction**; see **[`DURABILITY.md`](./DURABILITY.md)** for barriers and coalescing. Optional tuning: **[`Options.GroupWALMaxBatchWait`](../../options.go)**.
+- **`View`** acquires a **read lock**: many concurrent **`View`** calls can run; they block while an **`Update`** or **`Batch`** holds the **database** lock.
+- **`Update`** acquires the **database** lock before beginning the engine write transaction and keeps it through the callback, group-WAL commit wait, changelog append, and MVCC header finalization. No concurrent **`View`**, **`Update`**, or **`Batch`** can observe or build on staged engine state. A successful return publishes the complete commit, including its **`CommitSeq`**.
+- **`Batch`** is **equivalent** to **`Update`** (same lock and semantics). It exists for alignment with the spec’s `Batch` name and ecosystem expectations. Each successful **`Update`** / **`Batch`** uses one engine **write transaction**; see **[`DURABILITY.md`](./DURABILITY.md)** for barrier ordering.
 
 ## Snapshot semantics and MVCC
 

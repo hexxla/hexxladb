@@ -58,6 +58,9 @@ func TestMaxValueBytes_InvalidRejected(t *testing.T) {
 		if !errors.Is(err, hexxladb.ErrInvalidArgument) {
 			t.Errorf("MaxValueBytes=%d: expected ErrInvalidArgument, got %v", bad, err)
 		}
+		if err == nil || !strings.Contains(err.Error(), "1048576") {
+			t.Errorf("MaxValueBytes=%d: diagnostic omits accepted values: %v", bad, err)
+		}
 	}
 }
 

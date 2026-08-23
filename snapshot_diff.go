@@ -41,7 +41,7 @@ type SeamDiff struct {
 	// Op is the operation type (currently always [DiffOpPut]).
 	Op DiffOp
 	// Record is the decoded seam at this version.
-	Record record.SeamRecord
+	Record SeamRecord
 }
 
 // SnapshotDiff holds all changes between two MVCC commit sequences.
