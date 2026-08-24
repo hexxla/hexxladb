@@ -8,17 +8,6 @@ Execute these workstreams in order. Each workstream begins with a reproducible b
 
 Completed workstreams are recorded in [`CHANGELOG.md`](../CHANGELOG.md). Remaining workstreams retain their original identifiers so session state and prior review references stay unambiguous.
 
-### 9. Coordinate placement and lattice quality
-
-**Outcome:** Applications must have a reproducible way to make hex proximity meaningful and to detect when vector and lattice neighborhoods diverge, without hidden database mutation.
-
-- Define placement invariants, collision behavior, stable relocation/supersession rules, and the boundary between application policy and database primitives.
-- Build a reference placement example using existing public APIs rather than embedding product policy in the engine.
-- Measure useful context per token, neighborhood precision, stability under incremental insertion, and divergence between semantic seeds and lattice expansion.
-- Add inspection/export tooling only when the evaluation shows that users cannot diagnose placement quality with existing walks and queries.
-
-**Completion evidence:** a repeatable example produces and evaluates a lattice from a representative corpus, poor placement is observable, and the documentation states what HexxlaDB guarantees versus what the application must decide.
-
 ### 10. Product-policy and token-budget ergonomics
 
 **Outcome:** Keep truth, confidence, contradiction detection, and ranking policy explicit while making correct application integration easier.
@@ -43,10 +32,8 @@ Completed workstreams are recorded in [`CHANGELOG.md`](../CHANGELOG.md). Remaini
 
 ### Program sequencing
 
-1. Complete MVCC and write-path measurement/fixes before setting scale claims.
-2. Complete storage, backup, and durable-consumer workflows before expanding deployment guidance.
-3. Complete lattice-quality evidence before adding new placement abstractions.
-4. Complete migration and compatibility gates after the preceding contracts have stabilized.
+1. Complete product-policy and token-budget evidence before stabilizing the corresponding public guidance.
+2. Complete migration and compatibility gates after the preceding contracts have stabilized.
 
 For every workstream: run the narrowest regression first, then package tests and race checks, then `task ci`; update only the owning reference documents and record completed behavior under `CHANGELOG.md` `[Unreleased]`.
 

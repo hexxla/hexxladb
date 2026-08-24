@@ -1,8 +1,8 @@
 # Performance evidence
 
 This suite answers two separate questions about Dijkstra pathfinding,
-deterministic field of view (FOV), MVCC hot-key reads, HNSW vector search, and
-the aperture-7 super-hex occupancy prototype:
+deterministic field of view (FOV), MVCC hot-key reads, HNSW vector search,
+lattice placement quality, and the aperture-7 super-hex occupancy prototype:
 
 1. **Does the implementation remain correct and how does each operation scale
    under controlled inputs?** The controlled stream runs a seeded randomized
@@ -31,6 +31,7 @@ This writes:
 - `.tmp/evidence/superhex-sync-bench.txt`
 - `.tmp/evidence/storage-churn.txt`
 - `.tmp/evidence/workload.json`
+- `.tmp/evidence/lattice-placement.json`
 
 Run the streams separately when iteration time matters:
 
@@ -38,6 +39,7 @@ Run the streams separately when iteration time matters:
 task evidence-controlled
 task evidence-observe
 task evidence-vector-scale
+task evidence-lattice-placement
 ```
 
 The default observation workload uses 2,000 cells, 100 samples, seed `1`, FOV
@@ -62,6 +64,17 @@ task evidence-vector-scale \
   VECTOR_EVIDENCE_OUTPUT='.tmp/evidence/vector-scale-10000-384d.json'
 ```
 
+The placement runner defaults to six synthetic topics with 20 documents each,
+places 12 per topic before an incremental append, and compares a stable
+topic-clustered first-free policy with intentionally interleaved placement. It
+uses only public APIs and writes `.tmp/evidence/lattice-placement.json`:
+
+```bash
+task evidence-lattice-placement \
+  PLACEMENT_EVIDENCE_ARGS='-documents-per-topic 20 -initial-per-topic 12' \
+  PLACEMENT_EVIDENCE_OUTPUT='.tmp/evidence/lattice-placement-120.json'
+```
+
 ## What is measured
 
 | Area              | Controlled evidence                                                                                                                                        | Observation evidence                                                                                      |
@@ -70,6 +83,7 @@ task evidence-vector-scale \
 | Deterministic FOV | Shadowcast algorithm, retained raycast comparison, and full `LoadContextFOV` API latency                                                                   | p50/p95/max/mean latency and aggregate number of returned cells with deterministic blockers               |
 | Super-hex         | Rebuild, O(1) coordinate lookup, deterministic export, direct changelog tail reads across 512–100k historical records, and fixed-history one-shot catch-up | rebuild/write/sync distributions, changes processed, summary count, applied sequence, and caught-up state |
 | Vector search     | Final 500×32d query latency and allocation benchmark versus the recorded pre-change baseline                                                               | Batched graph build, exact-oracle recall@k, query latency/path/breadth, reopen, churn, memory, and file sizes |
+| Lattice placement | Deterministic repeat test for placement, incremental insertion, collision handling, and successor substitution                                           | Neighborhood precision, useful-context ratio, semantic precision, semantic/lattice divergence, and labelled diagnostic grids |
 | MVCC hot keys     | Latest and historical point-read latency and allocations at 10, 100, 1,000, and 6,000 versions                                                           | Not included                                                                                                |
 | Public writes     | Single, batched, callback-delayed, fdatasync, and reader-blocking latency with group-WAL batch/sync counts                                               | Not included                                                                                                |
 | Storage churn     | Exact primary/live/reclaimable page bytes after puts, tombstones, pruning, and compaction; bounded progress and interruption tests                      | Final primary, WAL, and changelog sizes                                                                     |
@@ -131,6 +145,53 @@ distributions, stricter recall targets, or different hardware, rerun the same
 command with representative inputs and retain the JSON before choosing
 `EfSearch`, batch size, cache, or page settings. A new index or bulk builder
 remains unjustified until that evidence misses an explicit target.
+
+### Lattice-placement evidence
+
+The runner creates the same deterministic six-topic, 120-document corpus in two
+temporary databases. The topic-clustered policy probes from a fixed per-topic
+anchor in deterministic ring order. The intentionally interleaved policy probes
+from one shared anchor while inserting topics round-robin. Both check occupancy
+with `GetCell` before `PutCell`, append eight documents per topic without moving
+the initial twelve, and use the same deterministic embeddings. Evaluation uses
+only read transactions; it does not repair or mutate poor placement.
+
+The report defines:
+
+- **neighborhood precision** as the fraction of occupied cells within two rings
+  that share the seed's topic;
+- **useful context per token** as the fraction of `LoadContext` budget units
+  spent on same-topic raw content, using the documented `ByteLenBudgeter` byte
+  proxy rather than claiming model-token accuracy;
+- **semantic precision** as the same-topic fraction among eight ANN neighbors;
+- **semantic/lattice divergence** as total-variation distance between semantic
+  and two-ring topic distributions, from zero (aligned) to one (disjoint);
+- **coordinate stability** as the fraction of initial record IDs still found at
+  their original coordinates after incremental insertion.
+
+The 2026-08-25 reference run used an Intel Core i9-14900HX, Linux/amd64,
+Go 1.27.0, seed 1, a 600-byte context budget, and the default workload:
+
+| Policy | Neighborhood precision | Useful context/token | Semantic precision | Semantic/lattice divergence | Coordinate stability |
+| ------ | ---------------------- | -------------------- | ------------------ | --------------------------- | -------------------- |
+| Topic-clustered | 1.000 | 1.000 | 1.000 | 0.000 | 1.000 |
+| Interleaved | 0.129 | 0.255 | 1.000 | 0.873 | 1.000 |
+
+The equal semantic precision isolates placement as the cause of the degraded
+interleaved neighborhood and context results. The same report includes labelled
+radius-two grids: the clustered grid contains one topic, while the interleaved
+grid visibly mixes all six. The clustered lifecycle check also creates a
+successor at a new free coordinate, preserves the predecessor, calls
+`MarkSupersedes`, and verifies that `LoadContext` substitutes the successor only
+when `FilterSuperseded` is enabled.
+
+The acceptance check fails unless clustered precision is at least 0.8,
+interleaved precision is at most 0.4, useful-context ratio separates by at least
+0.4, semantic precision remains at least 0.8, clustered divergence is at most
+0.25, interleaved divergence is at least 0.5, both stability scores are 1.0,
+and the relocation/supersession contract passes. Existing `GetCell`, ring walks,
+`LoadContext`, `SearchByEmbedding`, and `RenderHexGrid` exposed every failure, so
+the evidence does not justify a placement engine or new inspection/export API.
 
 ### MVCC hot-key evidence
 

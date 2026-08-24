@@ -55,6 +55,10 @@ The root package re-exports the stable geometry and wire types applications need
 
 Coordinate bounds and packing details are documented in [`internal/lattice/PACKED_COORD.md`](../../internal/lattice/PACKED_COORD.md).
 
+HexxlaDB does not choose coordinates or enforce semantic clustering. For deterministic placement, applications can probe a fixed anchor in `Ring`/`WalkRings` order, use `Tx.GetCell` to select the first free coordinate, and perform the occupancy check plus `PutCell` in one update. Do not silently overwrite a collision when the operation means insert. Preserve existing coordinates during incremental insertion; represent an intentional move by creating a successor and calling `MarkSupersedes` rather than deleting or rewriting history. `ClusterHint` is stored metadata only.
+
+The [`lattice_placement_evidence`](../../examples/lattice_placement_evidence) example implements that workflow entirely through the public API and compares semantic and spatial neighborhood quality.
+
 ## Cells, facets, edges, and seams
 
 Use these methods inside `View` or `Update` callbacks:
@@ -184,6 +188,7 @@ Do not compare error strings.
 - [`examples/llm_context_engine`](../../examples/llm_context_engine) — embedding-backed retrieval and prompt assembly; requires Ollama with `all-minilm`.
 - [`examples/performance_evidence`](../../examples/performance_evidence) — controlled evidence collection for spatial algorithms and super-hex occupancy.
 - [`examples/vector_scale_evidence`](../../examples/vector_scale_evidence) — bounded HNSW build, recall, reopen, churn, memory, and disk evidence.
+- [`examples/lattice_placement_evidence`](../../examples/lattice_placement_evidence) — deterministic placement, collision, incremental-stability, supersession, and semantic/lattice divergence evidence.
 
 Examples demonstrate workflows; they are not expected to call every exported symbol.
 

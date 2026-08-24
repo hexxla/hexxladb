@@ -72,10 +72,11 @@ tasks:
       - go test -count=1 -bench='BenchmarkAPI_(GetCell|AscendCellsBySource|LoadContext|LoadContextAt|WalkRing|WalkRingAt)/' -benchmem -benchtime=500ms ./.
 
   evidence:
-    desc: Run controlled performance evidence and the aggregate observation workload
+    desc: Run controlled, aggregate observation, and lattice-placement evidence
     cmds:
       - task: evidence-controlled
       - task: evidence-observe
+      - task: evidence-lattice-placement
 
   evidence-controlled:
     desc: Run the oracle soak and focused performance benchmarks
@@ -102,6 +103,15 @@ tasks:
     vars:
       VECTOR_EVIDENCE_ARGS: '{{.VECTOR_EVIDENCE_ARGS | default ""}}'
       VECTOR_EVIDENCE_OUTPUT: '{{.VECTOR_EVIDENCE_OUTPUT | default ".tmp/evidence/vector-scale.json"}}'
+
+  evidence-lattice-placement:
+    desc: Compare deterministic clustered and interleaved lattice placement quality
+    cmds:
+      - mkdir -p .tmp/evidence .tmp/go-build
+      - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go run ./examples/lattice_placement_evidence {{.PLACEMENT_EVIDENCE_ARGS}} | tee {{.PLACEMENT_EVIDENCE_OUTPUT}}"
+    vars:
+      PLACEMENT_EVIDENCE_ARGS: '{{.PLACEMENT_EVIDENCE_ARGS | default ""}}'
+      PLACEMENT_EVIDENCE_OUTPUT: '{{.PLACEMENT_EVIDENCE_OUTPUT | default ".tmp/evidence/lattice-placement.json"}}'
 
   fuzz:
     desc: Run short fuzz smoke tests on internal decoders

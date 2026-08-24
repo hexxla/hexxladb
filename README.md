@@ -25,7 +25,7 @@ Single binary, zero network dependencies, no daemon.
 
 ## How it works
 
-Cells sit at `(q, r)` hex coordinates. Related records sit nearby. `LoadContext` walks outward from seed coordinates, applies caller-selected assembly options such as supersession resolution and seam inclusion, and returns a budget-bounded context pack.
+Cells sit at `(q, r)` hex coordinates. Related records sit nearby when the application applies a meaningful placement policy; HexxlaDB preserves supplied coordinates but does not infer semantic position. `LoadContext` walks outward from seed coordinates, applies caller-selected assembly options such as supersession resolution and seam inclusion, and returns a budget-bounded context pack.
 
 | Primitive     | Description                                                                   |
 | ------------- | ----------------------------------------------------------------------------- |
@@ -283,6 +283,7 @@ The context assembly operations (`LoadContext`, `LoadContextFOV`, `LoadContextVo
 | [LLM Context Engine](examples/llm_context_engine/)       | `task demo-llm`     | Ollama embeddings, semantic search, supersession, FOV        |
 | [Spatial Algorithms](examples/spatial_algorithms/)       | `task demo-spatial` | FOV, LOD, Voronoi, Dijkstra, BFS — side-by-side              |
 | [Vector Scale Evidence](examples/vector_scale_evidence/) | `task evidence-vector-scale` | HNSW build, recall, reopen, churn, memory, and disk   |
+| [Lattice Placement Evidence](examples/lattice_placement_evidence/) | `task evidence-lattice-placement` | Placement stability and semantic/spatial divergence |
 
 The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm && task demo-llm`
 
@@ -294,6 +295,7 @@ The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm 
 - **In-process only** — no network server; one process owns the file at a time.
 - **Measured HNSW envelope** — 10,000 vectors at 32 and 384 dimensions pass build, recall, reopen, and update/delete churn with 4 KiB pages and a 64 MiB page-cache budget. This is evidence for that tested scale, not an unbounded capacity claim; run `task evidence-vector-scale` with representative vectors before relying on larger sets or dimensions. Flat-scan fallback remains available, and `SearchByEmbeddingWithStats` reports the selected path.
 - **Coordinates are sparse** — hex grid is a logical namespace, not a dense array. No compaction of coordinate space happens automatically.
+- **Placement is caller-owned** — the database does not infer semantic coordinates or resolve insert collisions. Use a deterministic first-free policy, preserve existing coordinates during incremental insertion, and measure semantic/lattice divergence with representative records.
 - **Storage is extend-only between maintenance windows** — deletes and pruning expose dead pages but do not shrink the primary; inspect `StorageStats`, then use bounded explicit compaction to create a smaller replacement.
 - **Primary-page integrity** — AES-XTS data pages provide confidentiality, not authenticated tamper detection. Use trusted storage and independently authenticated backups; encrypted WAL and changelog records do fail closed on modification.
 - **Pre-v1** — API may change between minor versions during the v0.y.z phase.
