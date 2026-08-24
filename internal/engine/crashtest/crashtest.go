@@ -3,7 +3,10 @@
 // to a file path; the file is written, then the process blocks until killed.
 package crashtest
 
-import "os"
+import (
+	"os"
+	"time"
+)
 
 // At is a no-op unless HEXXLADB_TEST_CRASH_AT matches phase. The ready file, if set, is written
 // first; the goroutine then blocks so a parent can kill(2) the process to simulate power loss.
@@ -16,5 +19,7 @@ func At(phase string) {
 		//nolint:gosec // G703 test subprocess only; path is chosen by the parent [testing.T] (tempdir).
 		_ = os.WriteFile(p, []byte(phase), 0o600)
 	}
-	select {}
+	for {
+		time.Sleep(time.Hour)
+	}
 }

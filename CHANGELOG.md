@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-24
+
+### Added
+
+- **Public write-path timing** — `DB.WriteStats` returns cumulative accepted-call and committed-transaction counts plus time spent waiting for the database lock, running callbacks, making the authoritative engine commit durable, and completing post-commit projection/finalization. Snapshots are lock-free and remain available after close so embedders can export interval metrics without a library-owned metrics subsystem.
+
+### Performance
+
+- **Immediate default group-WAL flush** — the zero-value `GroupWALMaxBatchWait` no longer inserts an ineffective 2 ms collection delay into serialized public updates. Explicit positive waits remain available for direct engine users that can enqueue concurrent jobs. In the controlled matrix, minimal single-write latency fell from about 2.24 ms to 75–81 µs and reader blocking with a fixed 1 ms callback fell from about 3.42 ms to 1.25–1.46 ms; public operations continued to report one batch, zero multi-job batches, and one WAL sync. Full indexed-record evidence still shows `BatchPutCells` at about 0.063 ms/cell versus about 0.53 ms for individual MVCC writes. Durability ordering and lock scope are unchanged.
+- **Bounded MVCC hot-key lookup** — cell, facet, and seam point reads now reverse-seek to the greatest version at or below the transaction snapshot instead of scanning and copying the full version chain. The benchmark matrix covers latest and historical snapshots through 6,000 versions; the 6,000-version latest case improved from about 2.02 ms and 3.43 MB allocated per lookup to about 13.4 µs and 31 KB on the reference host, with snapshot, tombstone, secondary-index, prune, race, and reopen coverage retained. No public API or on-disk format change.
+
+### Fixed
+
+- **Encrypted changelog confidentiality and integrity** — encrypted databases now write logical changelog format v2 with XChaCha20-Poly1305 frames and database/log-specific derived keys, so record keys and inline payloads are no longer exposed beside encrypted data pages. Headers, frame lengths, clear sequences, wrong keys, swapped logs, and modified frames fail closed; legacy plaintext logs are rejected deterministically instead of receiving mixed-format appends. Offline encryption rotation preserves and re-encrypts changelog history when changelog settings remain enabled at the same path. Primary AES-XTS pages remain explicitly confidentiality-only pending a future authenticated on-disk format.
+- **Recoverable commit and changefeed finalization** — `CommitSeq`, versioned data, and bounded logical-event intents now share one engine commit. The external changelog is a recoverable primary-outbox projection, so append failures and process death after the engine commit converge on reopen without permanent feed gaps or sequence reuse. Known-durable projection failures additionally match `ErrCommitDurable` and block further writes until reopen; a crash after append but before acknowledgement may redeliver the same idempotent operation. Lazy mode retains intents until a bounded sync/cleanup barrier, and incomplete unacknowledged tail frames can be reconstructed from primary state.
+
 ## [0.7.0] - 2026-08-23
 
 ### Changed
@@ -363,7 +379,8 @@
 
 _First release._
 
-[Unreleased]: https://github.com/hexxla/hexxladb/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/hexxla/hexxladb/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/hexxla/hexxladb/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/hexxla/hexxladb/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/hexxla/hexxladb/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/hexxla/hexxladb/compare/v0.5.0...v0.5.1

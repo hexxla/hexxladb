@@ -3,9 +3,25 @@ package hexxladb
 import (
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
-	"github.com/hexxla/hexxladb/internal/mvcc"
 	"github.com/hexxla/hexxladb/internal/record"
 )
+
+func (tx *Tx) getVisibleVersionRaw(
+	from, to []byte,
+	parseCommitSeq func([]byte) (uint64, bool),
+) (raw []byte, commitSeq uint64, ok bool, err error) {
+	err = tx.descendRange(from, to, func(k, v []byte) bool {
+		seq, valid := parseCommitSeq(k)
+		if !valid {
+			return true
+		}
+		raw = append([]byte(nil), v...)
+		commitSeq = seq
+		ok = true
+		return false
+	})
+	return raw, commitSeq, ok, err
+}
 
 func (tx *Tx) getCellVisibleRaw(key lattice.PackedCoord) (raw []byte, commitSeq uint64, ok bool, err error) {
 	if tx == nil || tx.db == nil {
@@ -34,20 +50,12 @@ func (tx *Tx) getCellVisibleRaw(key lattice.PackedCoord) (raw []byte, commitSeq 
 			return b, tx.writeSeq, true, nil
 		}
 	}
-	from, to := index.CellVersionScanBounds(key)
-	var versions []mvcc.VersionKV
-	err = tx.db.btree.AscendRange(from, to, func(k, v []byte) bool {
-		cs, ok := index.ParseCommitSeqFromCellKey(k)
-		if !ok {
-			return true
-		}
-		versions = append(versions, mvcc.VersionKV{CommitSeq: cs, Value: append([]byte(nil), v...)})
-		return true
-	})
+	from := index.CellKeyWithVersion(key, 0)
+	to := index.CellKeyWithVersion(key, tx.readSeq)
+	val, seq, ok, err := tx.getVisibleVersionRaw(from, to, index.ParseCommitSeqFromCellKey)
 	if err != nil {
 		return nil, 0, false, err
 	}
-	val, seq, ok := mvcc.SelectVisible(versions, tx.readSeq)
 	if !ok {
 		return nil, 0, false, nil
 	}
@@ -84,23 +92,18 @@ func (tx *Tx) getFacetVisibleRaw(p lattice.PackedCoord, facetID byte) (raw []byt
 		}
 		return tx.Get(k)
 	}
-	from, to, err := index.FacetVersionScanBounds(p, facetID)
+	from, err := index.FacetKeyWithVersion(p, facetID, 0)
 	if err != nil {
 		return nil, false, err
 	}
-	var versions []mvcc.VersionKV
-	err = tx.AscendRange(from, to, func(k, v []byte) bool {
-		cs, ok := index.ParseFacetCommitSeq(k)
-		if !ok {
-			return true
-		}
-		versions = append(versions, mvcc.VersionKV{CommitSeq: cs, Value: append([]byte(nil), v...)})
-		return true
-	})
+	to, err := index.FacetKeyWithVersion(p, facetID, tx.readSeq)
 	if err != nil {
 		return nil, false, err
 	}
-	val, _, ok := mvcc.SelectVisible(versions, tx.readSeq)
+	val, _, ok, err := tx.getVisibleVersionRaw(from, to, index.ParseFacetCommitSeq)
+	if err != nil {
+		return nil, false, err
+	}
 	if !ok {
 		return nil, false, nil
 	}
@@ -129,23 +132,18 @@ func (tx *Tx) getSeamVisibleRaw(id string) (raw []byte, commitSeq uint64, ok boo
 		}
 		return raw, 0, true, nil
 	}
-	from, to, err := index.SeamVersionScanBounds(id)
+	from, err := index.SeamKeyWithVersion(id, 0)
 	if err != nil {
 		return nil, 0, false, err
 	}
-	var versions []mvcc.VersionKV
-	err = tx.AscendRange(from, to, func(k, v []byte) bool {
-		cs, ok := index.ParseSeamCommitSeq(k)
-		if !ok {
-			return true
-		}
-		versions = append(versions, mvcc.VersionKV{CommitSeq: cs, Value: append([]byte(nil), v...)})
-		return true
-	})
+	to, err := index.SeamKeyWithVersion(id, tx.readSeq)
 	if err != nil {
 		return nil, 0, false, err
 	}
-	val, seq, ok := mvcc.SelectVisible(versions, tx.readSeq)
+	val, seq, ok, err := tx.getVisibleVersionRaw(from, to, index.ParseSeamCommitSeq)
+	if err != nil {
+		return nil, 0, false, err
+	}
 	if !ok {
 		return nil, 0, false, nil
 	}

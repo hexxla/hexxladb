@@ -72,19 +72,19 @@ tasks:
       - go test -count=1 -bench='BenchmarkAPI_(GetCell|AscendCellsBySource|LoadContext|LoadContextAt|WalkRing|WalkRingAt)/' -benchmem -benchtime=500ms ./.
 
   evidence:
-    desc: Run controlled spatial evidence and the aggregate observation workload
+    desc: Run controlled performance evidence and the aggregate observation workload
     cmds:
       - task: evidence-controlled
       - task: evidence-observe
 
   evidence-controlled:
-    desc: Run the oracle soak and focused spatial benchmarks
+    desc: Run the oracle soak and focused performance benchmarks
     cmds:
       - mkdir -p .tmp/evidence .tmp/go-build
       - GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go test -count=1 -race -run='TestSuperHexSummaryIndex_RandomizedAgainstOracle$' .
       - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go test -count=1 -run='^$' -bench='Benchmark(FieldOfViewShadowcast|FieldOfViewRaycast)$' -benchmem -benchtime=1s ./internal/lattice 2>&1 | tee .tmp/evidence/fov-bench.txt"
       - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go test -count=3 -run='^$' -bench='BenchmarkLog_ReadSinceTail$' -benchmem -benchtime=300ms ./internal/changelog 2>&1 | tee .tmp/evidence/changelog-read-bench.txt"
-      - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go test -count=1 -run='^$' -bench='BenchmarkAPI_(FindEdgePathDegree|LoadContextFOV|SuperHexRebuild|SuperHexSummaryForCoord|SuperHexSummaries)$' -benchmem -benchtime=1s . 2>&1 | tee .tmp/evidence/api-bench.txt"
+      - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go test -count=1 -run='^$' -bench='BenchmarkAPI_(BatchPutCells|FindEdgePathDegree|LoadContextFOV|MVCCVersionResolution|SuperHexRebuild|SuperHexSummaryForCoord|SuperHexSummaries|WritePath|WriteReaderBlocking)$' -benchmem -benchtime=1s . 2>&1 | tee .tmp/evidence/api-bench.txt"
       - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp HEXXLA_SYNC_BENCH=1 go test -count=1 -run='^$' -bench='BenchmarkEvidence_SuperHexSyncCatchUp$' -benchmem -benchtime=1x . 2>&1 | tee .tmp/evidence/superhex-sync-bench.txt"
 
   evidence-observe:

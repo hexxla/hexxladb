@@ -525,6 +525,16 @@ func (t *BTree) DescendRangeFromRoot(root uint64, from, to []byte, fn func(k, v 
 	return nil
 }
 
+// DescendRange calls fn for every key in [from, to] inclusive in descending
+// (reverse) byte order. If to is nil, it starts at the largest key.
+func (t *BTree) DescendRange(from, to []byte, fn func(k, v []byte) bool) error {
+	hdr, err := t.eng.ReadHeader()
+	if err != nil {
+		return err
+	}
+	return t.DescendRangeFromRoot(hdr.BTreeRoot, from, to, fn)
+}
+
 // rightmostLeaf returns the page ID of the rightmost leaf whose keys are ≤ to
 // (or the absolute rightmost leaf if to is nil).
 func (t *BTree) rightmostLeaf(root uint64, to []byte) (uint64, error) {

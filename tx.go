@@ -7,6 +7,7 @@ import (
 
 	"github.com/hexxla/hexxladb/internal/changelog"
 	"github.com/hexxla/hexxladb/internal/engine"
+	"github.com/hexxla/hexxladb/internal/engine/crashtest"
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
@@ -15,9 +16,13 @@ import (
 // Tx is a database transaction or snapshot view. Obtain it only from [DB.View], [DB.ViewAt], [DB.Update], or [DB.Batch].
 // A Tx is valid only for the duration of the callback; do not store it past the callback return.
 type Tx struct {
-	db       *DB
-	writable bool
-	clog     []changelog.Entry
+	db                     *DB
+	writable               bool
+	clog                   []changelog.Entry
+	changelogIntents       []changelog.Intent
+	changelogOutboxKeys    [][]byte
+	changefeedHeadBefore   uint64
+	changefeedHeadAdvanced bool
 	// readSeq is the MVCC snapshot (largest visible commit_seq). Ignored when the DB is format v1.
 	readSeq uint64
 	// writeSeq is the commit_seq assigned to writes in this Update (hdr.CommitSeq+1). Zero in read-only txs.
@@ -108,24 +113,37 @@ func (db *DB) Update(fn func(*Tx) error) error {
 	if db == nil || db.closed.Load() {
 		return ErrDatabaseClosed
 	}
+	db.writeStats.calls.Add(1)
+	lockStarted := time.Now()
 	db.mu.Lock()
+	db.writeStats.lockWait.Add(int64(time.Since(lockStarted)))
 	defer db.mu.Unlock()
 	if db.activeEng() == nil {
 		return ErrDatabaseClosed
+	}
+	if db.recoveryRequired.Load() {
+		return fmt.Errorf("%w: close and reopen required", ErrCommitFinalization)
 	}
 	if err := db.eng.BeginWriteTxn(); err != nil {
 		return err
 	}
 	committed := false
+	var writeSeqBefore uint64
+	var tx *Tx
 	defer func() {
 		if !committed {
 			db.eng.AbortWriteTxn()
+			db.resetChangefeedHead(tx)
+			if !db.recoveryRequired.Load() {
+				db.writeSeqNext.Store(writeSeqBefore)
+			}
 		}
 	}()
 
 	ch := db.cachedHdr.Load()
-	var tx *Tx
+	writeSeqBefore = ch.commitSeq
 	var metaTimelineKey []byte
+	commitWall := time.Now().UTC().UnixNano()
 	if db.useMVCC {
 		wseq := db.writeSeqNext.Add(1)
 		tx = &Tx{
@@ -138,54 +156,73 @@ func (db *DB) Update(fn func(*Tx) error) error {
 		// Insert commit-time row before MVCC physical cells so btree key order matches sorted key
 		// order (__meta/commit-time/… sorts before cell/…). Writing cells first then meta produced a
 		// shape where leaf delete/rebalance could corrupt pages (see internal/engine/btree_test.go).
-		wall := time.Now().UTC().UnixNano()
-		metaTimelineKey = index.CommitTimeKey(wall, tx.writeSeq)
+		metaTimelineKey = index.CommitTimeKey(commitWall, tx.writeSeq)
 		if err := db.btree.Put(metaTimelineKey, emptySecondaryVal); err != nil {
 			return fmt.Errorf("%w: commit timeline: %w", ErrCommitFinalization, err)
 		}
 	} else {
 		tx = &Tx{db: db, writable: true}
 	}
+	callbackStarted := time.Now()
 	fnErr := fn(tx)
+	db.writeStats.callback.Add(int64(time.Since(callbackStarted)))
 	if fnErr != nil {
 		if metaTimelineKey != nil {
 			_ = db.btree.Delete(metaTimelineKey)
 		}
 		return fnErr
 	}
+	if err := db.stageChangelogOutbox(tx, commitWall); err != nil {
+		return fmt.Errorf("%w: durable changelog intent: %w", ErrCommitFinalization, err)
+	}
+	if hook := db.commitFaults; hook != nil && hook.beforeCommitSeqPublish != nil {
+		if err := hook.beforeCommitSeqPublish(); err != nil {
+			return fmt.Errorf("%w: header publication: %w", ErrCommitFinalization, err)
+		}
+	}
+	finalHeader, err := db.eng.UpdateHeaderGet(func(h *engine.Header) {
+		if db.useMVCC {
+			h.CommitSeq = tx.writeSeq
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("%w: header publication: %w", ErrCommitFinalization, err)
+	}
+	if hook := db.commitFaults; hook != nil && hook.beforeEngineCommit != nil {
+		if err := hook.beforeEngineCommit(); err != nil {
+			return fmt.Errorf("%w: engine commit: %w", ErrCommitFinalization, err)
+		}
+	}
+	crashtest.At("db_header_staged")
 	// Keep db.mu held while the group-WAL job is applied. A later writer must not begin from
 	// staged B+ tree pages or a header that has not completed DB-level finalization.
+	durabilityStarted := time.Now()
 	wait, wErr := db.eng.CommitWriteTxnBeginAsync()
 	if wErr != nil {
+		db.writeStats.durability.Add(int64(time.Since(durabilityStarted)))
 		return fmt.Errorf("%w: engine commit: %w", ErrCommitFinalization, wErr)
 	}
 	cErr := wait()
+	db.writeStats.durability.Add(int64(time.Since(durabilityStarted)))
 	if cErr != nil {
+		db.recoveryRequired.Store(true)
 		return fmt.Errorf("%w: engine commit: %w", ErrCommitFinalization, cErr)
 	}
 	committed = true
-	if db.changelog != nil && len(tx.clog) > 0 {
-		wall := time.Now().UnixNano()
-		if err := db.changelog.AppendBatch(wall, tx.clog); err != nil {
-			return fmt.Errorf("%w: changelog append: %w", ErrCommitFinalization, err)
+	db.writeStats.commits.Add(1)
+	db.storeCachedHeader(finalHeader.CommitSeq, finalHeader.BTreeRoot)
+	crashtest.At("db_engine_committed")
+	finalizationStarted := time.Now()
+	defer func() { db.writeStats.finalization.Add(int64(time.Since(finalizationStarted))) }()
+	if hook := db.commitFaults; hook != nil && hook.afterEngineCommit != nil {
+		if err := hook.afterEngineCommit(); err != nil {
+			db.recoveryRequired.Store(true)
+			return durableCommitError("after engine commit", err)
 		}
 	}
-	// Refresh the cached header so the next View sees the updated BTreeRoot and CommitSeq
-	// without a pread(page0). For MVCC DBs we use UpdateHeaderGet to set CommitSeq and
-	// retrieve the resulting header in one call (no second ReadHeader pread). For non-MVCC
-	// we call ReadHeader once. Both paths hold db.mu.Lock().
-	if db.useMVCC {
-		if fhdr, fErr := db.eng.UpdateHeaderGet(func(h *engine.Header) {
-			h.CommitSeq = tx.writeSeq
-		}); fErr == nil {
-			db.storeCachedHeader(fhdr.CommitSeq, fhdr.BTreeRoot)
-		} else {
-			return fmt.Errorf("%w: header update: %w", ErrCommitFinalization, fErr)
-		}
-	} else {
-		if fhdr, fErr := db.eng.ReadHeader(); fErr == nil {
-			db.storeCachedHeader(fhdr.CommitSeq, fhdr.BTreeRoot)
-		}
+	if err := db.finalizeChangelogProjection(tx); err != nil {
+		db.recoveryRequired.Store(true)
+		return err
 	}
 	return nil
 }
@@ -272,6 +309,21 @@ func (tx *Tx) AscendRange(from, to []byte, fn func(k, v []byte) bool) error {
 		return tx.db.btree.AscendRangeFromRoot(tx.cachedBTreeRoot, from, to, fn)
 	}
 	return tx.db.btree.AscendRange(from, to, fn)
+}
+
+// descendRange calls fn for keys in [from, to] inclusive in reverse byte order.
+// Read-only transactions use their pinned B+ tree root; writers use staged tree state.
+func (tx *Tx) descendRange(from, to []byte, fn func(k, v []byte) bool) error {
+	if tx == nil || tx.db == nil {
+		return ErrClosed
+	}
+	if tx.db.activeEng() == nil {
+		return ErrDatabaseClosed
+	}
+	if !tx.writable {
+		return tx.db.btree.DescendRangeFromRoot(tx.cachedBTreeRoot, from, to, fn)
+	}
+	return tx.db.btree.DescendRange(from, to, fn)
 }
 
 // Writable reports whether this transaction was started with [DB.Update].

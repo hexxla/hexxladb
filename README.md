@@ -174,6 +174,7 @@ Public API guide: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE
 | `NewSuperHexSummaryIndex` + summary methods             | Rebuildable aperture-7 occupancy summaries maintained from changelog    |
 | `MarkConflict` / `MarkSupersedes` / `FindSeams`         | Record and retrieve contradictions and supersessions                    |
 | `ViewAt` / `SnapshotDiff`                               | MVCC time-travel and change detection                                   |
+| `WriteStats` / `GroupWALStats`                         | Observe write contention, phase timing, and WAL batching                |
 | `Compact` / `HealthCheck`                               | Copy-compaction and structural integrity check                          |
 
 ---
@@ -192,7 +193,7 @@ _Intel Core i9-14900HX · 16 GB · Go 1.26 · Linux · `-benchtime=3s -count=1`_
 | ------------------------------------- | ------- | ------------------------------------------------------------------------- |
 | `GetCell` (2k cells)                  | ~20 µs  | O(log n) B+ tree                                                          |
 | `GetCell` encrypted (2k cells)        | ~21 µs  | AES-256-XTS; ~1 µs overhead vs plaintext                                  |
-| `GetCell` MVCC + encrypted (2k cells) | ~26 µs  | Combined MVCC version scan + decryption                                   |
+| `GetCell` MVCC + encrypted (2k cells) | ~26 µs  | Combined bounded MVCC version seek + decryption                            |
 | `WalkRing` r=2 (19 cells/walk, 2k DB) | ~162 µs | Scales with ring area, not DB size                                        |
 | `QueryCells` tag-only (2k cells)      | ~15 µs  | Index-only; no page reads                                                 |
 | `QueryCells` spatial r=5 (2k DB)      | ~634 µs | 91-cell ring area walk + filter (3r²+3r+1)                                |
@@ -213,13 +214,13 @@ _Intel Core i9-14900HX · 16 GB · Go 1.26 · Linux · `-benchtime=3s -count=1`_
 
 ### Writes
 
-| Operation                           | Latency       | Notes                                       |
-| ----------------------------------- | ------------- | ------------------------------------------- |
-| `PutCell` single write              | ~5.0 ms/op    | Single-writer B+ tree; fsync per commit     |
-| `PutCell` MVCC                      | ~5.7 ms/op    | Version row + changelog overhead            |
-| `BatchPutCells` batch=500           | ~0.09 ms/cell | vs ~5 ms/cell single-write (55× faster)     |
-| `PutEmbedding` dim=32 (HNSW insert) | ~53 ms/op     | Full HNSW graph maintenance per write       |
-| `PutEmbedding` dim=384              | ~74 ms/op     | Encode + graph insert scales with dimension |
+| Operation                           | Latency        | Notes                                                |
+| ----------------------------------- | -------------- | ---------------------------------------------------- |
+| `PutCell` single write              | ~0.57 ms/op    | Single-writer B+ tree; durable commit, no wait window |
+| `PutCell` MVCC                      | ~0.53 ms/op    | Version and secondary-index rows                     |
+| `BatchPutCells` batch=100           | ~0.063 ms/cell | About 8× lower per-cell latency than single MVCC writes |
+| `PutEmbedding` dim=32 (HNSW insert) | ~53 ms/op      | Full HNSW graph maintenance per write                |
+| `PutEmbedding` dim=384              | ~74 ms/op      | Encode + graph insert scales with dimension          |
 
 ### Semantic and lexical search
 
@@ -231,18 +232,19 @@ _Intel Core i9-14900HX · 16 GB · Go 1.26 · Linux · `-benchtime=3s -count=1`_
 
 ### MVCC and maintenance
 
-| Operation                              | Latency | Notes                                         |
-| -------------------------------------- | ------- | --------------------------------------------- |
-| MVCC version resolution (100 versions) | ~1.1 ms | O(n) version scan per `GetCell`               |
-| MVCC version resolution (500 versions) | ~5.5 ms | Prune old versions to keep this fast          |
-| `SnapshotDiff` (10 writes)             | ~159 µs | Incremental CDC; scales linearly with range   |
-| `SnapshotDiff` (500 writes)            | ~6.9 ms |                                               |
-| `Compact` (512 cells)                  | ~67 ms  | Copy-compaction; run after heavy delete/prune |
-| `Compact` (2k cells)                   | ~236 ms | One-time cost; DB is read-only during copy    |
+| Operation                                         | Latency  | Notes                                                   |
+| ------------------------------------------------- | -------- | ------------------------------------------------------- |
+| MVCC latest resolution (100 versions)             | ~6 µs    | Reverse B+ tree seek; does not scan older versions      |
+| MVCC latest resolution (6,000 versions)           | ~12–14 µs | Growth follows tree depth/page occupancy, not chain scan |
+| MVCC historical resolution (6,000 versions)       | ~10–15 µs | Seeks directly to the greatest version at `read_seq`    |
+| `SnapshotDiff` (10 writes)                        | ~159 µs  | Incremental CDC; scales linearly with range              |
+| `SnapshotDiff` (500 writes)                       | ~6.9 ms  |                                                         |
+| `Compact` (512 cells)                             | ~67 ms   | Copy-compaction; run after heavy delete/prune            |
+| `Compact` (2k cells)                              | ~236 ms  | One-time cost; DB is read-only during copy               |
 
 ### Performance context
 
-HexxlaDB's "write" and "read" are not equivalent to a raw KV store operation. A `PutCell` writes a primary record plus 3–4 secondary index rows (source, tag, validity, changelog) in a single fsync'd transaction — comparable to a multi-index SQL insert. A `GetCell` deserialises a structured record (provenance, tags, validity window) on top of the B+ tree lookup. The ~5 ms single-write latency reflects this; `BatchPutCells` amortises the fsync to ~0.09 ms/cell.
+HexxlaDB's "write" and "read" are not equivalent to a raw KV store operation. A `PutCell` writes a primary record, 3–4 secondary index rows (source, tag, validity), and a durable changefeed intent in one engine transaction, then projects that intent to the sidecar changelog — comparable to a multi-index SQL insert with an outbox. A `GetCell` deserialises a structured record (provenance, tags, validity window) on top of the B+ tree lookup. The ~5 ms single-write latency reflects this; `BatchPutCells` amortises the fsync to ~0.09 ms/cell.
 
 The context assembly operations (`LoadContext`, `LoadContextFOV`, `LoadContextVoronoi`) have no direct equivalent in general KV stores — they replace what would otherwise be multiple sequential scans, scoring passes, and manual budget accounting in application code.
 

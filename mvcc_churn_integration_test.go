@@ -76,6 +76,8 @@ func TestIntegration_MVCC_sustainedPutCellSameKey(t *testing.T) {
 	if stats.CommitSeq != uint64(iterations) {
 		t.Fatalf("commit seq: got %d want %d", stats.CommitSeq, iterations)
 	}
+	assertCellContentAtSeq(t, db, p, stats.CommitSeq, fmt.Sprintf("payload-%08d-churn=%06d", iterations-1, (iterations-1)%100000))
+	assertCellContentAtSeq(t, db, p, iterations/2, fmt.Sprintf("payload-%08d-churn=%06d", iterations/2-1, (iterations/2-1)%100000))
 	bs, ok, err := db.SuggestedPruneBeforeSeq()
 	if err != nil || !ok {
 		t.Fatalf("SuggestedPruneBeforeSeq ok=%v err=%v", ok, err)
@@ -108,5 +110,33 @@ func TestIntegration_MVCC_sustainedPutCellSameKey(t *testing.T) {
 	}
 	if stats2.VersionedRows >= stats.VersionedRows {
 		t.Fatalf("rows should shrink after prune: before=%d after=%d", stats.VersionedRows, stats2.VersionedRows)
+	}
+	assertCellContentAtSeq(t, db, p, stats.CommitSeq, fmt.Sprintf("payload-%08d-churn=%06d", iterations-1, (iterations-1)%100000))
+	assertCellContentAtSeq(t, db, p, bs, fmt.Sprintf("payload-%08d-churn=%06d", int(bs)-1, (int(bs)-1)%100000))
+
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCellContentAtSeq(t, db, p, stats.CommitSeq, fmt.Sprintf("payload-%08d-churn=%06d", iterations-1, (iterations-1)%100000))
+	assertCellContentAtSeq(t, db, p, bs, fmt.Sprintf("payload-%08d-churn=%06d", int(bs)-1, (int(bs)-1)%100000))
+}
+
+func assertCellContentAtSeq(t *testing.T, db *hexxladb.DB, p lattice.PackedCoord, readSeq uint64, want string) {
+	t.Helper()
+	if err := db.ViewAt(readSeq, func(tx *hexxladb.Tx) error {
+		rec, ok, err := tx.GetCell(p)
+		if err != nil {
+			return err
+		}
+		if !ok || rec.RawContent != want {
+			return fmt.Errorf("read_seq %d: ok=%v content=%q want=%q", readSeq, ok, rec.RawContent, want)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -24,10 +24,14 @@ type Options struct {
 	// MVCCRetention is optional policy for [DB.SuggestedPruneBeforeSeq] / [DB.MVCCPrunePlan] (ignored for v1 files).
 	MVCCRetention MVCCRetention
 	// ChangelogEnabled, when true, maintains an append-only logical changefeed file (see [docs/hexxladb/CHANGEFEED.md]).
+	// With [EncryptionKey] or [Passphrase], new changelogs use authenticated encryption automatically;
+	// a legacy plaintext changelog is rejected instead of being appended to.
 	ChangelogEnabled bool
 	// ChangelogPath overrides the default path (<dbpath>-changelog). Empty means default.
 	ChangelogPath string
-	// ChangelogLazy, when true, avoids fsync after each commit batch (faster; may lose tail records on crash).
+	// ChangelogLazy, when true, defers changelog fsync and retains durable primary outbox intents
+	// until 256 records are pending or [DB.Close]. A crash may redeliver intents after reopen but
+	// cannot permanently lose a committed event while the primary database remains recoverable.
 	ChangelogLazy bool
 	// BeforeWritePage optional transform before a data page is logged and written.
 	// If [EncryptionKey] or [Passphrase] is set, custom hooks must not be used.
@@ -81,8 +85,9 @@ type Options struct {
 	// [docs/hexxladb/DURABILITY.md] before enabling in production.
 	UsePrimaryFdatasync bool
 	// GroupWALMaxBatchWait is passed to the engine group-WAL flusher as its collection window.
-	// Zero means a 2ms default in the engine. Public [DB.Update] calls are serialized through
-	// finalization, so this affects latency but does not coalesce concurrent public updates.
+	// Zero (default) flushes public writes immediately. Positive values wait for additional
+	// direct-engine jobs, but public [DB.Update] calls are serialized through finalization and
+	// therefore cannot coalesce with each other.
 	// See [docs/hexxladb/DURABILITY.md].
 	GroupWALMaxBatchWait time.Duration
 

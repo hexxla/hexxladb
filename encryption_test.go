@@ -54,6 +54,31 @@ func TestEncryption_headerPageNotTransformed(t *testing.T) {
 	}
 }
 
+func TestEncryption_XTSCiphertextTamperIsNotAuthenticated(t *testing.T) {
+	t.Parallel()
+	key, err := deriveXTSKeyMaterial([]byte("tamper-evidence-key"), nil, []byte(hkdfInfoXTS))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hooks, err := buildEncryptionHooks(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := bytes.Repeat([]byte{0x5a}, engine.DefaultPageSize)
+	ciphertext, err := hooks.BeforeWrite(7, plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciphertext[engine.DefaultPageSize/2] ^= 0x80
+	altered, err := hooks.AfterRead(7, ciphertext)
+	if err != nil {
+		t.Fatalf("XTS unexpectedly authenticated modified ciphertext: %v", err)
+	}
+	if bytes.Equal(altered, plain) {
+		t.Fatal("modified XTS ciphertext unexpectedly produced the original plaintext")
+	}
+}
+
 func TestDeriveKeyFromPassphrase_roundTrip(t *testing.T) {
 	t.Parallel()
 	salt := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}

@@ -1,6 +1,6 @@
 # Versioning and compatibility
 
-**Current version:** `v0.7.0`
+**Current version:** `v0.8.0`
 
 This document describes how **module versions**, **Go API stability**, and **on-disk format** relate for [`github.com/hexxla/hexxladb`](https://github.com/hexxla/hexxladb).
 
@@ -41,10 +41,12 @@ Persistence layout (page size, header fields, WAL records, B+ tree pages) is def
 
 - **`format_version`** in the file header is **forward-only** for a major line: older code may refuse to open newer files until upgraded.
 - **`format_version` 2** (optional **[`Options.EnableMVCC`](options.go)** on **new** files only) stores **`commit_seq`** in the header and uses version-suffixed physical keys for cells and related indexes; see [`HEXXLA_DB.md`](docs/hexxladb/HEXXLA_DB.md). Existing v1 files are **not** auto-upgraded.
+- The optional changelog has its own framing version: plaintext databases use format v1; encrypted databases use authenticated encrypted format v2. Modes are not mixed. Offline encryption rotation converts and re-encrypts the changelog when it remains enabled at the same path; an already encrypted database rejects a legacy plaintext changelog until operators archive/reconcile it.
+- Changelog-enabled commits store private `__meta/changelog-head` and `__meta/changelog-outbox/` records in both database formats. These keys do not change the engine format version; they make the sidecar a recoverable at-least-once projection. Older libraries can preserve the unknown keys but do not perform outbox recovery, so downgrade while intents are pending is unsupported.
 - A **breaking** on-disk change (e.g. new magic, incompatible page layout) should coincide with a **documented migration path** or a new major product/engine version—not a silent patch.
 
 For backup and file pairing (primary + WAL), see [`docs/hexxladb/OPERATIONS.md`](docs/hexxladb/OPERATIONS.md).
 
 ## Encryption
 
-Optional at-rest encryption is described in [`docs/hexxladb/ENCRYPTION.md`](docs/hexxladb/ENCRYPTION.md). Offline key rotation is available via [`RotateEncryption`](rotation.go); online re-encryption is still out of scope for the current versioning story.
+Optional at-rest encryption is described in [`docs/hexxladb/ENCRYPTION.md`](docs/hexxladb/ENCRYPTION.md). Offline key rotation, including an enabled changelog, is available via [`RotateEncryption`](rotation.go); online re-encryption and authenticated primary-page format migration remain out of scope for the current versioning story.

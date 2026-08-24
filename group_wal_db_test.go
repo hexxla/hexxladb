@@ -1,7 +1,6 @@
 package hexxladb_test
 
 import (
-	"context"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -132,7 +131,7 @@ func TestGroupWAL_concurrentUpdatesNoRace(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	var wg sync.WaitGroup
 	errOnce := make(chan error, 1)
 	for g := range 4 {
@@ -157,5 +156,72 @@ func TestGroupWAL_concurrentUpdatesNoRace(t *testing.T) {
 	case e := <-errOnce:
 		t.Fatalf("Update: %v", e)
 	default:
+	}
+	apply, multi, walSyncs := db.GroupWALStats()
+	if apply != 32 || multi != 0 || walSyncs != 32 {
+		t.Fatalf("GroupWALStats: apply=%d multi=%d walSyncs=%d", apply, multi, walSyncs)
+	}
+}
+
+func TestGroupWAL_readerWaitsForUpdateFinalization(t *testing.T) {
+	t.Parallel()
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "reader-finalization.db"), &hexxladb.Options{
+		EnableMVCC:           true,
+		GroupWALMaxBatchWait: 50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	p, err := hexxladb.Pack(hexxladb.Coord{Q: 3, R: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	callbackReady := make(chan struct{})
+	releaseCallback := make(chan struct{})
+	writerReturned := make(chan struct{})
+	readerCalling := make(chan struct{})
+	var enteredBeforeWriterReturned bool
+	var writerErr, readerErr error
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		writerErr = db.Update(func(tx *hexxladb.Tx) error {
+			if err := tx.PutCell(t.Context(), hexxladb.CellRecord{Key: p, RawContent: "visible-after-finalization"}); err != nil {
+				return err
+			}
+			close(callbackReady)
+			<-releaseCallback
+			return nil
+		})
+		close(writerReturned)
+	})
+	<-callbackReady
+	wg.Go(func() {
+		close(readerCalling)
+		readerErr = db.View(func(tx *hexxladb.Tx) error {
+			select {
+			case <-writerReturned:
+			default:
+				enteredBeforeWriterReturned = true
+			}
+			rec, ok, err := tx.GetCell(p)
+			if err != nil {
+				return err
+			}
+			if !ok || rec.RawContent != "visible-after-finalization" {
+				t.Errorf("reader saw ok=%v content=%q", ok, rec.RawContent)
+			}
+			return nil
+		})
+	})
+	<-readerCalling
+	close(releaseCallback)
+	wg.Wait()
+	if writerErr != nil || readerErr != nil {
+		t.Fatalf("writer=%v reader=%v", writerErr, readerErr)
+	}
+	if enteredBeforeWriterReturned {
+		t.Fatal("reader entered before Update completed finalization")
 	}
 }

@@ -99,3 +99,14 @@ func deriveWALMACKey(xtsKey []byte) [32]byte {
 	copy(out[:], sum[:32])
 	return out
 }
+
+func deriveChangelogKey(xtsKey []byte, salt [16]byte) [32]byte {
+	mac := hmac.New(sha256.New, xtsKey)
+	_, _ = mac.Write([]byte("hexxladb-changelog-master-v2"))
+	_, _ = mac.Write(salt[:])
+	sum := mac.Sum(nil)
+	defer clear(sum)
+	var out [32]byte
+	copy(out[:], sum)
+	return out
+}

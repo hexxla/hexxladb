@@ -29,6 +29,10 @@ func RotateEncryptionWithOptions(path string, currentOpts, newOpts *Options, rop
 	if newOpts == nil || (len(newOpts.EncryptionKey) == 0 && newOpts.Passphrase == "") {
 		return ErrEncryptionOptions
 	}
+	copyChangelog, changelogPath, err := rotationChangelogPlan(path, currentOpts, newOpts)
+	if err != nil {
+		return err
+	}
 	src, err := Open(path, currentOpts)
 	if err != nil {
 		return err
@@ -38,7 +42,14 @@ func RotateEncryptionWithOptions(path string, currentOpts, newOpts *Options, rop
 	tmpPath := path + ".rotate.tmp"
 	_ = os.Remove(tmpPath)
 	_ = os.Remove(tmpPath + "-wal")
-	dst, err := Open(tmpPath, newOpts)
+	dstOpts := *newOpts
+	tmpChangelogPath := ""
+	if copyChangelog {
+		tmpChangelogPath = changelogPath + ".rotate.tmp"
+		_ = os.Remove(tmpChangelogPath)
+		dstOpts.ChangelogPath = tmpChangelogPath
+	}
+	dst, err := Open(tmpPath, &dstOpts)
 	if err != nil {
 		return err
 	}
@@ -55,6 +66,11 @@ func RotateEncryptionWithOptions(path string, currentOpts, newOpts *Options, rop
 	if err := rotateCopyData(src, dst, batchSize, onProgress); err != nil {
 		return err
 	}
+	if copyChangelog {
+		if err := src.changelog.CopyTo(dst.changelog); err != nil {
+			return err
+		}
+	}
 	if err := dst.Close(); err != nil {
 		return err
 	}
@@ -64,7 +80,31 @@ func RotateEncryptionWithOptions(path string, currentOpts, newOpts *Options, rop
 	}
 	src = nil
 
-	return rotateSwapFiles(path, tmpPath)
+	return rotateSwapFiles(path, tmpPath, changelogPath, tmpChangelogPath)
+}
+
+func rotationChangelogPlan(path string, currentOpts, newOpts *Options) (bool, string, error) {
+	currentEnabled := currentOpts != nil && currentOpts.ChangelogEnabled
+	newEnabled := newOpts != nil && newOpts.ChangelogEnabled
+	if currentEnabled != newEnabled {
+		return false, "", fmt.Errorf("%w: encryption rotation must preserve ChangelogEnabled", ErrInvalidArgument)
+	}
+	if !currentEnabled {
+		return false, "", nil
+	}
+	currentPath := configuredChangelogPath(path, currentOpts)
+	newPath := configuredChangelogPath(path, newOpts)
+	if currentPath != newPath {
+		return false, "", fmt.Errorf("%w: encryption rotation cannot change ChangelogPath", ErrInvalidArgument)
+	}
+	return true, currentPath, nil
+}
+
+func configuredChangelogPath(path string, opts *Options) string {
+	if opts != nil && opts.ChangelogPath != "" {
+		return opts.ChangelogPath
+	}
+	return path + "-changelog"
 }
 
 // rotateRow is a key/value pair captured during rotation.
@@ -112,19 +152,42 @@ func rotateCopyData(src, dst *DB, batchSize int, onProgress func(int64)) error {
 }
 
 // rotateSwapFiles atomically replaces the original DB file with the rotated tmp file.
-func rotateSwapFiles(path, tmpPath string) error {
+func rotateSwapFiles(path, tmpPath, changelogPath, tmpChangelogPath string) error {
 	backupPath := path + ".rotate.bak"
 	_ = os.Remove(backupPath)
 	if err := os.Rename(path, backupPath); err != nil {
 		return fmt.Errorf("hexxladb: rotate backup: %w", err)
 	}
+	changelogBackupPath := ""
+	if changelogPath != "" {
+		changelogBackupPath = changelogPath + ".rotate.bak"
+		_ = os.Remove(changelogBackupPath)
+		if err := os.Rename(changelogPath, changelogBackupPath); err != nil {
+			_ = os.Rename(backupPath, path)
+			return fmt.Errorf("hexxladb: rotate changelog backup: %w", err)
+		}
+	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		_ = os.Rename(backupPath, path)
+		if changelogBackupPath != "" {
+			_ = os.Rename(changelogBackupPath, changelogPath)
+		}
 		return fmt.Errorf("hexxladb: rotate swap: %w", err)
+	}
+	if changelogPath != "" {
+		if err := os.Rename(tmpChangelogPath, changelogPath); err != nil {
+			_ = os.Remove(path)
+			_ = os.Rename(backupPath, path)
+			_ = os.Rename(changelogBackupPath, changelogPath)
+			return fmt.Errorf("hexxladb: rotate changelog swap: %w", err)
+		}
 	}
 	_ = os.Remove(path + "-wal")
 	_ = os.Remove(tmpPath + "-wal")
 	_ = os.Remove(backupPath + "-wal")
 	_ = os.Remove(backupPath)
+	if changelogBackupPath != "" {
+		_ = os.Remove(changelogBackupPath)
+	}
 	return nil
 }

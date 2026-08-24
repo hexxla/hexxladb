@@ -59,11 +59,11 @@ Embeddings are always available — there is no "disabled" state. A database wit
 
 ### Changelog
 
-| Field              | Type     | Default | Description                                                                 |
-| ------------------ | -------- | ------- | --------------------------------------------------------------------------- |
-| `ChangelogEnabled` | `bool`   | `false` | Maintain an append-only logical changefeed file alongside the DB.           |
-| `ChangelogPath`    | `string` | `""`    | Override path. Empty = `<dbpath>-changelog`.                                |
-| `ChangelogLazy`    | `bool`   | `false` | Skip fsync after each commit batch. Faster; may lose tail records on crash. |
+| Field              | Type     | Default | Description                                                                                                                                       |
+| ------------------ | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ChangelogEnabled` | `bool`   | `false` | Maintain a recoverable logical changefeed backed by durable primary outbox intents. Official database encryption selects authenticated format v2. |
+| `ChangelogPath`    | `string` | `""`    | Override path. Empty = `<dbpath>-changelog`. The file must match the database's encryption mode and key binding.                                  |
+| `ChangelogLazy`    | `bool`   | `false` | Defer sidecar fsync; durable primary intents are acknowledged after 256 pending records or clean close. Crash recovery may redeliver them.        |
 
 ### Hooks
 
@@ -77,10 +77,10 @@ Convenience adapters: `CellValidatorFunc`, `AfterPutCellHookFunc`, `AfterPutSeam
 
 ### Durability tuning
 
-| Field                  | Type            | Default | Description                                                                                |
-| ---------------------- | --------------- | ------- | ------------------------------------------------------------------------------------------ |
-| `UsePrimaryFdatasync`  | `bool`          | `false` | Use `fdatasync(2)` instead of `fsync(2)` on the primary file (Linux). See `DURABILITY.md`. |
-| `GroupWALMaxBatchWait` | `time.Duration` | `2ms`   | Engine flusher collection window. Public updates are serialized, so higher values add latency without cross-update batching. |
+| Field                  | Type            | Default | Description                                                                                                                  |
+| ---------------------- | --------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `UsePrimaryFdatasync`  | `bool`          | `false` | Use `fdatasync(2)` instead of `fsync(2)` on the primary file (Linux). See `DURABILITY.md`.                                   |
+| `GroupWALMaxBatchWait` | `time.Duration` | `0`     | Immediate flush after already-queued jobs are collected. Positive waits are useful only for direct-engine batching; serialized public updates cannot coalesce. |
 
 ### Page hooks (advanced)
 

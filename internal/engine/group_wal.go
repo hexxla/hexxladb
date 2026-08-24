@@ -51,10 +51,7 @@ func (e *Engine) startGroupWALFlusher() {
 	if !e.groupWALCfg.Enabled {
 		return
 	}
-	maxWait := e.groupWALCfg.MaxBatchWait
-	if maxWait <= 0 {
-		maxWait = 2 * time.Millisecond
-	}
+	maxWait := max(time.Duration(0), e.groupWALCfg.MaxBatchWait)
 	e.groupWALCfg = GroupWAL{Enabled: true, MaxBatchWait: maxWait}
 	e.groupJobCh = make(chan *groupJob, 256)
 	e.groupStop = make(chan struct{})
@@ -77,9 +74,6 @@ func (e *Engine) stopGroupWALFlusher() {
 func (e *Engine) runGroupWALFlusher() {
 	defer e.groupFlusherWG.Done()
 	maxWait := e.groupWALCfg.MaxBatchWait
-	if maxWait <= 0 {
-		maxWait = 2 * time.Millisecond
-	}
 	for {
 		select {
 		case <-e.groupStop:
@@ -90,6 +84,27 @@ func (e *Engine) runGroupWALFlusher() {
 				return
 			}
 			batch := []*groupJob{j}
+			if maxWait == 0 {
+			collectReady:
+				for {
+					select {
+					case <-e.groupStop:
+						e.applyGroupBatch(batch)
+						e.drainGroupJobChNoWait()
+						return
+					case j2, ok := <-e.groupJobCh:
+						if !ok {
+							e.applyGroupBatch(batch)
+							return
+						}
+						batch = append(batch, j2)
+					default:
+						break collectReady
+					}
+				}
+				e.applyGroupBatch(batch)
+				continue
+			}
 			t := time.NewTimer(maxWait)
 		collect:
 			for {

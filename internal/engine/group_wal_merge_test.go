@@ -75,3 +75,30 @@ func TestGroupWAL_twoJobsOneBatch(t *testing.T) {
 		t.Fatalf("GroupWALStats: applyBatches=%d batchesWith2+=%d walSynces=%d (want 1,1,1)", apply, multi, walS)
 	}
 }
+
+func TestGroupWAL_zeroWaitFlushesImmediately(t *testing.T) {
+	t.Parallel()
+	e, err := Open(filepath.Join(t.TempDir(), "immediate.db"), &Options{
+		GroupWAL: GroupWAL{Enabled: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = e.Close() }()
+	if e.groupWALCfg.MaxBatchWait != 0 {
+		t.Fatalf("MaxBatchWait: got %s want immediate", e.groupWALCfg.MaxBatchWait)
+	}
+	if err := e.BeginWriteTxn(); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.WritePage(1, bytes.Repeat([]byte{0x66}, DefaultPageSize)); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.CommitWriteTxn(); err != nil {
+		t.Fatal(err)
+	}
+	apply, multi, walSyncs := e.GroupWALStats()
+	if apply != 1 || multi != 0 || walSyncs != 1 {
+		t.Fatalf("GroupWALStats: apply=%d multi=%d walSyncs=%d", apply, multi, walSyncs)
+	}
+}

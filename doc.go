@@ -23,6 +23,7 @@
 //   - [DB.SnapshotDiff] — MVCC change diff between two commit sequences; yields [SnapshotDiff] with [CellDiff]/[SeamDiff] slices.
 //   - [DB.View], [DB.ViewAt], [DB.ViewAtTime], [DB.Update], [DB.Batch], [Tx] —
 //     Bolt-style transactions; [DB.Batch] is an alias for [DB.Update]; see docs/hexxladb/TX.md.
+//     [DB.WriteStats] and [DB.GroupWALStats] expose cumulative write-phase timing and batching counters.
 //   - [DB.Compact], [CompactTo] — copy-compaction to reclaim dead pages (see docs/hexxladb/OPERATIONS.md).
 //   - [Tx.Get], [Tx.Put], [Tx.AscendRange] — byte-key ordered store.
 //     Lattice primitives: [Tx.PutCell], [Tx.GetCell], [Tx.DeleteCell], [Tx.DeleteCellWithOutcome], [Tx.WalkRing], [Tx.PutSeam],

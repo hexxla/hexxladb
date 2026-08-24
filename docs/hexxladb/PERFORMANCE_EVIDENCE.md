@@ -1,8 +1,8 @@
-# Spatial performance evidence
+# Performance evidence
 
 This suite answers two separate questions about Dijkstra pathfinding,
-deterministic field of view (FOV), and the aperture-7 super-hex occupancy
-prototype:
+deterministic field of view (FOV), MVCC hot-key reads, and the aperture-7
+super-hex occupancy prototype:
 
 1. **Does the implementation remain correct and how does each operation scale
    under controlled inputs?** The controlled stream runs a seeded randomized
@@ -56,7 +56,29 @@ radius 512. This keeps an accidentally oversized observation run bounded.
 | Dijkstra          | API latency and allocations as graph out-degree grows                                                                                                      | p50/p95/max/mean latency, paths found, and aggregate hop count over seeded route queries                  |
 | Deterministic FOV | Shadowcast algorithm, retained raycast comparison, and full `LoadContextFOV` API latency                                                                   | p50/p95/max/mean latency and aggregate number of returned cells with deterministic blockers               |
 | Super-hex         | Rebuild, O(1) coordinate lookup, deterministic export, direct changelog tail reads across 512–100k historical records, and fixed-history one-shot catch-up | rebuild/write/sync distributions, changes processed, summary count, applied sequence, and caught-up state |
+| MVCC hot keys     | Latest and historical point-read latency and allocations at 10, 100, 1,000, and 6,000 versions                                                           | Not included                                                                                                |
+| Public writes     | Single, batched, callback-delayed, fdatasync, and reader-blocking latency with group-WAL batch/sync counts                                               | Not included                                                                                                |
 | Resources         | Go allocation counts per benchmark operation                                                                                                               | total bytes allocated plus final database, WAL, and changelog sizes                                       |
+
+### MVCC hot-key evidence
+
+`BenchmarkAPI_MVCCVersionResolution` writes every version as a distinct durable commit to one coordinate, validates the expected record at each snapshot, and then measures `GetCell` for both the latest snapshot and the midpoint historical snapshot. Run it directly when evaluating version lookup changes:
+
+```bash
+go test -run '^$' -bench '^BenchmarkAPI_MVCCVersionResolution$' -benchmem -count=1 .
+```
+
+Use the same version matrix and machine for before/after comparisons. The acceptance gate is that lookup latency and allocations remain bounded by B+ tree traversal and page occupancy rather than increasing linearly with older irrelevant versions. Pair the benchmark with the race-enabled `TestIntegration_MVCC_sustainedPutCellSameKey`, which verifies latest and retained historical snapshots before pruning, after pruning, and after reopen.
+
+### Public write-path evidence
+
+`BenchmarkAPI_WritePath` compares default and explicitly delayed single commits, primary `fdatasync`, a controlled one-millisecond callback, and a 100-cell transaction. `BenchmarkAPI_WriteReaderBlocking` measures a view waiting behind that controlled callback and commit. Every case reports apply batches, multi-job batches, and WAL syncs per operation so a latency change cannot be mistaken for successful group coalescing. `BenchmarkAPI_BatchPutCells` uses fresh coordinates in one open MVCC database, keeping database lifecycle work outside the timed bulk-write path.
+
+```bash
+go test -run '^$' -bench '^(BenchmarkAPI_WritePath|BenchmarkAPI_WriteReaderBlocking|BenchmarkAPI_BatchPutCells)$' -benchmem -count=1 .
+```
+
+The acceptance gate is that zero-wait public writes report no artificial collection delay, an explicit positive window remains measurable, public multi-job batches remain zero under the serialized lock contract, batching retains lower per-cell latency, and race tests prove readers cannot enter before finalization.
 
 The super-hex correctness soak applies deterministic randomized puts, repeated
 updates, and deletes at hierarchy levels 1, 2, and 3. After every batch it fully

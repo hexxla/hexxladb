@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -150,6 +151,111 @@ func BenchmarkAPI_PutCell_MVCC(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+// BenchmarkAPI_WritePath measures the public write path with the durability and
+// batching controls that materially affect user-visible latency.
+func BenchmarkAPI_WritePath(b *testing.B) {
+	type writeCase struct {
+		name          string
+		opts          hexxladb.Options
+		cellsPerWrite int
+		callbackDelay time.Duration
+	}
+	cases := []writeCase{
+		{name: "single_default", opts: hexxladb.Options{EnableMVCC: true}, cellsPerWrite: 1},
+		{name: "single_wait_10ms", opts: hexxladb.Options{EnableMVCC: true, GroupWALMaxBatchWait: 10 * time.Millisecond}, cellsPerWrite: 1},
+		{name: "single_fdatasync", opts: hexxladb.Options{EnableMVCC: true, UsePrimaryFdatasync: true}, cellsPerWrite: 1},
+		{name: "single_callback_1ms", opts: hexxladb.Options{EnableMVCC: true}, cellsPerWrite: 1, callbackDelay: time.Millisecond},
+		{name: "batch_100", opts: hexxladb.Options{EnableMVCC: true}, cellsPerWrite: 100},
+	}
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			db, err := hexxladb.Open(filepath.Join(b.TempDir(), "write_path.db"), &tc.opts)
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(func() { _ = db.Close() })
+			next := 0
+			b.ReportMetric(float64(tc.cellsPerWrite), "cells/op")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				err := db.Update(func(tx *hexxladb.Tx) error {
+					if tc.callbackDelay > 0 {
+						time.Sleep(tc.callbackDelay)
+					}
+					for i := range tc.cellsPerWrite {
+						coord := lattice.Coord{Q: (next + i) % 100_000, R: (next + i) / 100_000}
+						p, err := lattice.Pack(coord)
+						if err != nil {
+							return err
+						}
+						if err := tx.PutCell(context.Background(), record.CellRecord{Key: p, RawContent: "write-path"}); err != nil {
+							return err
+						}
+					}
+					next += tc.cellsPerWrite
+					return nil
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.StopTimer()
+			reportGroupWALMetrics(b, db)
+		})
+	}
+}
+
+// BenchmarkAPI_WriteReaderBlocking measures how long a View waits behind an
+// Update whose callback deliberately remains active for one millisecond.
+func BenchmarkAPI_WriteReaderBlocking(b *testing.B) {
+	db, err := hexxladb.Open(filepath.Join(b.TempDir(), "reader_blocking.db"), &hexxladb.Options{EnableMVCC: true})
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { _ = db.Close() })
+	next := 0
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		started := make(chan struct{})
+		done := make(chan error, 1)
+		coord := lattice.Coord{Q: next % 100_000, R: next / 100_000}
+		next++
+		p, err := lattice.Pack(coord)
+		if err != nil {
+			b.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			done <- db.Update(func(tx *hexxladb.Tx) error {
+				close(started)
+				time.Sleep(time.Millisecond)
+				return tx.PutCell(context.Background(), record.CellRecord{Key: p, RawContent: "reader-blocking"})
+			})
+		})
+		<-started
+		if err := db.View(func(*hexxladb.Tx) error { return nil }); err != nil {
+			b.Fatal(err)
+		}
+		wg.Wait()
+		if err := <-done; err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	reportGroupWALMetrics(b, db)
+}
+
+func reportGroupWALMetrics(b *testing.B, db *hexxladb.DB) {
+	b.Helper()
+	applyBatches, multiJobBatches, walSyncs := db.GroupWALStats()
+	operations := float64(max(b.N, 1))
+	b.ReportMetric(float64(applyBatches)/operations, "apply-batches/op")
+	b.ReportMetric(float64(multiJobBatches)/operations, "multi-job-batches/op")
+	b.ReportMetric(float64(walSyncs)/operations, "wal-syncs/op")
 }
 
 // BenchmarkAPI_GetCell measures random-access read after preloading n cells (sub-benchmark per n).
@@ -490,11 +596,10 @@ func BenchmarkAPI_LoadContext_Budgeted(b *testing.B) {
 	}
 }
 
-// BenchmarkAPI_MVCCVersionResolution measures MVCC [Tx.GetCell] with high version counts.
-// Each sub-benchmark writes the same coord N times then benchmarks the GetCell read path,
-// which drives [internal/mvcc.SelectVisible] — the O(n) version scan.
+// BenchmarkAPI_MVCCVersionResolution measures latest and historical MVCC [Tx.GetCell]
+// lookups with high version counts on one logical coordinate.
 func BenchmarkAPI_MVCCVersionResolution(b *testing.B) {
-	for _, versions := range []int{10, 50, 100, 500} {
+	for _, versions := range []int{10, 100, 1000, 6000} {
 		b.Run(fmt.Sprintf("versions_%d", versions), func(b *testing.B) {
 			path := filepath.Join(b.TempDir(), "mvcc_versions.db")
 			db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
@@ -527,17 +632,40 @@ func BenchmarkAPI_MVCCVersionResolution(b *testing.B) {
 				}
 			}
 
-			b.ReportMetric(float64(versions), "versions")
-			b.ReportAllocs()
-			b.ResetTimer()
-			for b.Loop() {
-				err := db.View(func(tx *hexxladb.Tx) error {
-					_, _, err := tx.GetCell(p)
-					return err
+			for _, tc := range []struct {
+				name    string
+				readSeq uint64
+				want    string
+			}{
+				{name: "latest", readSeq: uint64(versions), want: fmt.Sprintf("version-%d", versions-1)},
+				{name: "historical", readSeq: uint64(versions / 2), want: fmt.Sprintf("version-%d", versions/2-1)},
+			} {
+				b.Run(tc.name, func(b *testing.B) {
+					if err := db.ViewAt(tc.readSeq, func(tx *hexxladb.Tx) error {
+						rec, ok, err := tx.GetCell(p)
+						if err != nil {
+							return err
+						}
+						if !ok || rec.RawContent != tc.want {
+							return fmt.Errorf("read_seq %d: ok=%v content=%q want=%q", tc.readSeq, ok, rec.RawContent, tc.want)
+						}
+						return nil
+					}); err != nil {
+						b.Fatal(err)
+					}
+					b.ReportMetric(float64(versions), "versions")
+					b.ReportAllocs()
+					b.ResetTimer()
+					for b.Loop() {
+						err := db.ViewAt(tc.readSeq, func(tx *hexxladb.Tx) error {
+							_, _, err := tx.GetCell(p)
+							return err
+						})
+						if err != nil {
+							b.Fatal(err)
+						}
+					}
 				})
-				if err != nil {
-					b.Fatal(err)
-				}
 			}
 		})
 	}
@@ -635,6 +763,11 @@ func BenchmarkAPI_BatchPutCells(b *testing.B) {
 	nq := 200
 	for _, batchSize := range []int{10, 100, 500} {
 		b.Run(fmt.Sprintf("batch_%d", batchSize), func(b *testing.B) {
+			db, err := hexxladb.Open(filepath.Join(b.TempDir(), "batch_bench.db"), &hexxladb.Options{EnableMVCC: true})
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(func() { _ = db.Close() })
 			cells := make([]record.CellRecord, batchSize)
 			for i := range batchSize {
 				q := i % nq
@@ -655,21 +788,23 @@ func BenchmarkAPI_BatchPutCells(b *testing.B) {
 				}
 			}
 			opts := &hexxladb.BatchPutCellOptions{BatchSize: batchSize}
+			next := 0
 			b.ReportMetric(float64(batchSize), "cells/op")
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
-				path := filepath.Join(b.TempDir(), "batch_bench.db")
-				db, err := hexxladb.Open(path, nil)
-				if err != nil {
-					b.Fatal(err)
+				for i := range batchSize {
+					coord := lattice.Coord{Q: (next + i) % 100_000, R: (next + i) / 100_000}
+					p, err := lattice.Pack(coord)
+					if err != nil {
+						b.Fatal(err)
+					}
+					cells[i].Key = p
 				}
+				next += batchSize
 				if _, err := db.BatchPutCells(ctx, cells, opts); err != nil {
-					_ = db.Close()
 					b.Fatal(err)
 				}
-				_ = db.Close()
-				_ = os.RemoveAll(path)
 			}
 		})
 	}

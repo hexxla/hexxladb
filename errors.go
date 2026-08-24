@@ -57,12 +57,22 @@ var (
 
 	// ErrChangelogDisabled means [DB.ReadChangelogSince] was called but changelog was not enabled in [Options].
 	ErrChangelogDisabled = errors.New("hexxladb: changelog not enabled")
+	// ErrChangelogPlaintext means an encrypted database was configured with a legacy plaintext changelog.
+	ErrChangelogPlaintext = errors.New("hexxladb: encrypted database cannot use a plaintext changelog")
+	// ErrChangelogEncryptionKeyRequired means an encrypted changelog was configured without database encryption credentials.
+	ErrChangelogEncryptionKeyRequired = errors.New("hexxladb: changelog encryption key required")
+	// ErrChangelogEncryptionKeyMismatch means a changelog does not belong to the encrypted database/key being opened.
+	ErrChangelogEncryptionKeyMismatch = errors.New("hexxladb: changelog encryption key mismatch")
 
 	// ErrReadSeqFuture means [DB.ViewAt] was called with a read_seq greater than the database's committed [engine.Header.CommitSeq].
 	ErrReadSeqFuture = errors.New("hexxladb: read_seq beyond last commit")
 
 	// ErrCommitFinalization means callback writes may have reached storage but post-callback finalization failed.
 	ErrCommitFinalization = errors.New("hexxladb: commit finalization failed")
+	// ErrCommitDurable accompanies [ErrCommitFinalization] when authoritative database state is
+	// known durable and the failure occurred while projecting or acknowledging its changefeed intent.
+	// Do not retry the mutation; close and reopen the database to complete recovery.
+	ErrCommitDurable = errors.New("hexxladb: commit is durable")
 
 	// ErrMVCCRequired is returned when an MVCC-only operation is called on a format-v1 database.
 	ErrMVCCRequired = errors.New("hexxladb: operation requires MVCC (EnableMVCC on open)")

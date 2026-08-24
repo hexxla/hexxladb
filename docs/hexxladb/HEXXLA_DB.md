@@ -65,6 +65,8 @@ The notation below describes logical identities. Concrete encodings use binary s
 | Embedding          | `embed/<packed_coord>` → fixed-dimension float32 vector              |
 | HNSW metadata      | `hnsw/meta`, `hnsw/entry` → graph configuration and entry point      |
 | HNSW node          | `hnsw/node/<packed_coord>` → graph layers and neighbor lists         |
+| Changefeed head    | `__meta/changelog-head` → latest durable outbox commit identifier    |
+| Changefeed outbox  | `__meta/changelog-outbox/<commit>/<ordinal>/<key>` → bounded intent  |
 
 Source identifiers and tags are length-prefixed UTF-8 byte strings. Time indexes use UTC week buckets derived from `Validity.ValidFrom`. Missing source, tag, or `ValidFrom` values do not create the corresponding secondary.
 
@@ -74,7 +76,7 @@ Cell and seam source/time/tag secondaries are maintained by their typed write me
 
 Format v1 stores one physical value for each logical key and overwrites it in place.
 
-When a new database is created with `Options.EnableMVCC`, format v2 appends a commit-sequence suffix to versioned cell, facet, edge, seam, and secondary keys. Multiple committed versions then coexist, and reads select the newest version whose `commit_seq` is visible to the transaction.
+When a new database is created with `Options.EnableMVCC`, format v2 appends a commit-sequence suffix to versioned cell, facet, edge, seam, and secondary keys. Multiple committed versions then coexist. Cell, facet, and seam point reads seek backward from the transaction's `read_seq` bound and stop at the newest visible version; they do not scan the logical key's full history.
 
 Cells use a zero-length latest value as a tombstone. Deletion therefore adds a version rather than immediately removing physical history. Pruning can remove eligible non-latest versions; compaction rewrites the remaining physical keys into a new file.
 
@@ -96,12 +98,13 @@ The query and content-search APIs can use embedding similarity for seed selectio
 
 ## Logical changefeed
 
-The optional logical changefeed is not a B+ tree key family. It is an append-only sidecar file, `{primary}-changelog`, containing semantic mutation records for at-least-once consumers.
+The consumer-facing changefeed is an append-only sidecar file, `{primary}-changelog`. When enabled, each database commit first stores bounded private intents under `__meta/changelog-outbox/`; those records are the recoverable source for projecting semantic mutation records to the sidecar. A head key supplies commit identifiers independently of sidecar delivery sequence. Acknowledged outbox entries are deleted without advancing MVCC `CommitSeq`.
 
 The redo WAL and logical changefeed have separate purposes:
 
 - the WAL contains page images required for crash recovery;
-- the changefeed contains logical operations used by external consumers and rebuildable projections.
+- the primary outbox contains unacknowledged logical intent needed for recovery;
+- the changefeed sidecar contains ordered logical deliveries used by external consumers and rebuildable projections.
 
 See [`CHANGEFEED.md`](./CHANGEFEED.md) for framing, cursors, reconciliation, and recovery.
 

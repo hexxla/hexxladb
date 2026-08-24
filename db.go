@@ -32,12 +32,24 @@ type DB struct {
 	afterPutCell  AfterPutCellHook // optional post-write hook from [Options.AfterPutCell].
 	afterPutSeam  AfterPutSeamHook // optional post-write hook from [Options.AfterPutSeam].
 	writeSeqNext  atomic.Uint64
+	// changefeedSeqNext allocates durable primary-outbox commit identifiers independently
+	// of external changelog record sequences. Its value is persisted under the outbox head key.
+	changefeedSeqNext atomic.Uint64
+	changelogLazy     bool
+	// pendingOutboxEntries is guarded by mu and bounds lazy-mode intents between sync barriers.
+	pendingOutboxEntries int
+	// commitFaults is test-only deterministic boundary injection; production construction leaves it nil.
+	commitFaults *commitFaultHooks
 	// cachedHdr is the fast-path header snapshot for readers. Writers store a new pointer
 	// after every commit; readers load it without holding any lock.
 	cachedHdr atomic.Pointer[dbCachedHeader]
 	// closed is set to true by Close before the mutex is released, allowing
 	// public methods to fast-fail without acquiring the read lock.
 	closed atomic.Bool
+	// recoveryRequired prevents another writer from building on an ambiguous or incompletely
+	// projected finalization outcome. Close and Open perform the supported recovery boundary.
+	recoveryRequired atomic.Bool
+	writeStats       writeStatsCounters
 }
 
 func (db *DB) storeCachedHeader(commitSeq, btreeRoot uint64) {
@@ -53,10 +65,11 @@ func Open(path string, opts *Options) (*DB, error) {
 }
 
 func openDB(path string, opts *Options, createExclusive bool) (*DB, error) {
-	eopts, err := buildEngineOptions(path, opts)
+	eopts, xtsKey, err := buildEngineOptions(path, opts)
 	if err != nil {
 		return nil, err
 	}
+	defer clear(xtsKey)
 	eopts = mergeEnginePageSize(eopts, opts)
 	eopts = mergeEnginePrimaryFdatasync(eopts, opts)
 	eopts = mergeEngineGroupWAL(eopts, opts)
@@ -112,6 +125,10 @@ func openDB(path string, opts *Options, createExclusive bool) (*DB, error) {
 	db := &DB{eng: eng, btree: bt, useMVCC: hdr.FormatVersion >= 2}
 	db.writeSeqNext.Store(hdr.CommitSeq)
 	db.storeCachedHeader(hdr.CommitSeq, hdr.BTreeRoot)
+	if err := db.initializeChangefeedHead(); err != nil {
+		_ = eng.Close()
+		return nil, err
+	}
 	if opts != nil {
 		db.mvccRetention = opts.MVCCRetention
 		db.cellValidator = opts.CellValidator
@@ -119,19 +136,57 @@ func openDB(path string, opts *Options, createExclusive bool) (*DB, error) {
 		db.afterPutSeam = opts.AfterPutSeam
 	}
 	if opts != nil && opts.ChangelogEnabled {
+		db.changelogLazy = opts.ChangelogLazy
+		pendingOutbox, pendingErr := db.readPendingChangelogIntents()
+		if pendingErr != nil {
+			_ = eng.Close()
+			return nil, pendingErr
+		}
+		recoverableTail := len(pendingOutbox) > 0
 		clPath := opts.ChangelogPath
 		if clPath == "" {
 			clPath = path + "-changelog"
 		}
 		syncWrites := !opts.ChangelogLazy
-		cl, err := changelog.Open(clPath, syncWrites)
+		var cl *changelog.Log
+		if len(xtsKey) > 0 {
+			changelogKey := deriveChangelogKey(xtsKey, hdr.EncryptionSalt)
+			if recoverableTail {
+				cl, err = changelog.OpenEncryptedRecoverable(clPath, syncWrites, changelogKey[:])
+			} else {
+				cl, err = changelog.OpenEncrypted(clPath, syncWrites, changelogKey[:])
+			}
+			clear(changelogKey[:])
+		} else if recoverableTail {
+			cl, err = changelog.OpenRecoverable(clPath, syncWrites)
+		} else {
+			cl, err = changelog.Open(clPath, syncWrites)
+		}
 		if err != nil {
+			_ = eng.Close()
+			return nil, mapChangelogOpenError(err)
+		}
+		db.changelog = cl
+		if err := db.recoverChangelogOutbox(); err != nil {
+			_ = cl.Close()
 			_ = eng.Close()
 			return nil, err
 		}
-		db.changelog = cl
 	}
 	return db, nil
+}
+
+func mapChangelogOpenError(err error) error {
+	switch {
+	case errors.Is(err, changelog.ErrPlaintext):
+		return fmt.Errorf("%w: archive or remove the legacy changelog before re-enabling it", ErrChangelogPlaintext)
+	case errors.Is(err, changelog.ErrEncryptionRequired):
+		return ErrChangelogEncryptionKeyRequired
+	case errors.Is(err, changelog.ErrEncryptionKeyMismatch):
+		return ErrChangelogEncryptionKeyMismatch
+	default:
+		return err
+	}
 }
 
 // Close releases resources associated with the database.
@@ -147,8 +202,13 @@ func (db *DB) Close() error {
 	}
 	db.closed.Store(true)
 	var err error
+	if db.changelog != nil && db.changelogLazy && db.pendingOutboxEntries > 0 && !db.recoveryRequired.Load() {
+		err = db.syncAndCleanupPendingChangelog()
+	}
 	if db.changelog != nil {
-		err = db.changelog.Close()
+		if closeErr := db.changelog.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
 		db.changelog = nil
 	}
 	if e := db.eng.Close(); e != nil && err == nil {

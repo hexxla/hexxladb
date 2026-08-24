@@ -2,7 +2,9 @@ package engine
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -192,6 +194,37 @@ func TestBTree_ascendRange(t *testing.T) {
 		if out[i] != want[i] {
 			t.Fatalf("got %v want %v", out, want)
 		}
+	}
+}
+
+func TestBTree_descendRange(t *testing.T) {
+	t.Parallel()
+	e, err := Open(filepath.Join(t.TempDir(), "descend.db"), &Options{UseFormatV2: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = e.Close() }()
+	bt := OpenBTree(e)
+	for i := range 500 {
+		key := []byte(fmt.Sprintf("k%04d", i))
+		if err := bt.Put(key, key); err != nil {
+			t.Fatalf("put %d: %v", i, err)
+		}
+	}
+	var out []string
+	err = bt.DescendRange([]byte("k0123"), []byte("k0378"), func(k, v []byte) bool {
+		if !bytes.Equal(k, v) {
+			t.Fatalf("key/value mismatch: %q != %q", k, v)
+		}
+		out = append(out, string(k))
+		return len(out) < 5
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"k0378", "k0377", "k0376", "k0375", "k0374"}
+	if !slices.Equal(out, want) {
+		t.Fatalf("got %v want %v", out, want)
 	}
 }
 

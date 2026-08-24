@@ -48,17 +48,19 @@ Confirm with **HealthCheck `cell_count`**, or enumerate coords before/after.
 
 HexxlaDB permits exactly one open handle per primary database file, across handles and processes. A competing [`Open`](../../db.go) fails immediately with [`ErrDatabaseLocked`](../../errors.go); do not bypass this lock or independently manipulate the WAL. Close the owning handle before using offline tools such as [`CompactTo`](../../compact.go) or encryption rotation.
 
-- **Preferred:** Close the database ([`DB.Close`](../../db.go)) so files are consistent, then copy **both** primary and WAL (if present and non-empty), or copy the directory after close.
-- **Filesystem snapshots:** Snapshot the volume containing both files at the same logical point in time. Copying only the primary without the WAL (or mixing files from different times) can yield **corruption** or lost data.
+- **Preferred:** Close the database ([`DB.Close`](../../db.go)) so files are consistent, then copy primary, WAL (if present and non-empty), and the optional changelog together, or copy the directory after close.
+- **Filesystem snapshots:** Snapshot the volume containing primary, WAL, and optional changelog at the same logical point in time. Copying only the primary without the WAL (or mixing files from different times) can yield **corruption** or lost data; omitting the changelog loses the consumer/audit history.
 - **Live copy** without application cooperation is not documented as safe; use application-level export if you need hot backup.
+
+When changelog is enabled, the primary may contain unacknowledged `__meta/changelog-outbox/` intents. A clean `Close` syncs and acknowledges lazy-mode intents before returning. A crash-consistent snapshot may capture pending intents; reopening the restored primary with its paired changelog completes projection automatically and may redeliver an already appended operation.
 
 ## Encryption
 
-Optional **AES-256-XTS** at the page layer is configured with [`Options`](../../options.go) — see [`ENCRYPTION.md`](./ENCRYPTION.md) for keys, passphrases, WAL ciphertext, and limitations.
+Optional **AES-256-XTS** at the page layer is configured with [`Options`](../../options.go). When the logical changelog is enabled, official database encryption also selects authenticated encrypted changelog format v2. See [`ENCRYPTION.md`](./ENCRYPTION.md) for keys, visible metadata, legacy-log handling, and the unauthenticated primary-page limitation.
 
 Wrong key/passphrase fails deterministically at open with [`ErrEncryptionKeyMismatch`](../../errors.go) once the database has an encryption verifier (new encrypted databases and upgraded legacy encrypted databases).
 
-Use [`RotateEncryption`](../../rotation.go) for offline key rotation/re-encryption. For large databases, prefer [`RotateEncryptionWithOptions`](../../rotation.go) to stream rows in batches and emit progress callbacks.
+Use [`RotateEncryption`](../../rotation.go) for offline key rotation/re-encryption. For large databases, prefer [`RotateEncryptionWithOptions`](../../rotation.go) to stream rows in batches and emit progress callbacks. If the changelog is enabled, it must remain enabled at the same effective path in both option sets; rotation preserves its logical records and re-encrypts its frames.
 
 ## Observability
 
@@ -159,6 +161,8 @@ constraints, output files, and decision gates are documented in
 
 Use after meaningful storage/MVCC changes or before tagging a release. Capture machine type, git SHA, and wall-clock duration in your release notes.
 
+For write-path diagnosis, sample [`DB.WriteStats`](../../write_stats.go) twice and subtract the cumulative fields. `LockWait` identifies reader/writer contention before an update starts; `Callback`, `Durability`, and `Finalization` divide the time spent holding the exclusive lock. Pair this with [`DB.GroupWALStats`](../../db.go): serialized public writes should report zero multi-job batches, while each authoritative commit still has one WAL sync. A positive `GroupWALMaxBatchWait` adds directly to public write and reader-blocking latency and is intended only for direct engine users that can enqueue jobs concurrently.
+
 | Step | Command                    | Pass criteria                                                                                                           |
 | ---- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | 1    | `task ci`                  | Exits `0`; includes unit tests + race.                                                                                  |
@@ -171,13 +175,14 @@ Tune retention and pruning for your workload and soak longer in staging if reten
 ## Crash recovery drill
 
 1. Kill the embedding process during an active [`Update`](../../tx.go) (SIGKILL).
-2. [`Open`](../../db.go) the same path; verify WAL replay succeeds and [`View`](../../tx.go) reads match expectations.
-3. If [`ErrCorruptDatabase`](../../errors.go): restore from last known-good primary + WAL pair (see **Backup and copy**).
+2. [`Open`](../../db.go) the same path with the same changelog settings; verify WAL replay and durable-outbox projection succeed and [`View`](../../tx.go) reads match expectations.
+3. Resume consumers from their last durable cursor and verify any redelivered operation is handled idempotently.
+4. If [`ErrCorruptDatabase`](../../errors.go): restore from last known-good primary + WAL pair (see **Backup and copy**).
 
 ## Backup drill
 
 1. `Close` the database (or stop the sole writer).
-2. Copy primary and `{primary}-wal` together from the same instant.
+2. Copy primary, `{primary}-wal`, and the optional changelog together from the same instant.
 3. Restore on a staging host, `Open`, run read probes (`GetCell`, `StatsMVCC`).
 
 ## Incident response checklist
@@ -206,7 +211,13 @@ The historical `leaf page full` variant caused by an incomplete cascading split 
 
 **Signal:** `ErrChangelogCorrupt` from `ReadChangelogSince`.
 
-**Response:** Pause consumers; truncate/repair changelog per ops policy; re-bootstrap derived state from DB truth + [`CHANGEFEED.md`](./CHANGEFEED.md) reconciliation steps.
+**Response:** Pause consumers. If durable primary outbox intent exists, `Open` automatically removes only an incomplete final frame and reprojects it. Complete frames with invalid CRC/authentication still fail closed; preserve the files, restore the paired backup or follow an application-approved repair policy, then re-bootstrap derived state from database truth. Never delete private outbox keys manually.
+
+### 5) Commit finalization failure
+
+**Signal:** `Update`/`Batch` returns `ErrCommitFinalization`; known durable projection failures also match `ErrCommitDurable`.
+
+**Response:** Stop writes on that handle. Do not retry a mutation when `ErrCommitDurable` matches. Close and reopen with the same changelog configuration, then inspect authoritative state and resume the consumer from its durable cursor. If reopen still fails, correct the reported filesystem/changelog error while preserving the primary and its outbox.
 
 ## Scope boundaries
 

@@ -37,7 +37,7 @@ All reads and writes occur through [`Tx`](../../tx.go):
 | [`DB.Update`](../../tx.go)                                                                           | Run one write transaction.                       |
 | [`DB.Batch`](../../tx.go)                                                                            | Alias for `Update`; useful for call-site intent. |
 
-Callbacks must not mix or nest read and write transactions on the same `DB`. Commit-outcome uncertainty is reported as [`ErrCommitFinalization`](../../errors.go). See [`TX.md`](./TX.md) for locking, snapshots, validity, and failure semantics.
+Callbacks must not mix or nest read and write transactions on the same `DB`. Commit failures match [`ErrCommitFinalization`](../../errors.go); [`ErrCommitDurable`](../../errors.go) additionally identifies a known-durable primary commit whose changefeed recovery requires close and reopen. See [`TX.md`](./TX.md) for locking, snapshots, validity, and failure semantics.
 
 [`Tx.Get`](../../tx.go), [`Tx.Put`](../../tx.go), and [`Tx.AscendRange`](../../tx.go) expose raw byte keys. Prefer the typed lattice operations below so record encodings and secondary indexes remain consistent.
 
@@ -147,6 +147,7 @@ Pruning does not shrink the primary file. Use compaction after pruning when disk
 | [`DB.ReadChangelogSince`, `DB.ReadChangelogFiltered`](../../db_changelog.go) | Consume the optional at-least-once logical changefeed. |
 | [`DB.HealthCheck`](../../health.go)                                          | Validate database structure and report counts.         |
 | [`DB.GroupWALStats`](../../db.go)                                            | Observe group-WAL batching.                            |
+| [`DB.WriteStats`](../../write_stats.go)                                      | Observe cumulative write contention and phase timing. |
 | [`DB.Compact`, `CompactTo`](../../compact.go)                                | Rewrite live keys into a new compact file.             |
 | [`DeriveKeyFromPassphrase`](../../encryption.go)                             | Derive an encryption key using the database KDF.       |
 | [`RotateEncryption`, `RotateEncryptionWithOptions`](../../rotation.go)       | Perform offline key rotation or encryption migration.  |
@@ -167,7 +168,7 @@ Public sentinel errors are defined in [`errors.go`](../../errors.go). Handle sta
 - argument and transaction errors such as `ErrInvalidArgument` and `ErrTxReadOnly`;
 - MVCC errors such as `ErrReadSeqFuture` and `ErrMVCCRequired`;
 - encryption and changelog errors documented in their focused references;
-- `ErrCommitFinalization`, which means the callback's writes may already be durable.
+- `ErrCommitFinalization`, which requires recovery before another write, and `ErrCommitDurable`, which specifically means the authoritative commit is known durable and must not be retried.
 
 Do not compare error strings.
 

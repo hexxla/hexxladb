@@ -7,7 +7,8 @@ type GroupWAL struct {
 	// Enabled starts the background flusher that coalesces logical commits before WAL sync.
 	Enabled bool
 	// MaxBatchWait is the window after the first queued commit to batch additional commits.
-	// Zero means a small default (2ms) in [Engine.startGroupWALFlusher].
+	// Zero flushes immediately after collecting jobs already queued. Positive values opt in
+	// to waiting for additional direct-engine commits.
 	MaxBatchWait time.Duration
 }
 
