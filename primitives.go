@@ -327,7 +327,7 @@ func (tx *Tx) MarkConflict(cellA, cellB lattice.Coord, reason string) error {
 
 // MarkSupersedes records that superseder is the current truth and superseded is stale.
 // The seam uses [SeamTypeSupersedes] with CellA=superseded, CellB=superseder (directional:
-// "superseded is superseded by superseder"). Context assembly with [LoadContextBudgetConfig.FilterSuperseded]
+// "superseded is superseded by superseder"). Context assembly with [ContextAssemblyConfig.FilterSuperseded]
 // walks these chains and excludes stale cells from the [ContextPack].
 // Only allowed inside [DB.Update].
 func (tx *Tx) MarkSupersedes(superseder, superseded lattice.Coord, reason string) error {

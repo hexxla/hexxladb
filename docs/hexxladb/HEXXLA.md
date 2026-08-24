@@ -115,8 +115,8 @@ A typical context request follows this pipeline:
 seed selection
   -> spatial or graph expansion
   -> validity, provenance, tag, and seam filters
-  -> ranking and facet assembly
-  -> token-budgeted context
+  -> facet assembly and deterministic result bound
+  -> application ranking and complete-request fitting
 ```
 
 Seed selection may use embeddings, text search, tags, source identifiers, an explicit coordinate, or an application-defined policy. The memory model does not require embeddings.
@@ -129,7 +129,7 @@ Expansion strategies serve different structures:
 - Voronoi partitioning for multiple competing seeds;
 - hierarchical occupancy summaries for deciding which larger regions merit inspection.
 
-Token budgeting happens after eligibility and assembly. Distance, confidence, and product policy may influence eviction, but the policy must remain explicit to callers.
+HexxlaDB bounds assembled candidates by count. It does not interpret confidence, choose a model tokenizer, or estimate a prompt from isolated cell strings. Applications rank candidates and fit the complete rendered request—including instructions, history, tools, separators, and reserved output capacity—using the target provider/model contract.
 
 ## Contradiction workflow
 

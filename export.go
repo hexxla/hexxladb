@@ -83,21 +83,14 @@ type ContextPackStats = views.ContextPackStats
 // CellExplanation records why a cell was included or excluded during context assembly.
 type CellExplanation = views.CellExplanation
 
-// ContextPack matches the neighbourhood summary shape described in HEXXLA.md.
+// ContextPack contains deterministically bounded context candidates and seams.
 type ContextPack = views.ContextPack
-
-// TokenBudgeter counts tokens for budgeting (e.g. approximate LLM tokens).
-// Inject domain-specific logic; the default is [ByteLenBudgeter].
-type TokenBudgeter = views.TokenBudgeter
-
-// ByteLenBudgeter counts tokens as UTF-8 byte length (cheap default; not tokenizer-accurate).
-type ByteLenBudgeter = views.ByteLenBudgeter
 
 // AssembleCellViewOpts configures [Tx.AssembleCellView].
 type AssembleCellViewOpts = views.AssembleCellViewOpts
 
-// LoadContextBudgetConfig configures context assembly options for [Tx.LoadContext].
-type LoadContextBudgetConfig = views.LoadContextBudgetConfig
+// ContextAssemblyConfig configures context assembly options for [Tx.LoadContext].
+type ContextAssemblyConfig = views.ContextAssemblyConfig
 
 // CellViewPredicate selects [CellView] rows when filtering slices.
 type CellViewPredicate = views.CellViewPredicate

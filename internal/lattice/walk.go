@@ -58,7 +58,7 @@ type CoordPacked struct {
 
 // WalkRingsPackedSeq returns a lazy iterator over (Coord, PackedCoord) pairs for
 // rings 0..maxR from center. Coords outside the packable range are silently skipped.
-// No backing slice is allocated; callers may break early for budget-bounded walks.
+// No backing slice is allocated; callers may break early for result-bounded walks.
 func WalkRingsPackedSeq(center Coord, maxR int) iter.Seq[CoordPacked] {
 	return func(yield func(CoordPacked) bool) {
 		for c := range WalkRingsSeq(center, maxR) {

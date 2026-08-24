@@ -318,7 +318,7 @@ var seedConversation = []seedMessage{
 	},
 	{
 		"assistant",
-		"LLMs have a fixed context window. Token budget management selects which memories to include given the window size. HexxlaDB's LoadContextWithBudgeting evicts low-confidence cells first (greedy fill by confidence descending), respecting a Budgeter that counts tokens or bytes. This prevents context overflow while maximising relevance.",
+		"LLMs have fixed context windows, but exact token accounting depends on the provider, model, rendered messages, tool definitions, and reserved output. HexxlaDB returns a deterministic MaxCells-bounded candidate set; the application ranks candidates, renders the complete request, and applies its model-specific tokenizer before sending it.",
 		[]string{"fact", "llm", "token-budget", "memory", "hexxladb", "user-123"},
 	},
 	{
@@ -378,7 +378,7 @@ var seedConversation = []seedMessage{
 	},
 	{
 		"assistant",
-		"Confidence encodes epistemic certainty. High-confidence cells (user-confirmed facts, verified data) are prioritised in token-budgeted context assembly and kept longer during pruning. Low-confidence cells (inferred, speculative) are evicted first. Confidence should degrade over time for time-sensitive facts.",
+		"Confidence encodes epistemic certainty. HexxlaDB stores and returns confidence without silently changing retrieval meaning. Applications can rank user-confirmed or verified facts ahead of inferred material, and should apply any time-based confidence policy explicitly with auditable writes.",
 		[]string{"fact", "llm", "memory", "confidence", "hexxladb", "user-123"},
 	},
 

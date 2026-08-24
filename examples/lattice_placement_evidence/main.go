@@ -35,7 +35,7 @@ type config struct {
 	documentsPerTopic  int
 	initialPerTopic    int
 	neighborhoodRadius int
-	maxTokens          int
+	maxCells           int
 	semanticK          int
 	seed               uint64
 }
@@ -67,11 +67,11 @@ type document struct {
 type qualityMetrics struct {
 	Cells                     int     `json:"cells"`
 	NeighborhoodPrecision     float64 `json:"neighborhood_precision"`
-	UsefulContextPerToken     float64 `json:"useful_context_per_token"`
+	UsefulContentFraction     float64 `json:"useful_content_fraction"`
 	SemanticPrecision         float64 `json:"semantic_precision"`
 	SemanticLatticeDivergence float64 `json:"semantic_lattice_divergence"`
 	MeanContextCells          float64 `json:"mean_context_cells"`
-	MeanContextTokens         float64 `json:"mean_context_tokens"`
+	MeanContextBytes          float64 `json:"mean_context_bytes"`
 }
 
 type relocationReport struct {
@@ -102,10 +102,9 @@ type evidenceReport struct {
 		DocumentsPerTopic  int    `json:"documents_per_topic"`
 		InitialPerTopic    int    `json:"initial_per_topic"`
 		NeighborhoodRadius int    `json:"neighborhood_radius"`
-		MaxTokens          int    `json:"max_tokens"`
+		MaxCells           int    `json:"max_cells"`
 		SemanticK          int    `json:"semantic_k"`
 		Seed               uint64 `json:"seed"`
-		BudgetUnit         string `json:"budget_unit"`
 	} `json:"workload"`
 	Clustered   strategyReport `json:"clustered"`
 	Interleaved strategyReport `json:"interleaved"`
@@ -129,7 +128,7 @@ func main() {
 	flag.IntVar(&cfg.documentsPerTopic, "documents-per-topic", 20, "documents per topic (4..100)")
 	flag.IntVar(&cfg.initialPerTopic, "initial-per-topic", 12, "documents placed before incremental insertion")
 	flag.IntVar(&cfg.neighborhoodRadius, "neighborhood-radius", 2, "rings used for placement-quality evaluation (1..10)")
-	flag.IntVar(&cfg.maxTokens, "max-tokens", 600, "ByteLenBudgeter units available to each context (256..1000000)")
+	flag.IntVar(&cfg.maxCells, "max-cells", 8, "maximum cells returned per context (1..256)")
 	flag.IntVar(&cfg.semanticK, "semantic-k", 8, "semantic neighbors used for distribution comparison")
 	flag.Uint64Var(&cfg.seed, "seed", 1, "deterministic corpus seed")
 	flag.Parse()
@@ -161,8 +160,8 @@ func validateConfig(cfg config) error {
 	if cfg.neighborhoodRadius < 1 || cfg.neighborhoodRadius > hexxladb.MaxRenderRadius {
 		return fmt.Errorf("neighborhood-radius must be between 1 and %d", hexxladb.MaxRenderRadius)
 	}
-	if cfg.maxTokens < 256 || cfg.maxTokens > 1_000_000 {
-		return errors.New("max-tokens must be between 256 and 1000000")
+	if cfg.maxCells < 1 || cfg.maxCells > 256 {
+		return errors.New("max-cells must be between 1 and 256")
 	}
 	if cfg.semanticK < 1 || cfg.semanticK >= cfg.documentsPerTopic {
 		return errors.New("semantic-k must be positive and less than documents-per-topic")
@@ -189,10 +188,9 @@ func run(ctx context.Context, cfg config) (evidenceReport, error) {
 	report.Workload.DocumentsPerTopic = cfg.documentsPerTopic
 	report.Workload.InitialPerTopic = cfg.initialPerTopic
 	report.Workload.NeighborhoodRadius = cfg.neighborhoodRadius
-	report.Workload.MaxTokens = cfg.maxTokens
+	report.Workload.MaxCells = cfg.maxCells
 	report.Workload.SemanticK = cfg.semanticK
 	report.Workload.Seed = cfg.seed
-	report.Workload.BudgetUnit = "UTF-8 bytes via ByteLenBudgeter"
 	report.Clustered = clusteredReport
 	report.Interleaved = interleavedReport
 	if err := validateEvidence(report); err != nil {
@@ -380,7 +378,7 @@ func firstFreeCoordinate(tx *hexxladb.Tx, anchor hexxladb.Coord) (hexxladb.Coord
 func evaluate(ctx context.Context, db *hexxladb.DB, docsByCoord map[hexxladb.Coord]document, cfg config) (qualityMetrics, error) {
 	var metrics qualityMetrics
 	var relevantNeighbors, neighbors int
-	var usefulTokens, contextTokens, contextCells int
+	var usefulBytes, contextBytes, contextCells int
 	var semanticRelevant, semanticTotal int
 	var divergence float64
 	err := db.View(func(tx *hexxladb.Tx) error {
@@ -400,18 +398,18 @@ func evaluate(ctx context.Context, db *hexxladb.DB, docsByCoord map[hexxladb.Coo
 			neighbors += localNeighbors
 
 			pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-				Seeds:     []hexxladb.Coord{coord},
-				MaxRing:   cfg.neighborhoodRadius,
-				MaxTokens: cfg.maxTokens,
+				Seeds:    []hexxladb.Coord{coord},
+				MaxRing:  cfg.neighborhoodRadius,
+				MaxCells: cfg.maxCells,
 			})
 			if err != nil {
 				return err
 			}
 			contextCells += len(pack.Cells)
-			contextTokens += pack.TotalTokens
 			for _, cell := range pack.Cells {
+				contextBytes += len(cell.RawContent)
 				if cellTopic(cell.Tags) == doc.topicID {
-					usefulTokens += len(cell.RawContent)
+					usefulBytes += len(cell.RawContent)
 				}
 			}
 
@@ -453,12 +451,12 @@ func evaluate(ctx context.Context, db *hexxladb.DB, docsByCoord map[hexxladb.Coo
 	}
 	metrics.Cells = len(docsByCoord)
 	metrics.NeighborhoodPrecision = ratio(relevantNeighbors, neighbors)
-	metrics.UsefulContextPerToken = ratio(usefulTokens, contextTokens)
+	metrics.UsefulContentFraction = ratio(usefulBytes, contextBytes)
 	metrics.SemanticPrecision = ratio(semanticRelevant, semanticTotal)
 	if metrics.Cells > 0 {
 		metrics.SemanticLatticeDivergence = divergence / float64(metrics.Cells)
 		metrics.MeanContextCells = float64(contextCells) / float64(metrics.Cells)
-		metrics.MeanContextTokens = float64(contextTokens) / float64(metrics.Cells)
+		metrics.MeanContextBytes = float64(contextBytes) / float64(metrics.Cells)
 	}
 	return metrics, nil
 }
@@ -608,10 +606,10 @@ func exerciseRelocation(ctx context.Context, db *hexxladb.DB, state *placementSt
 			return err
 		}
 		pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-			Seeds:     []hexxladb.Coord{oldCoord},
-			MaxRing:   0,
-			MaxTokens: 10_000,
-			Assembly: hexxladb.LoadContextBudgetConfig{
+			Seeds:    []hexxladb.Coord{oldCoord},
+			MaxRing:  0,
+			MaxCells: 16,
+			Assembly: hexxladb.ContextAssemblyConfig{
 				FilterSuperseded: true,
 			},
 		})
@@ -670,8 +668,8 @@ func validateEvidence(report evidenceReport) error {
 		return fmt.Errorf("clustered neighborhood precision %.3f is below 0.8", good.NeighborhoodPrecision)
 	case poor.NeighborhoodPrecision > 0.4:
 		return fmt.Errorf("interleaved neighborhood precision %.3f is above 0.4", poor.NeighborhoodPrecision)
-	case good.UsefulContextPerToken-poor.UsefulContextPerToken < 0.4:
-		return errors.New("placement strategies do not separate useful context by at least 0.4")
+	case good.UsefulContentFraction-poor.UsefulContentFraction < 0.4:
+		return errors.New("placement strategies do not separate useful content fraction by at least 0.4")
 	case good.SemanticPrecision < 0.8 || poor.SemanticPrecision < 0.8:
 		return errors.New("synthetic semantic retrieval precision is below 0.8")
 	case good.SemanticLatticeDivergence > 0.25:

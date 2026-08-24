@@ -6,7 +6,7 @@
 //  1. Store each user/assistant turn as a cell with an embedding
 //  2. On new user input, retrieve the most relevant past context using embeddings
 //  3. Combine semantic search with tag filters for precision
-//  4. Assemble a token-budgeted context pack for the LLM prompt
+//  4. Assemble bounded candidates, then fit the rendered prompt in the application
 //  5. Handle preference changes via supersession (not deletion)
 //  6. Show how different retrieval strategies surface different knowledge
 //
@@ -423,10 +423,10 @@ func run(dbPath string) error {
 		err = db.View(func(tx *hexxladb.Tx) error {
 			var e error
 			pack, e = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-				Seeds:     []hexxladb.Coord{briefCoord}, // start from the OLD coord — successor should appear instead
-				MaxRing:   3,
-				MaxTokens: 4096,
-				Assembly: hexxladb.LoadContextBudgetConfig{
+				Seeds:    []hexxladb.Coord{briefCoord}, // start from the OLD coord — successor should appear instead
+				MaxRing:  3,
+				MaxCells: 32,
+				Assembly: hexxladb.ContextAssemblyConfig{
 					FilterSuperseded: true,
 					Explain:          true,
 				},
@@ -437,7 +437,7 @@ func run(dbPath string) error {
 			return fmt.Errorf("context pack: %w", err)
 		}
 
-		_, _ = infoStyle.Printf("  Context pack: %d cells, %d tokens\n", len(pack.Cells), pack.TotalTokens)
+		_, _ = infoStyle.Printf("  Context pack: %d cells\n", len(pack.Cells))
 		for _, cv := range pack.Cells {
 			marker := " "
 			if cv.SupersededFrom != nil {
@@ -469,8 +469,8 @@ func run(dbPath string) error {
 	//   1. Embed the user's new message
 	//   2. Find semantically relevant past turns (ANN)
 	//   3. Find preference cells (tag filter)
-	//   4. Assemble a token-budgeted context window
-	//   5. Format for the LLM prompt
+	//   4. Assemble a deterministically bounded candidate set
+	//   5. Rank, render, and token-fit the complete request in the application
 	//
 	// This is the payoff — everything working together.
 
@@ -535,7 +535,7 @@ func run(dbPath string) error {
 	fmt.Println()
 
 	// Step 3: Build the seed coords from search results
-	printStep("Step 3 — Context assembly: token-budgeted neighbourhood walk")
+	printStep("Step 3 — Context assembly: bounded neighbourhood walk")
 	seeds := make([]hexxladb.Coord, 0, len(techContext))
 	seen := map[hexxladb.Coord]bool{}
 	for _, r := range techContext[:min(3, len(techContext))] {
@@ -549,10 +549,10 @@ func run(dbPath string) error {
 	err = db.View(func(tx *hexxladb.Tx) error {
 		var e error
 		contextPack, e = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-			Seeds:     seeds,
-			MaxRing:   2,
-			MaxTokens: 2048,
-			Assembly: hexxladb.LoadContextBudgetConfig{
+			Seeds:    seeds,
+			MaxRing:  2,
+			MaxCells: 24,
+			Assembly: hexxladb.ContextAssemblyConfig{
 				FilterSuperseded: true,
 				IncludeSeams:     true,
 				Explain:          true,
@@ -564,39 +564,36 @@ func run(dbPath string) error {
 		return fmt.Errorf("context pack: %w", err)
 	}
 
-	_, _ = infoStyle.Printf("    Seeds: %d coords → Context: %d cells, %d tokens (budget: 2048)\n",
-		len(seeds), len(contextPack.Cells), contextPack.TotalTokens)
-	_, _ = infoStyle.Printf("    Stats: scanned=%d, evicted=%d, max_ring=%d\n",
-		contextPack.Stats.CandidatesScanned, contextPack.Stats.CellsEvicted, contextPack.Stats.MaxRingUsed)
+	_, _ = infoStyle.Printf("    Seeds: %d coords → Context: %d cells (limit: 24)\n",
+		len(seeds), len(contextPack.Cells))
+	_, _ = infoStyle.Printf("    Stats: scanned=%d, limit_reached=%t, max_ring=%d\n",
+		contextPack.Stats.CandidatesScanned, contextPack.Stats.ResultLimitReached, contextPack.Stats.MaxRingUsed)
 	fmt.Println()
 
-	// Step 4: Format the prompt
-	printStep("Step 4 — Format LLM prompt")
-	fmt.Println()
-	_, _ = dimStyle.Println("  ┌─ SYSTEM PROMPT ─────────────────────────────────────────────┐")
-	_, _ = dimStyle.Println("  │ You are a helpful coding assistant.                         │")
-	_, _ = dimStyle.Println("  │                                                             │")
-	_, _ = dimStyle.Println("  │ USER PREFERENCES:                                           │")
+	// Step 4: The application owns ranking, rendering, and model-specific fitting.
+	printStep("Step 4 — Application-owned ranking and complete-prompt fitting")
+	preferenceText := make([]string, 0, len(prefs))
 	for _, p := range prefs {
-		line := fmt.Sprintf("  │   • %s", trunc(p.Cell.RawContent, 55))
-		_, _ = dimStyle.Printf("%-64s│\n", line)
+		preferenceText = append(preferenceText, p.Cell.RawContent)
 	}
-	_, _ = dimStyle.Println("  │                                                             │")
-	_, _ = dimStyle.Println("  │ RELEVANT CONTEXT FROM MEMORY:                               │")
-	for i, cv := range contextPack.Cells {
-		if i >= 5 {
-			_, _ = dimStyle.Printf("  │   ... (%d more cells)%s│\n",
-				len(contextPack.Cells)-5, strings.Repeat(" ", 64-25-len(fmt.Sprintf("%d", len(contextPack.Cells)-5))))
-			break
-		}
-		line := fmt.Sprintf("  │   [%d] %s", i+1, trunc(cv.RawContent, 52))
-		_, _ = dimStyle.Printf("%-64s│\n", line)
+	rankedCandidates := rankByConfidence(contextPack.Cells)
+	const demoPromptLimit = 140
+	selected, renderedPrompt, promptUnits, err := fitRenderedPrompt(
+		preferenceText,
+		rankedCandidates,
+		newUserMsg,
+		demoPromptLimit,
+		demoWordCounter,
+	)
+	if err != nil {
+		return fmt.Errorf("fit rendered prompt: %w", err)
 	}
-	_, _ = dimStyle.Println("  └─────────────────────────────────────────────────────────────┘")
+	printNote("The demo counter uses words only to keep the example dependency-free; production code supplies its provider/model tokenizer here.")
+	printMetric("Retrieved candidates", len(contextPack.Cells))
+	printMetric("Prompt-selected cells", len(selected))
+	_, _ = infoStyle.Printf("    Complete rendered request: %d / %d demo units\n", promptUnits, demoPromptLimit)
 	fmt.Println()
-	_, _ = dimStyle.Println("  ┌─ USER MESSAGE ────────────────────────────────────────────────┐")
-	_, _ = dimStyle.Printf("  │ %s│\n", fmt.Sprintf("%-62s", trunc(newUserMsg, 62)))
-	_, _ = dimStyle.Println("  └──────────────────────────────────────────────────────────────┘")
+	_, _ = dimStyle.Println(renderedPrompt)
 	fmt.Println()
 
 	// ================================================================
@@ -627,9 +624,9 @@ func run(dbPath string) error {
 			"QueryCells combines ANN embeddings + tag filters + confidence + source in one call",
 		},
 		{
-			"Token-budgeted context",
+			"Provider-neutral context fitting",
 			"Naive truncation drops relevant context; overflow breaks generation",
-			"LoadContext evicts low-confidence cells from outer rings first",
+			"LoadContext bounds candidates; the application ranks and token-fits the rendered request",
 		},
 		{
 			"Auditable memory",
@@ -653,7 +650,7 @@ func run(dbPath string) error {
 	// Empty cells act as opaque barriers — only cells the "observer" can
 	// see through populated neighborhoods are returned. This is smarter
 	// than blind radial loading for sparse grids where large empty gaps
-	// would waste the context budget on unreachable cells.
+	// would return irrelevant candidates across unreachable regions.
 
 	printSection("Scenario 7: FOV-Filtered Context Loading")
 	printNote("Visibility-based retrieval — only cells with clear line-of-sight from center are loaded.")
@@ -720,7 +717,7 @@ func run(dbPath string) error {
 	fmt.Println()
 
 	_, _ = dimStyle.Println("  Why FOV matters for LLM context:")
-	_, _ = dimStyle.Println("    • Sparse grids: empty regions block LOS, preventing budget waste")
+	_, _ = dimStyle.Println("    • Sparse grids: empty regions block LOS, avoiding irrelevant candidates")
 	_, _ = dimStyle.Println("    • Dense clusters: FOV naturally loads the connected neighborhood")
 	_, _ = dimStyle.Println("    • Custom opacity: mark cells as opaque based on tags, confidence, etc.")
 	fmt.Println()

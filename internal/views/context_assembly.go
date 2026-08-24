@@ -3,26 +3,31 @@ package views
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
 // SeamTypeSupersedes is the canonical seam type written by MarkSupersedes.
-// Defined here so budget.go can walk supersession chains without importing
+// Defined here so context assembly can walk supersession chains without importing
 // the root hexxladb package.
 const SeamTypeSupersedes = "supersedes"
 
 const maxSupersessionDepth = 16
 
-// LoadContextBudgetConfig configures context assembly for [Tx.LoadContext].
-type LoadContextBudgetConfig struct {
-	Assemble          AssembleCellViewOpts
-	MaxCandidateCells int // upper bound on cells considered before eviction; default 256
-	IncludeFacetText  bool
-	IncludeSeams      bool
-	SeamRadius        int
-	Explain           bool // when true, populate ContextPack.Explanations
+// ContextAssemblyConfig configures context assembly for [Tx.LoadContext].
+type ContextAssemblyConfig struct {
+	// Assemble controls enrichment of each returned CellView.
+	Assemble AssembleCellViewOpts
+	// IncludeSeams attaches a deduplicated regional seam set to ContextPack.Seams.
+	// It is distinct from Assemble.IncludeSeams, which enriches each CellView.
+	IncludeSeams bool
+	// SeamRadius is the regional seam search radius. Zero uses MaxRing;
+	// negative values return ErrInvalidArgument.
+	SeamRadius int
+	// Explain populates ContextPack.Explanations when true.
+	Explain bool
 	// FilterSuperseded walks [SeamTypeSupersedes] chains for each candidate cell
 	// and replaces superseded cells with their current-truth successor (if the
 	// successor exists in the DB). Cells with no live successor are excluded.
@@ -30,12 +35,10 @@ type LoadContextBudgetConfig struct {
 	FilterSuperseded bool
 }
 
-// scoredCandidate pairs a CellView with the ring it was found in, used during
-// context budgeting eviction.
-type scoredCandidate struct {
-	ring          int
-	view          CellView
-	originalCoord *lattice.Coord // set when this candidate replaced a superseded cell
+// contextCandidate pairs a CellView with the ring it was found in.
+type contextCandidate struct {
+	ring int
+	view CellView
 }
 
 // resolveSupersession walks SeamTypeSupersedes chains from coord and returns
@@ -114,40 +117,46 @@ func resolveChainTerminus(tx TxReader, orig, current lattice.Coord, superseded b
 // collectCandidates scans rings outward from center, assembling up to capCells
 // CellView candidates. If cfg.FilterSuperseded is set, superseded cells are
 // replaced by their current-truth successor (or excluded if none exists).
-func collectCandidates(ctx context.Context, tx TxReader, center lattice.Coord, maxR, capCells int, opts AssembleCellViewOpts, cfg LoadContextBudgetConfig) ([]scoredCandidate, []CellExplanation, error) {
-	// Ring area = 3r²+3r+1 (exact cell count for radius r). Pre-size items, seen,
-	// and the per-ring coordinate buffer to avoid repeated heap allocations.
-	ringArea := min(3*maxR*maxR+3*maxR+1, capCells)
-	coll := candidateCollector{
-		items: make([]scoredCandidate, 0, ringArea),
-		seen:  make(map[lattice.Coord]struct{}, ringArea),
-		cfg:   cfg,
-		opts:  opts,
-		cap:   capCells,
-	}
-	ringBuf := make([]lattice.Coord, 0, 6*maxR+1) // max ring perimeter
+func collectCandidates(ctx context.Context, tx TxReader, center lattice.Coord, maxR, maxCells int, asOf *time.Time, opts AssembleCellViewOpts, cfg ContextAssemblyConfig) ([]contextCandidate, []CellExplanation, int, error) {
+	// Keep speculative capacity bounded even when a caller supplies a very large
+	// result limit; slices grow only as actual cells are found.
+	initialCapacity := min(maxCells, 256)
+	coll := newCandidateCollector(initialCapacity, asOf, opts, cfg)
+	ringBuf := make([]lattice.Coord, 0, min(maxCells, 6*min(maxR, 64)+1))
 	for ring := range maxR + 1 {
 		ringBuf = lattice.RingInto(ringBuf[:0], center, ring)
 		for _, c := range ringBuf {
-			if len(coll.items) >= capCells {
-				return coll.items, coll.explanations, nil
+			if len(coll.items) >= maxCells {
+				return coll.items, coll.explanations, coll.scanned, nil
 			}
+			coll.scanned++
 			if err := coll.processCoord(ctx, tx, c, ring); err != nil {
-				return nil, nil, err
+				return nil, nil, coll.scanned, err
 			}
 		}
 	}
-	return coll.items, coll.explanations, nil
+	return coll.items, coll.explanations, coll.scanned, nil
 }
 
-// candidateCollector accumulates scored candidates during ring scans.
+// candidateCollector accumulates unique assembled candidates.
 type candidateCollector struct {
-	items        []scoredCandidate
+	items        []contextCandidate
 	explanations []CellExplanation
 	seen         map[lattice.Coord]struct{}
-	cfg          LoadContextBudgetConfig
+	cfg          ContextAssemblyConfig
 	opts         AssembleCellViewOpts
-	cap          int
+	asOf         *time.Time
+	scanned      int
+}
+
+func newCandidateCollector(capacity int, asOf *time.Time, opts AssembleCellViewOpts, cfg ContextAssemblyConfig) candidateCollector {
+	return candidateCollector{
+		items: make([]contextCandidate, 0, capacity),
+		seen:  make(map[lattice.Coord]struct{}, capacity),
+		cfg:   cfg,
+		opts:  opts,
+		asOf:  asOf,
+	}
 }
 
 // processCoord resolves supersession, assembles the cell view, and adds it.
@@ -162,7 +171,7 @@ func (cc *candidateCollector) processCoord(ctx context.Context, tx TxReader, c l
 	if _, already := cc.seen[target]; already {
 		return nil
 	}
-	v, err := AssembleCellView(ctx, tx, target, nil, cc.opts)
+	v, err := AssembleCellView(ctx, tx, target, cc.asOf, cc.opts)
 	if err != nil {
 		if errors.Is(err, ErrCellNotFound) {
 			return nil
@@ -181,7 +190,7 @@ func (cc *candidateCollector) processCoord(ctx context.Context, tx TxReader, c l
 		}
 	}
 	cc.seen[target] = struct{}{}
-	cc.items = append(cc.items, scoredCandidate{ring: ring, view: v, originalCoord: originalCoord})
+	cc.items = append(cc.items, contextCandidate{ring: ring, view: v})
 	return nil
 }
 
@@ -213,30 +222,22 @@ func (cc *candidateCollector) resolveTarget(ctx context.Context, tx TxReader, c 
 	return resolved, &origC, false, nil
 }
 
-// LoadContextWithBudgeting walks rings from center, builds [CellView] values,
-// then applies HEXXLA.md-style eviction: drop the lowest-confidence cell from
-// the outermost ring first until within maxTokens (or no progress).
-// Token counts sum RawContent and optionally facet text.
-func LoadContextWithBudgeting(ctx context.Context, tx TxReader, center lattice.Coord, maxR, maxTokens int, budgeter TokenBudgeter, cfg LoadContextBudgetConfig) (ContextPack, error) {
+// loadContextByRings walks rings from center and returns at most maxCells
+// candidates in deterministic nearest-first order. Model-specific ranking,
+// prompt rendering, and token accounting belong to the embedding application.
+func loadContextByRings(ctx context.Context, tx TxReader, center lattice.Coord, maxR, maxCells int, asOf *time.Time, cfg ContextAssemblyConfig) (ContextPack, error) {
 	if err := ctx.Err(); err != nil {
 		return ContextPack{}, err
 	}
-	if maxTokens <= 0 || maxR < 0 {
+	if maxCells <= 0 || maxR < 0 {
 		return ContextPack{}, ErrInvalidArgument
-	}
-	if budgeter == nil {
-		budgeter = ByteLenBudgeter{}
-	}
-	capCells := cfg.MaxCandidateCells
-	if capCells <= 0 {
-		capCells = 256
 	}
 	assembleOpts := cfg.Assemble
 	if assembleOpts == (AssembleCellViewOpts{}) {
 		assembleOpts = DefaultAssembleCellViewOpts()
 	}
 
-	items, supersededExplanations, err := collectCandidates(ctx, tx, center, maxR, capCells, assembleOpts, cfg)
+	items, explanations, scanned, err := collectCandidates(ctx, tx, center, maxR, maxCells, asOf, assembleOpts, cfg)
 	if err != nil {
 		return ContextPack{}, err
 	}
@@ -244,78 +245,62 @@ func LoadContextWithBudgeting(ctx context.Context, tx TxReader, center lattice.C
 		return ContextPack{}, nil
 	}
 
-	candidatesScanned := len(items)
-	items, evicted, evictExplanations := evictOverBudget(items, maxTokens, budgeter, cfg)
-	explanations := append(supersededExplanations, evictExplanations...) //nolint:gocritic // intentional append to separate slice
-
-	pack := buildContextPack(items, explanations, candidatesScanned, evicted, budgeter, cfg)
+	pack := buildContextPack(items, explanations, scanned, maxCells, cfg)
 
 	if cfg.IncludeSeams {
-		if err := attachSeams(ctx, tx, center, maxR, cfg, &pack); err != nil {
+		if err := attachSeams(ctx, tx, []lattice.Coord{center}, maxR, cfg, &pack); err != nil {
 			return ContextPack{}, err
 		}
 	}
 	return pack, nil
 }
 
-// evictOverBudget removes the lowest-confidence cell from the outermost ring
-// until total tokens fit within maxTokens. Returns the surviving items, eviction
-// count, and any explanations generated.
-func evictOverBudget(items []scoredCandidate, maxTokens int, budgeter TokenBudgeter, cfg LoadContextBudgetConfig) ([]scoredCandidate, int, []CellExplanation) {
-	total := 0
-	for i := range items {
-		total += CellViewTokens(budgeter, items[i].view, cfg.IncludeFacetText)
+// assembleCoordsIntoContextPack assembles an ordered coordinate list through
+// the same validity, supersession, deduplication, and result-limit path used by
+// ring retrieval.
+func assembleCoordsIntoContextPack(ctx context.Context, tx TxReader, coords, seeds []lattice.Coord, maxCells, defaultSeamRadius int, asOf *time.Time, cfg ContextAssemblyConfig) (ContextPack, error) {
+	if err := ctx.Err(); err != nil {
+		return ContextPack{}, err
 	}
-
-	var explanations []CellExplanation
-	evicted := 0
-	for total > maxTokens && len(items) > 0 {
-		drop := findEvictionTarget(items)
-		if drop < 0 {
+	if maxCells <= 0 {
+		return ContextPack{}, ErrInvalidArgument
+	}
+	opts := cfg.Assemble
+	if opts == (AssembleCellViewOpts{}) {
+		opts = DefaultAssembleCellViewOpts()
+	}
+	coll := newCandidateCollector(min(len(coords), maxCells), asOf, opts, cfg)
+	for _, coord := range coords {
+		if len(coll.items) >= maxCells {
 			break
 		}
-		droppedTokens := CellViewTokens(budgeter, items[drop].view, cfg.IncludeFacetText)
-		if cfg.Explain {
-			explanations = append(explanations, CellExplanation{
-				Coord:  items[drop].view.Coord,
-				Ring:   items[drop].ring,
-				Reason: "evicted_low_confidence",
-				Tokens: droppedTokens,
-			})
+		coll.scanned++
+		if err := coll.processCoord(ctx, tx, coord, nearestSeedDistance(coord, seeds)); err != nil {
+			return ContextPack{}, err
 		}
-		total -= droppedTokens
-		items = append(items[:drop], items[drop+1:]...)
-		evicted++
 	}
-	return items, evicted, explanations
+	pack := buildContextPack(coll.items, coll.explanations, coll.scanned, maxCells, cfg)
+	if cfg.IncludeSeams {
+		if err := attachSeams(ctx, tx, seeds, defaultSeamRadius, cfg, &pack); err != nil {
+			return ContextPack{}, err
+		}
+	}
+	return pack, nil
 }
 
-// findEvictionTarget returns the index of the lowest-confidence candidate at
-// the outermost ring, or -1 if no candidates remain.
-func findEvictionTarget(items []scoredCandidate) int {
-	maxRing := -1
-	for i := range items {
-		if items[i].ring > maxRing {
-			maxRing = items[i].ring
-		}
+func nearestSeedDistance(coord lattice.Coord, seeds []lattice.Coord) int {
+	if len(seeds) == 0 {
+		return 0
 	}
-	drop := -1
-	var minConf float64
-	for i := range items {
-		if items[i].ring != maxRing {
-			continue
-		}
-		c := items[i].view.Provenance.Confidence
-		if drop < 0 || c < minConf {
-			drop = i
-			minConf = c
-		}
+	distance := coord.Distance(seeds[0])
+	for _, seed := range seeds[1:] {
+		distance = min(distance, coord.Distance(seed))
 	}
-	return drop
+	return distance
 }
 
-// buildContextPack assembles the final ContextPack from surviving items.
-func buildContextPack(items []scoredCandidate, explanations []CellExplanation, candidatesScanned, evicted int, budgeter TokenBudgeter, cfg LoadContextBudgetConfig) ContextPack {
+// buildContextPack assembles the final ContextPack from selected items.
+func buildContextPack(items []contextCandidate, explanations []CellExplanation, candidatesScanned, maxCells int, cfg ContextAssemblyConfig) ContextPack {
 	maxRingUsed := 0
 	for i := range items {
 		if items[i].ring > maxRingUsed {
@@ -328,7 +313,6 @@ func buildContextPack(items []scoredCandidate, explanations []CellExplanation, c
 				Coord:  items[i].view.Coord,
 				Ring:   items[i].ring,
 				Reason: "included",
-				Tokens: CellViewTokens(budgeter, items[i].view, cfg.IncludeFacetText),
 			})
 		}
 	}
@@ -337,23 +321,19 @@ func buildContextPack(items []scoredCandidate, explanations []CellExplanation, c
 	for i := range items {
 		out[i] = items[i].view
 	}
-	pack := ContextPack{
+	return ContextPack{
 		Cells: out,
 		Stats: ContextPackStats{
-			CandidatesScanned: candidatesScanned,
-			CellsEvicted:      evicted,
-			MaxRingUsed:       maxRingUsed,
+			CandidatesScanned:  candidatesScanned,
+			ResultLimitReached: len(out) == maxCells,
+			MaxRingUsed:        maxRingUsed,
 		},
 		Explanations: explanations,
 	}
-	for i := range out {
-		pack.TotalTokens += CellViewTokens(budgeter, out[i], cfg.IncludeFacetText)
-	}
-	return pack
 }
 
 // attachSeams loads seams for the context pack.
-func attachSeams(ctx context.Context, tx TxReader, center lattice.Coord, maxR int, cfg LoadContextBudgetConfig, pack *ContextPack) error {
+func attachSeams(ctx context.Context, tx TxReader, centers []lattice.Coord, maxR int, cfg ContextAssemblyConfig, pack *ContextPack) error {
 	r := cfg.SeamRadius
 	if r < 0 {
 		return ErrInvalidArgument
@@ -361,10 +341,19 @@ func attachSeams(ctx context.Context, tx TxReader, center lattice.Coord, maxR in
 	if r == 0 {
 		r = maxR
 	}
-	seams, err := tx.FindSeams(ctx, center, r, false)
-	if err != nil {
-		return err
+	seen := make(map[string]struct{})
+	for _, center := range centers {
+		seams, err := tx.FindSeams(ctx, center, r, false)
+		if err != nil {
+			return err
+		}
+		for _, seam := range seams {
+			if _, duplicate := seen[seam.ID]; duplicate {
+				continue
+			}
+			seen[seam.ID] = struct{}{}
+			pack.Seams = append(pack.Seams, seam)
+		}
 	}
-	pack.Seams = seams
 	return nil
 }

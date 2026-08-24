@@ -69,7 +69,7 @@ tasks:
       TMPDIR: "{{.TASK_TMPDIR}}"
       HEXXLA_BENCH_PRELOAD: '{{.HEXXLA_BENCH_PRELOAD | default "all"}}'
     cmds:
-      - go test -count=1 -bench='BenchmarkAPI_(GetCell|AscendCellsBySource|LoadContext|LoadContextAt|WalkRing|WalkRingAt)/' -benchmem -benchtime=500ms ./.
+      - go test -count=1 -bench='BenchmarkAPI_(GetCell|AscendCellsBySource|ScanContextRaw|ScanContextAtRaw|LoadContext|WalkRing|WalkRingAt)/' -benchmem -benchtime=500ms ./.
 
   evidence:
     desc: Run controlled, aggregate observation, and lattice-placement evidence

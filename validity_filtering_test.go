@@ -200,6 +200,27 @@ func TestTx_LoadContextAt_maxCellsAfterFilter(t *testing.T) {
 	if len(out2) != 1 {
 		t.Fatalf("maxCells=1 after filter: got %d", len(out2))
 	}
+
+	// The unified loader must propagate AsOf through its ordinary single-seed
+	// ring path and continue past ineligible cells until MaxCells is filled.
+	asOf = time.Unix(0, 250).UTC()
+	var pack hexxladb.ContextPack
+	err = db.View(func(tx *hexxladb.Tx) error {
+		var inner error
+		pack, inner = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+			Seeds:    []hexxladb.Coord{center},
+			MaxRing:  1,
+			MaxCells: 1,
+			AsOf:     &asOf,
+		})
+		return inner
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pack.Cells) != 1 || pack.Cells[0].RawContent != "b" {
+		t.Fatalf("LoadContext AsOf result = %+v, want only future-valid cell b", pack.Cells)
+	}
 }
 
 func TestTx_WalkRingFacets_maskAndAsOf(t *testing.T) {

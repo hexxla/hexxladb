@@ -160,9 +160,9 @@ The report defines:
 
 - **neighborhood precision** as the fraction of occupied cells within two rings
   that share the seed's topic;
-- **useful context per token** as the fraction of `LoadContext` budget units
-  spent on same-topic raw content, using the documented `ByteLenBudgeter` byte
-  proxy rather than claiming model-token accuracy;
+- **useful content fraction** as the same-topic share of raw-content bytes in
+  the deterministically `MaxCells`-bounded `LoadContext` result; this measures
+  placement quality and makes no model-token claim;
 - **semantic precision** as the same-topic fraction among eight ANN neighbors;
 - **semantic/lattice divergence** as total-variation distance between semantic
   and two-ring topic distributions, from zero (aligned) to one (disjoint);
@@ -170,12 +170,12 @@ The report defines:
   their original coordinates after incremental insertion.
 
 The 2026-08-25 reference run used an Intel Core i9-14900HX, Linux/amd64,
-Go 1.27.0, seed 1, a 600-byte context budget, and the default workload:
+Go 1.27.0, seed 1, an eight-cell context limit, and the default workload:
 
-| Policy | Neighborhood precision | Useful context/token | Semantic precision | Semantic/lattice divergence | Coordinate stability |
-| ------ | ---------------------- | -------------------- | ------------------ | --------------------------- | -------------------- |
-| Topic-clustered | 1.000 | 1.000 | 1.000 | 0.000 | 1.000 |
-| Interleaved | 0.129 | 0.255 | 1.000 | 0.873 | 1.000 |
+| Policy          | Neighborhood precision | Useful content fraction | Semantic precision | Semantic/lattice divergence | Coordinate stability |
+| --------------- | ---------------------- | ----------------------- | ------------------ | --------------------------- | -------------------- |
+| Topic-clustered | 1.000                  | 1.000                   | 1.000              | 0.000                       | 1.000                |
+| Interleaved     | 0.129                  | 0.248                   | 1.000              | 0.873                       | 1.000                |
 
 The equal semantic precision isolates placement as the cause of the degraded
 interleaved neighborhood and context results. The same report includes labelled
@@ -186,7 +186,7 @@ successor at a new free coordinate, preserves the predecessor, calls
 when `FilterSuperseded` is enabled.
 
 The acceptance check fails unless clustered precision is at least 0.8,
-interleaved precision is at most 0.4, useful-context ratio separates by at least
+interleaved precision is at most 0.4, useful-content fraction separates by at least
 0.4, semantic precision remains at least 0.8, clustered divergence is at most
 0.25, interleaved divergence is at least 0.5, both stability scores are 1.0,
 and the relocation/supersession contract passes. Existing `GetCell`, ring walks,

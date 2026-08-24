@@ -53,51 +53,36 @@ type CellView struct {
 	Edges       []EdgeView
 	Seams       []SeamRef
 	// SupersededFrom is set when this cell was substituted for a superseded cell
-	// during context assembly with [LoadContextBudgetConfig.FilterSuperseded].
+	// during context assembly with [ContextAssemblyConfig.FilterSuperseded].
 	// It holds the coordinate of the original (stale) cell that was replaced.
 	SupersededFrom *lattice.Coord
 }
 
 // ContextPackStats records assembly statistics for debugging and observability.
 type ContextPackStats struct {
-	CandidatesScanned int // cells examined before eviction
-	CellsEvicted      int // cells dropped during budget trimming
-	MaxRingUsed       int // outermost ring that contributed at least one cell
+	CandidatesScanned  int  // candidate coordinates examined during assembly
+	ResultLimitReached bool // true when MaxCells cells were returned
+	MaxRingUsed        int  // outermost ring that contributed at least one cell
 }
 
 // CellExplanation records why a cell was included or excluded during context assembly.
 type CellExplanation struct {
 	Coord lattice.Coord
 	Ring  int
-	// Reason is one of: "included", "evicted_low_confidence", "cap_exceeded", "superseded".
+	// Reason is one of: "included" or "superseded".
 	Reason string
-	Tokens int // token count at time of decision
 	// SupersededBy is set when Reason == "superseded": the coord of the successor
 	// cell that replaced this one (if a live successor exists), or nil if excluded.
 	SupersededBy *lattice.Coord
 }
 
-// ContextPack matches the neighbourhood summary shape described in HEXXLA.md
-// (Cells + TotalTokens + Seams).
+// ContextPack contains deterministically bounded context candidates and seams.
 type ContextPack struct {
 	Cells        []CellView
-	TotalTokens  int
 	Seams        []record.SeamRecord
-	Stats        ContextPackStats  // assembly statistics (zero when built outside LoadContextWithBudgeting)
-	Explanations []CellExplanation // per-cell decisions (only when LoadContextBudgetConfig.Explain is true)
+	Stats        ContextPackStats  // assembly statistics
+	Explanations []CellExplanation // per-cell decisions (only when ContextAssemblyConfig.Explain is true)
 }
-
-// TokenBudgeter counts tokens for budgeting (e.g. approximate LLM tokens).
-// Inject domain-specific logic; the default is [ByteLenBudgeter].
-type TokenBudgeter interface {
-	CountTokens(content string) int
-}
-
-// ByteLenBudgeter counts tokens as UTF-8 byte length (cheap default; not tokenizer-accurate).
-type ByteLenBudgeter struct{}
-
-// CountTokens implements [TokenBudgeter].
-func (ByteLenBudgeter) CountTokens(content string) int { return len(content) }
 
 // AssembleCellViewOpts configures [AssembleCellView].
 type AssembleCellViewOpts struct {
@@ -119,7 +104,7 @@ func DefaultAssembleCellViewOpts() AssembleCellViewOpts {
 // ── CellView predicates / utilities ──────────────────────────────────────────
 
 // CellViewPredicate selects [CellView] rows when filtering slices produced from
-// walks or budgeting helpers.
+// walks or context assembly helpers.
 type CellViewPredicate func(CellView) bool
 
 // FilterCellViews returns only views for which pred reports true.
@@ -137,37 +122,6 @@ func FilterCellViews(views []CellView, pred CellViewPredicate) []CellView {
 		}
 	}
 	return out
-}
-
-// TruncateCellViewsToTokenBudget returns a prefix of views (order preserved)
-// such that the summed token count is at most maxTokens.
-func TruncateCellViewsToTokenBudget(vs []CellView, budgeter TokenBudgeter, maxTokens int, includeFacetText bool) (out []CellView, total int) {
-	if budgeter == nil {
-		budgeter = ByteLenBudgeter{}
-	}
-	if maxTokens <= 0 || len(vs) == 0 {
-		return nil, 0
-	}
-	for _, v := range vs {
-		n := CellViewTokens(budgeter, v, includeFacetText)
-		if total+n > maxTokens {
-			break
-		}
-		out = append(out, v)
-		total += n
-	}
-	return out, total
-}
-
-// CellViewTokens counts tokens for a single CellView, optionally including facet text.
-func CellViewTokens(b TokenBudgeter, v CellView, facets bool) int {
-	n := b.CountTokens(v.RawContent)
-	if facets {
-		for _, f := range v.Facets {
-			n += b.CountTokens(f.DerivedContent)
-		}
-	}
-	return n
 }
 
 // ── AssembleCellView ──────────────────────────────────────────────────────────

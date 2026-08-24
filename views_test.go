@@ -51,10 +51,10 @@ func TestTx_AssembleCellView(t *testing.T) {
 	}
 }
 
-func TestTx_LoadContext_evictionOrder(t *testing.T) {
+func TestTx_LoadContext_nearestFirstResultLimit(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	db, err := hexxladb.Open(filepath.Join(dir, "budget.db"), nil)
+	db, err := hexxladb.Open(filepath.Join(dir, "bounded.db"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestTx_LoadContext_evictionOrder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		conf := float64(i) * 0.1 // 0, 0.1, 0.2 — lowest on ring 1 is cell 0
+		conf := float64(i) * 0.1
 		rec := record.CellRecord{
 			Key:        p,
 			RawContent: "xxxx",
@@ -93,32 +93,27 @@ func TestTx_LoadContext_evictionOrder(t *testing.T) {
 
 	err = db.View(func(tx *hexxladb.Tx) error {
 		pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-			Seeds:     []hexxladb.Coord{center},
-			MaxRing:   1,
-			MaxTokens: 14,
-			Assembly: hexxladb.LoadContextBudgetConfig{
-				Assemble:          hexxladb.AssembleCellViewOpts{IncludeFacets: false},
-				MaxCandidateCells: 10,
-				IncludeFacetText:  false,
-				IncludeSeams:      false,
+			Seeds:    []hexxladb.Coord{center},
+			MaxRing:  1,
+			MaxCells: 3,
+			Assembly: hexxladb.ContextAssemblyConfig{
+				Assemble: hexxladb.AssembleCellViewOpts{IncludeFacets: false},
 			},
 		})
 		if err != nil {
 			return err
 		}
-		if len(pack.Cells) != 3 {
-			t.Fatalf("expected 3 cells after eviction, got %d", len(pack.Cells))
+		want := []lattice.Coord{center, ring1[0], ring1[1]}
+		if len(pack.Cells) != len(want) {
+			t.Fatalf("expected %d bounded cells, got %d", len(want), len(pack.Cells))
 		}
-		for _, v := range pack.Cells {
-			if v.Coord == center {
-				if v.RawContent != "center" {
-					t.Fatal("center missing")
-				}
-				continue
+		for i := range want {
+			if pack.Cells[i].Coord != want[i] {
+				t.Fatalf("cell %d = %v, want nearest-first %v", i, pack.Cells[i].Coord, want[i])
 			}
-			if v.Provenance.Confidence == 0 {
-				t.Fatal("lowest-confidence ring cell should have been dropped first")
-			}
+		}
+		if !pack.Stats.ResultLimitReached {
+			t.Fatal("ResultLimitReached = false, want true")
 		}
 		return nil
 	})
@@ -172,8 +167,8 @@ func TestFilterSuperseded_excludesStale(t *testing.T) {
 
 	err = db.View(func(tx *hexxladb.Tx) error {
 		pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-			Seeds: []hexxladb.Coord{center}, MaxRing: 1, MaxTokens: 10000,
-			Assembly: hexxladb.LoadContextBudgetConfig{
+			Seeds: []hexxladb.Coord{center}, MaxRing: 1,
+			Assembly: hexxladb.ContextAssemblyConfig{
 				Assemble: hexxladb.AssembleCellViewOpts{IncludeFacets: false}, FilterSuperseded: true,
 			},
 		})
@@ -233,8 +228,8 @@ func TestFilterSuperseded_chainWalk(t *testing.T) {
 
 	err = db.View(func(tx *hexxladb.Tx) error {
 		pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-			Seeds: []hexxladb.Coord{center}, MaxRing: 1, MaxTokens: 10000,
-			Assembly: hexxladb.LoadContextBudgetConfig{
+			Seeds: []hexxladb.Coord{center}, MaxRing: 1,
+			Assembly: hexxladb.ContextAssemblyConfig{
 				Assemble: hexxladb.AssembleCellViewOpts{IncludeFacets: false}, FilterSuperseded: true,
 			},
 		})
@@ -288,8 +283,8 @@ func TestFilterSuperseded_noSuccessor(t *testing.T) {
 
 	err = db.View(func(tx *hexxladb.Tx) error {
 		pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-			Seeds: []hexxladb.Coord{center}, MaxRing: 1, MaxTokens: 10000,
-			Assembly: hexxladb.LoadContextBudgetConfig{
+			Seeds: []hexxladb.Coord{center}, MaxRing: 1,
+			Assembly: hexxladb.ContextAssemblyConfig{
 				Assemble: hexxladb.AssembleCellViewOpts{IncludeFacets: false}, FilterSuperseded: true,
 			},
 		})
@@ -338,8 +333,8 @@ func TestFilterSuperseded_offByDefault(t *testing.T) {
 
 	err = db.View(func(tx *hexxladb.Tx) error {
 		pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-			Seeds: []hexxladb.Coord{center}, MaxRing: 1, MaxTokens: 10000,
-			Assembly: hexxladb.LoadContextBudgetConfig{
+			Seeds: []hexxladb.Coord{center}, MaxRing: 1,
+			Assembly: hexxladb.ContextAssemblyConfig{
 				Assemble: hexxladb.AssembleCellViewOpts{IncludeFacets: false}, FilterSuperseded: false,
 			},
 		})
@@ -362,7 +357,7 @@ func TestFilterSuperseded_offByDefault(t *testing.T) {
 	}
 }
 
-func TestFilterCellViews_and_TruncateCellViewsToTokenBudget(t *testing.T) {
+func TestFilterCellViews(t *testing.T) {
 	t.Parallel()
 	a := lattice.Coord{Q: 1, R: 0}
 	b := lattice.Coord{Q: 0, R: 1}
@@ -374,9 +369,5 @@ func TestFilterCellViews_and_TruncateCellViewsToTokenBudget(t *testing.T) {
 	})
 	if len(filtered) != 1 || filtered[0].Coord != b {
 		t.Fatalf("filter: %+v", filtered)
-	}
-	trunc, n := hexxladb.TruncateCellViewsToTokenBudget(all, hexxladb.ByteLenBudgeter{}, 4, false)
-	if n != 4 || len(trunc) != 1 || trunc[0].RawContent != "aaaa" {
-		t.Fatalf("truncate: n=%d pack=%+v", n, trunc)
 	}
 }

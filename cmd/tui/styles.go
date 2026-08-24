@@ -33,7 +33,7 @@ var (
 	colorGreen  = lipgloss.Color("42")  // success / included
 	colorPink   = lipgloss.Color("213") // warning / superseded
 	colorOrange = lipgloss.Color("214") // caution / seam
-	colorRed    = lipgloss.Color("196") // error / evicted
+	colorRed    = lipgloss.Color("196") // error / warning
 	colorYellow = lipgloss.Color("229") // highlight / tags
 
 	// Backgrounds

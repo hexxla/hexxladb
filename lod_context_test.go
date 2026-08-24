@@ -45,10 +45,10 @@ func TestLoadContext_LOD_largeRadius(t *testing.T) {
 
 	err = db.View(func(tx *hexxladb.Tx) error {
 		pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-			Seeds:     []hexxladb.Coord{{Q: 0, R: 0}},
-			MaxRing:   12,
-			MaxTokens: 50000,
-			Assembly:  hexxladb.LoadContextBudgetConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
+			Seeds:    []hexxladb.Coord{{Q: 0, R: 0}},
+			MaxRing:  12,
+			MaxCells: 256,
+			Assembly: hexxladb.ContextAssemblyConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
 		})
 		if err != nil {
 			return err
@@ -56,7 +56,7 @@ func TestLoadContext_LOD_largeRadius(t *testing.T) {
 		if len(pack.Cells) == 0 {
 			t.Fatal("expected cells in LOD-dispatched pack")
 		}
-		t.Logf("LOD pack: %d cells, %d tokens", len(pack.Cells), pack.TotalTokens)
+		t.Logf("LOD pack: %d cells", len(pack.Cells))
 		return nil
 	})
 	if err != nil {
@@ -64,7 +64,7 @@ func TestLoadContext_LOD_largeRadius(t *testing.T) {
 	}
 }
 
-// TestLoadContext_LOD_maxCellsCap verifies that MaxCandidateCells limits results.
+// TestLoadContext_LOD_maxCellsCap verifies that MaxCells limits results.
 func TestLoadContext_LOD_maxCellsCap(t *testing.T) {
 	t.Parallel()
 	db := openLODTestDB(t)
@@ -93,12 +93,11 @@ func TestLoadContext_LOD_maxCellsCap(t *testing.T) {
 	const maxCells = 10
 	err = db.View(func(tx *hexxladb.Tx) error {
 		pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-			Seeds:     []hexxladb.Coord{{Q: 0, R: 0}},
-			MaxRing:   12,
-			MaxTokens: 50000,
-			Assembly: hexxladb.LoadContextBudgetConfig{
-				Assemble:          hexxladb.DefaultAssembleCellViewOpts(),
-				MaxCandidateCells: maxCells,
+			Seeds:    []hexxladb.Coord{{Q: 0, R: 0}},
+			MaxRing:  12,
+			MaxCells: maxCells,
+			Assembly: hexxladb.ContextAssemblyConfig{
+				Assemble: hexxladb.DefaultAssembleCellViewOpts(),
 			},
 		})
 		if err != nil {
@@ -106,6 +105,9 @@ func TestLoadContext_LOD_maxCellsCap(t *testing.T) {
 		}
 		if len(pack.Cells) > maxCells {
 			t.Fatalf("expected max %d cells, got %d", maxCells, len(pack.Cells))
+		}
+		if !pack.Stats.ResultLimitReached {
+			t.Fatal("ResultLimitReached = false, want true")
 		}
 		return nil
 	})

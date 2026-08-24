@@ -362,14 +362,29 @@ func TestLoadContext_ByEdges_basic(t *testing.T) {
 			Seeds:      []hexxladb.Coord{coords[0]},
 			EdgeFilter: "",
 			MaxHops:    5,
-			MaxTokens:  10 * 64,
-			Assembly:   hexxladb.LoadContextBudgetConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
+			MaxCells:   10,
+			Assembly:   hexxladb.ContextAssemblyConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
 		})
 		if err != nil {
 			return err
 		}
 		if len(pack.Cells) != 3 {
 			t.Fatalf("expected 3 cells via edges, got %d", len(pack.Cells))
+		}
+		bounded, err := tx.LoadContext(context.Background(), hexxladb.LoadContextConfig{
+			Seeds:    []hexxladb.Coord{coords[0]},
+			MaxHops:  5,
+			MaxCells: 2,
+			Assembly: hexxladb.ContextAssemblyConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
+		})
+		if err != nil {
+			return err
+		}
+		if len(bounded.Cells) != 2 || bounded.Cells[0].Coord != coords[0] || bounded.Cells[1].Coord != coords[1] {
+			t.Fatalf("bounded edge context = %+v, want first two BFS cells", bounded.Cells)
+		}
+		if !bounded.Stats.ResultLimitReached {
+			t.Fatal("bounded edge context did not report result limit")
 		}
 		return nil
 	})

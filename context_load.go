@@ -14,7 +14,7 @@ import (
 // LOD, multi-seed deduplication, or graph BFS internals.
 type LoadContextConfig struct {
 	// Seeds is one or more seed coordinates (required).
-	// Multiple seeds: concurrent deduped ring-walk per seed under a shared budget.
+	// Multiple seeds are expanded concurrently and merged round-robin in seed order.
 	Seeds []Coord
 
 	// MaxRing is the maximum ring radius to expand around each seed (default 5).
@@ -22,11 +22,10 @@ type LoadContextConfig struct {
 	// and a single seed is provided, reducing lookups for large radii.
 	MaxRing int
 
-	// MaxTokens is the byte/token budget across all seeds (default 4096).
-	MaxTokens int
-
-	// Budgeter counts tokens for budget enforcement. Nil uses ByteLenBudgeter.
-	Budgeter TokenBudgeter
+	// MaxCells is the maximum number of cells returned across all seeds (default 256).
+	// This is an operational result bound, not an LLM token budget. Applications
+	// own prompt rendering and model-specific token accounting.
+	MaxCells int
 
 	// EdgeFilter, when non-empty, switches to graph BFS traversal instead of ring walk.
 	// Value is a comma-separated list of relation types to follow (e.g. "requires,causes").
@@ -41,7 +40,7 @@ type LoadContextConfig struct {
 	AsOf *time.Time
 
 	// Assembly controls CellView enrichment: facets, edges, seams, supersession.
-	Assembly LoadContextBudgetConfig
+	Assembly ContextAssemblyConfig
 }
 
 // LoadContext is the unified context loading entry point.
@@ -49,8 +48,8 @@ type LoadContextConfig struct {
 // The DB selects the optimal algorithm automatically:
 //   - EdgeFilter non-empty → graph BFS traversal (naturally excludes cells with no edge connections)
 //   - MaxRing >= 10 and single seed → Level-of-Detail coarsening (efficient for large radii)
-//   - Multiple seeds → concurrent deduped ring-walk under shared budget
-//   - Otherwise → standard ring walk with confidence-based eviction
+//   - Multiple seeds → concurrent deduped ring walks merged round-robin
+//   - Otherwise → deterministic nearest-first ring walk
 //
 // Always returns [ContextPack] with assembled [CellView] values regardless of the
 // internal algorithm chosen.
@@ -65,8 +64,7 @@ func (tx *Tx) LoadContext(ctx context.Context, cfg LoadContextConfig) (ContextPa
 	p := views.LoadContextParams{
 		Seeds:      cfg.Seeds,
 		MaxRing:    cfg.MaxRing,
-		MaxTokens:  cfg.MaxTokens,
-		Budgeter:   cfg.Budgeter,
+		MaxCells:   cfg.MaxCells,
 		EdgeFilter: cfg.EdgeFilter,
 		MaxHops:    cfg.MaxHops,
 		AsOf:       cfg.AsOf,

@@ -17,7 +17,7 @@
 
 ---
 
-HexxlaDB is an embedded Go library for structured, spatially-organised records. Items live at hex grid coordinates — retrieval expands outward in rings, stays within a budget, and can respect validity windows. Cells carry provenance, confidence, and optional temporal bounds. Contradictions and supersessions are stored explicitly as seams.
+HexxlaDB is an embedded Go library for structured, spatially-organised records. Items live at hex grid coordinates — retrieval expands outward in rings, stays within an explicit result limit, and can respect validity windows. Cells carry provenance, confidence, and optional temporal bounds. Contradictions and supersessions are stored explicitly as seams.
 
 Single binary, zero network dependencies, no daemon.
 
@@ -25,7 +25,7 @@ Single binary, zero network dependencies, no daemon.
 
 ## How it works
 
-Cells sit at `(q, r)` hex coordinates. Related records sit nearby when the application applies a meaningful placement policy; HexxlaDB preserves supplied coordinates but does not infer semantic position. `LoadContext` walks outward from seed coordinates, applies caller-selected assembly options such as supersession resolution and seam inclusion, and returns a budget-bounded context pack.
+Cells sit at `(q, r)` hex coordinates. Related records sit nearby when the application applies a meaningful placement policy; HexxlaDB preserves supplied coordinates but does not infer semantic position. `LoadContext` walks outward from seed coordinates, applies caller-selected assembly options such as supersession resolution and seam inclusion, and returns a deterministic context pack bounded by result count.
 
 | Primitive     | Description                                                                   |
 | ------------- | ----------------------------------------------------------------------------- |
@@ -101,7 +101,7 @@ if err := db.View(func(tx *hexxladb.Tx) error {
 }
 ```
 
-### Assemble a token-budgeted context window
+### Assemble bounded context candidates
 
 ```go
 if len(results) == 0 {
@@ -118,8 +118,8 @@ if err := db.View(func(tx *hexxladb.Tx) error {
     pack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
         Seeds:     seeds,
         MaxRing:   2,
-        MaxTokens: 4096,
-        Assembly: hexxladb.LoadContextBudgetConfig{
+        MaxCells:  32,
+        Assembly: hexxladb.ContextAssemblyConfig{
             FilterSuperseded: true,
             IncludeSeams:     true,
         },
@@ -130,6 +130,8 @@ if err := db.View(func(tx *hexxladb.Tx) error {
 }
 log.Printf("assembled %d cells", len(pack.Cells))
 ```
+
+`MaxCells` is an operational retrieval bound, not an LLM token estimate. Rank and render the returned candidates in the application, then apply the target provider/model tokenizer to the complete request—including instructions, history, tools, separators, and reserved output capacity.
 
 ### Track contradictions and supersessions
 
@@ -148,9 +150,9 @@ if err := db.Update(func(tx *hexxladb.Tx) error {
 
 ## Use cases
 
-The core primitives — spatial locality, provenance, contradiction tracking, budget-bounded retrieval, MVCC snapshots, hybrid search — compose into patterns that are awkward to build on top of general-purpose stores.
+The core primitives — spatial locality, provenance, contradiction tracking, result-bounded retrieval, MVCC snapshots, hybrid search — compose into patterns that are awkward to build on top of general-purpose stores.
 
-- **Agent and LLM memory** — store conversation turns, facts, and preferences at hex coordinates; retrieve token-budgeted context packs ranked by semantic similarity and recency; include stored contradictions when requested
+- **Agent and LLM memory** — store conversation turns, facts, and preferences at hex coordinates; retrieve bounded candidates, rank and fit complete prompts in the application, and include stored contradictions when requested
 - **Game world state** — hex-native tile storage with FOV for visibility queries, Dijkstra pathfinding over weighted cell edges, LOD for distant regions, MVCC snapshots for save/rollback and replay
 - **Knowledge graphs with temporal validity** — facts that expire or get superseded; belief revision via seams; time-travel to any past snapshot with `ViewAt`
 - **Spatial annotation layers** — sensor readings, events, or annotations at coordinates; proximity queries via ring walks; confidence-weighted retrieval for noisy data
@@ -168,7 +170,7 @@ The core primitives — spatial locality, provenance, contradiction tracking, bu
 | Structured filters in same query   |    ✓     |  partial   |     ✓     |     ✓      |
 | Contradiction tracking             |    ✓     |     —      |     —     |     —      |
 | Supersession chains                |    ✓     |     —      |     —     |     —      |
-| Token-budgeted context assembly    |    ✓     |     —      |     —     |     —      |
+| Deterministically bounded context  |    ✓     |     —      |     —     |     —      |
 | Spatial locality (ring walks)      |    ✓     |     —      |     —     |     —      |
 | Graph pathfinding (Dijkstra, BFS)  |    ✓     |     —      |     ✓     |     —      |
 | MVCC time-travel                   |    ✓     |     —      |     —     |  partial   |
@@ -190,7 +192,7 @@ Public API guide: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE
 | `PutEmbedding` / `SearchByEmbedding`                    | Store a vector; HNSW nearest-neighbor search                            |
 | `SearchByEmbeddingWithStats`                            | Search with the selected HNSW/flat path and effective breadth           |
 | `QueryCells` / `SearchCells`                            | Hybrid ANN+filter search or multi-term lexical search                   |
-| `LoadContext` / `LoadContextFOV` / `LoadContextVoronoi` | Token-budgeted context assembly — ring walk, FOV, or multi-seed Voronoi |
+| `LoadContext` / `LoadContextFOV` / `LoadContextVoronoi` | Result-bounded context assembly — ring walk, FOV, or multi-seed Voronoi |
 | `FindEdgePath` / `WalkEdges`                            | Weighted shortest path and BFS reachability over cell edges             |
 | `NewSuperHexSummaryIndex` + summary methods             | Rebuildable aperture-7 occupancy summaries maintained from changelog    |
 | `MarkConflict` / `MarkSupersedes` / `FindSeams`         | Record and retrieve contradictions and supersessions                    |
@@ -208,7 +210,7 @@ Public API guide: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE
 task bench-api
 ```
 
-_Intel Core i9-14900HX · 16 GB · Linux. API benchmark rows: Go 1.26, `-benchtime=3s -count=1`; vector-scale rows: Go 1.27.0, seeded aggregate workload._
+_Intel Core i9-14900HX · 16 GB · Linux. API benchmark rows: Go 1.26–1.27, `-benchtime=3s -count=1`; vector-scale rows: Go 1.27.0, seeded aggregate workload._
 
 ### Reads and ring traversal
 
@@ -228,8 +230,8 @@ _Intel Core i9-14900HX · 16 GB · Linux. API benchmark rows: Go 1.26, `-benchti
 
 | Operation                                    | Latency  | Notes                                               |
 | -------------------------------------------- | -------- | --------------------------------------------------- |
-| `LoadContext` r=3 (37 cells/walk, 2k DB)     | ~753 µs  | Token-budgeted; stops early when budget full        |
-| `LoadContext` r=5 (91 cells/walk, 2k DB)     | ~1.67 ms | Ring area = 3r²+3r+1; r=10 → 331 cells              |
+| `LoadContext` r=3 (37 cells/walk, 2k DB)     | ~185 µs  | Nearest-first; 64-cell result limit                 |
+| `LoadContext` r=5 (91 cells/walk, 2k DB)     | ~419 µs  | Stops at 64 cells; ring area = 3r²+3r+1             |
 | `LoadContextFOV` r=3 (≤37 cells/walk, 2k DB) | ~526 µs  | FOV prunes occluded cells; faster than plain r=3    |
 | `LoadContextFOV` r=5 (≤91 cells/walk, 2k DB) | ~1.30 ms | Open-field (no occlusion) — worst case for FOV      |
 | `LoadContextVoronoi` 2 seeds (2k DB)         | ~2.1 ms  | Each seed gets up to r=4, 61 cells; non-overlapping |
@@ -271,7 +273,7 @@ _Intel Core i9-14900HX · 16 GB · Linux. API benchmark rows: Go 1.26, `-benchti
 
 HexxlaDB's "write" and "read" are not equivalent to raw KV operations. `PutCell` writes a structured primary record and every applicable source, tag, and validity index row. When the changelog is enabled, the same authoritative commit also stores recoverable outbox intent before projecting it to the sidecar. `GetCell` deserialises provenance, tags, and validity data on top of the B+ tree lookup. On the reference run above, individual cell writes measured about 0.53–0.57 ms and `BatchPutCells` amortised the commit barrier to about 0.063 ms per cell.
 
-The context assembly operations (`LoadContext`, `LoadContextFOV`, `LoadContextVoronoi`) have no direct equivalent in general KV stores — they replace what would otherwise be multiple sequential scans, scoring passes, and manual budget accounting in application code.
+The context assembly operations (`LoadContext`, `LoadContextFOV`, `LoadContextVoronoi`) have no direct equivalent in general KV stores — they replace what would otherwise be multiple sequential scans and spatial assembly passes. Product ranking, prompt rendering, and model-specific token accounting remain application responsibilities.
 
 ---
 

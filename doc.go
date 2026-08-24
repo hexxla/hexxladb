@@ -42,7 +42,7 @@
 //     [Tx.AscendCellsByTag], [Tx.AscendDistinctTags], [Tx.ListExistingTopics],
 //     [Tx.AscendSeamsBySource], [Tx.AscendSeamsInTimeBucket];
 //     HEXXLA-shaped views ([views.go]): [CellView], [ContextPack], [Tx.AssembleCellView],
-//     [CellViewPredicate], [FilterCellViews], [TruncateCellViewsToTokenBudget], [TokenBudgeter];
+//     [CellViewPredicate], [FilterCellViews];
 //     spatial context: [Tx.LoadContextFOV] (shadowcasting FOV), [Tx.LoadContextVoronoi] (Voronoi regions),
 //     [Tx.FindEdgePath] (Dijkstra over weighted edges), [Tx.WalkEdges] (BFS over edges);
 //     derived hierarchy: [NewSuperHexSummaryIndex], [SuperHexSummaryIndex], and

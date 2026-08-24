@@ -8,16 +8,6 @@ Execute these workstreams in order. Each workstream begins with a reproducible b
 
 Completed workstreams are recorded in [`CHANGELOG.md`](../CHANGELOG.md). Remaining workstreams retain their original identifiers so session state and prior review references stay unambiguous.
 
-### 10. Product-policy and token-budget ergonomics
-
-**Outcome:** Keep truth, confidence, contradiction detection, and ranking policy explicit while making correct application integration easier.
-
-- Add an example adapter for a real model tokenizer and quantify the default byte budgeter's expected error; keep `ByteLenBudgeter` as an explicitly approximate dependency-free fallback.
-- Demonstrate seam detection/resolution, confidence-aware ranking, and supersession as caller-owned policies with auditable writes.
-- Add no automatic truth adjudication or hidden confidence mutation to the database. Improve interfaces only when the example exposes repeated, error-prone application plumbing.
-
-**Completion evidence:** context packs respect a real tokenizer budget in tests, examples make policy ownership explicit, and no database operation mutates product meaning without a caller request.
-
 ### 11. Compatibility and v1 readiness
 
 **Outcome:** Users must have a tested path from format v1 to MVCC-capable storage and a clear API/on-disk compatibility promise before v1.0.0.
@@ -32,8 +22,7 @@ Completed workstreams are recorded in [`CHANGELOG.md`](../CHANGELOG.md). Remaini
 
 ### Program sequencing
 
-1. Complete product-policy and token-budget evidence before stabilizing the corresponding public guidance.
-2. Complete migration and compatibility gates after the preceding contracts have stabilized.
+1. Complete migration and compatibility gates after the preceding contracts have stabilized.
 
 For every workstream: run the narrowest regression first, then package tests and race checks, then `task ci`; update only the owning reference documents and record completed behavior under `CHANGELOG.md` `[Unreleased]`.
 

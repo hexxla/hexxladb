@@ -11,7 +11,7 @@ func TestPlacementEvidenceIsDeterministicAndSeparatesQuality(t *testing.T) {
 		documentsPerTopic:  6,
 		initialPerTopic:    4,
 		neighborhoodRadius: 1,
-		maxTokens:          512,
+		maxCells:           8,
 		semanticK:          4,
 		seed:               7,
 	}
@@ -37,7 +37,7 @@ func TestPlacementEvidenceRejectsInvalidConfig(t *testing.T) {
 		documentsPerTopic:  6,
 		initialPerTopic:    6,
 		neighborhoodRadius: 1,
-		maxTokens:          512,
+		maxCells:           8,
 		semanticK:          4,
 	}
 	if err := validateConfig(cfg); err == nil {

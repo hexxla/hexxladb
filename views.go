@@ -21,12 +21,6 @@ func FilterCellViews(vs []CellView, pred CellViewPredicate) []CellView {
 	return views.FilterCellViews(vs, pred)
 }
 
-// TruncateCellViewsToTokenBudget returns a prefix of views (order preserved)
-// such that the summed token count is at most maxTokens.
-func TruncateCellViewsToTokenBudget(vs []CellView, budgeter TokenBudgeter, maxTokens int, includeFacetText bool) (out []CellView, total int) {
-	return views.TruncateCellViewsToTokenBudget(vs, budgeter, maxTokens, includeFacetText)
-}
-
 // ── *Tx wrapper methods ───────────────────────────────────────────────────────
 
 // AssembleCellView builds a [CellView] for coord using the transaction snapshot.

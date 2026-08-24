@@ -320,12 +320,11 @@ func run(dbPath string) error {
 	err = db.View(func(tx *hexxladb.Tx) error {
 		var e error
 		lodPack, e = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-			Seeds:     []hexxladb.Coord{center},
-			MaxRing:   12,
-			MaxTokens: 100 * 64,
-			Assembly: hexxladb.LoadContextBudgetConfig{
-				Assemble:          hexxladb.DefaultAssembleCellViewOpts(),
-				MaxCandidateCells: 100,
+			Seeds:    []hexxladb.Coord{center},
+			MaxRing:  12,
+			MaxCells: 100,
+			Assembly: hexxladb.ContextAssemblyConfig{
+				Assemble: hexxladb.DefaultAssembleCellViewOpts(),
 			},
 		})
 		return e
@@ -480,8 +479,8 @@ func run(dbPath string) error {
 				Seeds:      []hexxladb.Coord{center},
 				EdgeFilter: "",
 				MaxHops:    4,
-				MaxTokens:  30 * 64,
-				Assembly:   hexxladb.LoadContextBudgetConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
+				MaxCells:   30,
+				Assembly:   hexxladb.ContextAssemblyConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
 			})
 			return e
 		})
@@ -528,8 +527,8 @@ func run(dbPath string) error {
 			Seeds:      []hexxladb.Coord{center},
 			EdgeFilter: "",
 			MaxHops:    5,
-			MaxTokens:  200 * 64,
-			Assembly:   hexxladb.LoadContextBudgetConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
+			MaxCells:   200,
+			Assembly:   hexxladb.ContextAssemblyConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
 		})
 		return nil
 	})

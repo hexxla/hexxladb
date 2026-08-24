@@ -381,8 +381,8 @@ func BenchmarkAPI_AscendCellsBySource(b *testing.B) {
 	}
 }
 
-// BenchmarkAPI_LoadContext reads a small neighborhood after preload (sub-benchmark per n).
-func BenchmarkAPI_LoadContext(b *testing.B) {
+// BenchmarkAPI_ScanContextRaw reads a small raw-record neighborhood after preload.
+func BenchmarkAPI_ScanContextRaw(b *testing.B) {
 	for _, n := range apiBenchPreloadSizes(b) {
 		b.Run(fmt.Sprintf("cells_%d", n), func(b *testing.B) {
 			db, _ := benchAPIPreloadCells(b, n)
@@ -417,8 +417,8 @@ func benchValidAsOf() time.Time {
 	return time.Unix(t/1e9, t%1e9).UTC()
 }
 
-// BenchmarkAPI_LoadContextAt is like BenchmarkAPI_LoadContext but applies [record.ValidAt] at asOf.
-func BenchmarkAPI_LoadContextAt(b *testing.B) {
+// BenchmarkAPI_ScanContextAtRaw is like BenchmarkAPI_ScanContextRaw but applies [record.ValidAt] at asOf.
+func BenchmarkAPI_ScanContextAtRaw(b *testing.B) {
 	asOf := benchValidAsOf()
 	center := lattice.Coord{Q: 0, R: 0}
 	ctx := context.Background()
@@ -560,14 +560,14 @@ func BenchmarkAPI_QueryCells(b *testing.B) {
 	}
 }
 
-// BenchmarkAPI_LoadContext_Budgeted measures [Tx.LoadContext] with budgeted assembly at varying radii.
-func BenchmarkAPI_LoadContext_Budgeted(b *testing.B) {
+// BenchmarkAPI_LoadContext measures [Tx.LoadContext] with result-bounded assembly at varying radii.
+func BenchmarkAPI_LoadContext(b *testing.B) {
 	for _, n := range apiBenchPreloadSizes(b) {
 		db, _ := benchAPIPreloadCells(b, n)
 		b.Cleanup(func() { _ = db.Close() })
 		ctx := context.Background()
 		center := lattice.Coord{Q: 0, R: 0}
-		assembly := hexxladb.LoadContextBudgetConfig{
+		assembly := hexxladb.ContextAssemblyConfig{
 			Assemble: hexxladb.DefaultAssembleCellViewOpts(),
 		}
 
@@ -580,10 +580,10 @@ func BenchmarkAPI_LoadContext_Budgeted(b *testing.B) {
 				for b.Loop() {
 					err := db.View(func(tx *hexxladb.Tx) error {
 						_, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-							Seeds:     []hexxladb.Coord{center},
-							MaxRing:   radius,
-							MaxTokens: 4096,
-							Assembly:  assembly,
+							Seeds:    []hexxladb.Coord{center},
+							MaxRing:  radius,
+							MaxCells: 64,
+							Assembly: assembly,
 						})
 						return err
 					})

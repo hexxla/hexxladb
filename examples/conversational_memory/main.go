@@ -289,10 +289,10 @@ func run(dbPath string) error {
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
 		packWithStale, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-			Seeds:     []hexxladb.Coord{center},
-			MaxRing:   3,
-			MaxTokens: 10000,
-			Assembly: hexxladb.LoadContextBudgetConfig{
+			Seeds:    []hexxladb.Coord{center},
+			MaxRing:  3,
+			MaxCells: 64,
+			Assembly: hexxladb.ContextAssemblyConfig{
 				Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
 				FilterSuperseded: false,
 				Explain:          true,
@@ -308,10 +308,10 @@ func run(dbPath string) error {
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
 		packFiltered, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-			Seeds:     []hexxladb.Coord{center},
-			MaxRing:   3,
-			MaxTokens: 10000,
-			Assembly: hexxladb.LoadContextBudgetConfig{
+			Seeds:    []hexxladb.Coord{center},
+			MaxRing:  3,
+			MaxCells: 64,
+			Assembly: hexxladb.ContextAssemblyConfig{
 				Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
 				FilterSuperseded: true,
 				Explain:          true,
@@ -361,9 +361,9 @@ func run(dbPath string) error {
 	// ═══════════════════════════════════════════════════════════════
 	// PHASE 5: Context Assembly for LLM Prompt
 	// ═══════════════════════════════════════════════════════════════
-	printHeader("Phase 5: Context Assembly (QueryCells → Seeds → Token-Budgeted Pack)")
+	printHeader("Phase 5: Context Assembly (QueryCells → Seeds → Bounded Candidates)")
 
-	printNote("Pipeline: QueryCells finds matching cells → coords become ring-walk seeds → LoadContext assembles a budgeted pack.")
+	printNote("Pipeline: QueryCells finds matching cells → coords become ring-walk seeds → LoadContext assembles bounded candidates.")
 	fmt.Println()
 
 	printSubHeader("Step 1 — QueryCells: find 'preference' seeds sorted by confidence")
@@ -401,28 +401,28 @@ func run(dbPath string) error {
 		assemblySeeds = []hexxladb.Coord{center} // fallback
 	}
 
-	budget := 600 // bytes — larger budget exercises more of the corpus
-	printSubHeader(fmt.Sprintf("Step 2 — LoadContext: %d seed(s), shared budget %d bytes", len(assemblySeeds), budget))
-	printNote("Ring walk r=3 around each seed · merged pool re-ranked by confidence · greedy fill.")
+	const resultLimit = 12
+	printSubHeader(fmt.Sprintf("Step 2 — LoadContext: %d seed(s), shared result limit %d cells", len(assemblySeeds), resultLimit))
+	printNote("Each seed walks nearest-first; multi-seed candidates merge round-robin in seed order.")
+	printNote("Prompt rendering and model-specific token fitting happen after retrieval in the application.")
 	fmt.Println()
 
-	assemblyCfg := hexxladb.LoadContextBudgetConfig{
-		Assemble:          hexxladb.DefaultAssembleCellViewOpts(),
-		MaxCandidateCells: 64,
-		IncludeSeams:      true,
-		SeamRadius:        2,
-		FilterSuperseded:  true,
-		Explain:           true,
+	assemblyCfg := hexxladb.ContextAssemblyConfig{
+		Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
+		IncludeSeams:     true,
+		SeamRadius:       2,
+		FilterSuperseded: true,
+		Explain:          true,
 	}
 
 	var pack hexxladb.ContextPack
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
 		pack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-			Seeds:     assemblySeeds,
-			MaxRing:   3,
-			MaxTokens: budget,
-			Assembly:  assemblyCfg,
+			Seeds:    assemblySeeds,
+			MaxRing:  3,
+			MaxCells: resultLimit,
+			Assembly: assemblyCfg,
 		})
 		return err
 	}); err != nil {
@@ -438,8 +438,8 @@ func run(dbPath string) error {
 	printMetric("Seeds expanded", len(assemblySeeds), "coords")
 	printMetric("Candidates scanned", pack.Stats.CandidatesScanned, "cells")
 	printMetric("Cells in combined pack", len(pack.Cells), "cells")
-	printMetric("Cells evicted (budget)", pack.Stats.CellsEvicted, "cells")
-	printMetric("Budget used", fmt.Sprintf("%d / %d bytes (%.0f%%)", includedBytes, budget, float64(includedBytes)/float64(budget)*100), "")
+	printMetric("Result limit reached", pack.Stats.ResultLimitReached, "")
+	printMetric("Returned content", includedBytes, "bytes (informational, not an LLM budget)")
 
 	if len(pack.Seams) > 0 {
 		fmt.Println()
@@ -451,7 +451,7 @@ func run(dbPath string) error {
 	}
 
 	fmt.Println()
-	_, _ = infoStyle.Println("  Combined context pack (highest-confidence first):")
+	_, _ = infoStyle.Println("  Combined context pack (round-robin across nearest-first seed walks):")
 	for i, cv := range pack.Cells {
 		_, _ = dimStyle.Printf("    [%02d] conf=%.1f  (%d,%d)  ", i+1, cv.Provenance.Confidence, cv.Coord.Q, cv.Coord.R)
 		_, _ = dataStyle.Printf("%s\n", truncate(cv.RawContent, 52))
@@ -460,27 +460,21 @@ func run(dbPath string) error {
 	if len(pack.Explanations) > 0 {
 		fmt.Println()
 		_, _ = infoStyle.Println("  Explain mode — cell inclusion decisions:")
-		var evicted int
 		for _, ex := range pack.Explanations {
 			switch ex.Reason {
 			case "included":
 				_, _ = color.New(color.FgGreen).Printf("    ✓  ")
-				_, _ = dimStyle.Printf("(%d,%d) ring=%d tokens=%-4d included\n", ex.Coord.Q, ex.Coord.R, ex.Ring, ex.Tokens)
+				_, _ = dimStyle.Printf("(%d,%d) ring=%d included\n", ex.Coord.Q, ex.Coord.R, ex.Ring)
 			case "superseded":
 				_, _ = color.New(color.FgYellow).Printf("    ↺  ")
 				_, _ = dimStyle.Printf("(%d,%d) ring=%d superseded (excluded — stale)\n", ex.Coord.Q, ex.Coord.R, ex.Ring)
-			default:
-				evicted++
 			}
-		}
-		if evicted > 0 {
-			_, _ = dimStyle.Printf("    ⋯  %d cell(s) evicted by budget or confidence threshold\n", evicted)
 		}
 	}
 
 	fmt.Println()
-	printSuccess(fmt.Sprintf("Context assembled: %d cells from %d seed(s) within %d-byte budget",
-		len(pack.Cells), len(assemblySeeds), budget))
+	printSuccess(fmt.Sprintf("Context assembled: %d cells from %d seed(s), bounded to %d results",
+		len(pack.Cells), len(assemblySeeds), resultLimit))
 	fmt.Println()
 
 	// ═══════════════════════════════════════════════════════════════
@@ -804,7 +798,7 @@ func run(dbPath string) error {
 		seeds = append(seeds, r.Cell.Coord)
 	}
 
-	printSubHeader(fmt.Sprintf("Multi-Seed Assembly — %d seeds from Query C, shared budget 800 bytes", len(seeds)))
+	printSubHeader(fmt.Sprintf("Multi-Seed Assembly — %d seeds from Query C, shared 12-cell result limit", len(seeds)))
 	printNote("LoadContext auto-dispatches: 1 seed → ring walk; N seeds → concurrent multi-seed merge. No caller switch needed.")
 	fmt.Println()
 
@@ -812,8 +806,8 @@ func run(dbPath string) error {
 		printNote("No search results — skipping multi-seed assembly.")
 	} else {
 
-		sharedBudget := 800
-		multiCfg := hexxladb.LoadContextBudgetConfig{
+		const sharedLimit = 12
+		multiCfg := hexxladb.ContextAssemblyConfig{
 			Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
 			FilterSuperseded: true,
 		}
@@ -821,51 +815,39 @@ func run(dbPath string) error {
 		if err := db.View(func(tx *hexxladb.Tx) error {
 			var err error
 			multiPack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-				Seeds:     seeds,
-				MaxRing:   2,
-				MaxTokens: sharedBudget,
-				Assembly:  multiCfg,
+				Seeds:    seeds,
+				MaxRing:  2,
+				MaxCells: sharedLimit,
+				Assembly: multiCfg,
 			})
 			return err
 		}); err != nil {
 			return fmt.Errorf("load context pack from: %w", err)
 		}
 
-		usedBytes := 0
-		for _, cv := range multiPack.Cells {
-			usedBytes += hexxladb.ByteLenBudgeter{}.CountTokens(cv.RawContent)
-		}
-
 		printMetric("Seeds expanded", len(seeds), "coords")
 		printMetric("Candidates scanned (all seeds)", multiPack.Stats.CandidatesScanned, "cells")
-		printMetric("Cells evicted (budget)", multiPack.Stats.CellsEvicted, "cells")
 		printMetric("Cells in merged pack", len(multiPack.Cells), "cells")
-		printMetric("Budget used", fmt.Sprintf("%d / %d bytes (%.0f%%)", usedBytes, sharedBudget, float64(usedBytes)/float64(sharedBudget)*100), "")
+		printMetric("Result limit reached", multiPack.Stats.ResultLimitReached, "")
 		fmt.Println()
 
-		_, _ = infoStyle.Println("  Merged context (highest-confidence cells first):")
+		_, _ = infoStyle.Println("  Merged context (round-robin across seeds):")
 		for i, cv := range multiPack.Cells {
 			_, _ = dimStyle.Printf("    [%02d] conf=%.1f  (%d,%d)  %s\n",
 				i+1, cv.Provenance.Confidence, cv.Coord.Q, cv.Coord.R, truncate(cv.RawContent, 50))
 		}
 		fmt.Println()
 
-		printSubHeader("How multi-seed budget works")
+		printSubHeader("How multi-seed result bounding works")
 		_, _ = dimStyle.Println("    1.  Each seed ring-walks independently (r=2, FilterSuperseded applied)")
-		_, _ = dimStyle.Println("    2.  All candidate cells merged into one pool")
-		_, _ = dimStyle.Println("    3.  Pool re-ranked by Confidence descending (cross-seed fair ranking)")
-		_, _ = dimStyle.Println("    4.  Greedy fill: keep highest-confidence cells until budget exhausted")
-		_, _ = dimStyle.Println("    5.  DeduplicateCoords: shared neighbours counted once (seed-order priority)")
+		_, _ = dimStyle.Println("    2.  Candidate positions merge round-robin in caller-supplied seed order")
+		_, _ = dimStyle.Println("    3.  Shared neighbours are deduplicated")
+		_, _ = dimStyle.Println("    4.  Retrieval stops at the shared MaxCells limit")
+		_, _ = dimStyle.Println("    5.  The application ranks and fits the rendered model request")
 		fmt.Println()
 
-		_, _ = infoStyle.Println("  Budget breakdown:")
-		_, _ = dimStyle.Printf("    Shared budget : %d bytes\n", sharedBudget)
-		_, _ = dimStyle.Printf("    Used by pack  : %d bytes\n", usedBytes)
-		_, _ = dimStyle.Printf("    Remaining     : %d bytes\n", sharedBudget-usedBytes)
-		fmt.Println()
-
-		printSuccess(fmt.Sprintf("Multi-seed pack assembled: %d cells from %d seeds within %d-byte budget",
-			len(multiPack.Cells), len(seeds), sharedBudget))
+		printSuccess(fmt.Sprintf("Multi-seed pack assembled: %d cells from %d seeds with a %d-cell limit",
+			len(multiPack.Cells), len(seeds), sharedLimit))
 	}
 	fmt.Println()
 
@@ -1174,7 +1156,7 @@ func run(dbPath string) error {
 	printHeader("Phase 13: Field of View — Visibility-Filtered Context")
 
 	printNote("LoadContextFOV uses symmetric shadowcasting to skip cells hidden behind empty regions.")
-	printNote("Compared to a radial ring walk, FOV spends budget only on reachable cells.")
+	printNote("Compared to a radial ring walk, FOV returns only reachable candidates.")
 	fmt.Println()
 
 	fovCenter := cells[len(cells)/2] // a cell near the middle of the corpus
@@ -1223,7 +1205,7 @@ func run(dbPath string) error {
 	printMetric("Radial cells (all occupied)", len(radialCells), "cells")
 	printMetric("FOV cells (visible only)", len(fovCells), "cells")
 	if len(radialCells) > len(fovCells) {
-		printMetric("Cells skipped by FOV", len(radialCells)-len(fovCells), "occluded cells saved from budget")
+		printMetric("Cells skipped by FOV", len(radialCells)-len(fovCells), "occluded candidates")
 	}
 	fmt.Println()
 
@@ -1241,7 +1223,7 @@ func run(dbPath string) error {
 	fmt.Println()
 
 	printNote("FOV is ideal for sparse grids: large empty gaps block LOS, so the context")
-	printNote("budget is spent only on cells the observer can actually 'see.'")
+	printNote("retrieval includes only cells the observer can actually 'see.'")
 	printSuccess("FOV context loading complete")
 	fmt.Println()
 
@@ -1364,8 +1346,8 @@ func run(dbPath string) error {
 				Seeds:      []hexxladb.Coord{edgeCenter},
 				EdgeFilter: "",
 				MaxHops:    3,
-				MaxTokens:  20 * 64,
-				Assembly:   hexxladb.LoadContextBudgetConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
+				MaxCells:   20,
+				Assembly:   hexxladb.ContextAssemblyConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
 			})
 			return err
 		}); err != nil {
@@ -1400,10 +1382,10 @@ func run(dbPath string) error {
 	fmt.Println()
 
 	_, _ = infoStyle.Println("  Production next steps:")
-	_, _ = dimStyle.Println("    •  Implement your own TokenBudgeter (e.g., tiktoken bindings)")
+	_, _ = dimStyle.Println("    •  Render and token-fit the complete model request in your application")
 	_, _ = dimStyle.Println("    •  Wire AfterPutCell/AfterPutSeam for real-time CDC or audit logging")
 	_, _ = dimStyle.Println("    •  Use SnapshotDiff for incremental replication pipelines")
-	_, _ = dimStyle.Println("    •  Use LoadContextFOV for sparse grids to save context budget")
+	_, _ = dimStyle.Println("    •  Use LoadContextFOV for sparse grids to avoid irrelevant candidates")
 	_, _ = dimStyle.Println("    •  Build edge graphs for topic-navigation and graph-based retrieval")
 	_, _ = dimStyle.Println("    •  Enable encryption (Options.Passphrase / Options.EncryptionKey)")
 	_, _ = dimStyle.Println("    •  Tune Options.PageSize (4096/8192/16384/65536) for your workload")

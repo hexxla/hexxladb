@@ -2,6 +2,7 @@ package hexxladb_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -41,6 +42,21 @@ func TestLoadContext_NoSeeds(t *testing.T) {
 	}
 }
 
+func TestLoadContext_NegativeMaxCells(t *testing.T) {
+	t.Parallel()
+	db := openMultiCtxDB(t)
+	err := db.View(func(tx *hexxladb.Tx) error {
+		_, err := tx.LoadContext(t.Context(), hexxladb.LoadContextConfig{
+			Seeds:    []hexxladb.Coord{{}},
+			MaxCells: -1,
+		})
+		return err
+	})
+	if !errors.Is(err, hexxladb.ErrInvalidArgument) {
+		t.Fatalf("error = %v, want ErrInvalidArgument", err)
+	}
+}
+
 func TestLoadContext_SingleSeed(t *testing.T) {
 	t.Parallel()
 	db := openMultiCtxDB(t)
@@ -59,9 +75,8 @@ func TestLoadContext_SingleSeed(t *testing.T) {
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
 		pack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-			Seeds:     []hexxladb.Coord{center},
-			MaxRing:   2,
-			MaxTokens: 4096,
+			Seeds:   []hexxladb.Coord{center},
+			MaxRing: 2,
 		})
 		return err
 	}); err != nil {
@@ -91,15 +106,22 @@ func TestLoadContext_MultiSeed_DeduplicateCoords(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.MarkConflict(seedA, seedB, "multi-seed seam")
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Multi-seed via LoadContext always deduplicates (concurrent assembly).
 	var pack hexxladb.ContextPack
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
 		pack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-			Seeds:     []hexxladb.Coord{seedA, seedB},
-			MaxRing:   1,
-			MaxTokens: 8192,
+			Seeds:   []hexxladb.Coord{seedA, seedB},
+			MaxRing: 1,
+			Assembly: hexxladb.ContextAssemblyConfig{
+				IncludeSeams: true,
+			},
 		})
 		return err
 	}); err != nil {
@@ -116,44 +138,73 @@ func TestLoadContext_MultiSeed_DeduplicateCoords(t *testing.T) {
 			t.Errorf("coord %v appears %d times in pack", coord, count)
 		}
 	}
+	if len(pack.Seams) != 1 {
+		t.Fatalf("multi-seed seams = %d, want one deduplicated seam", len(pack.Seams))
+	}
 }
 
-func TestLoadContext_SharedBudget(t *testing.T) {
+func TestLoadContext_SharedResultLimit(t *testing.T) {
 	t.Parallel()
 	db := openMultiCtxDB(t)
 	ctx := context.Background()
 
-	longContent := "This is a fairly long cell content string that will consume budget tokens. "
 	coords := []hexxladb.Coord{{Q: 0, R: 0}, {Q: 1, R: 0}, {Q: 2, R: 0}, {Q: 0, R: 1}, {Q: 1, R: 1}}
 	for _, c := range coords {
 		pk := mustPackTest(t, c)
 		if err := db.Update(func(tx *hexxladb.Tx) error {
-			return tx.PutCell(ctx, hexxladb.NewFactCell(pk, longContent, "src", "topic", 0.8))
+			return tx.PutCell(ctx, hexxladb.NewFactCell(pk, "content", "src", "topic", 0.8))
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	tinyBudget := 50 // bytes — fits roughly 1 cell
+	const maxCells = 3
 	var pack hexxladb.ContextPack
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
 		pack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-			Seeds:     []hexxladb.Coord{{Q: 0, R: 0}, {Q: 2, R: 0}},
-			MaxRing:   2,
-			MaxTokens: tinyBudget,
+			Seeds:    []hexxladb.Coord{{Q: 0, R: 0}, {Q: 2, R: 0}},
+			MaxRing:  2,
+			MaxCells: maxCells,
 		})
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	total := 0
-	for _, cv := range pack.Cells {
-		total += hexxladb.ByteLenBudgeter{}.CountTokens(cv.RawContent)
+	if len(pack.Cells) != maxCells {
+		t.Fatalf("cells = %d, want shared limit %d", len(pack.Cells), maxCells)
 	}
-	if total > tinyBudget {
-		t.Errorf("total tokens %d exceeds MaxTokens %d", total, tinyBudget)
+	if !pack.Stats.ResultLimitReached {
+		t.Error("ResultLimitReached = false, want true")
+	}
+	if pack.Cells[0].Coord != coords[0] || pack.Cells[1].Coord != coords[2] {
+		t.Fatalf("first merge round = %v, %v; want seed order %v, %v", pack.Cells[0].Coord, pack.Cells[1].Coord, coords[0], coords[2])
+	}
+	wantOrder := make([]hexxladb.Coord, len(pack.Cells))
+	for i := range pack.Cells {
+		wantOrder[i] = pack.Cells[i].Coord
+	}
+	for range 10 {
+		err := db.View(func(tx *hexxladb.Tx) error {
+			again, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+				Seeds:    []hexxladb.Coord{{Q: 0, R: 0}, {Q: 2, R: 0}},
+				MaxRing:  2,
+				MaxCells: maxCells,
+			})
+			if err != nil {
+				return err
+			}
+			for i := range wantOrder {
+				if again.Cells[i].Coord != wantOrder[i] {
+					t.Fatalf("repeat order[%d] = %v, want %v", i, again.Cells[i].Coord, wantOrder[i])
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -174,9 +225,8 @@ func TestLoadContext_StatsAccumulated(t *testing.T) {
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
 		pack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-			Seeds:     []hexxladb.Coord{coord},
-			MaxRing:   1,
-			MaxTokens: 4096,
+			Seeds:   []hexxladb.Coord{coord},
+			MaxRing: 1,
 		})
 		return err
 	}); err != nil {

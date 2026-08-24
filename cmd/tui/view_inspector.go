@@ -101,16 +101,15 @@ func loadContextPack(db *hexxladb.DB, coord hexxladb.Coord) (hexxladb.ContextPac
 		pack, e = tx.LoadContext(
 			context.Background(),
 			hexxladb.LoadContextConfig{
-				Seeds:     []hexxladb.Coord{coord},
-				MaxRing:   3,
-				MaxTokens: 8192,
-				Assembly: hexxladb.LoadContextBudgetConfig{
-					Assemble:          hexxladb.DefaultAssembleCellViewOpts(),
-					MaxCandidateCells: 128,
-					IncludeSeams:      true,
-					SeamRadius:        2,
-					FilterSuperseded:  true,
-					Explain:           true,
+				Seeds:    []hexxladb.Coord{coord},
+				MaxRing:  3,
+				MaxCells: 128,
+				Assembly: hexxladb.ContextAssemblyConfig{
+					Assemble:         hexxladb.DefaultAssembleCellViewOpts(),
+					IncludeSeams:     true,
+					SeamRadius:       2,
+					FilterSuperseded: true,
+					Explain:          true,
 				},
 			},
 		)
@@ -241,14 +240,13 @@ func (v *inspectorView) renderPack(w int) string {
 	sb.WriteString(styleCardHeader.Render("Context Pack") + "\n")
 	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Left,
 		styleCardDim.Render("cells: "), lipgloss.NewStyle().Foreground(colorGreen).Background(colorBg2).Render(fmt.Sprintf("%d", len(p.Cells))),
-		styleCardDim.Render("  tokens: "), styleCardValue.Render(fmt.Sprintf("%d", p.TotalTokens)),
 		styleCardDim.Render("  seams: "), lipgloss.NewStyle().Foreground(colorOrange).Background(colorBg2).Render(fmt.Sprintf("%d", len(p.Seams))),
 	) + "\n")
 
 	if p.Stats.CandidatesScanned > 0 {
 		sb.WriteString(styleCardDim.Render(fmt.Sprintf(
-			"scanned %d, evicted %d, max ring %d",
-			p.Stats.CandidatesScanned, p.Stats.CellsEvicted, p.Stats.MaxRingUsed,
+			"scanned %d, limit reached %t, max ring %d",
+			p.Stats.CandidatesScanned, p.Stats.ResultLimitReached, p.Stats.MaxRingUsed,
 		)) + "\n")
 	}
 	sb.WriteString("\n")
@@ -368,7 +366,7 @@ func (v *inspectorView) renderExplain(w int) string {
 		default:
 			marker = lipgloss.NewStyle().Foreground(colorRed).Background(colorBg2).Render("✗")
 		}
-		detail := styleCardDim.Render(fmt.Sprintf("ring=%-2d tok=%-4d", ex.Ring, ex.Tokens))
+		detail := styleCardDim.Render(fmt.Sprintf("ring=%-2d", ex.Ring))
 		reason := lipgloss.NewStyle().Foreground(func() lipgloss.Color {
 			switch ex.Reason {
 			case "included":

@@ -2,7 +2,6 @@ package views
 
 import (
 	"context"
-	"slices"
 	"sync"
 	"time"
 
@@ -33,11 +32,8 @@ type LoadContextParams struct {
 	// and len(Seeds) == 1.
 	MaxRing int
 
-	// MaxTokens is the byte/token budget (default 4096).
-	MaxTokens int
-
-	// Budgeter counts tokens. Nil defaults to ByteLenBudgeter.
-	Budgeter TokenBudgeter
+	// MaxCells is the maximum number of cells returned (default 256).
+	MaxCells int
 
 	// EdgeFilter, when non-empty, switches to graph BFS traversal.
 	// Comma-separated list of relation types to follow (e.g. "requires,causes").
@@ -52,7 +48,7 @@ type LoadContextParams struct {
 	AsOf *time.Time
 
 	// Assembly controls CellView enrichment (facets, edges, seams, supersession).
-	Assembly LoadContextBudgetConfig
+	Assembly ContextAssemblyConfig
 }
 
 // TxEdgeWalker extends TxReader with edge-walk capability needed for graph-based loading.
@@ -69,12 +65,15 @@ type TxEdgeWalker interface {
 //   - EdgeFilter non-empty  → graph BFS traversal (requires TxEdgeWalker)
 //   - MaxRing >= lodAutoThreshold AND single seed → LOD coarsened ring walk
 //   - Multiple seeds → concurrent deduped multi-seed ring walk
-//   - Otherwise → standard ring walk with budgeting
+//   - Otherwise → deterministic nearest-first ring walk
 //
 // Always returns ContextPack regardless of internal algorithm chosen.
 func LoadContext(ctx context.Context, tx TxReader, p LoadContextParams) (ContextPack, error) {
 	if err := ctx.Err(); err != nil {
 		return ContextPack{}, err
+	}
+	if p.MaxCells < 0 {
+		return ContextPack{}, ErrInvalidArgument
 	}
 	p = normalizeParams(p)
 
@@ -93,7 +92,7 @@ func LoadContext(ctx context.Context, tx TxReader, p LoadContextParams) (Context
 		return loadContextMultiSeedConcurrent(ctx, tx, p)
 
 	default:
-		return LoadContextWithBudgeting(ctx, tx, p.Seeds[0], p.MaxRing, p.MaxTokens, p.Budgeter, p.Assembly)
+		return loadContextByRings(ctx, tx, p.Seeds[0], p.MaxRing, p.MaxCells, p.AsOf, p.Assembly)
 	}
 }
 
@@ -102,11 +101,8 @@ func normalizeParams(p LoadContextParams) LoadContextParams {
 	if p.MaxRing <= 0 {
 		p.MaxRing = 5
 	}
-	if p.MaxTokens <= 0 {
-		p.MaxTokens = 4096
-	}
-	if p.Budgeter == nil {
-		p.Budgeter = ByteLenBudgeter{}
+	if p.MaxCells <= 0 {
+		p.MaxCells = 256
 	}
 	if p.MaxHops <= 0 && p.EdgeFilter != "" {
 		p.MaxHops = 5
@@ -119,10 +115,7 @@ func normalizeParams(p LoadContextParams) LoadContextParams {
 
 // loadContextByEdges walks edges from each seed via BFS, assembles CellViews, wraps into ContextPack.
 func loadContextByEdges(ctx context.Context, tx TxEdgeWalker, p LoadContextParams) (ContextPack, error) {
-	maxCoords := p.Assembly.MaxCandidateCells
-	if maxCoords <= 0 {
-		maxCoords = 256
-	}
+	maxCoords := p.MaxCells
 
 	seen := make(map[lattice.Coord]struct{})
 	var allCoords []lattice.Coord
@@ -133,31 +126,34 @@ func loadContextByEdges(ctx context.Context, tx TxEdgeWalker, p LoadContextParam
 			return ContextPack{}, err
 		}
 		for _, c := range coords {
+			if len(allCoords) >= maxCoords {
+				break
+			}
 			if _, dup := seen[c]; !dup {
 				seen[c] = struct{}{}
 				allCoords = append(allCoords, c)
 			}
 		}
+		if len(allCoords) >= maxCoords {
+			break
+		}
 	}
 
-	return assembleCoordsIntoContextPack(ctx, tx, allCoords, p)
+	return assembleCoordsIntoContextPack(ctx, tx, allCoords, p.Seeds, p.MaxCells, p.MaxRing, p.AsOf, p.Assembly)
 }
 
 // loadContextLOD loads cells using level-of-detail coarsening: inner rings at full
 // resolution, outer rings at CoarseFactor² reduced resolution.
 func loadContextLOD(ctx context.Context, tx TxReader, p LoadContextParams) (ContextPack, error) {
 	center := p.Seeds[0]
-	maxCoords := p.Assembly.MaxCandidateCells
-	if maxCoords <= 0 {
-		maxCoords = 256
-	}
+	maxCoords := p.MaxCells
 
 	fineR := min(lodDefaultFineRadius, p.MaxRing)
 	coords, err := collectLODCoords(ctx, tx, center, fineR, p.MaxRing, lodDefaultCoarseFactor, maxCoords)
 	if err != nil {
 		return ContextPack{}, err
 	}
-	return assembleCoordsIntoContextPack(ctx, tx, coords, p)
+	return assembleCoordsIntoContextPack(ctx, tx, coords, p.Seeds, p.MaxCells, p.MaxRing, p.AsOf, p.Assembly)
 }
 
 // collectLODCoords gathers coordinates using LOD strategy: full resolution for
@@ -232,31 +228,28 @@ type seedResult struct {
 	err  error
 }
 
-// loadContextMultiSeedConcurrent assembles per-seed ContextPacks concurrently then
-// merges them under a shared budget. Each seed runs in its own goroutine; results are
-// collected in original order so deduplication is deterministic.
+// loadContextMultiSeedConcurrent assembles per-seed ContextPacks concurrently.
+// Results are merged round-robin in original seed order so no seed is allowed to
+// monopolise the shared result limit and deduplication remains deterministic.
 func loadContextMultiSeedConcurrent(ctx context.Context, tx TxReader, p LoadContextParams) (ContextPack, error) {
 	results := make([]seedResult, len(p.Seeds))
 	var wg sync.WaitGroup
-	wg.Add(len(p.Seeds))
 
 	for i, seed := range p.Seeds {
-		go func() {
-			defer wg.Done()
-			pack, err := LoadContextWithBudgeting(ctx, tx, seed, p.MaxRing, p.MaxTokens, p.Budgeter, p.Assembly)
+		wg.Go(func() {
+			pack, err := loadContextByRings(ctx, tx, seed, p.MaxRing, p.MaxCells, p.AsOf, p.Assembly)
 			results[i] = seedResult{pack: pack, err: err}
-		}()
+		})
 	}
 	wg.Wait()
 
 	return mergeSeeds(results, p)
 }
 
-// mergeSeeds merges per-seed results into a single budget-bounded ContextPack.
+// mergeSeeds merges per-seed results into a single result-bounded ContextPack.
 func mergeSeeds(results []seedResult, p LoadContextParams) (ContextPack, error) {
 	seen := make(map[lattice.Coord]struct{})
-	var merged []CellView
-	var allExplanations []CellExplanation
+	merged := make([]CellView, 0, min(p.MaxCells, 256))
 	totalStats := ContextPackStats{}
 
 	for i := range results {
@@ -265,106 +258,84 @@ func mergeSeeds(results []seedResult, p LoadContextParams) (ContextPack, error) 
 		}
 		pack := results[i].pack
 		totalStats.CandidatesScanned += pack.Stats.CandidatesScanned
-		totalStats.CellsEvicted += pack.Stats.CellsEvicted
 		if pack.Stats.MaxRingUsed > totalStats.MaxRingUsed {
 			totalStats.MaxRingUsed = pack.Stats.MaxRingUsed
 		}
-		for _, cv := range pack.Cells {
-			if _, dup := seen[cv.Coord]; dup {
+	}
+
+	for candidateIndex := 0; len(merged) < p.MaxCells; candidateIndex++ {
+		advanced := false
+		for i := range results {
+			if candidateIndex >= len(results[i].pack.Cells) {
 				continue
 			}
-			seen[cv.Coord] = struct{}{}
-			merged = append(merged, cv)
+			advanced = true
+			candidate := results[i].pack.Cells[candidateIndex]
+			if _, duplicate := seen[candidate.Coord]; duplicate {
+				continue
+			}
+			seen[candidate.Coord] = struct{}{}
+			merged = append(merged, candidate)
+			if len(merged) == p.MaxCells {
+				break
+			}
 		}
-		allExplanations = append(allExplanations, pack.Explanations...)
+		if !advanced {
+			break
+		}
 	}
-
-	// Re-rank by Confidence descending for fair cross-seed budget eviction.
-	slices.SortFunc(merged, func(a, b CellView) int {
-		switch {
-		case a.Provenance.Confidence > b.Provenance.Confidence:
-			return -1
-		case a.Provenance.Confidence < b.Provenance.Confidence:
-			return 1
-		default:
-			return 0
-		}
-	})
-
-	budgeter := p.Budgeter
-	used := 0
-	kept := merged[:0]
-	for _, cv := range merged {
-		tokens := budgeter.CountTokens(cv.RawContent)
-		if used+tokens > p.MaxTokens {
-			totalStats.CellsEvicted++
-			continue
-		}
-		used += tokens
-		kept = append(kept, cv)
-	}
+	totalStats.ResultLimitReached = len(merged) == p.MaxCells
 
 	return ContextPack{
-		Cells:        kept,
-		Seams:        []record.SeamRecord{},
-		Explanations: allExplanations,
+		Cells:        merged,
+		Seams:        mergeSeedSeams(results),
+		Explanations: mergeSeedExplanations(results, merged, p.Assembly.Explain),
 		Stats:        totalStats,
-		TotalTokens:  used,
 	}, nil
 }
 
-// assembleCoordsIntoContextPack assembles CellViews from coords and applies the token
-// budget incrementally, stopping as soon as the budget is full.
-//
-// Coords are processed in the order supplied (ring order = nearest first), which is
-// already the correct priority for conversational memory — no sort is needed.
-// This mirrors Badger's iterator pattern: one record at a time, early exit when the
-// consumer (token budget) is satisfied, never materialising more than necessary.
-func assembleCoordsIntoContextPack(ctx context.Context, tx TxReader, coords []lattice.Coord, p LoadContextParams) (ContextPack, error) {
-	if len(coords) == 0 {
-		return ContextPack{}, nil
-	}
-
-	budgeter := p.Budgeter
-	used := 0
-	evicted := 0
-	scanned := 0
-	kept := make([]CellView, 0, min(len(coords), 64))
-
-	for _, c := range coords {
-		if err := ctx.Err(); err != nil {
-			return ContextPack{}, err
-		}
-		scanned++
-		v, err := AssembleCellView(ctx, tx, c, p.AsOf, p.Assembly.Assemble)
-		if err != nil {
-			if isNotFound(err) {
+func mergeSeedSeams(results []seedResult) []record.SeamRecord {
+	seen := make(map[string]struct{})
+	var merged []record.SeamRecord
+	for i := range results {
+		for _, seam := range results[i].pack.Seams {
+			if _, duplicate := seen[seam.ID]; duplicate {
 				continue
 			}
-			return ContextPack{}, err
+			seen[seam.ID] = struct{}{}
+			merged = append(merged, seam)
 		}
-		tokens := budgeter.CountTokens(v.RawContent)
-		if used+tokens > p.MaxTokens {
-			evicted++
-			continue
-		}
-		used += tokens
-		kept = append(kept, v)
 	}
-
-	return ContextPack{
-		Cells:       kept,
-		TotalTokens: used,
-		Stats: ContextPackStats{
-			CandidatesScanned: scanned,
-			CellsEvicted:      evicted,
-		},
-	}, nil
+	return merged
 }
 
-// isNotFound reports whether err is the views-package cell-not-found sentinel.
-func isNotFound(err error) bool {
-	return err != nil && err.Error() == ErrCellNotFound.Error()
+func mergeSeedExplanations(results []seedResult, cells []CellView, explain bool) []CellExplanation {
+	if !explain {
+		return nil
+	}
+	included := make(map[lattice.Coord]struct{}, len(cells))
+	for _, cell := range cells {
+		included[cell.Coord] = struct{}{}
+	}
+	seenIncluded := make(map[lattice.Coord]struct{}, len(cells))
+	var merged []CellExplanation
+	for i := range results {
+		for _, explanation := range results[i].pack.Explanations {
+			if explanation.Reason != "included" {
+				merged = append(merged, explanation)
+				continue
+			}
+			if _, kept := included[explanation.Coord]; !kept {
+				continue
+			}
+			if _, duplicate := seenIncluded[explanation.Coord]; duplicate {
+				continue
+			}
+			seenIncluded[explanation.Coord] = struct{}{}
+			merged = append(merged, explanation)
+		}
+	}
+	return merged
 }
 
 // ErrEdgeWalkerRequired is returned when EdgeFilter is set but the TxReader

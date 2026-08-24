@@ -85,17 +85,17 @@ The canonical record families and key encodings are in [`HEXXLA_DB.md`](./HEXXLA
 
 ## Context assembly and spatial retrieval
 
-| API                                                                   | Use                                                                                  |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| [`Tx.AssembleCellView`](../../views.go)                               | Hydrate one coordinate into a `CellView`.                                            |
-| [`Tx.LoadContext`](../../context_load.go)                             | Assemble token-budgeted context from one or more seeds.                              |
-| [`FilterCellViews`, `TruncateCellViewsToTokenBudget`](../../views.go) | Apply product policy to already assembled views.                                     |
-| [`Tx.LoadContextFOV`](../../fov_context.go)                           | Deterministic visibility-filtered loading with an application-supplied opacity rule. |
-| [`Tx.LoadContextVoronoi`](../../voronoi_context.go)                   | Partition cells among multiple seeds.                                                |
-| [`Tx.FindEdgePath`](../../pathfind_api.go)                            | Dijkstra shortest path over stored weighted edges.                                   |
-| [`Tx.WalkEdges`](../../pathfind_api.go)                               | Bounded breadth-first traversal over stored edges.                                   |
+| API                                                 | Use                                                                                  |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| [`Tx.AssembleCellView`](../../views.go)             | Hydrate one coordinate into a `CellView`.                                            |
+| [`Tx.LoadContext`](../../context_load.go)           | Assemble deterministically bounded context candidates from one or more seeds.        |
+| [`FilterCellViews`](../../views.go)                 | Apply caller-owned policy to already assembled views.                                |
+| [`Tx.LoadContextFOV`](../../fov_context.go)         | Deterministic visibility-filtered loading with an application-supplied opacity rule. |
+| [`Tx.LoadContextVoronoi`](../../voronoi_context.go) | Partition cells among multiple seeds.                                                |
+| [`Tx.FindEdgePath`](../../pathfind_api.go)          | Dijkstra shortest path over stored weighted edges.                                   |
+| [`Tx.WalkEdges`](../../pathfind_api.go)             | Bounded breadth-first traversal over stored edges.                                   |
 
-[`LoadContextConfig`](../../context_load.go) controls seeds, ring bounds, validity time, edge expansion, token budget, and assembly. `ViewAt` snapshot time and record validity time are independent; see [`TX.md`](./TX.md).
+[`LoadContextConfig`](../../context_load.go) controls seeds, ring bounds, validity time, edge expansion, the `MaxCells` result limit, and assembly; validity, supersession, explanations, and requested seams apply across dispatch strategies. A single-seed ring load is nearest-first; multi-seed loads merge candidates round-robin in caller-supplied seed order and deduplicate coordinates and seams. HexxlaDB does not rank by confidence or count LLM tokens during context assembly. Applications own product ranking, complete-request rendering, provider/model token accounting, and output-token reservation. `ViewAt` snapshot time and record validity time are independent; see [`TX.md`](./TX.md).
 
 ## Query and content search
 
