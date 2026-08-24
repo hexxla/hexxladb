@@ -144,13 +144,15 @@ Pruning does not shrink the primary file. Use compaction after pruning when disk
 
 | API                                                                          | Use                                                    |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------ |
-| [`DB.ReadChangelogSince`, `DB.ReadChangelogFiltered`](../../db_changelog.go) | Consume the optional at-least-once logical changefeed. |
-| [`DB.HealthCheck`](../../health.go)                                          | Validate database structure and report counts.         |
-| [`DB.GroupWALStats`](../../db.go)                                            | Observe group-WAL batching.                            |
-| [`DB.WriteStats`](../../write_stats.go)                                      | Observe cumulative write contention and phase timing. |
-| [`DB.Compact`, `CompactTo`](../../compact.go)                                | Rewrite live keys into a new compact file.             |
-| [`DeriveKeyFromPassphrase`](../../encryption.go)                             | Derive an encryption key using the database KDF.       |
-| [`RotateEncryption`, `RotateEncryptionWithOptions`](../../rotation.go)       | Perform offline key rotation or encryption migration.  |
+| [`DB.ReadChangelogSince`, `DB.ReadChangelogFiltered`](../../db_changelog.go) | Consume the optional at-least-once logical changefeed.         |
+| [`DB.HealthCheck`](../../health.go)                                          | Validate database structure and report counts.                 |
+| [`DB.GroupWALStats`](../../db.go)                                            | Observe group-WAL batching.                                    |
+| [`DB.WriteStats`](../../write_stats.go)                                      | Observe cumulative write contention and phase timing.         |
+| [`DB.StorageStats`](../../storage_stats.go)                                  | Measure physical, reachable, and reclaimable storage.         |
+| [`DB.Compact`, `CompactTo`](../../compact.go)                                | Rewrite live keys into a new compact file.                     |
+| [`DB.CompactWithOptions`, `CompactToWithOptions`](../../compact.go)          | Bound copy batches and receive durable progress checkpoints.  |
+| [`DeriveKeyFromPassphrase`](../../encryption.go)                             | Derive an encryption key using the database KDF.               |
+| [`RotateEncryption`, `RotateEncryptionWithOptions`](../../rotation.go)       | Perform offline key rotation or encryption migration.          |
 
 See [`CHANGEFEED.md`](./CHANGEFEED.md), [`OPERATIONS.md`](./OPERATIONS.md), [`DURABILITY.md`](./DURABILITY.md), and [`ENCRYPTION.md`](./ENCRYPTION.md) before enabling these deployment features.
 

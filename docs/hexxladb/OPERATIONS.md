@@ -14,6 +14,15 @@ Both primary and WAL matter for durability: the engine appends redo records to t
 
 The engine uses an **extend-only** page allocator with no freelist: pages made unreachable by deletes, pruning, or tree rewrites become dead space and are not reused. The primary file length therefore does **not** shrink automatically. Expect monotonic **file size** under churn until you compact via [`DB.Compact`](../../compact.go) or [`CompactTo`](../../compact.go) (see **Compaction** below). See [`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md) for the page/WAL layout.
 
+[`DB.StorageStats`](../../storage_stats.go) provides one consistent measurement while holding the database read lock:
+
+- **`PrimaryBytes`, `WALBytes`, `ChangelogBytes`** are current physical file lengths. `ChangelogBytes` is zero when the sidecar is disabled.
+- **`AllocatedPages` and `ReachablePages`** include the header page. Reachability is calculated by walking the current B+ tree and every referenced overflow chain, so it survives reopen rather than relying on an in-memory delete counter.
+- **`LiveBytes`** is `ReachablePages × PageSize`. It is page-rounded and includes unused capacity inside reachable pages; it is not logical payload size.
+- **`ReclaimableBytes`** is the exact whole-page dead space in the current primary. Compaction may recover more by repacking low-fill reachable pages.
+
+The walk is proportional to reachable pages and blocks writers, so sample it during a maintenance or low-traffic window rather than on every request. The older [`MVCCStats.WastedBytes`](../../mvcc_lifecycle.go) field counts only overflow payload freed since open and is deprecated for capacity decisions.
+
 ### Deletes, tombstones, and why the file size barely moves
 
 On **format v2 (MVCC)**, [`DeleteCell`](../../delete_cell.go) does **not** remove the cell’s primary history: it appends a **tombstone** row (zero-length value at a new `commit_seq`). That **adds** a physical btree entry and usually **grows** WAL and sometimes the primary (new pages or split pages), even while the **visible** cell count drops.
@@ -80,6 +89,7 @@ Quick API reference:
 | API                                                                                                     | Purpose                                                                                 |
 | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | [`DB.StatsMVCC`](../../mvcc_lifecycle.go)                                                               | `CommitSeq`, logical cell count, versioned row count                                    |
+| [`DB.StorageStats`](../../storage_stats.go)                                                             | Primary/WAL/changelog sizes and persistent live/reclaimable page bytes                  |
 | [`DB.SuggestedPruneBeforeSeq`](../../mvcc_lifecycle.go)                                                 | `beforeSeq` from open-time retention policy                                             |
 | [`DB.PruneCellVersions`](../../mvcc_lifecycle.go)                                                       | Explicit bounded prune pass                                                             |
 | [`DB.PruneCellVersionsByProfile`](../../mvcc_lifecycle.go) / [`MVCCPrunePlan`](../../mvcc_lifecycle.go) | Profile defaults (`low-latency`, `balanced`, `long-history`)                            |
@@ -93,19 +103,35 @@ Copy-compaction rewrites all B+ tree keys sequentially into a fresh file, reclai
 
 ### Quick reference
 
-| API                              | Purpose                                                                |
-| -------------------------------- | ---------------------------------------------------------------------- |
-| [`DB.Compact`](../../compact.go) | Compact an open database to `destPath`; holds a read lock during copy. |
-| [`CompactTo`](../../compact.go)  | Standalone: open `srcPath`, compact to `destPath`, close both.         |
+| API                                                                  | Purpose                                                                            |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| [`DB.Compact`](../../compact.go)                                     | Compact an open database to `destPath`; holds a read lock during copy.             |
+| [`CompactTo`](../../compact.go)                                      | Standalone: open `srcPath`, compact to `destPath`, close both.                     |
+| [`DB.CompactWithOptions`](../../compact.go)                           | Open-handle compaction with a bounded batch size and durable progress checkpoints. |
+| [`CompactToWithOptions`](../../compact.go)                            | Offline equivalent with credentials supplied through `Options`.                   |
 
 ### Typical workflow
 
+1. Record `before, err := db.StorageStats()` and choose a maintenance window based on `ReclaimableBytes` plus the free space needed to hold a second primary.
+2. Run bounded prune passes until one returns zero, then measure again. Prune never shrinks the primary.
+3. Take or verify a recoverable backup of the source primary, WAL, and optional changelog before replacement.
+4. Create a destination with `CompactWithOptions` (open plaintext source) or `CompactToWithOptions` (closed source, including encrypted sources). Use a context deadline and a progress callback; progress is emitted only after each destination batch is durable.
+5. Validate the destination by opening it, checking `StorageStats`, and running application read probes or `HealthCheck` before replacing the source during an exclusive shutdown window.
+6. Archive the original primary and WAL rather than overwriting the only recoverable copy. Replace files according to the changefeed rules below, reopen, and remove the archive only after validation.
+
+Example copy phase:
+
 ```go
-err := db.Compact(ctx, "/tmp/compacted.db")
-db.Close()
-os.Rename("/tmp/compacted.db", originalPath)
-db, _ = hexxladb.Open(originalPath, opts)
+var copied uint64
+err := db.CompactWithOptions(ctx, "/tmp/compacted.db", &hexxladb.CompactOptions{
+    BatchSize: 512,
+    OnProgress: func(p hexxladb.CompactProgress) {
+        copied = p.CopiedKeys
+    },
+})
 ```
+
+`BatchSize` is zero for the bounded default (4096 keys) or 1–4096. Cancel through `ctx`. A cancelled or failed copy removes the partial destination primary and WAL; retry with the same destination path restarts safely from the stable source. Compaction does not persist a byte-offset resume cursor.
 
 ### Stripping old MVCC versions
 
@@ -121,8 +147,9 @@ db.Compact(ctx, destPath)                // rewrite without dead pages
 - **Format preservation:** destination inherits format version, MVCC flag, `MaxValueBytes`, and encryption from the source header. Encryption credentials must be supplied via `opts` for encrypted sources.
 - **Exclusive paths:** `destPath` must not exist and is never overwritten. `CompactTo` also requires `srcPath` to be closed because it acquires the database lock itself.
 - **Encrypted open handles:** `DB.Compact` cannot recover caller credentials from an open handle and returns `ErrEncryptionKeyRequired` for encrypted databases. Close it and use `CompactTo(ctx, srcPath, destPath, opts)` with the original credentials.
-- **Context cancellation:** partial destination is removed on abort.
-- **Changelog:** the destination does not carry over the source changelog file. Re-enable changelog on the reopened destination if needed.
+- **Context cancellation:** partial destination is removed on abort, and the source is unchanged. A retry starts a fresh copy.
+- **Backups:** compaction creates a candidate primary, not a backup policy. Keep the source primary, WAL, and changelog together until the replacement has reopened and passed validation. Never copy an open primary/WAL pair independently.
+- **Changelog:** compaction copies authoritative primary keys, including any durable outbox intent, but does not copy the append-only sidecar. For a plaintext database that replaces its original primary, retain the original sidecar at the configured path; reopen may safely redeliver an unacknowledged intent. A compacted encrypted primary has a new encryption salt, so its old encrypted sidecar cannot be reused. Archive that sidecar and re-bootstrap consumers from database truth before enabling a new sidecar, or defer replacement if retained changefeed history is required. Never silently discard a sidecar that is the only consumer history.
 
 ## Super-hex derived occupancy index
 

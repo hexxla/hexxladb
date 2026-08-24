@@ -175,7 +175,7 @@ Public API guide: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE
 | `MarkConflict` / `MarkSupersedes` / `FindSeams`         | Record and retrieve contradictions and supersessions                    |
 | `ViewAt` / `SnapshotDiff`                               | MVCC time-travel and change detection                                   |
 | `WriteStats` / `GroupWALStats`                         | Observe write contention, phase timing, and WAL batching                |
-| `Compact` / `HealthCheck`                               | Copy-compaction and structural integrity check                          |
+| `StorageStats` / `Compact` / `HealthCheck`              | Space accounting, copy-compaction, and structural integrity checks      |
 
 ---
 
@@ -268,6 +268,7 @@ The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm 
 - **In-process only** — no network server; one process owns the file at a time.
 - **HNSW at scale** — the graph is persisted in the B+ tree; very large vector sets (>10K) may hit page-split pressure. Flat-scan fallback is always available.
 - **Coordinates are sparse** — hex grid is a logical namespace, not a dense array. No compaction of coordinate space happens automatically.
+- **Storage is extend-only between maintenance windows** — deletes and pruning expose dead pages but do not shrink the primary; inspect `StorageStats`, then use bounded explicit compaction to create a smaller replacement.
 - **Pre-v1** — API may change between minor versions during the v0.y.z phase.
 
 ---

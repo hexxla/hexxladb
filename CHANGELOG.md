@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Observable bounded storage maintenance** — `DB.StorageStats` now reports primary, WAL, and optional changelog sizes plus persistent page-graph reachability and whole-page reclaimable bytes. `CompactWithOptions` and `CompactToWithOptions` keep copy transactions at or below 4096 keys and emit cumulative progress only after a destination batch is durable; cancellation removes partial output so operators can retry safely. A deterministic puts/tombstones/prune/compact workload verifies reclamation and interruption behavior without changing the on-disk format. Persistent page reuse remains deferred because explicit compaction recovers the measured dead space without adding freelist/WAL recovery state.
+
 ## [0.8.0] - 2026-08-24
 
 ### Added

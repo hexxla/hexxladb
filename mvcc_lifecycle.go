@@ -102,6 +102,9 @@ type MVCCStats struct {
 	// since the database was opened. These pages are dead space on disk until the next
 	// [CompactTo]. The counter is in-memory only and resets to zero on reopen.
 	// A non-zero value is a signal to schedule compaction.
+	//
+	// Deprecated: use [DB.StorageStats] ReclaimableBytes for persistent, complete
+	// whole-page reachability accounting. WastedBytes counts only overflow payload.
 	WastedBytes uint64
 }
 

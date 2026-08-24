@@ -41,7 +41,7 @@ Engine-level coalescing and `MaxBatchWait` (via [`Options.GroupWALMaxBatchWait`]
 
 7. **Observability / tests:** [`Engine.GroupWALStats`](../../internal/engine/group_wal.go) reports batch counts and `wal.Sync` calls; the root package also exposes [`DB.GroupWALStats`](../../db.go) for the same metrics without importing `internal/engine`. [`DB.WriteStats`](../../write_stats.go) reports cumulative public-write calls, committed transactions, lock wait, callback time, engine durability time, and post-commit finalization time. [`TestGroupWAL_twoJobsOneBatch`](../../internal/engine/group_wal_merge_test.go) checks that two explicitly delayed engine jobs merge into one flusher batch.
 
-8. **Prune and immediate deletes:** The library’s [`PruneCellVersions`](../../mvcc_lifecycle.go) issues one B+-tree delete per reclaimed key, each on the **immediate** `WritePage` path (no `BeginWriteTxn` coalescing). Coalescing many deletes in a **single** engine write transaction would reduce per-delete WAL syncs but requires a designed API; today operators rely on bounded `maxDelete` and repeated passes.
+8. **Prune batches:** [`PruneCellVersions`](../../mvcc_lifecycle.go) groups at most 64 B+ tree deletes into one engine write transaction, then commits and releases the database lock before the next sub-batch. Each sub-batch therefore has one WAL/primary commit barrier, bounding both lock hold time and recovery work while avoiding one sync per deleted row.
 
 ### Tuning
 

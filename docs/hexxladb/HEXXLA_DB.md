@@ -80,6 +80,8 @@ When a new database is created with `Options.EnableMVCC`, format v2 appends a co
 
 Cells use a zero-length latest value as a tombstone. Deletion therefore adds a version rather than immediately removing physical history. Pruning can remove eligible non-latest versions; compaction rewrites the remaining physical keys into a new file.
 
+The page allocator is extend-only. [`DB.StorageStats`](../../storage_stats.go) walks the current B+ tree and overflow chains to report page-rounded live bytes and whole unreachable pages that compaction can reclaim. It does not treat unused capacity inside a reachable page as dead, so compacted output may be smaller than `PrimaryBytes - ReclaimableBytes` after repacking low-fill pages.
+
 Timeline keys map wall time to commit snapshots:
 
 ```text

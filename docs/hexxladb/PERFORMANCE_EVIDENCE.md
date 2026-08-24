@@ -29,6 +29,7 @@ This writes:
 - `.tmp/evidence/changelog-read-bench.txt`
 - `.tmp/evidence/api-bench.txt`
 - `.tmp/evidence/superhex-sync-bench.txt`
+- `.tmp/evidence/storage-churn.txt`
 - `.tmp/evidence/workload.json`
 
 Run the streams separately when iteration time matters:
@@ -58,6 +59,7 @@ radius 512. This keeps an accidentally oversized observation run bounded.
 | Super-hex         | Rebuild, O(1) coordinate lookup, deterministic export, direct changelog tail reads across 512–100k historical records, and fixed-history one-shot catch-up | rebuild/write/sync distributions, changes processed, summary count, applied sequence, and caught-up state |
 | MVCC hot keys     | Latest and historical point-read latency and allocations at 10, 100, 1,000, and 6,000 versions                                                           | Not included                                                                                                |
 | Public writes     | Single, batched, callback-delayed, fdatasync, and reader-blocking latency with group-WAL batch/sync counts                                               | Not included                                                                                                |
+| Storage churn     | Exact primary/live/reclaimable page bytes after puts, tombstones, pruning, and compaction; bounded progress and interruption tests                      | Final primary, WAL, and changelog sizes                                                                     |
 | Resources         | Go allocation counts per benchmark operation                                                                                                               | total bytes allocated plus final database, WAL, and changelog sizes                                       |
 
 ### MVCC hot-key evidence
@@ -79,6 +81,18 @@ go test -run '^$' -bench '^(BenchmarkAPI_WritePath|BenchmarkAPI_WriteReaderBlock
 ```
 
 The acceptance gate is that zero-wait public writes report no artificial collection delay, an explicit positive window remains measurable, public multi-job batches remain zero under the serialized lock contract, batching retains lower per-cell latency, and race tests prove readers cannot enter before finalization.
+
+### Storage-maintenance evidence
+
+`TestStorageMaintenanceRepresentativeChurn` applies four generations to 48 MVCC cells, tombstones half, prunes every eligible non-latest cell version, and compacts with 16-key destination batches. It reports `StorageStats` after each phase and verifies that physical bytes never shrink during tombstone/prune operations, durable progress is monotonic and bounded, and the compacted database has fewer physical and unreachable bytes. Run the cancellation/retry contract beside it:
+
+```bash
+go test -count=3 -run '^(TestStorageMaintenanceRepresentativeChurn|TestCompactWithOptionsCancellationCanRetry)$' -v .
+```
+
+On the 2026-08-24 reference run (Go 1.26.3, 4 KiB pages), all three churn samples produced the same byte counts: puts `2,523,136` primary / `1,036,288` live / `1,486,848` reclaimable; tombstones `2,650,112` / `1,064,960` / `1,585,152`; prune `2,650,112` / `122,880` / `2,527,232`; and compact `106,496` / `106,496` / `0`. Pruning removed 168 stale cell rows. These are deterministic layout measurements for this fixture, not a production capacity forecast.
+
+The result supports explicit compaction: it recovered all whole unreachable pages and additional low-fill space without a freelist or format change. Persistent reuse remains evidence-gated because it would add allocator state that must be ordered with WAL replay; reconsider it only if measured compaction windows or peak disk budgets fail an operator requirement.
 
 The super-hex correctness soak applies deterministic randomized puts, repeated
 updates, and deletes at hierarchy levels 1, 2, and 3. After every batch it fully

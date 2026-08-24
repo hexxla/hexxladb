@@ -63,6 +63,10 @@ If reopen returns `ErrCommitFinalization`, primary intent remains preserved but 
 - `ReadChangelogSince` seeks to the nearest checkpoint and scans forward. At most 255 records before the requested cursor are decoded, rather than the entire history.
 - Without matching durable primary intent, a corrupt/truncated format-v1 tail or authentication failure in a format-v2 frame returns **[`ErrChangelogCorrupt`](../../errors.go)**. Wrong database/key binding fails during open with [`ErrChangelogEncryptionKeyMismatch`](../../errors.go).
 
+## Compaction and replacement
+
+Copy-compaction preserves authoritative primary outbox keys but does not copy the sidecar. When a plaintext compacted primary replaces its source, retain the existing sidecar at the same configured path; reopening may redeliver an unacknowledged intent and consumers must remain idempotent. An encrypted compacted primary receives a new encryption salt, so the old encrypted sidecar is intentionally not compatible. Archive it and re-bootstrap consumers from database truth before enabling a new sidecar, or defer replacement when retained sidecar history is required. Back up the source primary, WAL, and sidecar together before either workflow. See [`OPERATIONS.md`](./OPERATIONS.md#compaction).
+
 ## Operations emitted
 
 One event per successful **mutation** on [`Tx`](../../tx.go) / primitives. Stable op codes are [`ChangelogOp*` constants](../../db_changelog.go): **PutCell** (`OpPutCell`), seam insert/update via **PutSeam** (`OpPutSeam`), **ResolveSeam** (`OpResolveSeam` — same encoded seam payload and MVCC keys as **PutSeam**, distinct op for downstream workflows), **PutFacet** / **UpdateFacet** (`OpPutFacet`), **PutEdge** / **LinkCells** (`OpPutEdge`). **MarkConflict** is recorded as **PutSeam** (`OpPutSeam`) with seam payload distinguishing `mark_conflict`. **Read-only** [`View`](../../db.go) emits nothing.

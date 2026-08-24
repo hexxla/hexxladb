@@ -8,17 +8,6 @@ Execute these workstreams in order. Each workstream begins with a reproducible b
 
 Completed workstreams are recorded in [`CHANGELOG.md`](../CHANGELOG.md). Remaining workstreams retain their original identifiers so session state and prior review references stay unambiguous.
 
-### 5. Storage growth and maintenance
-
-**Outcome:** Operators must be able to predict growth and reclaim space through a bounded, observable workflow; page reuse must not compromise crash recovery.
-
-- Add representative churn evidence covering puts, tombstones, pruning, and compaction, with physical/live/dead byte estimates where the engine can report them reliably.
-- Provide a bounded maintenance workflow that reports progress and interruption behavior rather than hiding unbounded work in a background goroutine.
-- Evaluate freelist reuse, tail truncation, and sparse-file techniques against WAL ordering and crash recovery. Implement only the smallest option whose recovered-state tests and space savings justify its format complexity.
-- Keep explicit prune-then-compact as the supported fallback and ensure backup/changefeed handling is part of the workflow.
-
-**Completion evidence:** an operator can measure reclaimable space, interrupt and resume maintenance safely, and demonstrate bounded file growth or documented compaction recovery under the reference churn workload.
-
 ### 6. Online backup and single-owner availability
 
 **Outcome:** Preserve the embedded single-owner model while providing a supported consistent backup that does not require an unsafe live file copy.
@@ -128,7 +117,7 @@ These are plausible extensions, not commitments. Promote one only when a represe
 ## Engine and retention investigations
 
 - **`DB.Path()`** — small API ergonomics candidate for embedders that must inspect the backing file.
-- **Partial file reclaim** — evaluate freelist reuse, tail truncation, or platform-specific sparse-file techniques against the durability model. The supported path remains [`PruneCellVersions`](./hexxladb/OPERATIONS.md#mvcc-retention-and-pruning) followed by compaction.
+- **Partial file reclaim** — persistent freelist reuse, tail truncation, and platform-specific hole punching remain deferred until measured prune-then-compact windows miss an operator requirement. Any future design must generation-protect reused pages from stale WAL replay and prove allocator recovery before replacing the supported [`PruneCellVersions`](./hexxladb/OPERATIONS.md#mvcc-retention-and-pruning) followed by compaction path.
 - **Physical coordinate purge** — define whether removing the latest tombstone can coexist with explicit historical-snapshot guarantees before considering an API.
 - **Changefeed-coordinated pruning** — consider alternative pruning modes only with a precise retained-sequence contract.
 
