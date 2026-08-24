@@ -172,6 +172,15 @@ func openDB(path string, opts *Options, createExclusive bool) (*DB, error) {
 			_ = eng.Close()
 			return nil, err
 		}
+		consumers, err := db.readChangelogConsumersLocked()
+		if err == nil {
+			err = db.validateChangelogConsumerHistoryLocked(consumers)
+		}
+		if err != nil {
+			_ = cl.Close()
+			_ = eng.Close()
+			return nil, err
+		}
 	}
 	return db, nil
 }

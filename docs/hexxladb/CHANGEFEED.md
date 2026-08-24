@@ -27,6 +27,46 @@ Formats are never mixed in one file. An encrypted database rejects a legacy form
 - **At-least-once:** a crash after the sidecar append but before primary outbox acknowledgement can append the same operation again during recovery. Handlers **must** be **idempotent**: apply puts as upserts, deletes as idempotent deletes, and use the primary key plus content hash/authoritative state when suppressing equivalent work. The sidecar `Seq` identifies delivery order, not a globally exactly-once mutation identity.
 - **Cursor:** monotonic **`uint64` sequence** per record. **`ReadChangelogSince(afterSeq, limit)`** returns records with **`seq > afterSeq`**, up to **`limit`** entries. Use **`0`** to read from the first record.
 
+## Durable consumer cursors
+
+Named cursors are optional authoritative metadata in the primary database. Cursor metadata and its logical-history checkpoint do not advance MVCC `CommitSeq` and do not emit changefeed records, avoiding recursive events.
+
+```go
+const consumerID = "search-projector"
+
+cursor, exists, err := db.GetChangelogConsumerCursor(consumerID)
+if err != nil {
+    return err
+}
+if !exists {
+    if err := db.AdvanceChangelogConsumer(consumerID, 0, 0); err != nil {
+        return err
+    }
+}
+
+records, err := db.ReadChangelogSince(cursor, 256)
+if err != nil {
+    return err
+}
+for _, change := range records {
+    if err := applyIdempotently(change); err != nil {
+        return err
+    }
+    if err := db.AdvanceChangelogConsumer(consumerID, cursor, change.Seq); err != nil {
+        return err
+    }
+    cursor = change.Seq
+}
+```
+
+- Consumer IDs are 1–128 ASCII bytes, begin with an alphanumeric byte, and otherwise contain only alphanumerics, `.`, `_`, `:`, or `-`.
+- [`DB.AdvanceChangelogConsumer`](../../changelog_consumers.go) registers `0 → 0` or atomically compares `expectedSeq` and advances to `nextSeq`. It rejects stale writers with [`ErrChangelogCursorConflict`](../../errors.go), regression with [`ErrChangelogCursorRegression`](../../errors.go), and sequences beyond the current head with [`ErrChangelogCursorBeyondHead`](../../errors.go).
+- [`DB.ListChangelogConsumers`](../../changelog_consumers.go) returns cursors ordered by identity. [`DB.ChangelogRetentionFloor`](../../changelog_consumers.go) returns the minimum sequence acknowledged by every registered consumer; records at or below it are eligible for a future coordinated archival policy. The current sidecar remains append-only, so do not truncate or rewrite it manually. This floor is unrelated to MVCC commit pruning.
+- [`DB.DeleteChangelogConsumer`](../../changelog_consumers.go) uses the same expected-sequence comparison. Deleting the last cursor removes retention protection but does not delete records. Inspection and deletion remain available on a changelog-disabled handle for explicit recovery administration; advances require an enabled sidecar.
+- Cursor persistence is not an exactly-once transaction with an external sink. Apply each record idempotently, then advance. A crash before the advance redelivers safely; a crash after it must not be allowed to precede the external effect's durable commit.
+
+The primary stores a rolling digest of canonical logical records, independent of plaintext/encrypted framing. When registered consumers exist, `Open` validates the retained sidecar against this checkpoint. A missing, shortened, or replaced history returns [`ErrChangelogConsumerInvalidated`](../../errors.go); malformed primary cursor metadata returns [`ErrCorruptDatabase`](../../errors.go). This binding survives backup and encryption rotation.
+
 ## Payload policy
 
 - **Small payloads (≤ 4096 bytes)** of the canonical encoded record may be **inlined** alongside **SHA-256** of that encoding.
@@ -63,9 +103,17 @@ If reopen returns `ErrCommitFinalization`, primary intent remains preserved but 
 - `ReadChangelogSince` seeks to the nearest checkpoint and scans forward. At most 255 records before the requested cursor are decoded, rather than the entire history.
 - Without matching durable primary intent, a corrupt/truncated format-v1 tail or authentication failure in a format-v2 frame returns **[`ErrChangelogCorrupt`](../../errors.go)**. Wrong database/key binding fails during open with [`ErrChangelogEncryptionKeyMismatch`](../../errors.go).
 
+## Backup
+
+[`DB.BackupTo`](../../backup.go) captures the primary, matched WAL, and complete enabled changelog under one database read lock. A custom source changelog path is normalized to `<backup-primary>-changelog`, so restore with `ChangelogEnabled: true` and the default sidecar path. Encrypted components are copied byte-for-byte and require the original database credentials on restore.
+
+Named cursors and their logical-history checkpoint are part of the primary and are captured with the matching sidecar. Lazy-mode backup can contain both an appended sidecar frame and its still-unacknowledged primary outbox intent. Restore projects every retained intent and may therefore append an equivalent record again; this preserves at-least-once delivery without omission and does not strengthen `Seq` into an exactly-once identity. Keep handlers idempotent and preserve the complete backup set. See [`OPERATIONS.md`](./OPERATIONS.md#backup-and-copy) for locking, cancellation, destination, and validation rules.
+
 ## Compaction and replacement
 
-Copy-compaction preserves authoritative primary outbox keys but does not copy the sidecar. When a plaintext compacted primary replaces its source, retain the existing sidecar at the same configured path; reopening may redeliver an unacknowledged intent and consumers must remain idempotent. An encrypted compacted primary receives a new encryption salt, so the old encrypted sidecar is intentionally not compatible. Archive it and re-bootstrap consumers from database truth before enabling a new sidecar, or defer replacement when retained sidecar history is required. Back up the source primary, WAL, and sidecar together before either workflow. See [`OPERATIONS.md`](./OPERATIONS.md#compaction).
+Copy-compaction preserves authoritative cursor and outbox keys but does not copy the sidecar. A compacted primary with registered consumers therefore opens with changelog enabled only when the operator supplies the matching retained logical history; a missing or replaced history fails with `ErrChangelogConsumerInvalidated` rather than silently moving a cursor.
+
+For a plaintext replacement, retain the existing sidecar at the configured path; reopening may redeliver an unacknowledged intent. An encrypted compacted primary receives a new encryption salt, so the old encrypted sidecar is intentionally incompatible. Either defer replacement when retained history is required, or explicitly re-bootstrap: open the candidate with changelog disabled, inspect and delete every named cursor at its expected sequence, rebuild downstream state from database truth, then enable a fresh sidecar and register new cursors at zero. Archive the original recovery set until validation completes. See [`OPERATIONS.md`](./OPERATIONS.md#compaction).
 
 ## Operations emitted
 

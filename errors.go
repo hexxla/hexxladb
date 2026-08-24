@@ -55,7 +55,7 @@ var (
 	// ErrFacetDerivationMismatch means [Tx.UpdateFacet] was rejected: facet DerivationHash does not match SHA-256 of the cell RawContent.
 	ErrFacetDerivationMismatch = errors.New("hexxladb: facet derivation hash mismatch")
 
-	// ErrChangelogDisabled means [DB.ReadChangelogSince] was called but changelog was not enabled in [Options].
+	// ErrChangelogDisabled means an operation requiring the sidecar was called but changelog was not enabled in [Options].
 	ErrChangelogDisabled = errors.New("hexxladb: changelog not enabled")
 	// ErrChangelogPlaintext means an encrypted database was configured with a legacy plaintext changelog.
 	ErrChangelogPlaintext = errors.New("hexxladb: encrypted database cannot use a plaintext changelog")
@@ -63,6 +63,16 @@ var (
 	ErrChangelogEncryptionKeyRequired = errors.New("hexxladb: changelog encryption key required")
 	// ErrChangelogEncryptionKeyMismatch means a changelog does not belong to the encrypted database/key being opened.
 	ErrChangelogEncryptionKeyMismatch = errors.New("hexxladb: changelog encryption key mismatch")
+	// ErrChangelogConsumerNotFound means no durable cursor is registered for the requested consumer identity.
+	ErrChangelogConsumerNotFound = errors.New("hexxladb: changelog consumer not found")
+	// ErrChangelogCursorConflict means a compare-and-advance/delete expected sequence did not match the durable cursor.
+	ErrChangelogCursorConflict = errors.New("hexxladb: changelog cursor conflict")
+	// ErrChangelogCursorRegression means an advance attempted to move a durable cursor backwards.
+	ErrChangelogCursorRegression = errors.New("hexxladb: changelog cursor regression")
+	// ErrChangelogCursorBeyondHead means an advance targeted a sequence not present in the current changelog.
+	ErrChangelogCursorBeyondHead = errors.New("hexxladb: changelog cursor beyond head")
+	// ErrChangelogConsumerInvalidated means registered cursors no longer match the retained logical changelog history.
+	ErrChangelogConsumerInvalidated = errors.New("hexxladb: changelog consumer history invalidated")
 
 	// ErrReadSeqFuture means [DB.ViewAt] was called with a read_seq greater than the database's committed [engine.Header.CommitSeq].
 	ErrReadSeqFuture = errors.New("hexxladb: read_seq beyond last commit")

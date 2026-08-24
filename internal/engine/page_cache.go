@@ -104,24 +104,23 @@ func (c *pageCache) shardFor(pageID uint64) *pcShard {
 	return &c.shards[h*uint64(c.numShard)>>32] //nolint:gosec // G115: h<2^32 and numShard<=16; product fits uint64
 }
 
-// get returns a copy of the cached page bytes for pageID, or nil on miss.
-// On hit the reference bit is set.
-func (c *pageCache) get(pageID uint64) []byte {
+// get copies the cached page bytes for pageID into dst and reports a hit.
+// The caller owns dst, so no cache storage is exposed. On hit the reference
+// bit is set.
+func (c *pageCache) get(pageID uint64, dst []byte) bool {
 	s := c.shardFor(pageID)
 	s.mu.Lock()
 	e, ok := s.index[pageID]
-	if !ok || e.ptype == pcEntryTest {
+	if !ok || e.ptype == pcEntryTest || len(dst) != len(e.data) {
 		s.mu.Unlock()
 		c.misses.Add(1)
-		return nil
+		return false
 	}
 	e.referenced = true
-	// return a copy so the caller owns it; the cache keeps its own copy
-	out := make([]byte, len(e.data))
-	copy(out, e.data)
+	copy(dst, e.data)
 	s.mu.Unlock()
 	c.hits.Add(1)
-	return out
+	return true
 }
 
 // set stores a copy of data for pageID. If the page is already cached its

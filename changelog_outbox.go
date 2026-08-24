@@ -210,6 +210,10 @@ func (db *DB) cleanupChangelogOutbox(keys [][]byte) error {
 			return err
 		}
 	}
+	checkpointSeq, checkpointDigest, err := db.changelog.LogicalCheckpoint()
+	if err != nil {
+		return err
+	}
 	if err := db.eng.BeginWriteTxn(); err != nil {
 		return err
 	}
@@ -223,6 +227,12 @@ func (db *DB) cleanupChangelogOutbox(keys [][]byte) error {
 		if err := db.btree.Delete(keys[i]); err != nil {
 			return err
 		}
+	}
+	if err := db.btree.Put(
+		index.ChangelogProjectionCheckpointKey(),
+		index.EncodeChangelogProjectionCheckpoint(checkpointSeq, checkpointDigest),
+	); err != nil {
+		return err
 	}
 	finalHeader, err := db.eng.UpdateHeaderGet(func(*engine.Header) {})
 	if err != nil {

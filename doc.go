@@ -13,7 +13,8 @@
 //
 // Exported entrypoints:
 //   - [Open], [Options], [DB], [DB.Close] — exclusively locked engine shell with durable WAL (see docs/hexxladb/DURABILITY.md).
-//     Optional logical changefeed ([Options.ChangelogEnabled], [DB.ReadChangelogSince]; see docs/hexxladb/CHANGEFEED.md).
+//     Optional logical changefeed ([Options.ChangelogEnabled], [DB.ReadChangelogSince]) with durable named cursors
+//     ([DB.AdvanceChangelogConsumer], [DB.GetChangelogConsumerCursor]; see docs/hexxladb/CHANGEFEED.md).
 //     Configurable page size via [Options.PageSize] (4096/8192/16384/65536; default 4096); readable at runtime via [DB.PageSize].
 //     Per-database value size limit via [Options.MaxValueBytes] (512–1048576 bytes; default 8192); readable at runtime via [DB.MaxValueBytes].
 //     Transparent per-value DEFLATE compression is always-on (compress/flate, Go stdlib; values ≥ 64 bytes).
@@ -25,6 +26,7 @@
 //     Bolt-style transactions; [DB.Batch] is an alias for [DB.Update]; see docs/hexxladb/TX.md.
 //     [DB.WriteStats] and [DB.GroupWALStats] expose cumulative write-phase timing and batching counters.
 //   - [DB.StorageStats] — physical, live, and reclaimable storage accounting.
+//   - [DB.BackupTo] — consistent online physical backup of the primary, WAL, and optional changelog.
 //   - [DB.Compact], [DB.CompactWithOptions], [CompactTo], [CompactToWithOptions] — bounded copy-compaction to reclaim dead pages
 //     with optional durable progress reporting (see docs/hexxladb/OPERATIONS.md).
 //   - [Tx.Get], [Tx.Put], [Tx.AscendRange] — byte-key ordered store.
@@ -48,7 +50,8 @@
 //   - Embedding / vector search: dimension auto-detected from first [Tx.PutEmbedding]
 //     (or pre-set via [Options.EmbeddingDimension]); [Options.DistanceMetric] (default cosine);
 //     [Tx.PutEmbedding], [Tx.GetEmbedding], [Tx.DeleteEmbedding];
-//     [Tx.SearchByEmbedding] (HNSW-accelerated ANN, flat-scan fallback), [EmbeddingSearchConfig];
+//     [Tx.SearchByEmbedding] (HNSW-accelerated ANN, flat-scan fallback),
+//     [Tx.SearchByEmbeddingWithStats] (execution path and effective breadth), [EmbeddingSearchConfig];
 //     [Tx.ReindexEmbeddings]; [CellQuery.Embedding] / [CellSearchConfig.Embedding] integrate
 //     vector search into [Tx.QueryCells] / [Tx.SearchCells] (see docs/hexxladb/API_REFERENCE.md).
 //   - Sentinel errors: [ErrCorruptDatabase], [ErrDatabaseClosed], [ErrDatabaseLocked], [ErrTxReadOnly],
@@ -56,7 +59,9 @@
 //     [ErrSeamEndpointMismatch], [ErrInvalidArgument], [ErrEncryptionKeyRequired],
 //     [ErrDatabaseNotEncrypted], [ErrEncryptionOptions], [ErrEncryptionKeyMismatch],
 //     [ErrCellNotFound], [ErrFacetDerivationMismatch], [ErrChangelogDisabled],
-//     [ErrChangelogCorrupt], [ErrReadSeqFuture], [ErrMVCCRequired],
+//     [ErrChangelogCorrupt], [ErrChangelogConsumerNotFound], [ErrChangelogCursorConflict],
+//     [ErrChangelogCursorRegression], [ErrChangelogCursorBeyondHead], [ErrChangelogConsumerInvalidated],
+//     [ErrReadSeqFuture], [ErrMVCCRequired],
 //     [ErrSnapshotTagNotFound], [ErrSnapshotTagLabelTooLong].
 //
 // Lattice types ([Coord], [PackedCoord], [Pack], [Unpack], [Ring], [WalkRings]) are

@@ -114,6 +114,24 @@ func TestGraph_InsertSingle(t *testing.T) {
 	}
 }
 
+func TestLayerForCoordIsDeterministicAndDistributed(t *testing.T) {
+	t.Parallel()
+	var aboveBase int
+	for i := range 10_000 {
+		c := coord(uint64(i + 1))
+		first := layerForCoord(c, DefaultM)
+		if second := layerForCoord(c, DefaultM); second != first {
+			t.Fatalf("coord %d layer changed: %d then %d", i, first, second)
+		}
+		if first > 0 {
+			aboveBase++
+		}
+	}
+	if aboveBase < 500 || aboveBase > 750 {
+		t.Fatalf("higher-layer nodes=%d, want distribution near 1/%d", aboveBase, DefaultM)
+	}
+}
+
 func TestGraph_InsertMultiple_SearchRecall(t *testing.T) {
 	t.Parallel()
 	s := newMemStorage()

@@ -94,6 +94,15 @@ tasks:
       - mkdir -p .tmp/evidence .tmp/go-build
       - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go run ./examples/performance_evidence {{.EVIDENCE_ARGS | default ""}} | tee .tmp/evidence/workload.json"
 
+  evidence-vector-scale:
+    desc: Run the bounded vector/HNSW scale, recall, reopen, and churn workload
+    cmds:
+      - mkdir -p .tmp/evidence .tmp/go-build
+      - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go run ./examples/vector_scale_evidence {{.VECTOR_EVIDENCE_ARGS}} | tee {{.VECTOR_EVIDENCE_OUTPUT}}"
+    vars:
+      VECTOR_EVIDENCE_ARGS: '{{.VECTOR_EVIDENCE_ARGS | default ""}}'
+      VECTOR_EVIDENCE_OUTPUT: '{{.VECTOR_EVIDENCE_OUTPUT | default ".tmp/evidence/vector-scale.json"}}'
+
   fuzz:
     desc: Run short fuzz smoke tests on internal decoders
     cmds:

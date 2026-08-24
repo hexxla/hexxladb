@@ -8,39 +8,6 @@ Execute these workstreams in order. Each workstream begins with a reproducible b
 
 Completed workstreams are recorded in [`CHANGELOG.md`](../CHANGELOG.md). Remaining workstreams retain their original identifiers so session state and prior review references stay unambiguous.
 
-### 6. Online backup and single-owner availability
-
-**Outcome:** Preserve the embedded single-owner model while providing a supported consistent backup that does not require an unsafe live file copy.
-
-- Specify a `BackupTo`-style snapshot contract, including writer blocking, cancellation, encryption credentials, WAL state, changelog inclusion, destination exclusivity, and restore validation.
-- Reuse the consistent copy/compaction machinery where possible; do not introduce a server or replication subsystem to solve backup.
-- Add restore tests from active MVCC and encrypted databases and failure tests for partial destinations.
-- Keep cross-node replication and high availability explicitly out of scope unless a separate product requirement authorizes that architecture.
-
-**Completion evidence:** the supported API produces a restorable point-in-time backup while the database remains open, never copies a mismatched primary/WAL pair, and clearly states the write pause and changefeed guarantees.
-
-### 7. Durable changefeed consumers
-
-**Outcome:** At-least-once consumers must have an optional durable cursor and a precise retention/backup relationship without pretending to provide distributed exactly-once processing.
-
-- Define consumer identity, cursor monotonicity, compare-and-advance semantics, deletion, and corruption behavior.
-- Store offsets in the authoritative database only if doing so does not recursively emit changefeed records; otherwise document the external-store contract.
-- Coordinate minimum retained sequence with pruning, compaction, backup, and changelog replacement.
-- Keep handlers idempotent and make push notification an optional wake-up mechanism rather than a second delivery truth.
-
-**Completion evidence:** crash/restart tests resume without omission, duplicate delivery remains safe and documented, cursor regression is rejected, and compaction/backup cannot silently invalidate a registered consumer.
-
-### 8. Search and vector scale
-
-**Outcome:** Replace the approximate HNSW warning with a measured supported envelope and remove page-split pressure or fail predictably outside that envelope.
-
-- Benchmark vector insertion, query recall/latency, reopen, delete/update churn, and file growth at 10K and larger representative sets across supported dimensions.
-- Profile whether B+ tree page layout, HNSW graph maintenance, or encoding dominates before changing storage structures.
-- Evaluate bulk index construction and graph-record layout before adding a new index. Add a lexical inverted index only if representative full-scan search misses an agreed latency target.
-- Preserve the flat-scan fallback and report which path served a query when observability requires it.
-
-**Completion evidence:** published evidence states tested scale, recall, latency, memory, and disk bounds; the prior 10K caveat is either removed by passing tests or replaced by an enforced, actionable limit.
-
 ### 9. Coordinate placement and lattice quality
 
 **Outcome:** Applications must have a reproducible way to make hex proximity meaningful and to detect when vector and lattice neighborhoods diverge, without hidden database mutation.
@@ -78,7 +45,7 @@ Completed workstreams are recorded in [`CHANGELOG.md`](../CHANGELOG.md). Remaini
 
 1. Complete MVCC and write-path measurement/fixes before setting scale claims.
 2. Complete storage, backup, and durable-consumer workflows before expanding deployment guidance.
-3. Complete search and lattice-quality evidence before adding new indexing or placement abstractions.
+3. Complete lattice-quality evidence before adding new placement abstractions.
 4. Complete migration and compatibility gates after the preceding contracts have stabilized.
 
 For every workstream: run the narrowest regression first, then package tests and race checks, then `task ci`; update only the owning reference documents and record completed behavior under `CHANGELOG.md` `[Unreleased]`.
@@ -108,7 +75,6 @@ For every workstream: run the narrowest regression first, then package tests and
 These are plausible extensions, not commitments. Promote one only when a representative workload establishes requirements and a measurable benefit.
 
 - **Persistent, content-bearing super-hex summaries** — extend the rebuildable occupancy prototype only after aggregation, freshness, storage, and recovery semantics are demonstrated.
-- **Persistent changefeed consumers** — durable consumer offsets and retention coordination for materialized projections.
 - **Push changefeed subscription** — in-process notification layered over the durable at-least-once log when polling is a demonstrated bottleneck.
 - **Graph export** — a standard external representation when consumers need topology inspection without custom traversal code.
 - **Record-encoding allocation reduction** — pool or capacity-hint encoding only after benchmarks show material write-path GC pressure.

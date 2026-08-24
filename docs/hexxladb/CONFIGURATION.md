@@ -32,6 +32,7 @@ All fields on `hexxladb.Options`. Fields marked **immutable** are persisted in t
 | `MVCCRetention` | `MVCCRetention` | zero    | no        | Policy for `SuggestedPruneBeforeSeq`. `RetainCommitsBehindHead` keeps N commits of history.                                                           |
 | `PageSize`      | `uint32`        | `4096`  | yes       | B+ tree page size. Accepted: `4096`, `8192`, `16384`, `65536`. Larger pages = fewer I/O ops for big values; smaller = less waste for small DBs.       |
 | `MaxValueBytes` | `uint32`        | `8192`  | yes       | Max encoded value size per B+ tree entry. Accepted: 512 to 1048576 (powers of 2). Values above the inline threshold use overflow pages automatically. |
+| `PageCacheSize` | `int64`         | `0`     | no        | In-process B+ tree page-cache budget. `0` selects 4 MiB, positive values set bytes, and `-1` disables the cache.                                   |
 
 ### Embeddings
 
@@ -108,11 +109,12 @@ db, _ := hexxladb.Open("memory.db", &hexxladb.Options{
     EnableMVCC:         true,
     EmbeddingDimension: 384,
     DistanceMetric:     hexxladb.DistanceCosine,
-    PageSize:           65536,
+    PageSize:           4096,
+    PageCacheSize:      64 << 20,
 })
 ```
 
-MVCC for time-travel and snapshot diffing. 384-dim vectors (all-MiniLM-L6-v2). Large pages for embedding storage efficiency.
+MVCC for time-travel and snapshot diffing. For the measured 10,000-vector HNSW envelope, 4 KiB pages avoid random graph-maintenance amplification and a 64 MiB cache keeps hot B+ tree pages resident. Benchmark representative data before changing either value; larger pages can still help workloads dominated by large sequential values rather than embeddings.
 
 ### Production with full features
 
@@ -121,7 +123,8 @@ db, _ := hexxladb.Open("prod.db", &hexxladb.Options{
     EnableMVCC:         true,
     EmbeddingDimension: 384,
     DistanceMetric:     hexxladb.DistanceCosine,
-    PageSize:           65536,
+    PageSize:           4096,
+    PageCacheSize:      64 << 20,
     MaxValueBytes:      65536,
     ChangelogEnabled:   true,
     Passphrase:         os.Getenv("HEXXLA_PASSPHRASE"),

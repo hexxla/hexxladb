@@ -98,6 +98,54 @@ func parseLeafPage(page []byte) (*leafData, error) {
 	return &leafData{next: next, parent: parent, keys: keys, vals: vals}, nil
 }
 
+// lookupLeafValue validates a serialized leaf and returns the matching
+// page-backed value without materializing every key and value on the page.
+// The caller must copy the result before releasing the page buffer.
+func lookupLeafValue(page, key []byte) ([]byte, bool, error) {
+	pageSize := len(page)
+	if !IsValidPageSize(uint32(pageSize)) { //nolint:gosec // pageSize is always positive
+		return nil, false, fmt.Errorf("%w: bad page len %d", ErrCorruptTree, pageSize)
+	}
+	if string(page[0:4]) != btreeNodeMagic {
+		return nil, false, fmt.Errorf("%w: leaf magic", ErrCorruptTree)
+	}
+	if page[4] != btreeVersion {
+		return nil, false, fmt.Errorf("%w: leaf version", ErrCorruptTree)
+	}
+	if page[5] != btreeKindLeaf {
+		return nil, false, fmt.Errorf("%w: not leaf", ErrCorruptTree)
+	}
+	n := binary.BigEndian.Uint16(page[6:8])
+	if n > maxLeafEntriesForPage(pageSize) {
+		return nil, false, fmt.Errorf("%w: leaf nkeys", ErrCorruptTree)
+	}
+
+	var found []byte
+	off := btreeHeaderSize
+	for range n {
+		if off+4 > len(page) {
+			return nil, false, fmt.Errorf("%w: leaf truncated", ErrCorruptTree)
+		}
+		keyLen := int(binary.BigEndian.Uint16(page[off : off+2]))
+		valueLen := int(binary.BigEndian.Uint16(page[off+2 : off+4]))
+		off += 4
+		if keyLen > maxKeyBytes {
+			return nil, false, fmt.Errorf("%w: leaf key len", ErrCorruptTree)
+		}
+		if off+keyLen+valueLen > len(page) {
+			return nil, false, fmt.Errorf("%w: leaf payload", ErrCorruptTree)
+		}
+		storedKey := page[off : off+keyLen]
+		off += keyLen
+		value := page[off : off+valueLen]
+		off += valueLen
+		if bytes.Equal(storedKey, key) {
+			found = value
+		}
+	}
+	return found, found != nil, nil
+}
+
 func buildLeafPage(pageSize int, parent, next uint64, keys, vals [][]byte) ([]byte, error) {
 	if len(keys) != len(vals) {
 		return nil, fmt.Errorf("%w: leaf kv mismatch", ErrCorruptTree)
@@ -188,6 +236,58 @@ func parseInternalPage(page []byte) (*internalData, error) {
 		ptrs = append(ptrs, p)
 	}
 	return &internalData{parent: parent, ptrs: ptrs, keys: keys}, nil
+}
+
+// lookupInternalChild validates a serialized internal page and returns the
+// child selected for key without allocating decoded key or pointer slices.
+func lookupInternalChild(page, key []byte) (uint64, error) {
+	pageSize := len(page)
+	if !IsValidPageSize(uint32(pageSize)) { //nolint:gosec // pageSize is always positive
+		return 0, fmt.Errorf("%w: bad page len %d", ErrCorruptTree, pageSize)
+	}
+	if string(page[0:4]) != btreeNodeMagic {
+		return 0, fmt.Errorf("%w: internal magic", ErrCorruptTree)
+	}
+	if page[4] != btreeVersion {
+		return 0, fmt.Errorf("%w: internal version", ErrCorruptTree)
+	}
+	if page[5] != btreeKindInternal {
+		return 0, fmt.Errorf("%w: not internal", ErrCorruptTree)
+	}
+	n := binary.BigEndian.Uint16(page[6:8])
+	if n > maxInternalKeysForPage(pageSize) {
+		return 0, fmt.Errorf("%w: internal nkeys", ErrCorruptTree)
+	}
+	off := btreeHeaderSize
+	if off+8 > len(page) {
+		return 0, fmt.Errorf("%w: internal ptr0", ErrCorruptTree)
+	}
+	child := binary.BigEndian.Uint64(page[off : off+8])
+	off += 8
+	chooseRight := true
+	for range n {
+		if off+2 > len(page) {
+			return 0, fmt.Errorf("%w: internal key len", ErrCorruptTree)
+		}
+		keyLen := int(binary.BigEndian.Uint16(page[off : off+2]))
+		off += 2
+		if keyLen > maxKeyBytes {
+			return 0, fmt.Errorf("%w: internal key", ErrCorruptTree)
+		}
+		if off+keyLen+8 > len(page) {
+			return 0, fmt.Errorf("%w: internal key data", ErrCorruptTree)
+		}
+		separator := page[off : off+keyLen]
+		off += keyLen
+		pointer := binary.BigEndian.Uint64(page[off : off+8])
+		off += 8
+		if chooseRight && bytes.Compare(key, separator) >= 0 {
+			child = pointer
+		} else {
+			chooseRight = false
+		}
+	}
+	return child, nil
 }
 
 func buildInternalPage(pageSize int, parent uint64, ptrs []uint64, keys [][]byte) ([]byte, error) {

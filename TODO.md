@@ -6,7 +6,7 @@ Immediate next steps. Update after each session.
 
 ## Pending (next sessions)
 
-- [ ] Execute limitation-remediation workstreams 6–11 in documented order, confirming each completion gate before advancing
+- [ ] Execute limitation-remediation workstreams 9–11 in documented order, confirming each completion gate before advancing
 - [ ] **`BatchDeleteCells`** (or equivalent) — batched/chunked **`DeleteCell`** helper + docs/tests; reference **`docs/ROADMAP.md`** Near-term bullet
 - [ ] **Engine and retention investigations** — optional **`DB.Path()`**, partial reclaim research, physical purge semantics, and prune extensions; see **`docs/ROADMAP.md`**
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)

@@ -4,7 +4,18 @@
 
 ### Added
 
+- **Durable changefeed consumers** — named consumer cursors are stored as authoritative, non-emitting primary metadata with monotonic compare-and-advance and explicit deletion. Restart tests prove at-least-once redelivery without omission; a minimum acknowledged sequence exposes the advisory retention floor. The primary also records a representation-independent logical-history digest, so backup preserves registered consumers while missing or replaced changelogs fail closed on open instead of silently resuming against unrelated history. Compaction recovery and explicit re-bootstrap are documented; exactly-once handlers and in-process push delivery remain outside the database contract.
+- **Consistent online backup** — `DB.BackupTo` captures an open database's matched primary and WAL plus its complete enabled changelog under one read lock, preserving encrypted bytes and MVCC history without retaining credentials or changing the on-disk format. Writes pause for the bounded, cancellable file copy; destination components are exclusive and failed calls remove only newly created files. Active MVCC, encrypted restore, lazy at-least-once redelivery, writer exclusion, destination collision, cancellation, and health-check coverage define the supported recovery contract while replication and high availability remain out of scope.
 - **Observable bounded storage maintenance** — `DB.StorageStats` now reports primary, WAL, and optional changelog sizes plus persistent page-graph reachability and whole-page reclaimable bytes. `CompactWithOptions` and `CompactToWithOptions` keep copy transactions at or below 4096 keys and emit cumulative progress only after a destination batch is durable; cancellation removes partial output so operators can retry safely. A deterministic puts/tombstones/prune/compact workload verifies reclamation and interruption behavior without changing the on-disk format. Persistent page reuse remains deferred because explicit compaction recovers the measured dead space without adding freelist/WAL recovery state.
+- **Vector-search observability and scale evidence** — `SearchByEmbeddingWithStats` reports whether HNSW or the exact flat fallback served a query and exposes the effective search breadth; `EmbeddingSearchConfig.EfSearch` provides bounded recall/latency tuning with a dimension-aware default. A deterministic aggregate-only runner measures build throughput, exact-oracle recall@k, latency, close/reopen, update/delete churn, memory, and storage at 10,000 vectors. Persisted HNSW levels are now deterministic for the same coordinates and insertion order; the on-disk encoding is unchanged.
+
+### Performance
+
+- **Bounded HNSW and B+ tree read amplification** — page-cache hits now copy directly into pooled caller buffers, B+ tree point reads select only the required child or value without materializing every page entry, and one graph operation caches decoded HNSW metadata, nodes, and vectors. The finished 500×32d search benchmark measured about 14.8 ms, 16.4 MB, and 3,966 allocations versus the 72.1 ms, 133.0 MB, and 514,980-allocation baseline. On the reference 10,000-vector runs with 4 KiB pages and a 64 MiB cache, recall@10 measured 0.992 at 32 dimensions and 0.956 at 384 dimensions before reopen, remaining 0.992 and 0.960 respectively after update/delete churn and reopen.
+
+### Changed
+
+- **Current root guidance** — the README quick start now handles query, context, and transaction errors without assuming two results; feature claims distinguish opt-in MVCC, supersession, seams, and changefeeds; encryption guidance states the unauthenticated primary-page boundary; and write-performance context matches the published benchmark table.
 
 ## [0.8.0] - 2026-08-24
 

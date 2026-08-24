@@ -136,6 +136,45 @@ func TestBTree_putGet(t *testing.T) {
 	}
 }
 
+func TestPointLookupHelpersMatchDecodedPages(t *testing.T) {
+	t.Parallel()
+	keys := [][]byte{[]byte("alpha"), []byte("bravo"), []byte("charlie")}
+	values := [][]byte{[]byte("one"), []byte("two"), []byte("three")}
+	leaf, err := buildLeafPage(DefaultPageSize, 0, 0, keys, values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range append(slices.Clone(keys), []byte("missing")) {
+		value, ok, err := lookupLeafValue(leaf, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		index := leafKeyIndex(keys, key)
+		wantOK := index < len(keys) && bytes.Equal(keys[index], key)
+		if ok != wantOK {
+			t.Fatalf("leaf lookup %q: ok=%v want=%v", key, ok, wantOK)
+		}
+		if ok && !bytes.Equal(value, values[index]) {
+			t.Fatalf("leaf lookup %q: value=%q want=%q", key, value, values[index])
+		}
+	}
+
+	internal, err := buildInternalPage(DefaultPageSize, 0, []uint64{11, 22, 33, 44}, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range [][]byte{[]byte("aardvark"), []byte("alpha"), []byte("beta"), []byte("charlie"), []byte("zulu")} {
+		child, err := lookupInternalChild(internal, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []uint64{11, 22, 33, 44}[internalPickChild(keys, key)]
+		if child != want {
+			t.Fatalf("internal lookup %q: child=%d want=%d", key, child, want)
+		}
+	}
+}
+
 func TestBTree_manySplits(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

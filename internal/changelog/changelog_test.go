@@ -476,6 +476,78 @@ func TestLog_CopyToReencryptsAndPreservesHashOnlyRecord(t *testing.T) {
 	}
 }
 
+func TestLog_logicalDigestSurvivesReopenAndReencryption(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "source")
+	source, err := changelog.Open(sourcePath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := make([]changelog.Entry, 300)
+	for i := range entries {
+		entries[i] = changelog.Entry{
+			Op:      changelog.OpPutCell,
+			Key:     []byte(fmt.Sprintf("cell/%03d", i)),
+			Encoded: []byte(fmt.Sprintf("value-%03d", i)),
+		}
+	}
+	if err := source.AppendBatch(1234, entries); err != nil {
+		t.Fatal(err)
+	}
+	wantHead, wantHeadDigest, err := source.LogicalCheckpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMidDigest, err := source.LogicalDigestAt(127)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.LogicalDigestAt(wantHead + 1); !errors.Is(err, changelog.ErrCorrupt) {
+		t.Fatalf("digest beyond head: want ErrCorrupt, got %v", err)
+	}
+	if err := source.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	source, err = changelog.Open(sourcePath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = source.Close() })
+	gotHead, gotHeadDigest, err := source.LogicalCheckpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotMidDigest, err := source.LogicalDigestAt(127)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotHead != wantHead || gotHeadDigest != wantHeadDigest || gotMidDigest != wantMidDigest {
+		t.Fatalf("logical digest changed after reopen: head=%d want=%d", gotHead, wantHead)
+	}
+
+	destination, err := changelog.OpenEncrypted(
+		filepath.Join(dir, "destination"),
+		true,
+		bytes.Repeat([]byte{0x67}, 32),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = destination.Close() })
+	if err := source.CopyTo(destination); err != nil {
+		t.Fatal(err)
+	}
+	copiedHead, copiedDigest, err := destination.LogicalCheckpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if copiedHead != wantHead || copiedDigest != wantHeadDigest {
+		t.Fatalf("logical digest changed after reencryption: head=%d want=%d", copiedHead, wantHead)
+	}
+}
+
 const encryptedHeaderSizeForTest = 48
 
 func TestCorrupt_badMagic(t *testing.T) {

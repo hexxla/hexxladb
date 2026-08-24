@@ -4,6 +4,7 @@ package changelog
 
 import (
 	"bytes"
+	"context"
 	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/rand"
@@ -45,6 +46,8 @@ const (
 	// mandatory open scan and are not persisted.
 	checkpointStride = uint64(256)
 )
+
+var emptyLogicalDigest = sha256.Sum256([]byte("hexxladb-changelog-logical-history-v1"))
 
 // Operation codes (must stay stable for consumers).
 // UpdateFacet is recorded as OpPutFacet; LinkCells as OpPutEdge; MarkConflict as OpPutSeam.
@@ -111,19 +114,21 @@ type Intent struct {
 type checkpoint struct {
 	seq    uint64
 	offset int64
+	digest [32]byte
 }
 
 // Log is an open changelog file (append + read).
 type Log struct {
-	path        string
-	f           *os.File
-	sync        bool
-	maxSeq      uint64
-	checkpoints []checkpoint
-	dataOffset  int64
-	aead        cipher.AEAD
-	noncePrefix [noncePrefixSize]byte
-	header      [encryptedHeaderSize]byte
+	path          string
+	f             *os.File
+	sync          bool
+	maxSeq        uint64
+	logicalDigest [32]byte
+	checkpoints   []checkpoint
+	dataOffset    int64
+	aead          cipher.AEAD
+	noncePrefix   [noncePrefixSize]byte
+	header        [encryptedHeaderSize]byte
 }
 
 // Open opens or creates a plaintext changelog file, validates the header, and scans for maxSeq.
@@ -193,7 +198,8 @@ func (l *Log) writeHeader(key []byte) error {
 			return err
 		}
 		l.dataOffset = plaintextHeaderSize
-		l.checkpoints = []checkpoint{{seq: 0, offset: l.dataOffset}}
+		l.logicalDigest = emptyLogicalDigest
+		l.checkpoints = []checkpoint{{seq: 0, offset: l.dataOffset, digest: l.logicalDigest}}
 	} else {
 		copy(l.header[:], headerMagicV2)
 		binary.BigEndian.PutUint32(l.header[8:12], formatV2)
@@ -211,7 +217,8 @@ func (l *Log) writeHeader(key []byte) error {
 			return err
 		}
 		l.dataOffset = encryptedHeaderSize
-		l.checkpoints = []checkpoint{{seq: 0, offset: l.dataOffset}}
+		l.logicalDigest = emptyLogicalDigest
+		l.checkpoints = []checkpoint{{seq: 0, offset: l.dataOffset, digest: l.logicalDigest}}
 	}
 	if l.sync {
 		return l.f.Sync()
@@ -286,10 +293,12 @@ func (l *Log) scanMaxSeq(repairIncompleteTail bool) (uint64, []checkpoint, error
 	}
 	off := l.dataOffset
 	var highSeq uint64
-	checkpoints := []checkpoint{{seq: 0, offset: l.dataOffset}}
+	digest := emptyLogicalDigest
+	checkpoints := []checkpoint{{seq: 0, offset: l.dataOffset, digest: digest}}
 	for off < st.Size() {
 		if st.Size()-off < 4 {
 			if repairIncompleteTail {
+				l.logicalDigest = digest
 				return highSeq, checkpoints, l.truncateIncompleteTail(off)
 			}
 			return 0, nil, ErrCorrupt
@@ -304,6 +313,7 @@ func (l *Log) scanMaxSeq(repairIncompleteTail bool) (uint64, []checkpoint, error
 		}
 		if st.Size()-off < 4 || n > st.Size()-off-4 {
 			if repairIncompleteTail {
+				l.logicalDigest = digest
 				return highSeq, checkpoints, l.truncateIncompleteTail(off)
 			}
 			return 0, nil, ErrCorrupt
@@ -319,12 +329,18 @@ func (l *Log) scanMaxSeq(repairIncompleteTail bool) (uint64, []checkpoint, error
 		if rec.Seq != highSeq+1 {
 			return 0, nil, fmt.Errorf("%w: non-contiguous sequence", ErrCorrupt)
 		}
+		inner, err := encodeRecordInner(rec)
+		if err != nil {
+			return 0, nil, err
+		}
+		digest = extendLogicalDigest(digest, inner)
 		highSeq = rec.Seq
 		off += 4 + n
 		if highSeq%checkpointStride == 0 {
-			checkpoints = append(checkpoints, checkpoint{seq: highSeq, offset: off})
+			checkpoints = append(checkpoints, checkpoint{seq: highSeq, offset: off, digest: digest})
 		}
 	}
+	l.logicalDigest = digest
 	return highSeq, checkpoints, nil
 }
 
@@ -364,12 +380,118 @@ func (l *Log) MaxSeq() uint64 {
 	return l.maxSeq
 }
 
+// LogicalCheckpoint returns the current sequence and rolling digest of every
+// logical record from sequence one through that head. The digest is stable
+// across plaintext/encrypted frame encoding and encryption rotation.
+func (l *Log) LogicalCheckpoint() (uint64, [32]byte, error) {
+	if l == nil || l.f == nil {
+		return 0, [32]byte{}, errors.New("changelog: closed")
+	}
+	return l.maxSeq, l.logicalDigest, nil
+}
+
+// LogicalDigestAt returns the rolling logical-history digest through seq.
+func (l *Log) LogicalDigestAt(seq uint64) ([32]byte, error) {
+	if l == nil || l.f == nil {
+		return [32]byte{}, errors.New("changelog: closed")
+	}
+	if seq > l.maxSeq {
+		return [32]byte{}, fmt.Errorf("%w: checkpoint sequence beyond head", ErrCorrupt)
+	}
+	if seq == l.maxSeq {
+		return l.logicalDigest, nil
+	}
+	i := sort.Search(len(l.checkpoints), func(i int) bool {
+		return l.checkpoints[i].seq > seq
+	})
+	checkpointIndex := max(0, i-1)
+	cp := l.checkpoints[checkpointIndex]
+	digest := cp.digest
+	currentSeq := cp.seq
+	off := cp.offset
+	st, err := l.f.Stat()
+	if err != nil {
+		return [32]byte{}, err
+	}
+	for currentSeq < seq {
+		if st.Size()-off < 4 {
+			return [32]byte{}, ErrCorrupt
+		}
+		var lenBuf [4]byte
+		if _, err := l.f.ReadAt(lenBuf[:], off); err != nil {
+			return [32]byte{}, err
+		}
+		n := int64(binary.BigEndian.Uint32(lenBuf[:]))
+		if n < int64(l.minimumFrameBody()) || n > maxBodyBytes || n > st.Size()-off-4 {
+			return [32]byte{}, ErrCorrupt
+		}
+		body := make([]byte, n)
+		if _, err := l.f.ReadAt(body, off+4); err != nil {
+			return [32]byte{}, err
+		}
+		record, err := l.decodeFrame(body)
+		if err != nil {
+			return [32]byte{}, err
+		}
+		if record.Seq != currentSeq+1 {
+			return [32]byte{}, fmt.Errorf("%w: non-contiguous checkpoint history", ErrCorrupt)
+		}
+		inner, err := encodeRecordInner(record)
+		if err != nil {
+			return [32]byte{}, err
+		}
+		digest = extendLogicalDigest(digest, inner)
+		currentSeq = record.Seq
+		off += 4 + n
+	}
+	return digest, nil
+}
+
 // Sync makes every successfully written changelog frame durable according to the file system.
 func (l *Log) Sync() error {
 	if l == nil || l.f == nil {
 		return errors.New("changelog: closed")
 	}
 	return l.f.Sync()
+}
+
+// CopySnapshotTo copies the current changelog image through its already-open
+// descriptor. The caller must exclude appends for the full call.
+func (l *Log) CopySnapshotTo(ctx context.Context, dest io.Writer, buffer []byte) error {
+	if l == nil || l.f == nil {
+		return errors.New("changelog: closed")
+	}
+	if len(buffer) == 0 {
+		return errors.New("changelog: snapshot buffer is empty")
+	}
+	info, err := l.f.Stat()
+	if err != nil {
+		return err
+	}
+	for offset := int64(0); offset < info.Size(); {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		chunkSize := min(int64(len(buffer)), info.Size()-offset)
+		n, readErr := l.f.ReadAt(buffer[:chunkSize], offset)
+		if n > 0 {
+			written, writeErr := dest.Write(buffer[:n])
+			if writeErr != nil {
+				return writeErr
+			}
+			if written != n {
+				return io.ErrShortWrite
+			}
+			offset += int64(n)
+		}
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return readErr
+		}
+		if n == 0 {
+			return io.ErrUnexpectedEOF
+		}
+	}
+	return nil
 }
 
 // Append appends one record after a successful commit (assigns seq = maxSeq+1).
@@ -408,8 +530,9 @@ func (l *Log) Append(wallUnixNs int64, op byte, key, encoded []byte) error {
 	if _, err := l.f.Write(body); err != nil {
 		return err
 	}
+	l.logicalDigest = extendLogicalDigest(l.logicalDigest, inner)
 	l.maxSeq = seq
-	l.addCheckpoint(seq, startOffset+int64(len(lenBuf))+int64(len(body)))
+	l.addCheckpoint(seq, startOffset+int64(len(lenBuf))+int64(len(body)), l.logicalDigest)
 	if l.sync {
 		return l.f.Sync()
 	}
@@ -430,6 +553,7 @@ func (l *Log) AppendBatch(wallUnixNs int64, entries []Entry) error {
 	startSeq := l.maxSeq
 	var buf bytes.Buffer
 	var pendingCheckpoints []checkpoint
+	pendingDigest := l.logicalDigest
 	for i := range entries {
 		e := &entries[i]
 		if len(e.Key) > 65535 {
@@ -456,8 +580,9 @@ func (l *Log) AppendBatch(wallUnixNs int64, entries []Entry) error {
 		if _, err := buf.Write(body); err != nil {
 			return err
 		}
+		pendingDigest = extendLogicalDigest(pendingDigest, inner)
 		if seq%checkpointStride == 0 {
-			pendingCheckpoints = append(pendingCheckpoints, checkpoint{seq: seq, offset: int64(buf.Len())})
+			pendingCheckpoints = append(pendingCheckpoints, checkpoint{seq: seq, offset: int64(buf.Len()), digest: pendingDigest})
 		}
 	}
 	startOffset, err := l.f.Seek(0, io.SeekEnd)
@@ -467,6 +592,7 @@ func (l *Log) AppendBatch(wallUnixNs int64, entries []Entry) error {
 	if _, err := l.f.Write(buf.Bytes()); err != nil {
 		return err
 	}
+	l.logicalDigest = pendingDigest
 	l.maxSeq = startSeq + uint64(len(entries))
 	for i := range pendingCheckpoints {
 		pendingCheckpoints[i].offset += startOffset
@@ -493,6 +619,7 @@ func (l *Log) AppendIntents(intents []Intent) error {
 	startSeq := l.maxSeq
 	var buf bytes.Buffer
 	var pendingCheckpoints []checkpoint
+	pendingDigest := l.logicalDigest
 	for i := range intents {
 		intent := &intents[i]
 		record := Record{
@@ -525,8 +652,9 @@ func (l *Log) AppendIntents(intents []Intent) error {
 		if _, err := buf.Write(body); err != nil {
 			return err
 		}
+		pendingDigest = extendLogicalDigest(pendingDigest, inner)
 		if record.Seq%checkpointStride == 0 {
-			pendingCheckpoints = append(pendingCheckpoints, checkpoint{seq: record.Seq, offset: int64(buf.Len())})
+			pendingCheckpoints = append(pendingCheckpoints, checkpoint{seq: record.Seq, offset: int64(buf.Len()), digest: pendingDigest})
 		}
 	}
 	startOffset, err := l.f.Seek(0, io.SeekEnd)
@@ -536,6 +664,7 @@ func (l *Log) AppendIntents(intents []Intent) error {
 	if _, err := l.f.Write(buf.Bytes()); err != nil {
 		return err
 	}
+	l.logicalDigest = pendingDigest
 	l.maxSeq = startSeq + uint64(len(intents))
 	for i := range pendingCheckpoints {
 		pendingCheckpoints[i].offset += startOffset
@@ -725,6 +854,7 @@ func (l *Log) appendRecords(records []Record) error {
 	startSeq := l.maxSeq
 	var buf bytes.Buffer
 	var pendingCheckpoints []checkpoint
+	pendingDigest := l.logicalDigest
 	for i := range records {
 		record := records[i]
 		wantSeq := startSeq + uint64(i+1)
@@ -748,8 +878,9 @@ func (l *Log) appendRecords(records []Record) error {
 		if _, err := buf.Write(body); err != nil {
 			return err
 		}
+		pendingDigest = extendLogicalDigest(pendingDigest, inner)
 		if record.Seq%checkpointStride == 0 {
-			pendingCheckpoints = append(pendingCheckpoints, checkpoint{seq: record.Seq, offset: int64(buf.Len())})
+			pendingCheckpoints = append(pendingCheckpoints, checkpoint{seq: record.Seq, offset: int64(buf.Len()), digest: pendingDigest})
 		}
 	}
 	startOffset, err := l.f.Seek(0, io.SeekEnd)
@@ -759,6 +890,7 @@ func (l *Log) appendRecords(records []Record) error {
 	if _, err := l.f.Write(buf.Bytes()); err != nil {
 		return err
 	}
+	l.logicalDigest = pendingDigest
 	l.maxSeq = records[len(records)-1].Seq
 	for i := range pendingCheckpoints {
 		pendingCheckpoints[i].offset += startOffset
@@ -770,9 +902,9 @@ func (l *Log) appendRecords(records []Record) error {
 	return nil
 }
 
-func (l *Log) addCheckpoint(seq uint64, offset int64) {
+func (l *Log) addCheckpoint(seq uint64, offset int64, digest [32]byte) {
 	if seq%checkpointStride == 0 {
-		l.checkpoints = append(l.checkpoints, checkpoint{seq: seq, offset: offset})
+		l.checkpoints = append(l.checkpoints, checkpoint{seq: seq, offset: offset, digest: digest})
 	}
 }
 
@@ -901,6 +1033,15 @@ func encodeInner(seq uint64, wallUnixNs int64, op byte, key, encoded []byte) ([]
 		}
 	}
 	return encodeRecordInner(record)
+}
+
+func extendLogicalDigest(current [32]byte, recordInner []byte) [32]byte {
+	h := sha256.New()
+	_, _ = h.Write(current[:])
+	_, _ = h.Write(recordInner)
+	var next [32]byte
+	copy(next[:], h.Sum(nil))
+	return next
 }
 
 func encodeRecordInner(record Record) ([]byte, error) {

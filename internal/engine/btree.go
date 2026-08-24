@@ -137,14 +137,15 @@ func (t *BTree) GetUsingRoot(root uint64, key []byte) (val []byte, ok bool, err 
 		}
 		switch page[5] {
 		case btreeKindLeaf:
-			ld, err := parseLeafPage(page)
+			v, ok, err := lookupLeafValue(page, key)
+			if ok {
+				v = bytes.Clone(v)
+			}
 			release()
 			if err != nil {
 				return nil, false, err
 			}
-			i := leafKeyIndex(ld.keys, key)
-			if i < len(ld.keys) && bytes.Equal(ld.keys[i], key) {
-				v := ld.vals[i]
+			if ok {
 				if isOverflowStub(v) {
 					logLen, firstPage := decodeOverflowStub(v)
 					v, err = t.readOverflowChain(firstPage, logLen)
@@ -162,13 +163,12 @@ func (t *BTree) GetUsingRoot(root uint64, key []byte) (val []byte, ok bool, err 
 			}
 			return nil, false, nil
 		case btreeKindInternal:
-			in, err := parseInternalPage(page)
+			child, err := lookupInternalChild(page, key)
 			release()
 			if err != nil {
 				return nil, false, err
 			}
-			ci := internalPickChild(in.keys, key)
-			pid = in.ptrs[ci]
+			pid = child
 		default:
 			release()
 			return nil, false, ErrCorruptTree

@@ -377,9 +377,10 @@ func TestEmbedding_SearchByEmbedding(t *testing.T) {
 	// Search for vector closest to [1,0,0].
 	query := []float32{1, 0, 0}
 	var results []hexxladb.EmbeddingSearchResult
+	var stats hexxladb.EmbeddingSearchStats
 	err = db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		results, err = tx.SearchByEmbedding(query, hexxladb.EmbeddingSearchConfig{MaxResults: 3})
+		results, stats, err = tx.SearchByEmbeddingWithStats(query, hexxladb.EmbeddingSearchConfig{MaxResults: 3})
 		return err
 	})
 	if err != nil {
@@ -387,6 +388,12 @@ func TestEmbedding_SearchByEmbedding(t *testing.T) {
 	}
 	if len(results) != 3 {
 		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	if stats.Path != hexxladb.EmbeddingSearchPathHNSW {
+		t.Fatalf("search path=%q, want HNSW", stats.Path)
+	}
+	if stats.EfSearch != 100 {
+		t.Fatalf("EfSearch=%d, want dimension-aware minimum 100", stats.EfSearch)
 	}
 	// First result should be coord[0] (exact match).
 	if results[0].Coord != coords[0] {
@@ -419,6 +426,47 @@ func TestEmbedding_SearchByEmbedding_EmptyDB(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestEmbedding_SearchByEmbeddingWithStats_NoIndex(t *testing.T) {
+	t.Parallel()
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "empty.db"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	err = db.View(func(tx *hexxladb.Tx) error {
+		results, stats, err := tx.SearchByEmbeddingWithStats([]float32{1}, hexxladb.EmbeddingSearchConfig{})
+		if err != nil {
+			return err
+		}
+		if len(results) != 0 || stats.Path != hexxladb.EmbeddingSearchPathNone {
+			t.Fatalf("empty search: results=%#v path=%q", results, stats.Path)
+		}
+		_, _, err = tx.SearchByEmbeddingWithStats([]float32{1}, hexxladb.EmbeddingSearchConfig{EfSearch: -1})
+		if !errors.Is(err, hexxladb.ErrInvalidArgument) {
+			t.Fatalf("empty search invalid EfSearch: want ErrInvalidArgument, got %v", err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEmbedding_SearchByEmbeddingRejectsInvalidEfSearch(t *testing.T) {
+	t.Parallel()
+	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
+	for _, efSearch := range []int{-1, 10_001} {
+		err := db.View(func(tx *hexxladb.Tx) error {
+			_, err := tx.SearchByEmbedding([]float32{1, 0, 0}, hexxladb.EmbeddingSearchConfig{EfSearch: efSearch})
+			return err
+		})
+		if !errors.Is(err, hexxladb.ErrInvalidArgument) {
+			t.Fatalf("EfSearch=%d: want ErrInvalidArgument, got %v", efSearch, err)
+		}
 	}
 }
 

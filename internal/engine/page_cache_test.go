@@ -20,8 +20,8 @@ func makeTestCache(budgetBytes int64) *pageCache {
 
 func TestPageCacheGetMiss(t *testing.T) {
 	c := makeTestCache(64 << 10)
-	if got := c.get(42); got != nil {
-		t.Fatalf("expected nil on miss, got %v", got)
+	if c.get(42, make([]byte, 4096)) {
+		t.Fatal("expected cache miss")
 	}
 	_, misses := c.stats()
 	if misses != 1 {
@@ -34,8 +34,8 @@ func TestPageCacheSetAndGet(t *testing.T) {
 	data := bytes.Repeat([]byte{0xAB}, 4096)
 	c.set(1, data)
 
-	got := c.get(1)
-	if got == nil {
+	got := make([]byte, len(data))
+	if !c.get(1, got) {
 		t.Fatal("expected cache hit, got nil")
 	}
 	if !bytes.Equal(got, data) {
@@ -51,8 +51,8 @@ func TestPageCacheInvalidate(t *testing.T) {
 	c := makeTestCache(64 << 10)
 	c.set(7, bytes.Repeat([]byte{0x01}, 4096))
 	c.invalidate(7)
-	if got := c.get(7); got != nil {
-		t.Fatal("expected nil after invalidate, got data")
+	if c.get(7, make([]byte, 4096)) {
+		t.Fatal("expected miss after invalidate")
 	}
 }
 
@@ -61,14 +61,14 @@ func TestPageCacheReturnsIndependentCopy(t *testing.T) {
 	orig := bytes.Repeat([]byte{0x55}, 4096)
 	c.set(3, orig)
 
-	got := c.get(3)
-	if got == nil {
+	got := make([]byte, len(orig))
+	if !c.get(3, got) {
 		t.Fatal("expected hit")
 	}
 	// Mutate the returned copy; the cache must be unaffected.
 	got[0] = 0xFF
-	got2 := c.get(3)
-	if got2 == nil {
+	got2 := make([]byte, len(orig))
+	if !c.get(3, got2) {
 		t.Fatal("expected second hit")
 	}
 	if got2[0] != 0x55 {
@@ -81,8 +81,8 @@ func TestPageCacheOverwrite(t *testing.T) {
 	c.set(5, bytes.Repeat([]byte{0x01}, 4096))
 	newData := bytes.Repeat([]byte{0x02}, 4096)
 	c.set(5, newData)
-	got := c.get(5)
-	if got == nil {
+	got := make([]byte, len(newData))
+	if !c.get(5, got) {
 		t.Fatal("expected hit after overwrite")
 	}
 	if !bytes.Equal(got, newData) {
@@ -127,7 +127,8 @@ func TestPageCacheGhostPromotion(t *testing.T) {
 	c.set(2, p2)
 
 	// Page 1 is a ghost — get returns nil.
-	if got := c.get(1); got != nil {
+	got := make([]byte, pageSize)
+	if c.get(1, got) {
 		// This is acceptable if the cache chose to keep page 1 hot and evict page 2.
 		// Just verify we don't return stale data.
 		if !bytes.Equal(got, p1) {
@@ -137,8 +138,7 @@ func TestPageCacheGhostPromotion(t *testing.T) {
 
 	// Re-populate page 1 — if it was a ghost this promotes it to hot.
 	c.set(1, p1)
-	got := c.get(1)
-	if got == nil {
+	if !c.get(1, got) {
 		t.Fatal("expected hit after re-population")
 	}
 	if !bytes.Equal(got, p1) {
@@ -159,16 +159,31 @@ func TestPageCacheMultipleShardsNoRace(t *testing.T) {
 		base := uint64(g * n)
 		go func() {
 			defer func() { done <- struct{}{} }()
+			buf := make([]byte, 4096)
 			for i := range uint64(n) {
 				pageID := base + i
 				c.set(pageID, bytes.Repeat([]byte{byte(pageID & 0xFF)}, 4096))
-				_ = c.get(pageID)
+				_ = c.get(pageID, buf)
 				c.invalidate(pageID)
 			}
 		}()
 	}
 	for range 4 {
 		<-done
+	}
+}
+
+func TestPageCacheGetDoesNotAllocate(t *testing.T) {
+	c := makeTestCache(64 << 10)
+	data := bytes.Repeat([]byte{0xAB}, 4096)
+	c.set(1, data)
+	dst := make([]byte, len(data))
+	if got := testing.AllocsPerRun(100, func() {
+		if !c.get(1, dst) {
+			t.Fatal("expected cache hit")
+		}
+	}); got != 0 {
+		t.Fatalf("cache hit allocations=%v, want 0", got)
 	}
 }
 

@@ -20,6 +20,28 @@ type EmbeddingSearchConfig struct {
 	MaxResults int
 	// MinScore filters results below this similarity threshold (0 = no filter).
 	MinScore float64
+	// EfSearch controls HNSW query breadth. Zero selects a bounded
+	// dimension-aware default; larger values trade latency and allocation for
+	// recall. Values above 10000 are rejected.
+	EfSearch int
+}
+
+// EmbeddingSearchPath identifies the execution path used for one vector query.
+type EmbeddingSearchPath string
+
+const (
+	// EmbeddingSearchPathNone means no vector index was configured.
+	EmbeddingSearchPathNone EmbeddingSearchPath = "none"
+	// EmbeddingSearchPathHNSW means the persisted approximate graph served the query.
+	EmbeddingSearchPathHNSW EmbeddingSearchPath = "hnsw"
+	// EmbeddingSearchPathFlat means no graph existed and the exact flat scan served the query.
+	EmbeddingSearchPathFlat EmbeddingSearchPath = "flat"
+)
+
+// EmbeddingSearchStats describes how one vector query was served.
+type EmbeddingSearchStats struct {
+	Path     EmbeddingSearchPath
+	EfSearch int
 }
 
 // EmbeddingSearchResult is a single result from [Tx.SearchByEmbedding].
@@ -32,37 +54,53 @@ type EmbeddingSearchResult struct {
 // Uses HNSW graph when available, falling back to flat scan over the embed/ keyspace.
 // Returns empty results if no embeddings have been stored yet (dimension not configured).
 func (tx *Tx) SearchByEmbedding(vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, error) {
+	results, _, err := tx.SearchByEmbeddingWithStats(vec, cfg)
+	return results, err
+}
+
+// SearchByEmbeddingWithStats is [Tx.SearchByEmbedding] with execution-path
+// observability for profiling and operational metrics.
+func (tx *Tx) SearchByEmbeddingWithStats(vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, EmbeddingSearchStats, error) {
 	if tx == nil || tx.db == nil {
-		return nil, ErrClosed
+		return nil, EmbeddingSearchStats{}, ErrClosed
 	}
 	if tx.db.activeEng() == nil {
-		return nil, ErrDatabaseClosed
+		return nil, EmbeddingSearchStats{}, ErrDatabaseClosed
 	}
 	if err := validateEmbeddingVector(vec); err != nil {
-		return nil, err
+		return nil, EmbeddingSearchStats{}, err
+	}
+	if cfg.EfSearch < 0 || cfg.EfSearch > 10_000 {
+		return nil, EmbeddingSearchStats{}, fmt.Errorf("%w: EfSearch must be between 0 and 10000", ErrInvalidArgument)
 	}
 	dim := tx.db.eng.EmbeddingDim()
 	if dim == 0 {
-		return nil, nil // no embeddings stored yet
+		return nil, EmbeddingSearchStats{Path: EmbeddingSearchPathNone}, nil
 	}
 	if uint16(len(vec)) != dim { //nolint:gosec // len(vec) bounded by uint16 max
-		return nil, fmt.Errorf("%w: want %d, got %d", ErrEmbeddingDimension, dim, len(vec))
+		return nil, EmbeddingSearchStats{}, fmt.Errorf("%w: want %d, got %d", ErrEmbeddingDimension, dim, len(vec))
 	}
 	maxResults := cfg.MaxResults
 	if maxResults <= 0 {
 		maxResults = 10
 	}
 	metric := tx.db.eng.EmbeddingMetric()
+	efSearch := cfg.EfSearch
+	if efSearch == 0 {
+		efSearch = max(maxResults*2, min(max(len(vec), 100), 400))
+	}
+	efSearch = max(efSearch, maxResults)
 
 	// Try HNSW graph first.
-	if results, used, err := tx.searchHNSW(vec, maxResults, cfg.MinScore, metric); err != nil {
-		return nil, err
+	if results, used, err := tx.searchHNSW(vec, maxResults, cfg.MinScore, efSearch, metric); err != nil {
+		return nil, EmbeddingSearchStats{}, err
 	} else if used {
-		return results, nil
+		return results, EmbeddingSearchStats{Path: EmbeddingSearchPathHNSW, EfSearch: efSearch}, nil
 	}
 
 	// Flat-scan fallback.
-	return tx.flatScanEmbeddings(vec, maxResults, cfg.MinScore, metric)
+	results, err := tx.flatScanEmbeddings(vec, maxResults, cfg.MinScore, metric)
+	return results, EmbeddingSearchStats{Path: EmbeddingSearchPathFlat}, err
 }
 
 // flatScanCandidate pairs a coordinate with its embedding vector.
@@ -124,19 +162,17 @@ func flatScanParallelScore(candidates []flatScanCandidate, vec []float32, maxRes
 		if start >= end {
 			continue
 		}
-		wg.Add(1)
-		go func(workerIdx int, chunk []flatScanCandidate) {
-			defer wg.Done()
+		wg.Go(func() {
 			var localHeap searchMinHeap
-			for _, c := range chunk {
+			for _, c := range candidates[start:end] {
 				s := engine.Similarity(vec, c.vec, metric)
 				if minScore != 0 && s < minScore {
 					continue
 				}
 				pushOrReplace(&localHeap, searchHit{coord: c.coord, score: s}, maxResults)
 			}
-			workerResults[workerIdx] = []searchHit(localHeap)
-		}(w, candidates[start:end])
+			workerResults[w] = []searchHit(localHeap)
+		})
 	}
 	wg.Wait()
 
@@ -177,7 +213,7 @@ func heapToResults(h searchMinHeap, _ int) []EmbeddingSearchResult {
 
 // searchHNSW attempts HNSW search. Returns (results, true, nil) if graph exists,
 // or (nil, false, nil) if no graph is available (caller should fall back to flat scan).
-func (tx *Tx) searchHNSW(vec []float32, maxResults int, minScore float64, metric engine.DistanceMetric) ([]EmbeddingSearchResult, bool, error) {
+func (tx *Tx) searchHNSW(vec []float32, maxResults int, minScore float64, efSearch int, metric engine.DistanceMetric) ([]EmbeddingSearchResult, bool, error) {
 	stor := &txHNSWStorage{tx: tx}
 	_, hasMeta, err := stor.GetHNSWMeta()
 	if err != nil {
@@ -187,9 +223,6 @@ func (tx *Tx) searchHNSW(vec []float32, maxResults int, minScore float64, metric
 		return nil, false, nil // no graph — fall back to flat scan
 	}
 	g := hnsw.NewGraph(stor, metric)
-	efSearch := max(
-		// reasonable default: 2× k
-		maxResults*2, 100)
 	hnswResults, err := g.Search(vec, maxResults, efSearch)
 	if err != nil {
 		return nil, false, err

@@ -112,13 +112,14 @@ Use [`RenderHexGrid`](../../hex_render.go) for bounded diagnostic rendering. It 
 
 Embeddings are optional. Configure a dimension and distance metric with [`Options`](../../options.go), or allow the first write to establish the dimension.
 
-| API                                                                                 | Use                                                            |
-| ----------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| [`Tx.PutEmbedding`, `Tx.GetEmbedding`, `Tx.DeleteEmbedding`](../../tx_embedding.go) | Manage one vector per cell.                                    |
-| [`Tx.SearchByEmbedding`](../../embedding_search.go)                                 | HNSW-assisted nearest-neighbor search with flat-scan fallback. |
-| [`Tx.ReindexEmbeddings`](../../embedding_reindex.go)                                | Recompute stored vectors in a transaction.                     |
+| API                                                                                 | Use                                                                                       |
+| ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| [`Tx.PutEmbedding`, `Tx.GetEmbedding`, `Tx.DeleteEmbedding`](../../tx_embedding.go) | Manage one vector per cell.                                                               |
+| [`Tx.SearchByEmbedding`](../../embedding_search.go)                                 | HNSW-assisted nearest-neighbor search with flat-scan fallback.                            |
+| [`Tx.SearchByEmbeddingWithStats`](../../embedding_search.go)                        | The same search plus the selected HNSW/flat path and effective HNSW query breadth.        |
+| [`Tx.ReindexEmbeddings`](../../embedding_reindex.go)                                | Recompute stored vectors in a transaction.                                                |
 
-`CellQuery.Embedding` and `CellSearchConfig.Embedding` integrate vector similarity into the query and search paths. HexxlaDB remains usable without embeddings through explicit coordinates and indexed metadata.
+`EmbeddingSearchConfig.EfSearch` trades HNSW latency and allocation for recall. Zero uses a bounded dimension-aware default; explicit values from 1 through 10,000 are accepted and are raised to at least `MaxResults`. `EmbeddingSearchStats` exposes the effective value. `CellQuery.Embedding` and `CellSearchConfig.Embedding` integrate vector similarity into the query and search paths. HexxlaDB remains usable without embeddings through explicit coordinates and indexed metadata.
 
 ## Derived super-hex occupancy
 
@@ -144,10 +145,12 @@ Pruning does not shrink the primary file. Use compaction after pruning when disk
 
 | API                                                                          | Use                                                    |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------ |
-| [`DB.ReadChangelogSince`, `DB.ReadChangelogFiltered`](../../db_changelog.go) | Consume the optional at-least-once logical changefeed.         |
+| [`DB.ReadChangelogSince`, `DB.ReadChangelogFiltered`](../../db_changelog.go) | Read the optional at-least-once logical changefeed.             |
+| [Durable consumer cursor methods](../../changelog_consumers.go)              | Register, compare-and-advance, inspect, and delete named cursors. |
 | [`DB.HealthCheck`](../../health.go)                                          | Validate database structure and report counts.                 |
 | [`DB.GroupWALStats`](../../db.go)                                            | Observe group-WAL batching.                                    |
 | [`DB.WriteStats`](../../write_stats.go)                                      | Observe cumulative write contention and phase timing.         |
+| [`DB.BackupTo`](../../backup.go)                                             | Capture a consistent primary/WAL/changelog recovery set.       |
 | [`DB.StorageStats`](../../storage_stats.go)                                  | Measure physical, reachable, and reclaimable storage.         |
 | [`DB.Compact`, `CompactTo`](../../compact.go)                                | Rewrite live keys into a new compact file.                     |
 | [`DB.CompactWithOptions`, `CompactToWithOptions`](../../compact.go)          | Bound copy batches and receive durable progress checkpoints.  |
@@ -180,6 +183,7 @@ Do not compare error strings.
 - [`examples/spatial_algorithms`](../../examples/spatial_algorithms) — FOV, LOD, Voronoi, Dijkstra, BFS, and graph-aware context.
 - [`examples/llm_context_engine`](../../examples/llm_context_engine) — embedding-backed retrieval and prompt assembly; requires Ollama with `all-minilm`.
 - [`examples/performance_evidence`](../../examples/performance_evidence) — controlled evidence collection for spatial algorithms and super-hex occupancy.
+- [`examples/vector_scale_evidence`](../../examples/vector_scale_evidence) — bounded HNSW build, recall, reopen, churn, memory, and disk evidence.
 
 Examples demonstrate workflows; they are not expected to call every exported symbol.
 

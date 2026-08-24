@@ -2,7 +2,6 @@ package hnsw
 
 import (
 	"math"
-	"math/rand/v2"
 	"slices"
 	"sort"
 
@@ -72,7 +71,7 @@ func (g *Graph) Insert(coord lattice.PackedCoord, vec []float32) error {
 		return g.initSingleNodeGraph(coord, &Meta{M: DefaultM, EfC: DefaultEfConstruction, MaxLayer: 0, Count: 1})
 	}
 
-	nodeLayer := g.randomLayer(meta.M)
+	nodeLayer := layerForCoord(coord, meta.M)
 	newNode := &Node{Coord: coord, MaxLayer: nodeLayer, Neighbors: make([][]lattice.PackedCoord, int(nodeLayer)+1)}
 
 	entryVec, ok, err := g.s.GetEmbeddingVec(entryCoord)
@@ -155,10 +154,19 @@ func (g *Graph) handleExistingNode(coord, entryCoord lattice.PackedCoord, meta *
 	return entryCoord, meta, nil
 }
 
-// randomLayer generates a random layer for a new node using the HNSW distribution.
-func (g *Graph) randomLayer(m uint16) uint8 {
+// layerForCoord deterministically maps a coordinate onto the HNSW exponential
+// layer distribution. Persisted graph construction is therefore repeatable for
+// the same insertion order without storing PRNG state.
+func layerForCoord(coord lattice.PackedCoord, m uint16) uint8 {
+	x := coord[0] ^ (coord[1]<<32 | coord[1]>>32)
+	x += 0x9e3779b97f4a7c15
+	x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9
+	x = (x ^ (x >> 27)) * 0x94d049bb133111eb
+	x ^= x >> 31
+	// Use the high 53 bits and add one so log never sees zero.
+	u := float64((x>>11)+1) / float64((uint64(1)<<53)+1)
 	mL := 1.0 / math.Log(float64(m))
-	return uint8(min(int(-math.Log(rand.Float64())*mL), 255)) //nolint:gosec // G115
+	return uint8(min(int(-math.Log(u)*mL), 255)) //nolint:gosec // bounded to uint8
 }
 
 // greedyDescend performs greedy traversal from startLayer down to stopLayer (exclusive).

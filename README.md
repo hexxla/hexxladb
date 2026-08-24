@@ -9,7 +9,6 @@
 [![CI](https://github.com/hexxla/hexxladb/actions/workflows/ci.yml/badge.svg)](https://github.com/hexxla/hexxladb/actions/workflows/ci.yml)
 [![Integration](https://github.com/hexxla/hexxladb/actions/workflows/integration.yml/badge.svg)](https://github.com/hexxla/hexxladb/actions/workflows/integration.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/hexxla/hexxladb.svg)](https://pkg.go.dev/github.com/hexxla/hexxladb)
-[![Go Report Card](https://goreportcard.com/badge/github.com/hexxla/hexxladb)](https://goreportcard.com/report/github.com/hexxla/hexxladb)
 [![Go 1.26](https://img.shields.io/badge/go-1.26-00ADD8?logo=go)](https://go.dev/doc/go1.26)
 [![Version](https://img.shields.io/github/v/tag/hexxla/hexxladb?label=version&color=7c3aed)](https://github.com/hexxla/hexxladb/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -18,7 +17,7 @@
 
 ---
 
-HexxlaDB is an embedded Go library for structured, spatially-organised records. Items live at hex grid coordinates — retrieval expands outward in rings, stays within a budget, and respects validity windows. Every record carries provenance, confidence, and temporal bounds. Contradictions are stored as seams, not silently overwritten.
+HexxlaDB is an embedded Go library for structured, spatially-organised records. Items live at hex grid coordinates — retrieval expands outward in rings, stays within a budget, and can respect validity windows. Cells carry provenance, confidence, and optional temporal bounds. Contradictions and supersessions are stored explicitly as seams.
 
 Single binary, zero network dependencies, no daemon.
 
@@ -26,14 +25,14 @@ Single binary, zero network dependencies, no daemon.
 
 ## How it works
 
-Cells sit at `(q, r)` hex coordinates. Related records sit nearby. `LoadContext` walks outward ring by ring from seed coordinates, filters superseded and low-confidence content, and returns a budget-bounded slice — a token window for a prompt, a tile range for a game engine, a context pack for an audit query.
+Cells sit at `(q, r)` hex coordinates. Related records sit nearby. `LoadContext` walks outward from seed coordinates, applies caller-selected assembly options such as supersession resolution and seam inclusion, and returns a budget-bounded context pack.
 
 | Primitive     | Description                                                                   |
 | ------------- | ----------------------------------------------------------------------------- |
 | **Cell**      | A record at `(q, r)` — content, tags, provenance, confidence, validity window |
 | **Seam**      | Conflict or supersession marker linking two cells                             |
 | **Edge**      | Directed relationship between cells (graph overlay)                           |
-| **Facet**     | Summary or annotation cryptographically bound to a cell                       |
+| **Facet**     | Summary or annotation with a source-content hash checked by `UpdateFacet`      |
 | **Embedding** | Vector stored alongside a cell for HNSW similarity search                     |
 
 ---
@@ -86,42 +85,61 @@ if err := db.Update(func(tx *hexxladb.Tx) error {
 ### Search by meaning
 
 ```go
-db.View(func(tx *hexxladb.Tx) error {
-    results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
+var results []hexxladb.CellQueryResult
+if err := db.View(func(tx *hexxladb.Tx) error {
+    var err error
+    results, err = tx.QueryCells(ctx, hexxladb.CellQuery{
         Embedding:     queryVector,
         ExcludeTags:   []string{"preference"},
         MinConfidence: 0.5,
         MaxResults:    8,
         SortBy:        hexxladb.SortByScore,
     })
-    // results: ranked cells with score, content, tags, provenance
-})
+    return err
+}); err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### Assemble a token-budgeted context window
 
 ```go
-db.View(func(tx *hexxladb.Tx) error {
-    pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
-        Seeds:   []hexxladb.Coord{results[0].Cell.Coord, results[1].Cell.Coord},
-        MaxRing: 2,
+if len(results) == 0 {
+    log.Fatal("no matching cells")
+}
+seeds := []hexxladb.Coord{results[0].Cell.Coord}
+if len(results) > 1 {
+    seeds = append(seeds, results[1].Cell.Coord)
+}
+
+var pack hexxladb.ContextPack
+if err := db.View(func(tx *hexxladb.Tx) error {
+    var err error
+    pack, err = tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+        Seeds:     seeds,
+        MaxRing:   2,
         MaxTokens: 4096,
         Assembly: hexxladb.LoadContextBudgetConfig{
             FilterSuperseded: true,
-            IncludeSeams:     true, // surface contradictions for the LLM
+            IncludeSeams:     true,
         },
     })
-    // pack.Cells: ordered context within token budget
-})
+    return err
+}); err != nil {
+    log.Fatal(err)
+}
+log.Printf("assembled %d cells", len(pack.Cells))
 ```
 
 ### Track contradictions and supersessions
 
 ```go
-db.Update(func(tx *hexxladb.Tx) error {
+if err := db.Update(func(tx *hexxladb.Tx) error {
     // Mark that newRecord supersedes oldRecord (e.g. updated belief, revised fact, preference change)
     return tx.MarkSupersedes(newCoord, oldCoord, "revised based on new evidence")
-})
+}); err != nil {
+    log.Fatal(err)
+}
 ```
 
 > All in-process, no network calls. Embed → search → filter → assemble — one library.
@@ -132,11 +150,11 @@ db.Update(func(tx *hexxladb.Tx) error {
 
 The core primitives — spatial locality, provenance, contradiction tracking, budget-bounded retrieval, MVCC snapshots, hybrid search — compose into patterns that are awkward to build on top of general-purpose stores.
 
-- **Agent and LLM memory** — store conversation turns, facts, and preferences at hex coordinates; retrieve token-budgeted context packs ranked by semantic similarity and recency; surface contradictions to the model automatically
+- **Agent and LLM memory** — store conversation turns, facts, and preferences at hex coordinates; retrieve token-budgeted context packs ranked by semantic similarity and recency; include stored contradictions when requested
 - **Game world state** — hex-native tile storage with FOV for visibility queries, Dijkstra pathfinding over weighted cell edges, LOD for distant regions, MVCC snapshots for save/rollback and replay
 - **Knowledge graphs with temporal validity** — facts that expire or get superseded; belief revision via seams; time-travel to any past snapshot with `ViewAt`
 - **Spatial annotation layers** — sensor readings, events, or annotations at coordinates; proximity queries via ring walks; confidence-weighted retrieval for noisy data
-- **Audit trails and event sourcing** — append-only changelog, `SnapshotDiff` for incremental CDC, MVCC pinning for point-in-time views; all writes are versioned
+- **Audit trails and event sourcing** — optional recoverable at-least-once changelog with durable named consumer cursors, `SnapshotDiff` for incremental CDC, and MVCC-enabled typed writes for point-in-time views
 - **Personal knowledge management** — notes arranged spatially by topic proximity; contradiction surfacing between linked notes; supersession chains for evolving understanding
 - **Simulation state** — reproducible snapshots between runs, diff for regression detection, spatial queries for proximity-based interactions
 
@@ -158,6 +176,8 @@ The core primitives — spatial locality, provenance, contradiction tracking, bu
 | Embedded (no network)              |    ✓     |     —      |     —     |     ✓      |
 | Encryption at rest                 |    ✓     |   varies   |     —     |     ✓      |
 
+Encryption scope matters: primary data pages use AES-256-XTS for confidentiality but are not cryptographically authenticated. Encrypted WAL records use a keyed MAC, and encrypted changelog frames use XChaCha20-Poly1305. See [`ENCRYPTION.md`](docs/hexxladb/ENCRYPTION.md) for the threat model.
+
 ---
 
 ## API
@@ -168,14 +188,17 @@ Public API guide: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE
 | ------------------------------------------------------- | ----------------------------------------------------------------------- |
 | `PutCell` / `GetCell` / `DeleteCell`                    | Store, retrieve, or tombstone a memory                                  |
 | `PutEmbedding` / `SearchByEmbedding`                    | Store a vector; HNSW nearest-neighbor search                            |
+| `SearchByEmbeddingWithStats`                            | Search with the selected HNSW/flat path and effective breadth           |
 | `QueryCells` / `SearchCells`                            | Hybrid ANN+filter search or multi-term lexical search                   |
 | `LoadContext` / `LoadContextFOV` / `LoadContextVoronoi` | Token-budgeted context assembly — ring walk, FOV, or multi-seed Voronoi |
 | `FindEdgePath` / `WalkEdges`                            | Weighted shortest path and BFS reachability over cell edges             |
 | `NewSuperHexSummaryIndex` + summary methods             | Rebuildable aperture-7 occupancy summaries maintained from changelog    |
 | `MarkConflict` / `MarkSupersedes` / `FindSeams`         | Record and retrieve contradictions and supersessions                    |
-| `ViewAt` / `SnapshotDiff`                               | MVCC time-travel and change detection                                   |
-| `WriteStats` / `GroupWALStats`                         | Observe write contention, phase timing, and WAL batching                |
-| `StorageStats` / `Compact` / `HealthCheck`              | Space accounting, copy-compaction, and structural integrity checks      |
+| `ViewAt` / `ViewAtTime` / `SnapshotDiff`                | MVCC time-travel and change detection                                   |
+| `ReadChangelogSince` / durable consumer cursor methods  | Consume and checkpoint the optional recoverable at-least-once changefeed |
+| `WriteStats` / `GroupWALStats`                          | Observe write contention, phase timing, and WAL batching                |
+| `BackupTo` / `StorageStats` / `CompactWithOptions`      | Back up an open database and manage physical storage                     |
+| `HealthCheck`                                           | Validate visible records and secondary indexes                          |
 
 ---
 
@@ -185,7 +208,7 @@ Public API guide: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE
 task bench-api
 ```
 
-_Intel Core i9-14900HX · 16 GB · Go 1.26 · Linux · `-benchtime=3s -count=1`_
+_Intel Core i9-14900HX · 16 GB · Linux. API benchmark rows: Go 1.26, `-benchtime=3s -count=1`; vector-scale rows: Go 1.27.0, seeded aggregate workload._
 
 ### Reads and ring traversal
 
@@ -228,6 +251,8 @@ _Intel Core i9-14900HX · 16 GB · Go 1.26 · Linux · `-benchtime=3s -count=1`_
 | --------------------------------- | --------- | ------------------------------------------------------ |
 | `QueryCells` embedding (500×32d)  | ~13 ms    | Full HNSW ANN + post-filter pipeline                   |
 | `QueryCells` embedding (500×128d) | ~11 ms    | Higher dim; fewer graph candidates needed              |
+| HNSW search (10k×32d, recall@10=.992)  | ~5.8 ms p50  | 4 KiB pages, 64 MiB cache, `ef_search=100`          |
+| HNSW search (10k×384d, recall@10=.956) | ~32.8 ms p50 | 4 KiB pages, 64 MiB cache, `ef_search=384`          |
 | `SearchCells` lexical (2k cells)  | ~28–41 ms | Full-scan scorer; pre-filter with tags or source first |
 
 ### MVCC and maintenance
@@ -244,7 +269,7 @@ _Intel Core i9-14900HX · 16 GB · Go 1.26 · Linux · `-benchtime=3s -count=1`_
 
 ### Performance context
 
-HexxlaDB's "write" and "read" are not equivalent to a raw KV store operation. A `PutCell` writes a primary record, 3–4 secondary index rows (source, tag, validity), and a durable changefeed intent in one engine transaction, then projects that intent to the sidecar changelog — comparable to a multi-index SQL insert with an outbox. A `GetCell` deserialises a structured record (provenance, tags, validity window) on top of the B+ tree lookup. The ~5 ms single-write latency reflects this; `BatchPutCells` amortises the fsync to ~0.09 ms/cell.
+HexxlaDB's "write" and "read" are not equivalent to raw KV operations. `PutCell` writes a structured primary record and every applicable source, tag, and validity index row. When the changelog is enabled, the same authoritative commit also stores recoverable outbox intent before projecting it to the sidecar. `GetCell` deserialises provenance, tags, and validity data on top of the B+ tree lookup. On the reference run above, individual cell writes measured about 0.53–0.57 ms and `BatchPutCells` amortised the commit barrier to about 0.063 ms per cell.
 
 The context assembly operations (`LoadContext`, `LoadContextFOV`, `LoadContextVoronoi`) have no direct equivalent in general KV stores — they replace what would otherwise be multiple sequential scans, scoring passes, and manual budget accounting in application code.
 
@@ -257,6 +282,7 @@ The context assembly operations (`LoadContext`, `LoadContextFOV`, `LoadContextVo
 | [Conversational Memory](examples/conversational_memory/) | `task demo`         | Cells, seams, tags, MVCC, queries, context, FOV, pathfinding |
 | [LLM Context Engine](examples/llm_context_engine/)       | `task demo-llm`     | Ollama embeddings, semantic search, supersession, FOV        |
 | [Spatial Algorithms](examples/spatial_algorithms/)       | `task demo-spatial` | FOV, LOD, Voronoi, Dijkstra, BFS — side-by-side              |
+| [Vector Scale Evidence](examples/vector_scale_evidence/) | `task evidence-vector-scale` | HNSW build, recall, reopen, churn, memory, and disk   |
 
 The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm && task demo-llm`
 
@@ -266,9 +292,10 @@ The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm 
 
 - **Write throughput** — B+ tree with single writer; not suited for high-volume random write workloads. Use batch writes (`db.Update` with many operations) where possible.
 - **In-process only** — no network server; one process owns the file at a time.
-- **HNSW at scale** — the graph is persisted in the B+ tree; very large vector sets (>10K) may hit page-split pressure. Flat-scan fallback is always available.
+- **Measured HNSW envelope** — 10,000 vectors at 32 and 384 dimensions pass build, recall, reopen, and update/delete churn with 4 KiB pages and a 64 MiB page-cache budget. This is evidence for that tested scale, not an unbounded capacity claim; run `task evidence-vector-scale` with representative vectors before relying on larger sets or dimensions. Flat-scan fallback remains available, and `SearchByEmbeddingWithStats` reports the selected path.
 - **Coordinates are sparse** — hex grid is a logical namespace, not a dense array. No compaction of coordinate space happens automatically.
 - **Storage is extend-only between maintenance windows** — deletes and pruning expose dead pages but do not shrink the primary; inspect `StorageStats`, then use bounded explicit compaction to create a smaller replacement.
+- **Primary-page integrity** — AES-XTS data pages provide confidentiality, not authenticated tamper detection. Use trusted storage and independently authenticated backups; encrypted WAL and changelog records do fail closed on modification.
 - **Pre-v1** — API may change between minor versions during the v0.y.z phase.
 
 ---
@@ -282,7 +309,7 @@ The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm 
 | [`HEXXLA.md`](docs/hexxladb/HEXXLA.md)                             | Memory model: hex lattice, seams, validity, supersession |
 | [`HEXXLA_DB.md`](docs/hexxladb/HEXXLA_DB.md)                       | Storage layout, key encoding, HNSW keyspace              |
 | [`OPERATIONS.md`](docs/hexxladb/OPERATIONS.md)                     | Production ops, benchmarks, backup, encryption           |
-| [`PERFORMANCE_EVIDENCE.md`](docs/hexxladb/PERFORMANCE_EVIDENCE.md) | Reproducible Dijkstra, FOV, and super-hex evidence runs  |
+| [`PERFORMANCE_EVIDENCE.md`](docs/hexxladb/PERFORMANCE_EVIDENCE.md) | Correctness, performance, and storage evidence            |
 | [`ROADMAP.md`](docs/ROADMAP.md)                                    | What's next and what's out of scope                      |
 
 ---

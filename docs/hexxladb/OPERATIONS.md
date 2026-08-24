@@ -57,11 +57,38 @@ Confirm with **HealthCheck `cell_count`**, or enumerate coords before/after.
 
 HexxlaDB permits exactly one open handle per primary database file, across handles and processes. A competing [`Open`](../../db.go) fails immediately with [`ErrDatabaseLocked`](../../errors.go); do not bypass this lock or independently manipulate the WAL. Close the owning handle before using offline tools such as [`CompactTo`](../../compact.go) or encryption rotation.
 
-- **Preferred:** Close the database ([`DB.Close`](../../db.go)) so files are consistent, then copy primary, WAL (if present and non-empty), and the optional changelog together, or copy the directory after close.
-- **Filesystem snapshots:** Snapshot the volume containing primary, WAL, and optional changelog at the same logical point in time. Copying only the primary without the WAL (or mixing files from different times) can yield **corruption** or lost data; omitting the changelog loses the consumer/audit history.
-- **Live copy** without application cooperation is not documented as safe; use application-level export if you need hot backup.
+[`DB.BackupTo`](../../backup.go) is the supported online backup path:
 
-When changelog is enabled, the primary may contain unacknowledged `__meta/changelog-outbox/` intents. A clean `Close` syncs and acknowledges lazy-mode intents before returning. A crash-consistent snapshot may capture pending intents; reopening the restored primary with its paired changelog completes projection automatically and may redeliver an already appended operation.
+```go
+if err := db.BackupTo(ctx, "/var/backups/hexxladb/data.db"); err != nil {
+    return err
+}
+```
+
+It holds the database read lock while copying and syncing one consistent recovery set. Writes and [`DB.Close`](../../db.go) wait for the full capture; existing reads may continue. Backup time and writer pause are proportional to the combined primary, WAL, and changelog size, so use a context deadline and schedule large captures around the application's write-latency budget.
+
+The output uses fixed companion paths:
+
+- primary: the `destPath` argument;
+- WAL: `destPath + "-wal"`;
+- changelog: `destPath + "-changelog"` when changelog was enabled, including when the source used a custom changelog path.
+
+All destination component paths must be absent and their parent directory must be controlled by the embedding application. They are created with exclusive semantics and mode `0600`; an existing component is preserved and causes the operation to fail. Cancellation is checked between 1 MiB copy chunks. A returned error removes only components created by that call, never the source or a pre-existing or path-replaced destination. A process or host failure can still leave files from an interrupted call, so publish or replicate the set only after `BackupTo` returns success.
+
+The primary and WAL are copied under the same lock after any in-flight writer has completed its durability and changefeed-finalization boundary. Do not replace this API with independent live file copies. If the handle requires close/reopen recovery after [`ErrCommitFinalization`](../../errors.go), `BackupTo` rejects the capture until recovery completes.
+
+Encryption is preserved byte-for-byte; `BackupTo` does not need or retain credentials and does not rotate keys. Restore an encrypted backup with the same key or passphrase. Restore a changelog-enabled backup with `ChangelogEnabled: true`; the backup sidecar uses the default path beside the destination primary. Validate every backup policy with a restore drill: open the captured primary with its required options, run [`DB.HealthCheck`](../../health.go) plus application read probes, and close it cleanly before treating the artifact as recoverable.
+
+Offline alternatives remain supported:
+
+- close the database, then copy the primary, WAL, and optional changelog together;
+- take a crash-consistent filesystem snapshot of the volume containing all enabled components at the same logical instant.
+
+Copying only the primary, mixing a primary and WAL from different instants, or omitting the only retained changelog history is unsafe. `BackupTo` is a point-in-time backup, not replication, continuous availability, compaction, or re-encryption; HexxlaDB remains an embedded single-owner database.
+
+When changelog is enabled, the primary may contain unacknowledged `__meta/changelog-outbox/` intents. A clean `Close` syncs and acknowledges lazy-mode intents before returning. `BackupTo` and a crash-consistent snapshot can capture pending intents; reopening the restored primary with its paired changelog completes projection automatically and may redeliver an already appended operation. Consumers must retain their at-least-once idempotency rules.
+
+Durable named consumer cursors and their logical-history checkpoint live in the primary, so `BackupTo` preserves them with the matching sidecar. Restore with changelog enabled to validate the binding before resuming. `ErrChangelogConsumerInvalidated` means the primary and retained logical history do not match; do not reset the cursor or delete the sidecar until the correct backup set has been sought. See [`CHANGEFEED.md`](./CHANGEFEED.md#durable-consumer-cursors) for compare-and-advance and explicit re-bootstrap rules.
 
 ## Encryption
 
@@ -149,7 +176,7 @@ db.Compact(ctx, destPath)                // rewrite without dead pages
 - **Encrypted open handles:** `DB.Compact` cannot recover caller credentials from an open handle and returns `ErrEncryptionKeyRequired` for encrypted databases. Close it and use `CompactTo(ctx, srcPath, destPath, opts)` with the original credentials.
 - **Context cancellation:** partial destination is removed on abort, and the source is unchanged. A retry starts a fresh copy.
 - **Backups:** compaction creates a candidate primary, not a backup policy. Keep the source primary, WAL, and changelog together until the replacement has reopened and passed validation. Never copy an open primary/WAL pair independently.
-- **Changelog:** compaction copies authoritative primary keys, including any durable outbox intent, but does not copy the append-only sidecar. For a plaintext database that replaces its original primary, retain the original sidecar at the configured path; reopen may safely redeliver an unacknowledged intent. A compacted encrypted primary has a new encryption salt, so its old encrypted sidecar cannot be reused. Archive that sidecar and re-bootstrap consumers from database truth before enabling a new sidecar, or defer replacement if retained changefeed history is required. Never silently discard a sidecar that is the only consumer history.
+- **Changelog:** compaction copies authoritative primary keys, including durable cursors and outbox intents, but does not copy the append-only sidecar. Registered consumers bind the candidate to the matching logical history, and `Open` fails with `ErrChangelogConsumerInvalidated` when it is missing or replaced. For plaintext replacement, retain the original sidecar at the configured path. A compacted encrypted primary has a new encryption salt, so the old encrypted sidecar cannot be reused: defer replacement when retained history is required, or open the candidate with changelog disabled, list and explicitly delete every cursor at its expected sequence, rebuild downstream state from database truth, then enable a fresh sidecar and re-register consumers. Preserve the archived source set until this validation passes.
 
 ## Super-hex derived occupancy index
 
@@ -203,7 +230,7 @@ Tune retention and pruning for your workload and soak longer in staging if reten
 
 1. Kill the embedding process during an active [`Update`](../../tx.go) (SIGKILL).
 2. [`Open`](../../db.go) the same path with the same changelog settings; verify WAL replay and durable-outbox projection succeed and [`View`](../../tx.go) reads match expectations.
-3. Resume consumers from their last durable cursor and verify any redelivered operation is handled idempotently.
+3. Resume consumers from [`GetChangelogConsumerCursor`](../../changelog_consumers.go) and verify any redelivered operation is handled idempotently before compare-and-advance.
 4. If [`ErrCorruptDatabase`](../../errors.go): restore from last known-good primary + WAL pair (see **Backup and copy**).
 
 ## Backup drill
@@ -246,6 +273,12 @@ The historical `leaf page full` variant caused by an incomplete cascading split 
 
 **Response:** Stop writes on that handle. Do not retry a mutation when `ErrCommitDurable` matches. Close and reopen with the same changelog configuration, then inspect authoritative state and resume the consumer from its durable cursor. If reopen still fails, correct the reported filesystem/changelog error while preserving the primary and its outbox.
 
+### 6) Durable consumer history invalidated
+
+**Signal:** changelog-enabled `Open` returns `ErrChangelogConsumerInvalidated`.
+
+**Response:** Preserve the primary, WAL, and sidecar. Locate their matching backup or archived compaction set; a registered cursor must never be applied to unrelated history. If the replacement was intentional and no matching history can or should be retained, open with changelog disabled, list and compare-delete every cursor, rebuild each downstream projection from authoritative database state, then enable a fresh sidecar and re-register at zero.
+
 ## Scope boundaries
 
-Cross-node replication, automated prune policy in-process, materialized changefeed consumers, and hybrid embed/service routing are out of the current spec. Track the repository's technical roadmap in [`docs/ROADMAP.md`](../ROADMAP.md).
+Cross-node replication, automated prune policy in-process, in-process materialized consumer workers or push delivery, and hybrid embed/service routing are out of the current spec. Track the repository's technical roadmap in [`docs/ROADMAP.md`](../ROADMAP.md).

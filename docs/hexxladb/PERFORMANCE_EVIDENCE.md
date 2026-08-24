@@ -1,8 +1,8 @@
 # Performance evidence
 
 This suite answers two separate questions about Dijkstra pathfinding,
-deterministic field of view (FOV), MVCC hot-key reads, and the aperture-7
-super-hex occupancy prototype:
+deterministic field of view (FOV), MVCC hot-key reads, HNSW vector search, and
+the aperture-7 super-hex occupancy prototype:
 
 1. **Does the implementation remain correct and how does each operation scale
    under controlled inputs?** The controlled stream runs a seeded randomized
@@ -37,6 +37,7 @@ Run the streams separately when iteration time matters:
 ```bash
 task evidence-controlled
 task evidence-observe
+task evidence-vector-scale
 ```
 
 The default observation workload uses 2,000 cells, 100 samples, seed `1`, FOV
@@ -50,6 +51,17 @@ task evidence-observe \
 Input bounds are deliberate: at most 100,000 cells, 10,000 samples, and FOV
 radius 512. This keeps an accidentally oversized observation run bounded.
 
+The vector runner defaults to 10,000 32-dimensional unit vectors, 25 exact-
+oracle query samples, recall@10, 100 updates plus 100 deletes, 4 KiB pages, and
+a 64 MiB page cache. It writes aggregate JSON to
+`.tmp/evidence/vector-scale.json`. Override bounded inputs and the output path:
+
+```bash
+task evidence-vector-scale \
+  VECTOR_EVIDENCE_ARGS='-cells 10000 -dimension 384 -batch-size 100' \
+  VECTOR_EVIDENCE_OUTPUT='.tmp/evidence/vector-scale-10000-384d.json'
+```
+
 ## What is measured
 
 | Area              | Controlled evidence                                                                                                                                        | Observation evidence                                                                                      |
@@ -57,10 +69,68 @@ radius 512. This keeps an accidentally oversized observation run bounded.
 | Dijkstra          | API latency and allocations as graph out-degree grows                                                                                                      | p50/p95/max/mean latency, paths found, and aggregate hop count over seeded route queries                  |
 | Deterministic FOV | Shadowcast algorithm, retained raycast comparison, and full `LoadContextFOV` API latency                                                                   | p50/p95/max/mean latency and aggregate number of returned cells with deterministic blockers               |
 | Super-hex         | Rebuild, O(1) coordinate lookup, deterministic export, direct changelog tail reads across 512–100k historical records, and fixed-history one-shot catch-up | rebuild/write/sync distributions, changes processed, summary count, applied sequence, and caught-up state |
+| Vector search     | Final 500×32d query latency and allocation benchmark versus the recorded pre-change baseline                                                               | Batched graph build, exact-oracle recall@k, query latency/path/breadth, reopen, churn, memory, and file sizes |
 | MVCC hot keys     | Latest and historical point-read latency and allocations at 10, 100, 1,000, and 6,000 versions                                                           | Not included                                                                                                |
 | Public writes     | Single, batched, callback-delayed, fdatasync, and reader-blocking latency with group-WAL batch/sync counts                                               | Not included                                                                                                |
 | Storage churn     | Exact primary/live/reclaimable page bytes after puts, tombstones, pruning, and compaction; bounded progress and interruption tests                      | Final primary, WAL, and changelog sizes                                                                     |
 | Resources         | Go allocation counts per benchmark operation                                                                                                               | total bytes allocated plus final database, WAL, and changelog sizes                                       |
+
+### Vector-search evidence
+
+The runner generates seeded unit vectors and queries in memory, builds the
+persisted HNSW graph through the public transaction API, and compares each ANN
+result with an exact cosine top-k oracle. It closes and reopens the database,
+then updates and deletes the requested number of vectors, closes and reopens a
+second time, and repeats the oracle comparison. It also requires the reported
+execution path to be HNSW. The JSON contains aggregate durations and resource
+counts only; the temporary database is removed.
+
+The 2026-08-24 reference runs used an Intel Core i9-14900HX, Linux/amd64,
+Go 1.27.0, seed 1, 25 queries, recall@10, 100 updates and 100 deletes, 4 KiB
+pages, and a 64 MiB cache:
+
+| Workload | Batch | Build | Query before reopen p50/p95 | Recall before/reopen/churn | Query after churn p50/p95 | Heap after build/churn | Primary/live/reclaimable |
+| -------- | ----- | ----- | ---------------------------- | -------------------------- | --------------------------- | ---------------------- | ------------------------ |
+| 10k×32d  | 500   | 78.1 s; 128.1 vectors/s | 5.75/8.65 ms | .992/.992/.992 | 4.80/7.03 ms | 18.4/25.0 MB | 23.87/23.07/0.80 MB |
+| 10k×384d | 100   | 141.2 s; 70.8 vectors/s | 32.81/37.05 ms | .956/.956/.960 | 29.37/35.62 ms | 97.8/68.1 MB | 66.06/64.50/1.56 MB |
+
+The 32-dimensional run used the minimum default `ef_search=100`; the
+dimension-aware 384-dimensional run used `ef_search=384`. The latter setting
+replaced a fixed-100 result of .63 recall@10 while retaining bounded query
+latency. Total Go allocation over the complete build/query/reopen/churn process
+was 132.1 GB for 32 dimensions and 237.9 GB for 384 dimensions. Those cumulative
+allocation figures make graph construction an explicit offline or batched
+write cost even though steady heap and database size remain bounded.
+
+Page-layout trials identified 4 KiB as the supported HNSW profile rather than
+the prior 64 KiB recommendation. At 2k×384d, 4 KiB pages built at 162.2
+vectors/s with about 7 ms median query latency and a 14.07 MB primary; 64 KiB
+pages built at 29.2 vectors/s with about 23.5 ms median latency and a 67.96 MB
+primary. Two 10k×384d 64 KiB attempts were terminated by the reference host
+before completion as transaction dirty pages amplified memory. The 4 KiB
+10k×384d run completed without page-split or corruption errors.
+
+The point-read fixes were also isolated with the existing final benchmark:
+
+```bash
+go test -run '^$' -bench '^BenchmarkSearchByEmbedding_HNSW/500_32d$' \
+  -benchmem -benchtime=1x -count=1 .
+```
+
+The recorded baseline was 72.1 ms/op, 133.0 MB/op, and 514,980 allocations/op.
+The finished implementation measured 14.8 ms/op, 16.4 MB/op, and 3,966
+allocations/op on the reference host. Direct copies into pooled cache buffers,
+allocation-free B+ tree page selection, and transaction-local HNSW decode
+caches account for the reduction; the persisted B+ tree and HNSW encodings did
+not change.
+
+These measurements support 10,000 vectors at 32 and 384 dimensions with the
+tested settings. They are not a claim of an unbounded capacity or a service-
+level objective. For larger sets, other dimensions, non-random vector
+distributions, stricter recall targets, or different hardware, rerun the same
+command with representative inputs and retain the JSON before choosing
+`EfSearch`, batch size, cache, or page settings. A new index or bulk builder
+remains unjustified until that evidence misses an explicit target.
 
 ### MVCC hot-key evidence
 

@@ -94,7 +94,9 @@ Named snapshot metadata is stored under private `__meta/` keys. Snapshot and val
 
 Embeddings are optional. `Options.EmbeddingDimension` and `Options.DistanceMetric` become immutable database settings once established. Each cell may have one float32 vector.
 
-`PutEmbedding` maintains the persisted HNSW graph. `SearchByEmbedding` uses HNSW when available and falls back to a flat scan when required. `DeleteCell` also removes the cell's embedding and HNSW node.
+`PutEmbedding` maintains the persisted HNSW graph. Node levels are derived deterministically from the packed coordinate, so the same vectors and insertion order produce the same graph layout without persisted random state. `SearchByEmbedding` uses HNSW when available and falls back to a flat scan when required; `SearchByEmbeddingWithStats` exposes the selected path and effective query breadth. `DeleteCell` also removes the cell's embedding and HNSW node.
+
+The measured 10,000-vector envelope uses 4 KiB B+ tree pages for both 32- and 384-dimensional vectors. HNSW graph maintenance performs many small random reads and rewrites, so increasing the page size can amplify copying, dirty-page retention, file growth, and transaction memory even though each graph record is small. The vector-scale evidence runner and reference measurements are documented in [`PERFORMANCE_EVIDENCE.md`](./PERFORMANCE_EVIDENCE.md).
 
 The query and content-search APIs can use embedding similarity for seed selection, but spatial expansion after seed selection remains deterministic and does not require vectors.
 

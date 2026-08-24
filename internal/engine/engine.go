@@ -529,18 +529,14 @@ func (e *Engine) pooledTransformRead(pageID uint64, src []byte) (data []byte, re
 // readPageFromDisk reads a data page directly from the primary file, consulting
 // the page cache first when enabled.
 func (e *Engine) readPageFromDisk(pageID uint64) (data []byte, release func(), err error) {
-	// Cache check: on hit return a pooled copy so the caller's release contract is unchanged.
-	if e.cache != nil {
-		if cached := e.cache.get(pageID); cached != nil {
-			bp := e.pageBufPool.Get().(*[]byte)
-			buf := (*bp)[:e.pageSize]
-			copy(buf, cached)
-			return buf, func() { e.pageBufPool.Put(bp) }, nil
-		}
-	}
-
 	bp := e.pageBufPool.Get().(*[]byte)
 	buf := (*bp)[:e.pageSize]
+	// Copy cache hits directly into the caller-owned pooled page. Allocating an
+	// intermediate page here multiplies HNSW traversal cost by every B+ tree
+	// lookup, especially with 64 KiB pages.
+	if e.cache != nil && e.cache.get(pageID, buf) {
+		return buf, func() { e.pageBufPool.Put(bp) }, nil
+	}
 
 	off, err := pageByteOffset(pageID, e.pageSize)
 	if err != nil {
