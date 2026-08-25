@@ -1,8 +1,8 @@
 # Versioning and compatibility
 
-**Current published version:** `v0.5.1`
+**Current published version:** `v0.6.0`
 
-**Next release candidate:** `v0.6.0`
+**Next release candidate:** not selected
 
 This document describes how **module versions**, **Go API stability**, and **on-disk format** relate for [`github.com/hexxla/hexxladb`](https://github.com/hexxla/hexxladb).
 
@@ -64,7 +64,7 @@ it does not mean that every newer API is meaningful on format v1.
 | Library line | Engine v1 | Engine v2 | Plaintext changelog v1 | Encrypted changelog v2 | Newer engine format |
 | --- | --- | --- | --- | --- | --- |
 | `v0.1.0`–`v0.5.1` | Read/write | Read/write | Release-specific; consult that tag | Unsupported before the encrypted log was introduced | Refused as corrupt/unsupported |
-| `[Unreleased]` (planned `v0.6.0`) | Read/write; explicit migration source | Read/write; migration destination | Read/write | Read/write with matching database credentials | Refused with `ErrUnsupportedFormatVersion` |
+| `v0.6.0` | Read/write; explicit migration source | Read/write; migration destination | Read/write | Read/write with matching database credentials | Refused with `ErrUnsupportedFormatVersion` |
 
 Compatibility rules:
 

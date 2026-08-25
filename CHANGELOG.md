@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-25
+
 ### Added
 
 - **Offline format-v1 to MVCC migration** — `MigrateV1ToV2` performs a source-preserving logical copy into an exclusively created format-v2 destination, rebuilding mutable primary and secondary indexes while retaining edges, embeddings/HNSW, raw application rows, storage limits, and embedding configuration. Batch checkpoints are atomic with copied rows, cancellation is resumable only against the same source digest, incomplete destinations are refused by ordinary `Open`, independent source/destination encryption is supported, changelog reset requires explicit authorization, and a full logical verification precedes publication.
@@ -27,7 +29,7 @@
 ### Changed
 
 - **Go 1.27 minimum** ⚠️ **breaking pre-v1** — the module, CI, and pinned analyzer runner now require Go 1.27.0 or newer; users must upgrade their Go toolchain before building this release, and macOS builds consequently require macOS 13 or newer. Existing database files remain format-compatible. An interleaved 10-sample comparison against Go 1.26.7 found statistically significant read and compression improvements, no significant durable-write latency change, and one small HNSW encoding microbenchmark regression; the method and trade-offs are recorded in `docs/hexxladb/PERFORMANCE_EVIDENCE.md`.
-- **Current examples and active references** — all six maintained examples now compile through the stable module-root API, the build task produces every example binary, and the example index includes each interactive and evidence workload. Seeded HexxlaDB facts, configuration snippets, changefeed operations, migration errors, package guidance, and maintained engine-format documents now match the implemented v0.6.0 candidate; the obsolete standalone mega-stress plan was consolidated into the roadmap.
+- **Current examples and active references** — all six maintained examples now compile through the stable module-root API, the build task produces every example binary, and the example index includes each interactive and evidence workload. Seeded HexxlaDB facts, configuration snippets, changefeed operations, migration errors, package guidance, and maintained engine-format documents now match the v0.6.0 release; the obsolete standalone mega-stress plan was consolidated into the roadmap.
 - **Current root guidance** — the README quick start now handles query, context, and transaction errors without assuming two results; feature claims distinguish opt-in MVCC, supersession, seams, and changefeeds; encryption guidance states the unauthenticated primary-page boundary; and write-performance context matches the published benchmark table.
 - **Provider-neutral context retrieval** ⚠️ **breaking pre-v1** — `LoadContextConfig.MaxCells` replaces `MaxTokens` and `Budgeter`; `ContextAssemblyConfig` replaces `LoadContextBudgetConfig`; and token-specific `TokenBudgeter`, `ByteLenBudgeter`, `TruncateCellViewsToTokenBudget`, `ContextPack.TotalTokens`, explanation token counts, and budget-eviction statistics have been removed. Single-seed ring retrieval is deterministically nearest-first and multi-seed retrieval is deduplicated round-robin in caller-supplied seed order under one result limit. HexxlaDB no longer interprets confidence or approximates model tokens; the LLM example demonstrates caller-owned confidence ranking and checks the fully rendered request with an application-supplied provider/model counter.
 - **Task-based repository workflow** — replaced the Makefile with `Taskfile.yml` while preserving the existing CI, test, benchmark, evidence, build, demo, fuzz, mutation, and pre-commit task names and variable overrides. GitHub Actions pins Task v3.53.1, and VS Code, Zed, contributor guidance, examples, and operational documentation now use `task`. No public Go API or on-disk format change.
@@ -378,7 +380,8 @@
 
 _First release._
 
-[Unreleased]: https://github.com/hexxla/hexxladb/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/hexxla/hexxladb/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/hexxla/hexxladb/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/hexxla/hexxladb/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/hexxla/hexxladb/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/hexxla/hexxladb/compare/v0.3.0...v0.4.0
