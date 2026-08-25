@@ -28,8 +28,6 @@ import (
 	"github.com/fatih/color"
 
 	"github.com/hexxla/hexxladb"
-	"github.com/hexxla/hexxladb/internal/lattice"
-	"github.com/hexxla/hexxladb/internal/record"
 )
 
 const defaultDBPath = ".tmp/spatial-algorithms.db"
@@ -125,7 +123,7 @@ func run(dbPath string) error {
 	fmt.Println()
 
 	type cellSeed struct {
-		coord   lattice.Coord
+		coord   hexxladb.Coord
 		content string
 		tags    []string
 	}
@@ -134,7 +132,7 @@ func run(dbPath string) error {
 	var seeds []cellSeed
 	idx := 0
 	for r := range 7 {
-		ring := lattice.Ring(lattice.Coord{}, r)
+		ring := hexxladb.Ring(hexxladb.Coord{}, r)
 		for _, c := range ring {
 			topic := []string{"spatial", "demo"}
 			switch {
@@ -155,24 +153,24 @@ func run(dbPath string) error {
 	}
 
 	// Also add some intentional gaps (skip every 5th cell in outer rings)
-	var cells []lattice.Coord
+	var cells []hexxladb.Coord
 	err = db.Update(func(tx *hexxladb.Tx) error {
 		for i, s := range seeds {
 			// Create gaps in outer rings to make FOV interesting
-			if s.coord.Distance(lattice.Coord{}) >= 4 && i%5 == 0 {
+			if s.coord.Distance(hexxladb.Coord{}) >= 4 && i%5 == 0 {
 				continue
 			}
-			pk, pErr := lattice.Pack(s.coord)
+			pk, pErr := hexxladb.Pack(s.coord)
 			if pErr != nil {
 				continue
 			}
-			if err := tx.PutCell(ctx, record.CellRecord{
+			if err := tx.PutCell(ctx, hexxladb.CellRecord{
 				Key:        pk,
 				RawContent: s.content,
 				Tags:       s.tags,
-				Provenance: record.ProvenanceWire{
+				Provenance: hexxladb.ProvenanceWire{
 					SourceID:   "spatial-demo",
-					Confidence: 1.0 - float64(s.coord.Distance(lattice.Coord{}))*0.1,
+					Confidence: 1.0 - float64(s.coord.Distance(hexxladb.Coord{}))*0.1,
 				},
 			}); err != nil {
 				return err
@@ -191,9 +189,9 @@ func run(dbPath string) error {
 	var edgeCount int
 	err = db.Update(func(tx *hexxladb.Tx) error {
 		for i := 1; i < len(cells); i++ {
-			fromPK, _ := lattice.Pack(cells[i-1])
-			toPK, _ := lattice.Pack(cells[i])
-			if err := tx.PutEdge(record.EdgeRecord{
+			fromPK, _ := hexxladb.Pack(cells[i-1])
+			toPK, _ := hexxladb.Pack(cells[i])
+			if err := tx.PutEdge(hexxladb.EdgeWalkRecord{
 				From:         fromPK,
 				To:           toPK,
 				RelationType: "sequence",
@@ -209,9 +207,9 @@ func run(dbPath string) error {
 			if cl[0] >= len(cells) || cl[1] >= len(cells) {
 				continue
 			}
-			fromPK, _ := lattice.Pack(cells[cl[0]])
-			toPK, _ := lattice.Pack(cells[cl[1]])
-			if err := tx.PutEdge(record.EdgeRecord{
+			fromPK, _ := hexxladb.Pack(cells[cl[0]])
+			toPK, _ := hexxladb.Pack(cells[cl[1]])
+			if err := tx.PutEdge(hexxladb.EdgeWalkRecord{
 				From:         fromPK,
 				To:           toPK,
 				RelationType: "cross-ref",
@@ -230,7 +228,7 @@ func run(dbPath string) error {
 
 	// Show grid
 	_ = db.View(func(tx *hexxladb.Tx) error {
-		grid, err := tx.RenderHexGridFromDB(ctx, lattice.Coord{}, 6)
+		grid, err := tx.RenderHexGridFromDB(ctx, hexxladb.Coord{}, 6)
 		if err != nil {
 			return nil
 		}
@@ -244,7 +242,7 @@ func run(dbPath string) error {
 	printSuccess("Grid seeded")
 	fmt.Println()
 
-	center := lattice.Coord{Q: 0, R: 0}
+	center := hexxladb.Coord{Q: 0, R: 0}
 
 	// ════════════════════════════════════════════════════════════════
 	// PHASE 2: Field of View
@@ -254,10 +252,10 @@ func run(dbPath string) error {
 	printNote("Opaque function: empty grid positions = walls. Guaranteed symmetric: if A sees B, B sees A.")
 	fmt.Println()
 
-	var fovCells []record.CellRecord
+	var fovCells []hexxladb.CellRecord
 	err = db.View(func(tx *hexxladb.Tx) error {
-		opaque := func(c lattice.Coord) bool {
-			p, e := lattice.Pack(c)
+		opaque := func(c hexxladb.Coord) bool {
+			p, e := hexxladb.Pack(c)
 			if e != nil {
 				return true
 			}
@@ -277,7 +275,11 @@ func run(dbPath string) error {
 	// Count total cells in radius for comparison
 	var totalInRadius int
 	_ = db.View(func(tx *hexxladb.Tx) error {
-		for _, p := range lattice.WalkRingsPacked(center, 5) {
+		for _, coord := range hexxladb.WalkRings(nil, center, 5) {
+			p, pErr := hexxladb.Pack(coord)
+			if pErr != nil {
+				return pErr
+			}
 			_, ok, _ := tx.GetCell(p)
 			if ok {
 				totalInRadius++
@@ -300,7 +302,7 @@ func run(dbPath string) error {
 			_, _ = dimStyle.Printf("    ⋯  (%d more)\n", len(fovCells)-8)
 			break
 		}
-		c, _ := lattice.Unpack(rec.Key)
+		c, _ := hexxladb.Unpack(rec.Key)
 		_, _ = dimStyle.Printf("    [%d] (%d,%d) dist=%d  ", i+1, c.Q, c.R, center.Distance(c))
 		_, _ = dataStyle.Printf("%s\n", trunc(rec.RawContent, 45))
 	}
@@ -372,7 +374,7 @@ func run(dbPath string) error {
 		{Q: 0, R: 3},
 	}
 
-	var voronoiRegions map[int][]record.CellRecord
+	var voronoiRegions map[int][]hexxladb.CellRecord
 	err = db.View(func(tx *hexxladb.Tx) error {
 		var e error
 		voronoiRegions, e = tx.LoadContextVoronoi(ctx, voronoiSeeds, hexxladb.VoronoiContextConfig{
@@ -396,7 +398,7 @@ func run(dbPath string) error {
 				_, _ = dimStyle.Printf("      ⋯  (%d more)\n", len(region)-3)
 				break
 			}
-			c, _ := lattice.Unpack(rec.Key)
+			c, _ := hexxladb.Unpack(rec.Key)
 			_, _ = dimStyle.Printf("      [%d] (%d,%d) ", j+1, c.Q, c.R)
 			_, _ = dataStyle.Printf("%s\n", trunc(rec.RawContent, 42))
 		}
@@ -509,9 +511,13 @@ func run(dbPath string) error {
 	fmt.Println()
 
 	// Radial
-	var radialCells []record.CellRecord
+	var radialCells []hexxladb.CellRecord
 	_ = db.View(func(tx *hexxladb.Tx) error {
-		for _, p := range lattice.WalkRingsPacked(center, 5) {
+		for _, coord := range hexxladb.WalkRings(nil, center, 5) {
+			p, pErr := hexxladb.Pack(coord)
+			if pErr != nil {
+				return pErr
+			}
 			rec, ok, _ := tx.GetCell(p)
 			if ok {
 				radialCells = append(radialCells, rec)

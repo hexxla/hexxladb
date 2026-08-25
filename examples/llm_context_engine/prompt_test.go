@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/hexxla/hexxladb"
-	"github.com/hexxla/hexxladb/internal/record"
 )
 
 func TestFitRenderedPromptCountsCompleteRequest(t *testing.T) {
@@ -61,8 +60,8 @@ func TestFitRenderedPromptPropagatesCounterFailure(t *testing.T) {
 
 func TestRankByConfidenceDoesNotMutateRetrievalOrder(t *testing.T) {
 	cells := []hexxladb.CellView{
-		{RawContent: "low", Provenance: record.ProvenanceWire{Confidence: 0.2}},
-		{RawContent: "high", Provenance: record.ProvenanceWire{Confidence: 0.9}},
+		{RawContent: "low", Provenance: hexxladb.ProvenanceWire{Confidence: 0.2}},
+		{RawContent: "high", Provenance: hexxladb.ProvenanceWire{Confidence: 0.9}},
 	}
 	ranked := rankByConfidence(cells)
 	if ranked[0].RawContent != "high" {

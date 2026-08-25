@@ -24,10 +24,11 @@ func (f CellValidatorFunc) ValidateCell(rec record.CellRecord) error { return f(
 // AfterPutCellHook is called synchronously after a successful [Tx.PutCell] inside the
 // current [DB.Update] callback. The written record is passed for inspection.
 //
-// A non-nil error is returned from [Tx.PutCell] to the caller; the cell write itself has
-// already committed at this point (within the transaction callback). Use this for
-// side-effects such as confidence decay triggers, audit trails, or metric updates.
-// For fire-and-forget usage, return nil and handle errors internally.
+// A non-nil error is returned from [Tx.PutCell] to the caller. At hook time the logical
+// write is staged in the current engine transaction but is not yet durable. Propagating
+// the error out of the [DB.Update] callback aborts the transaction; swallowing it allows
+// the staged write to commit. Use this for synchronous validation-adjacent reactions or
+// metrics, and keep irreversible external side effects idempotent.
 type AfterPutCellHook interface {
 	AfterPutCell(ctx context.Context, rec record.CellRecord) error
 }
@@ -44,9 +45,10 @@ func (f AfterPutCellHookFunc) AfterPutCell(ctx context.Context, rec record.CellR
 // [Tx.MarkConflict]/[Tx.MarkSupersedes] inside the current [DB.Update] callback.
 // The written seam record is passed for inspection.
 //
-// A non-nil error is returned from the triggering write method. Use this to react
-// to new seam detection — e.g. alerting on new conflicts, triggering review workflows,
-// or updating semantic graphs.
+// A non-nil error is returned from the triggering write method. As with
+// [AfterPutCellHook], the write is only staged at hook time; propagating the error out
+// of [DB.Update] aborts it. Use this to react to new seam detection, such as collecting
+// metrics or scheduling an idempotent review workflow after commit confirmation.
 type AfterPutSeamHook interface {
 	AfterPutSeam(ctx context.Context, rec SeamRecord) error
 }

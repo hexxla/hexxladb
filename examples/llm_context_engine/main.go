@@ -33,8 +33,6 @@ import (
 	"github.com/fatih/color"
 
 	"github.com/hexxla/hexxladb"
-	"github.com/hexxla/hexxladb/internal/lattice"
-	"github.com/hexxla/hexxladb/internal/record"
 )
 
 // ── Styles ─────────────────────────────────────────────────────────────
@@ -113,8 +111,8 @@ func run(dbPath string) error {
 
 	start := time.Now()
 	for i, t := range turns {
-		coord := lattice.Coord{Q: nextQ, R: nextR}
-		pk, _ := lattice.Pack(coord)
+		coord := hexxladb.Coord{Q: nextQ, R: nextR}
+		pk, _ := hexxladb.Pack(coord)
 		nextQ++
 		if nextQ > 5 {
 			nextQ = 0
@@ -127,11 +125,11 @@ func run(dbPath string) error {
 		}
 
 		if err := db.Update(func(tx *hexxladb.Tx) error {
-			if err := tx.PutCell(ctx, record.CellRecord{
+			if err := tx.PutCell(ctx, hexxladb.CellRecord{
 				Key:        pk,
 				RawContent: t.content,
 				Tags:       t.tags,
-				Provenance: record.ProvenanceWire{
+				Provenance: hexxladb.ProvenanceWire{
 					SourceID:   t.sourceID,
 					Confidence: t.confidence,
 				},
@@ -206,7 +204,7 @@ func run(dbPath string) error {
 				if !ok {
 					continue
 				}
-				c, _ := lattice.Unpack(rec.Key)
+				c, _ := hexxladb.Unpack(rec.Key)
 				_, _ = dimStyle.Printf("    [%d] sim=%.3f (%d,%d) ", i+1, hit.Score, c.Q, c.R)
 				_, _ = dataStyle.Printf("%s\n", trunc(rec.RawContent, 55))
 			}
@@ -347,7 +345,7 @@ func run(dbPath string) error {
 	fmt.Println()
 
 	// Find the "keep things brief" preference
-	var briefCoord lattice.Coord
+	var briefCoord hexxladb.Coord
 	var briefFound bool
 	err = db.View(func(tx *hexxladb.Tx) error {
 		results, e := tx.QueryCells(ctx, hexxladb.CellQuery{
@@ -371,7 +369,7 @@ func run(dbPath string) error {
 	if briefFound {
 		_, _ = infoStyle.Printf("  Found old preference at (%d,%d): ", briefCoord.Q, briefCoord.R)
 		_ = db.View(func(tx *hexxladb.Tx) error {
-			pk, _ := lattice.Pack(briefCoord)
+			pk, _ := hexxladb.Pack(briefCoord)
 			rec, ok, _ := tx.GetCell(pk)
 			if ok {
 				_, _ = dataStyle.Printf("%s\n", trunc(rec.RawContent, 55))
@@ -380,15 +378,15 @@ func run(dbPath string) error {
 		})
 
 		// Write new preference
-		newCoord := lattice.Coord{Q: nextQ, R: nextR}
-		newPK, _ := lattice.Pack(newCoord)
+		newCoord := hexxladb.Coord{Q: nextQ, R: nextR}
+		newPK, _ := hexxladb.Pack(newCoord)
 
 		err = db.Update(func(tx *hexxladb.Tx) error {
-			if err := tx.PutCell(ctx, record.CellRecord{
+			if err := tx.PutCell(ctx, hexxladb.CellRecord{
 				Key:        newPK,
 				RawContent: "Actually, I want detailed explanations with code examples for everything now. I'm learning a new codebase.",
 				Tags:       []string{"preference", "communication-style", "user-request"},
-				Provenance: record.ProvenanceWire{
+				Provenance: hexxladb.ProvenanceWire{
 					SourceID:   "session-3",
 					Confidence: 1.0,
 				},
@@ -658,13 +656,16 @@ func run(dbPath string) error {
 	fmt.Println()
 
 	// Use the first cell as the FOV center
-	fovCenter := lattice.Coord{Q: 2, R: 1} // center of our 6-column grid
+	fovCenter := hexxladb.Coord{Q: 2, R: 1} // center of our 6-column grid
 
 	// Standard radial loading for comparison
 	var radialCount int
 	_ = db.View(func(tx *hexxladb.Tx) error {
-		packed := lattice.WalkRingsPacked(fovCenter, 3)
-		for _, p := range packed {
+		for _, coord := range hexxladb.WalkRings(nil, fovCenter, 3) {
+			p, pErr := hexxladb.Pack(coord)
+			if pErr != nil {
+				return pErr
+			}
 			_, ok, _ := tx.GetCell(p)
 			if ok {
 				radialCount++
@@ -674,10 +675,10 @@ func run(dbPath string) error {
 	})
 
 	// FOV-filtered loading — empty cells are opaque barriers
-	var fovCells []record.CellRecord
+	var fovCells []hexxladb.CellRecord
 	err = db.View(func(tx *hexxladb.Tx) error {
-		opaque := func(c lattice.Coord) bool {
-			p, pErr := lattice.Pack(c)
+		opaque := func(c hexxladb.Coord) bool {
+			p, pErr := hexxladb.Pack(c)
 			if pErr != nil {
 				return true
 			}
@@ -708,7 +709,7 @@ func run(dbPath string) error {
 			_, _ = dimStyle.Printf("    ⋯  (%d more cells)\n", len(fovCells)-8)
 			break
 		}
-		c, _ := lattice.Unpack(rec.Key)
+		c, _ := hexxladb.Unpack(rec.Key)
 		dist := fovCenter.Distance(c)
 		_, _ = dimStyle.Printf("    [%d] (%d,%d) dist=%d conf=%.1f ",
 			i+1, c.Q, c.R, dist, rec.Provenance.Confidence)

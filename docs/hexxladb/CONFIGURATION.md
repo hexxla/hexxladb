@@ -31,7 +31,7 @@ All fields on `hexxladb.Options`. Fields marked **immutable** are persisted in t
 | `EnableMVCC`    | `bool`          | `false` | yes       | Format v2 with snapshot isolation, time-travel (`ViewAt`), and version history. Required for `SnapshotDiff`, `PruneCellVersions`, `ViewAtTime`.       |
 | `MVCCRetention` | `MVCCRetention` | zero    | no        | Policy for `SuggestedPruneBeforeSeq`. `RetainCommitsBehindHead` keeps N commits of history.                                                           |
 | `PageSize`      | `uint32`        | `4096`  | yes       | B+ tree page size. Accepted: `4096`, `8192`, `16384`, `65536`. Larger pages = fewer I/O ops for big values; smaller = less waste for small DBs.       |
-| `MaxValueBytes` | `uint32`        | `8192`  | yes       | Max encoded value size per B+ tree entry. Accepted: 512 to 1048576 (powers of 2). Values above the inline threshold use overflow pages automatically. |
+| `MaxValueBytes` | `uint32`        | `8192`  | no        | Max encoded value size per B+ tree entry. Accepted: 512 to 1048576 (powers of 2). A non-zero value on reopen updates the persisted limit for subsequent writes; existing values are unchanged. |
 | `PageCacheSize` | `int64`         | `0`     | no        | In-process B+ tree page-cache budget. `0` selects 4 MiB, positive values set bytes, and `-1` disables the cache.                                   |
 
 ### Embeddings
@@ -129,13 +129,13 @@ db, _ := hexxladb.Open("prod.db", &hexxladb.Options{
     ChangelogEnabled:   true,
     Passphrase:         os.Getenv("HEXXLA_PASSPHRASE"),
     MVCCRetention:      hexxladb.MVCCRetention{RetainCommitsBehindHead: 1000},
-    CellValidator: hexxladb.CellValidatorFunc(func(rec record.CellRecord) error {
+    CellValidator: hexxladb.CellValidatorFunc(func(rec hexxladb.CellRecord) error {
         if len(rec.RawContent) > 100_000 {
             return fmt.Errorf("content too large: %d bytes", len(rec.RawContent))
         }
         return nil
     }),
-    AfterPutCell: hexxladb.AfterPutCellHookFunc(func(_ context.Context, rec record.CellRecord) error {
+    AfterPutCell: hexxladb.AfterPutCellHookFunc(func(_ context.Context, rec hexxladb.CellRecord) error {
         slog.Info("cell written", "key", rec.Key, "tags", rec.Tags)
         return nil
     }),
@@ -157,15 +157,13 @@ db, _ := hexxladb.Open("encrypted.db", &hexxladb.Options{
 
 ---
 
-## Immutable vs mutable fields
+## Persisted and per-open fields
 
-Fields marked **immutable** are written to the file header when the database is first created (or on first use for embedding dimension). On subsequent opens:
-
-- **Immutable fields are read from the header**, not from `Options`. If you pass a conflicting value (e.g. different `EmbeddingDimension`), `Open` returns an error.
-- **Mutable fields** (hooks, changelog, MVCC retention, durability tuning) take effect on each open and can change between runs.
-- **Embedding dimension** is special: if not set at `Open` time, it's auto-detected and persisted on the first `PutEmbedding` call.
-
-To change an immutable field, create a new database and migrate data.
+- **Engine format and page size** are fixed when the database is created. `EnableMVCC` and `PageSize` do not convert an existing file; use the documented migration or compaction workflow when a new physical format is required.
+- **Embedding dimension and metric** become fixed together when configured at creation or detected on the first `PutEmbedding`. A conflicting non-zero embedding configuration on reopen returns `ErrInvalidArgument`.
+- **`MaxValueBytes` is persisted but mutable.** Passing a supported non-zero value on reopen updates the stored limit for subsequent writes. Existing values are not rewritten, and lowering the limit does not remove them.
+- **Encryption mode and credentials** cannot be changed through ordinary `Open`; use `RotateEncryption` for an offline source-preserving replacement.
+- **Per-open fields** such as hooks, changelog selection, MVCC retention, page-cache budget, and durability tuning take effect for that handle and can change between opens subject to their documented compatibility checks.
 
 ---
 

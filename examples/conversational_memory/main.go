@@ -39,8 +39,6 @@ import (
 	"github.com/fatih/color"
 
 	"github.com/hexxla/hexxladb"
-	"github.com/hexxla/hexxladb/internal/lattice"
-	"github.com/hexxla/hexxladb/internal/record"
 )
 
 // defaultDBPath is where the demo database lands when no -db flag is provided.
@@ -147,7 +145,7 @@ func run(dbPath string) error {
 		MVCCRetention: hexxladb.MVCCRetention{
 			RetainCommitsBehindHead: 100,
 		},
-		AfterPutCell: hexxladb.AfterPutCellHookFunc(func(_ context.Context, _ record.CellRecord) error {
+		AfterPutCell: hexxladb.AfterPutCellHookFunc(func(_ context.Context, _ hexxladb.CellRecord) error {
 			hookCellCount++
 			return nil
 		}),
@@ -185,8 +183,8 @@ func run(dbPath string) error {
 	fmt.Println()
 
 	sessionID := fmt.Sprintf("session-%d", time.Now().Unix())
-	var cells []lattice.Coord
-	var recs []record.CellRecord
+	var cells []hexxladb.Coord
+	var recs []hexxladb.CellRecord
 
 	userColor := color.New(color.FgGreen)
 	assistantColor := color.New(color.FgBlue)
@@ -194,9 +192,9 @@ func run(dbPath string) error {
 	for i, msg := range seedConversation {
 		coord := spiralCoord(i)
 		cells = append(cells, coord)
-		pk, _ := lattice.Pack(coord)
+		pk, _ := hexxladb.Pack(coord)
 
-		var rec record.CellRecord
+		var rec hexxladb.CellRecord
 		if msg.role == "user" {
 			rec = hexxladb.NewUserMessageCell(pk, msg.content, sessionID, 1.0)
 		} else {
@@ -608,7 +606,7 @@ func run(dbPath string) error {
 	printNote("These are the building blocks QueryCells uses internally. Shown here for transparency.")
 	var prefCells int
 	if err := db.View(func(tx *hexxladb.Tx) error {
-		return tx.AscendCellsByTag(ctx, "preference", func(_ record.CellRecord) bool {
+		return tx.AscendCellsByTag(ctx, "preference", func(_ hexxladb.CellRecord) bool {
 			prefCells++
 			return true
 		})
@@ -619,7 +617,7 @@ func run(dbPath string) error {
 
 	var sessionCells int
 	if err := db.View(func(tx *hexxladb.Tx) error {
-		return tx.AscendCellsBySource(ctx, sessionID, func(_ record.CellRecord) bool {
+		return tx.AscendCellsBySource(ctx, sessionID, func(_ hexxladb.CellRecord) bool {
 			sessionCells++
 			return true
 		})
@@ -939,7 +937,7 @@ func run(dbPath string) error {
 	fmt.Println()
 
 	// Use an unused coord so this works even on re-runs of an existing DB.
-	delCoord := lattice.Coord{Q: 10, R: 10}
+	delCoord := hexxladb.Coord{Q: 10, R: 10}
 	delKey, err := hexxladb.Pack(delCoord)
 	if err != nil {
 		return fmt.Errorf("pack delete coord: %w", err)
@@ -947,11 +945,11 @@ func run(dbPath string) error {
 
 	// Write the cell fresh so we always have something to delete.
 	err = db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutCell(ctx, record.CellRecord{
+		return tx.PutCell(ctx, hexxladb.CellRecord{
 			Key:        delKey,
 			RawContent: "This cell was written specifically to demonstrate DeleteCell.",
 			Tags:       []string{"demo", "ephemeral"},
-			Provenance: record.ProvenanceWire{SourceID: "phase-12"},
+			Provenance: hexxladb.ProvenanceWire{SourceID: "phase-12"},
 		})
 	})
 	if err != nil {
@@ -1050,15 +1048,15 @@ func run(dbPath string) error {
 	const bulkCount = 200
 	err = db.Update(func(tx *hexxladb.Tx) error {
 		for i := range bulkCount {
-			p, err := hexxladb.Pack(lattice.Coord{Q: 20 + i, R: 20})
+			p, err := hexxladb.Pack(hexxladb.Coord{Q: 20 + i, R: 20})
 			if err != nil {
 				return err
 			}
-			if err := tx.PutCell(ctx, record.CellRecord{
+			if err := tx.PutCell(ctx, hexxladb.CellRecord{
 				Key:        p,
 				RawContent: fmt.Sprintf("Bulk cell %d — written to demonstrate compaction size reduction after delete.", i),
 				Tags:       []string{"bulk", "throwaway"},
-				Provenance: record.ProvenanceWire{SourceID: "compact-demo"},
+				Provenance: hexxladb.ProvenanceWire{SourceID: "compact-demo"},
 			}); err != nil {
 				return err
 			}
@@ -1073,7 +1071,7 @@ func run(dbPath string) error {
 	// Delete them all.
 	err = db.Update(func(tx *hexxladb.Tx) error {
 		for i := range bulkCount {
-			p, err := hexxladb.Pack(lattice.Coord{Q: 20 + i, R: 20})
+			p, err := hexxladb.Pack(hexxladb.Coord{Q: 20 + i, R: 20})
 			if err != nil {
 				return err
 			}
@@ -1162,10 +1160,13 @@ func run(dbPath string) error {
 	fovCenter := cells[len(cells)/2] // a cell near the middle of the corpus
 
 	// Radial context for comparison
-	var radialCells []record.CellRecord
+	var radialCells []hexxladb.CellRecord
 	if err := db.View(func(tx *hexxladb.Tx) error {
-		packed := lattice.WalkRingsPacked(fovCenter, 3)
-		for _, p := range packed {
+		for _, coord := range hexxladb.WalkRings(nil, fovCenter, 3) {
+			p, err := hexxladb.Pack(coord)
+			if err != nil {
+				return err
+			}
 			rec, ok, err := tx.GetCell(p)
 			if err != nil {
 				return err
@@ -1180,10 +1181,10 @@ func run(dbPath string) error {
 	}
 
 	// FOV-filtered context — empty cells act as opaque barriers
-	var fovCells []record.CellRecord
+	var fovCells []hexxladb.CellRecord
 	if err := db.View(func(tx *hexxladb.Tx) error {
-		opaque := func(c lattice.Coord) bool {
-			p, err := lattice.Pack(c)
+		opaque := func(c hexxladb.Coord) bool {
+			p, err := hexxladb.Pack(c)
 			if err != nil {
 				return true
 			}
@@ -1215,7 +1216,7 @@ func run(dbPath string) error {
 			_, _ = dimStyle.Printf("    ⋯  (%d more cells not shown)\n", len(fovCells)-10)
 			break
 		}
-		c, _ := lattice.Unpack(rec.Key)
+		c, _ := hexxladb.Unpack(rec.Key)
 		dist := fovCenter.Distance(c)
 		_, _ = dimStyle.Printf("    [%02d] (%d,%d) dist=%d  ", i+1, c.Q, c.R, dist)
 		_, _ = dataStyle.Printf("%s\n", truncate(rec.RawContent, 48))
@@ -1259,9 +1260,9 @@ func run(dbPath string) error {
 			if ep.from >= len(cells) || ep.to >= len(cells) {
 				continue
 			}
-			fromPK, _ := lattice.Pack(cells[ep.from])
-			toPK, _ := lattice.Pack(cells[ep.to])
-			if err := tx.PutEdge(record.EdgeRecord{
+			fromPK, _ := hexxladb.Pack(cells[ep.from])
+			toPK, _ := hexxladb.Pack(cells[ep.to])
+			if err := tx.PutEdge(hexxladb.EdgeWalkRecord{
 				From:         fromPK,
 				To:           toPK,
 				RelationType: ep.kind,
@@ -1398,11 +1399,11 @@ func run(dbPath string) error {
 // spiralCoord maps a linear corpus index to an axial grid coordinate.
 // The grid is 11 columns wide (q in [-5,5]) so all 84 seed turns fit without
 // collision. Each row shifts by one q unit per 11 entries.
-func spiralCoord(index int) lattice.Coord {
+func spiralCoord(index int) hexxladb.Coord {
 	const cols = 11
 	q := (index % cols) - (cols / 2)
 	r := (index / cols) - 4
-	return lattice.Coord{Q: q, R: r}
+	return hexxladb.Coord{Q: q, R: r}
 }
 
 func truncate(s string, maxLen int) string {

@@ -58,10 +58,10 @@ Mapping to [`HEXXLA_DB.md`](./HEXXLA_DB.md) Native Query Primitives:
 
 Single-version **read filters** on the current committed cell and seam (not MVCC; for **`ViewAt`** / **`ViewAtTime`** see **Snapshot semantics** and **MVCC temporal semantics** above):
 
-- **[`record.ValidAt`](../../internal/record/validity.go)** — half-open validity window **`[ValidFrom, ValidTo)`** in Unix nanoseconds UTC (`nil` bound = open on that side).
+- **[`ValidityWire`](../../export.go)** — half-open validity window **`[ValidFrom, ValidTo)`** in Unix nanoseconds UTC (`nil` bound = open on that side), applied by validity-aware typed reads.
 - **[`Tx.WalkRingAt`](../../primitives.go)** — same ring order as **`WalkRing`**, but invokes the callback only for cells whose **`Validity`** contains **`asOf`** (missing or out-of-window cells are skipped).
 - **[`Tx.LoadContext`](../../context_load.go)** with **`LoadContextConfig.AsOf`** — assembles only cells whose validity contains **`asOf`**; `MaxCells` remains the upper bound on returned cells.
-- **[`Tx.FindSeamsAt`](../../primitives.go)** — like **`FindSeams`**, but only includes seams whose **[`SeamRecord.Validity`](../../internal/record/types.go)** contains **`asOf`**. Seams stored without a validity suffix decode as an open window (always included when **`asOf`** is used).
+- **[`Tx.FindSeamsAt`](../../primitives.go)** — like **`FindSeams`**, but only includes seams whose **[`SeamRecord.Validity`](../../export.go)** contains **`asOf`**. Seams stored without a validity suffix decode as an open window (always included when **`asOf`** is used).
 - **[`Tx.WalkRingFacets`](../../primitives.go)** — for each ring coordinate with an existing cell (and optional **`asOf`** filter on the cell’s validity), loads facet records for **`facet_id`** bits **`0..5`** set in the 6-bit **`facetMask`** (bits outside **`0x3f`** → **`ErrInvalidArgument`**). Typical cost **O(ring_cells × popcount(mask))** btree **`GetFacet`** operations; facets are returned in ascending **`facet_id`** order (missing keys omitted).
 
 ## MVCC temporal semantics
@@ -71,7 +71,7 @@ For format-v2 databases the authoritative visibility clock is **`CommitSeq`** in
 - **[`DB.ViewAt(readSeq)`](../../tx.go)** pins `read_seq` for the callback. Cell, facet, and seam point reads use the version suffix's byte ordering to seek directly to the largest stored `commit_seq <= read_seq`, then stop after one valid version. [`ErrReadSeqFuture`](../../errors.go) is returned if `read_seq` exceeds the header's `CommitSeq`.
 - **[`DB.ViewAtTime(asOf)`](../../tx.go)** maps UTC wall time to a `read_seq` using the commit timeline: during each MVCC `Update`, an `__meta/commit-time/` btree key records `(wall_unix_nano, writeSeq)` (wall timestamp sampled at transaction start). The resolver performs a reverse bounded seek and picks the maximum `commit_seq` at or before `asOf`. Determinism requires stable UTC clock usage; the same `asOf` yields the same snapshot for a given database history.
 - **Secondary indexes (`source/`, `time/`, seam secondaries):** version-suffixed secondary keys coexist with MVCC primaries; [`AscendCellsBySource`](../../cell_secondary.go) (and seam variants) dedupe by logical ID and evaluate visibility via [`GetCell`](../../mvcc.go) / seam readers at the transaction `read_seq`.
-- **Validity vs snapshot:** [`WalkRingAt`](../../primitives.go), [`LoadContextConfig.AsOf`](../../context_load.go), and [`record.ValidAt`](../../internal/record/validity.go) filter by record validity windows — orthogonal to `read_seq` (snapshot time vs. domain validity interval).
+- **Validity vs snapshot:** [`WalkRingAt`](../../primitives.go), [`FindSeamsAt`](../../primitives.go), and [`LoadContextConfig.AsOf`](../../context_load.go) filter by record validity windows — orthogonal to `read_seq` (snapshot time vs. domain validity interval).
 
 ## Secondary indexes — `source/` and `time/`
 

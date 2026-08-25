@@ -43,7 +43,7 @@ Cells sit at `(q, r)` hex coordinates. Related records sit nearby when the appli
 go get github.com/hexxla/hexxladb
 ```
 
-Full runnable examples: [`examples/`](examples/) — conversational memory, LLM context engine, spatial algorithms.
+Six runnable examples cover conversational memory, LLM context assembly, spatial algorithms, and reproducible evidence workloads: [`examples/`](examples/).
 
 ### Open a database
 
@@ -280,13 +280,14 @@ The context assembly operations (`LoadContext`, `LoadContextFOV`, `LoadContextVo
 
 ## Examples
 
-| Example                                                  | Run                 | What it covers                                               |
-| -------------------------------------------------------- | ------------------- | ------------------------------------------------------------ |
-| [Conversational Memory](examples/conversational_memory/) | `task demo`         | Cells, seams, tags, MVCC, queries, context, FOV, pathfinding |
-| [LLM Context Engine](examples/llm_context_engine/)       | `task demo-llm`     | Ollama embeddings, semantic search, supersession, FOV        |
-| [Spatial Algorithms](examples/spatial_algorithms/)       | `task demo-spatial` | FOV, LOD, Voronoi, Dijkstra, BFS — side-by-side              |
-| [Vector Scale Evidence](examples/vector_scale_evidence/) | `task evidence-vector-scale` | HNSW build, recall, reopen, churn, memory, and disk   |
-| [Lattice Placement Evidence](examples/lattice_placement_evidence/) | `task evidence-lattice-placement` | Placement stability and semantic/spatial divergence |
+| Example                                                                    | Run                               | What it covers                                                        |
+| -------------------------------------------------------------------------- | --------------------------------- | --------------------------------------------------------------------- |
+| [Conversational Memory](examples/conversational_memory/)                   | `task demo`                       | Cells, seams, tags, MVCC, queries, context, FOV, pathfinding          |
+| [LLM Context Engine](examples/llm_context_engine/)                         | `task demo-llm`                   | Ollama embeddings, semantic search, supersession, FOV                 |
+| [Spatial Algorithms](examples/spatial_algorithms/)                         | `task demo-spatial`               | FOV, LOD, Voronoi, Dijkstra, BFS — side-by-side                       |
+| [Performance Evidence](examples/performance_evidence/)                     | `task evidence-observe`           | Dijkstra, FOV, super-hex sync, allocation, and storage observations   |
+| [Vector Scale Evidence](examples/vector_scale_evidence/)                   | `task evidence-vector-scale`      | HNSW build, recall, reopen, churn, memory, and disk                    |
+| [Lattice Placement Evidence](examples/lattice_placement_evidence/)         | `task evidence-lattice-placement` | Placement stability and semantic/spatial divergence                   |
 
 The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm && task demo-llm`
 

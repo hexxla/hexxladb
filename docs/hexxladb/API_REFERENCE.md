@@ -184,6 +184,7 @@ Public sentinel errors are defined in [`errors.go`](../../errors.go). Handle sta
 - lifecycle and locking errors such as `ErrDatabaseClosed` and `ErrDatabaseLocked`;
 - argument and transaction errors such as `ErrInvalidArgument` and `ErrTxReadOnly`;
 - MVCC errors such as `ErrReadSeqFuture` and `ErrMVCCRequired`;
+- format and migration errors such as `ErrUnsupportedFormatVersion`, `ErrMigrationIncomplete`, and `ErrMigrationChangelogState`;
 - encryption and changelog errors documented in their focused references;
 - `ErrCommitFinalization`, which requires recovery before another write, and `ErrCommitDurable`, which specifically means the authoritative commit is known durable and must not be retried.
 

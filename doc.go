@@ -3,8 +3,10 @@
 // Documentation map:
 //   - docs/hexxladb/HEXXLA_DB.md — storage layout and key spec (how it works).
 //   - docs/hexxladb/API_REFERENCE.md — task-oriented public API guide.
+//   - docs/hexxladb/CONFIGURATION.md — options, defaults, and supported combinations.
 //   - docs/hexxladb/TX.md — transactions, primitives, MVCC temporal semantics.
 //   - docs/hexxladb/OPERATIONS.md — embedding, backups, MVCC retention, incident response.
+//   - docs/hexxladb/PERFORMANCE_EVIDENCE.md — repeatable correctness and performance evidence.
 //   - docs/hexxladb/DURABILITY.md, ENCRYPTION.md, CHANGEFEED.md — focused feature refs.
 //   - docs/hexxladb/HEXXLA.md — memory model reference (product context).
 //   - docs/ROADMAP.md — pending and evidence-gated work.
@@ -38,7 +40,7 @@
 //     stable record aliases: [CellRecord], [SeamRecord], [FacetWalkRecord], [EdgeWalkRecord] ([export.go]);
 //     [NewFacetDerived], [NewProvenanceWire] ([templates.go]) for callers outside this module;
 //     spec-named sugar: [Tx.MarkConflict], [Tx.UpdateFacet], [Tx.LinkCells];
-//     validity read filters: [record.ValidAt], [Tx.WalkRingAt], [Tx.WalkRingFacets];
+//     validity read filters: [Tx.WalkRingAt], [Tx.WalkRingFacets], and [LoadContextConfig.AsOf];
 //     secondary index walks: [Tx.AscendCellsBySource], [Tx.AscendCellsInTimeBucket],
 //     [Tx.AscendCellsByTag], [Tx.AscendDistinctTags], [Tx.ListExistingTopics],
 //     [Tx.AscendSeamsBySource], [Tx.AscendSeamsInTimeBucket];
@@ -55,24 +57,21 @@
 //     [Tx.SearchByEmbeddingWithStats] (execution path and effective breadth), [EmbeddingSearchConfig];
 //     [Tx.ReindexEmbeddings]; [CellQuery.Embedding] / [CellSearchConfig.Embedding] integrate
 //     vector search into [Tx.QueryCells] / [Tx.SearchCells] (see docs/hexxladb/API_REFERENCE.md).
-//   - Sentinel errors: [ErrCorruptDatabase], [ErrDatabaseClosed], [ErrDatabaseLocked], [ErrTxReadOnly],
-//     [ErrNilCallback], [ErrNotImplemented], [ErrClosed], [ErrSeamNotFound],
-//     [ErrSeamEndpointMismatch], [ErrInvalidArgument], [ErrEncryptionKeyRequired],
-//     [ErrDatabaseNotEncrypted], [ErrEncryptionOptions], [ErrEncryptionKeyMismatch],
-//     [ErrCellNotFound], [ErrFacetDerivationMismatch], [ErrChangelogDisabled],
-//     [ErrChangelogCorrupt], [ErrChangelogConsumerNotFound], [ErrChangelogCursorConflict],
-//     [ErrChangelogCursorRegression], [ErrChangelogCursorBeyondHead], [ErrChangelogConsumerInvalidated],
-//     [ErrReadSeqFuture], [ErrMVCCRequired],
-//     [ErrSnapshotTagNotFound], [ErrSnapshotTagLabelTooLong].
+//   - Sentinel errors are defined in errors.go and support [errors.Is]. Recovery-sensitive
+//     categories include lifecycle ([ErrDatabaseClosed], [ErrDatabaseLocked]), format and migration
+//     refusal ([ErrUnsupportedFormatVersion], [ErrMigrationIncomplete], [ErrMigrationChangelogState]),
+//     commit finalization ([ErrCommitFinalization], [ErrCommitDurable]), encryption and changelog
+//     integrity ([ErrEncryptionKeyMismatch], [ErrChangelogCorrupt], [ErrChangelogConsumerInvalidated]),
+//     and MVCC snapshot errors ([ErrReadSeqFuture], [ErrMVCCRequired]).
 //
 // Lattice types ([Coord], [PackedCoord], [Pack], [Unpack], [Ring], [WalkRings]) are
 // re-exported from internal/lattice; see docs/hexxladb/HEXXLA.md and
 // internal/lattice/PACKED_COORD.md for geometry and key layout.
 //
-// Internal spatial algorithms (not exported at root level) power the context-loading
-// methods above: [FieldOfView] (symmetric shadowcasting, Albert Ford 2021 adaptation),
-// [Voronoi] (multi-source Dijkstra with optional [WeightFunc] cost function),
-// and pathfinding heuristics for regular-grid callers. [Tx.FindEdgePath] uses
+// Private spatial algorithms power the context-loading methods above: symmetric
+// shadowcasting for [Tx.LoadContextFOV], multi-source Dijkstra with an optional
+// [VoronoiWeightFunc] for [Tx.LoadContextVoronoi], and pathfinding heuristics for
+// regular-grid callers. [Tx.FindEdgePath] uses
 // Dijkstra because stored edges may be long-range and have subunit weights.
 //
 // # Embedding in your program

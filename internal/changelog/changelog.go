@@ -1,4 +1,4 @@
-// Package changelog implements the append-only logical changefeed (Phase G).
+// Package changelog implements the append-only logical changefeed.
 // See docs/hexxladb/CHANGEFEED.md.
 package changelog
 

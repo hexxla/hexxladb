@@ -133,7 +133,7 @@ primary/WAL/changelog recovery set until downstream validation completes. See
 
 ## Operations emitted
 
-One event per successful **mutation** on [`Tx`](../../tx.go) / primitives. Stable op codes are [`ChangelogOp*` constants](../../db_changelog.go): **PutCell** (`OpPutCell`), seam insert/update via **PutSeam** (`OpPutSeam`), **ResolveSeam** (`OpResolveSeam` — same encoded seam payload and MVCC keys as **PutSeam**, distinct op for downstream workflows), **PutFacet** / **UpdateFacet** (`OpPutFacet`), **PutEdge** / **LinkCells** (`OpPutEdge`). **MarkConflict** is recorded as **PutSeam** (`OpPutSeam`) with seam payload distinguishing `mark_conflict`. **Read-only** [`View`](../../db.go) emits nothing.
+One event per successful **mutation** on [`Tx`](../../tx.go) / primitives. Stable op codes are [`ChangelogOp*` constants](../../db_changelog.go): **PutCell** (`OpPutCell`), seam insert/update via **PutSeam** (`OpPutSeam`), **ResolveSeam** (`OpResolveSeam` — same encoded seam payload and MVCC keys as **PutSeam**, distinct op for downstream workflows), **PutFacet** / **UpdateFacet** (`OpPutFacet`), **PutEdge** / **LinkCells** (`OpPutEdge`), and **DeleteCell** (`OpDeleteCell`). **MarkConflict** is recorded as **PutSeam** (`OpPutSeam`) with seam payload distinguishing `mark_conflict`. **Read-only** [`View`](../../db.go) emits nothing.
 
 ## Observability (recommended metrics)
 

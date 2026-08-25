@@ -1,6 +1,6 @@
-# Engine on-disk format (M3 design gate)
+# Engine on-disk format
 
-HexxlaDB v1 engine shell: **configurable page size** (4/8/16/64 KiB; default **4 KiB** for new databases), one **primary database file** and one **WAL file**. Numeric fields are **big-endian** unless noted. Bump **`format_version`** / magic if layouts change incompatibly.
+HexxlaDB uses a **configurable page size** (4/8/16/64 KiB; default **4 KiB** for new databases), one **primary database file**, and one **WAL file**. Engine format v1 stores unversioned logical rows; format v2 adds MVCC commit sequencing. Numeric fields are **big-endian** unless noted. Bump **`format_version`** or the relevant magic for an incompatible layout change.
 
 ## Paths
 
@@ -19,7 +19,7 @@ HexxlaDB v1 engine shell: **configurable page size** (4/8/16/64 KiB; default **4
 - **Page 0** is the **meta/header page**: the first **512 bytes** hold a fixed **file header**; the remainder of page 0 is reserved (zeros).
 - **Page IDs:** logical **`uint64`**. **Page 0** is header-only. **Pages with id ≥ 1** are data pages.
 - **Byte offset** for page `p`: `p * PageSize` (so page 0 starts at file offset 0).
-- **Allocation (shell):** append-only growth: writing page `p` extends the file to at least `(p+1) * PageSize` bytes.
+- **Allocation:** extend-only growth: writing page `p` extends the file to at least `(p+1) * PageSize` bytes. Dead pages are reclaimed only by explicit compaction.
 
 ## File header (first 512 bytes of page 0)
 
@@ -27,33 +27,35 @@ HexxlaDB v1 engine shell: **configurable page size** (4/8/16/64 KiB; default **4
 | ------ | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0      | 8    | **Magic** ASCII `HEXXLADB` + NUL                                                                                                                    |
 | 8      | 4    | **format_version** `uint32` (**1** = single-version cells; **2** = MVCC versioned keys; see [HEXXLA_DB.md](../../docs/hexxladb/HEXXLA_DB.md))       |
-| 12     | 4    | **page_size** `uint32` (65536)                                                                                                                      |
+| 12     | 4    | **page_size** `uint32` — one of 4096, 8192, 16384, or 65536                                                                                         |
 | 16     | 8    | **last_wal_seq** `uint64` — last WAL sequence applied to the primary file                                                                           |
-| 24     | 8    | **next_page_id** `uint64` — allocator hint for M4+ (shell may still update)                                                                         |
+| 24     | 8    | **next_page_id** `uint64` — next extend-only allocator page id                                                                                      |
 | 32     | 8    | **btree_root_page** `uint64` — B+ tree root (**0** = empty); see [ORDERED_STORE.md](./ORDERED_STORE.md)                                             |
 | 40     | 4    | **features** `uint32` — bit **0** = encrypted data pages; bit **1** = keyed WAL MAC enabled; see [ENCRYPTION.md](../../docs/hexxladb/ENCRYPTION.md) |
 | 44     | 16   | **encryption_salt** — used with Argon2id passphrase mode and keyed encryption verifier derivation                                                   |
 | 60     | 8    | **commit_seq** `uint64` — last committed logical sequence (**format_version ≥ 2**); **zero** when **format_version == 1** (treated as unused)       |
 | 68     | 32   | **encryption_key_check** — keyed verifier for deterministic wrong-key detection on encrypted DBs                                                    |
 | 100    | 4    | **max_value_bytes** `uint32` — per-database max B+ tree value size; **0** = default (8192)                                                          |
-| 104    | 408  | **reserved** (zero)                                                                                                                                 |
+| 104    | 2    | **embedding_dimension** `uint16` — zero until configured or detected on first vector write                                                          |
+| 106    | 1    | **embedding_metric** `uint8` — persisted distance metric when the embedding dimension is non-zero                                                   |
+| 107    | 405  | **reserved** (zero)                                                                                                                                 |
 
-Unrecognized **format_version** → open fails (forward-only policy; migration tooling later).
+An unrecognized **format_version** fails open with `ErrUnsupportedFormatVersion`; the engine never guesses or auto-upgrades. The public `MigrateV1ToV2` workflow performs the supported source-preserving v1-to-v2 conversion into a distinct destination.
 
 ## WAL file
 
 - Append-only **redo** log. Each **record** is self-contained.
-- **Replay:** on `Open`, records with **seq > last_wal_seq** in the file header are applied (page write). Then **`last_wal_seq`** is updated and the WAL may be **truncated** to length 0 for the shell (crash-safe ordering: append record → fsync WAL → write page → fsync DB → advance header).
+- **Replay:** on `Open`, records with **seq > last_wal_seq** in the file header are applied. Then **`last_wal_seq`** is updated and the reusable WAL extent is normalized (crash-safe ordering: append record → sync WAL → write pages → sync primary → advance and sync header).
 
 ### WAL record (v1)
 
-| Field | Type | Notes |
-| ----------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | ------- | --- | -------------------------------------------------------- |
-| **seq** | `uint64` | Monotonic per database; must be **last_wal_seq + 1** for new appends after recovery |
-| **page_id** | `uint64` | Target page; **≥ 1** (page 0 is not WAL-patched by shell tests) |
-| **crc32** | `uint32` | IEEE CRC-32 of **payload** |
-| **payload** | `[pageSize]byte` | Full page image (length equals the database's page size — **ciphertext** when encryption hooks are enabled; see [ENCRYPTION.md](../../docs/hexxladb/ENCRYPTION.md)) |
-| **mac** | `[32]byte` (optional) | Present when header feature bit 1 is set. HMAC-SHA256 over `seq                                                                                                     |     | page_id |     | payload` using key derived from encryption key material. |
+| Field       | Type                    | Notes                                                                                                                                                            |
+| ----------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **seq**     | `uint64`                | Monotonic per database; new records continue after the last applied sequence.                                                                                    |
+| **page_id** | `uint64`                | Target data page; **≥ 1**. Page 0 is published separately after data-page durability.                                                                            |
+| **crc32**   | `uint32`                | IEEE CRC-32 of **payload**.                                                                                                                                      |
+| **payload** | `[pageSize]byte`         | Full page image; ciphertext when encryption hooks are enabled. See [ENCRYPTION.md](../../docs/hexxladb/ENCRYPTION.md).                                           |
+| **mac**     | `[32]byte` (conditional) | Present when header feature bit 1 is set. HMAC-SHA256 over `seq || page_id || payload`, using key material derived from the configured database encryption secret. |
 
 Records are read sequentially from the start of the WAL file. Partial tail → **`ErrCorruptWAL`**.
 
@@ -90,9 +92,9 @@ Values larger than the **inline threshold** (`pageSize - btreeHeaderSize - maxKe
 
 Overflow pages are ordinary data pages: they are written via `WritePage`, appear in the WAL, and encrypt like any other page.
 
-## Freelist
+## Allocation and reclamation
 
-- **M3 shell:** no separate freelist structure; **next_page_id** in the header documents intent for **M4**. Extending the file is sufficient for tests.
+The engine has no persistent freelist. `next_page_id` advances as new tree and overflow pages are allocated, so deletes, rewrites, and MVCC pruning can leave unreachable pages. `DB.StorageStats` measures whole unreachable pages and explicit copy-compaction rewrites live keys into a smaller replacement. Persistent page reuse remains deferred until allocator state can be proven safe across WAL replay.
 
 ## Page I/O hooks (encryption seam)
 

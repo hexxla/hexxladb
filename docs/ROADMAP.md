@@ -31,6 +31,8 @@ These are plausible extensions, not commitments. Promote one only when a represe
 - **Graph export** — a standard external representation when consumers need topology inspection without custom traversal code.
 - **Record-encoding allocation reduction** — pool or capacity-hint encoding only after benchmarks show material write-path GC pressure.
 - **Large-graph shortest paths** — reconsider advanced SSSP algorithms such as BMSSP only when graph sizes and profiles show Dijkstra expansion is the limiting cost. Current bounded workloads do not justify the implementation complexity.
+- **Page-level corruption fault injection** — extend current decoder, WAL, overflow-chain, and B+ tree invariant tests with byte-level primary-file faults when a defined recovery or fail-closed requirement identifies coverage that structural unit tests do not provide.
+- **Resource-failure injection** — add deterministic ENOSPC, sync, allocation, or file-descriptor fault seams only when an operator requirement defines the expected transaction outcome and recovery evidence; avoid non-reproducible host-exhaustion tests.
 
 ## Engine and retention investigations
 

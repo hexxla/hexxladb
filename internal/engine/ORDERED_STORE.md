@@ -1,12 +1,12 @@
-# Ordered store (M4 — B+ tree on engine pages)
+# Ordered store (B+ tree on engine pages)
 
-This document specifies the **v1 B+ tree** stored in the primary database file. It builds on **[ENGINE_FORMAT.md](./ENGINE_FORMAT.md)** (configurable page size, WAL). Bump **`format_version`** if any incompatible layout changes.
+This document specifies the B+ tree node format stored in the primary database file. It builds on **[ENGINE_FORMAT.md](./ENGINE_FORMAT.md)** (configurable page size, WAL). Bump the engine **`format_version`** for an incompatible layout change.
 
 ## Goals
 
 - **Morton-aligned keys:** logical order matches [`PackedCoord.Compare`](../../internal/lattice/packed.go) when using [`internal/index`](../../internal/index) encodings (e.g. `cell/` keys).
 - **Owned structure:** no third-party LSM/SQLite; all nodes live in ordinary data pages (`page_id >= 1`).
-- **M5 concurrency:** **single writer, multiple readers** at the API boundary; the tree does **not** take locks. Callers may wrap **`Engine`** / **`BTree`** with a future `RWMutex`. Iterators must not retain stale page buffers across concurrent writes (copy bytes or hold the lock).
+- **Concurrency boundary:** the tree does **not** take its own locks. The module-root database and engine write-transaction layers enforce single-writer ownership and snapshot-safe reads; direct internal callers must use those same ownership rules. Iterators copy returned keys and values rather than retaining mutable page buffers.
 
 ## File header additions
 
@@ -58,13 +58,13 @@ Invariant: child page **ptr0** contains keys `< key[0]`; **ptr[i+1]** contains k
 
 ## Capacity and splits
 
-- Leaf and internal node capacity is **dynamic**, derived from the database's page size. Inserts use **fill-based splitting**: a node splits when its serialized size exceeds ~50% of the page. See `btree_page.go` for `maxLeafEntriesForPage` / `maxInternalChildrenForPage`.
+- Leaf and internal node capacity is **dynamic**, derived from the database's page size. Inserts split only when the serialized node no longer fits; cascading splits greedily left-fill every emitted page and propagate all promoted children until the root fits.
 - **Overflow pages:** values larger than the **inline threshold** (`pageSize - btreeHeaderSize - maxKeyBytes - 4`) are stored in a chain of overflow pages; the leaf entry holds a 14-byte stub (`0xFF 0x4F` magic + `uint32` logical length + `uint64` first page ID). See `overflow.go` and `ENGINE_FORMAT.md` for the on-disk layout.
 - **Root:** when the root splits, a new internal node becomes the root; **`btree_root_page`** in the file header is updated.
 
 ## Allocator
 
-- New pages use the engine’s **`next_page_id`** discipline: the next allocated id is the current **`NextPageID`** from the header before **`WritePage`** (see ENGINE_FORMAT). The B+ tree does not maintain a separate freelist in M4 (**extend-only**); reuse is a later milestone.
+- New pages use the engine’s **`next_page_id`** discipline: the next allocated id is the current **`NextPageID`** from the header before **`WritePage`** (see ENGINE_FORMAT). The allocator is **extend-only** and has no persistent freelist; operators reclaim dead pages through explicit compaction.
 
 ## Key encoding (application layer)
 

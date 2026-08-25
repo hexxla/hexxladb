@@ -1,4 +1,4 @@
-# Record envelope and v1 payloads (M2 design gate)
+# Record envelope and v1 payloads
 
 Binary records are **big-endian** numeric fields (`encoding/binary`). Strings are **UTF-8** with a **uint32** byte-length prefix (see `MaxStringField` in code).
 

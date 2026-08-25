@@ -148,11 +148,43 @@ tasks:
       - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-demo-llm{{.EXE}}" ./examples/llm_context_engine
       - 'echo "  → {{.BINDIR}}/hexxladb-demo-llm{{.EXE}}"'
 
+  build-demo-spatial:
+    desc: Build the spatial-algorithms example
+    cmds:
+      - mkdir -p "{{.BINDIR}}"
+      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-demo-spatial{{.EXE}}" ./examples/spatial_algorithms
+      - 'echo "  → {{.BINDIR}}/hexxladb-demo-spatial{{.EXE}}"'
+
+  build-evidence-performance:
+    desc: Build the aggregate performance-evidence runner
+    cmds:
+      - mkdir -p "{{.BINDIR}}"
+      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-evidence-performance{{.EXE}}" ./examples/performance_evidence
+      - 'echo "  → {{.BINDIR}}/hexxladb-evidence-performance{{.EXE}}"'
+
+  build-evidence-vector-scale:
+    desc: Build the vector-scale evidence runner
+    cmds:
+      - mkdir -p "{{.BINDIR}}"
+      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-evidence-vector-scale{{.EXE}}" ./examples/vector_scale_evidence
+      - 'echo "  → {{.BINDIR}}/hexxladb-evidence-vector-scale{{.EXE}}"'
+
+  build-evidence-lattice-placement:
+    desc: Build the lattice-placement evidence runner
+    cmds:
+      - mkdir -p "{{.BINDIR}}"
+      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-evidence-lattice-placement{{.EXE}}" ./examples/lattice_placement_evidence
+      - 'echo "  → {{.BINDIR}}/hexxladb-evidence-lattice-placement{{.EXE}}"'
+
   build-examples:
     desc: Build all examples
     cmds:
       - task: build-demo
       - task: build-demo-llm
+      - task: build-demo-spatial
+      - task: build-evidence-performance
+      - task: build-evidence-vector-scale
+      - task: build-evidence-lattice-placement
 
   build:
     desc: Build the CLI, TUI, and examples for the selected OS and architecture

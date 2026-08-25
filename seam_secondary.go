@@ -1,9 +1,8 @@
-// seam_secondary.go — secondary index key builders and scan methods for seams.
-//
-// These are *Tx receiver methods that access unexported fields (tx.db.useMVCC,
-// tx.putDirect, tx.deleteDirect, tx.getSeamVisibleRaw) and therefore must
-// remain in package hexxladb. Pure key-encoding logic lives in internal/index.
 package hexxladb
+
+// This file contains secondary-index builders and scan methods for seams. These
+// Tx receiver methods access unexported transaction state and therefore remain in
+// the root package; pure key encoding lives in internal/index.
 
 import (
 	"context"
