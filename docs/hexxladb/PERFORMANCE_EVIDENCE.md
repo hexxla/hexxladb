@@ -17,6 +17,9 @@ report contains durations, counts, runtime metadata, allocation totals, and file
 sizes only; it does not contain cell content, coordinates, database paths, or
 individual query inputs.
 
+Toolchain-transition comparisons are collected separately from `task evidence`
+because they require running the identical source tree with two Go releases.
+
 ## Quick run
 
 ```bash
@@ -88,6 +91,68 @@ task evidence-lattice-placement \
 | Public writes     | Single, batched, callback-delayed, fdatasync, and reader-blocking latency with group-WAL batch/sync counts                                               | Not included                                                                                                |
 | Storage churn     | Exact primary/live/reclaimable page bytes after puts, tombstones, pruning, and compaction; bounded progress and interruption tests                      | Final primary, WAL, and changelog sizes                                                                     |
 | Resources         | Go allocation counts per benchmark operation                                                                                                               | total bytes allocated plus final database, WAL, and changelog sizes                                       |
+
+### Go 1.26.7 to Go 1.27.0 comparison
+
+The 2026-08-25 toolchain decision used the same source tree and an Intel Core
+i9-14900HX Linux/amd64 host. Each toolchain used a separate
+build cache and one logical CPU (`GOMAXPROCS=1`, `-cpu=1`). After an untimed
+warm-up, ten 500 ms samples per benchmark were collected with toolchain order
+alternated between rounds. `benchstat` from `golang.org/x/perf` at revision
+`ebcb4798430d` compared the samples with its default Mann-Whitney test and 95%
+confidence threshold. The focused set covered public reads, context assembly,
+durable and batched writes, value compression, record encoding, and HNSW node
+encoding rather than aggregating every repository benchmark.
+
+Statistically significant time changes from Go 1.26.7 to Go 1.27.0 were:
+
+| Operation | Change |
+| --------- | -----: |
+| `GetCell`, 512 / 2,000 preloaded cells | -79.21% / -81.08% |
+| Raw context scan, 512 / 2,000 cells | -58.64% / -57.00% |
+| Context assembly across tested radii and sizes | -16.81% to -47.42% |
+| Compressible / incompressible 1 KiB value compression | -25.31% / -97.74% |
+| 1 KiB value decompression | -30.44% |
+| Cell-record encode/decode | -13.23% |
+| HNSW node encoding | +7.66% (about +24 ns/op) |
+
+None of the five durable-write timings or three `BatchPutCells` sizes changed
+at the 95% confidence threshold. HNSW decoding was also unchanged. Public point
+reads allocated 98.7% fewer bytes per operation, while context scans allocated
+96.9% fewer bytes. `LoadContext` allocation counts were mixed: they fell about
+24–25% with 512 preloaded cells but rose about 26–27% with 2,000, even as bytes
+allocated fell 52–56% and execution time improved in every case. Durable-write
+bytes per operation also shifted by small but significant amounts (-2.58% to
++5.00%) without a corresponding timing regression, so both allocation metrics
+remain watch items for representative application workloads.
+
+The HNSW result is a compiler microbenchmark effect rather than a changed graph
+or wire format. A separate 15-sample alternating rerun measured 280.3 ns/op on
+Go 1.26.7 and 320.3 ns/op on Go 1.27.0 (+14.27%, p<0.001), with the same one
+896-byte allocation. Twelve-sample attribution probes found no significant
+allocation-cost change, a 9.6% faster size calculation, and an 18.53% slower
+allocation-free buffer fill. Both compilers made the same inlining and escape
+decisions; amd64 disassembly showed that Go 1.27 emitted smaller code but lowered
+the tight range loops differently. The evidence therefore localizes the delta
+to Go 1.27 compiler code generation in the byte-fill loop, without establishing
+an end-to-end HNSW build regression. At roughly 40 ns per encoded node, changing
+the clear existing encoder is not justified without a representative HNSW build
+benchmark showing a material application-level impact.
+
+These read-path changes include a representation trade-off:
+the representative 88-byte benchmark cell encoded as a 70-byte compressed value
+under Go 1.26.7, but Go 1.27.0's `flate.BestSpeed` result did not beat the raw
+size, so HexxlaDB correctly stored the 88-byte value uncompressed. That avoids
+decompression on this hot read but can reduce page density for small,
+moderately-compressible values. Larger compressible values remain compressed;
+compressed and raw values already coexist in the same format.
+
+The comparison supports the Go 1.27.0 minimum because the material wins occur
+in real public read paths, the storage behavior follows the existing
+store-compressed-only-when-smaller rule, and no measured write-path regression
+was established. Capacity-sensitive users should still rerun representative
+data-size and page-density workloads; the benchmark does not turn a toolchain
+upgrade into a storage-size guarantee.
 
 ### Vector-search evidence
 

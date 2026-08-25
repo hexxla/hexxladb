@@ -1,13 +1,12 @@
 module github.com/hexxla/hexxladb
 
-go 1.26.6
-
-require github.com/oklog/ulid/v2 v2.1.0
+go 1.27.0
 
 require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/fatih/color v1.19.0
+	github.com/oklog/ulid/v2 v2.1.0
 	golang.org/x/crypto v0.40.0
 	golang.org/x/sys v0.42.0
 )

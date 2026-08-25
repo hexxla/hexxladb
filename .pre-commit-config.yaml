@@ -18,9 +18,9 @@ repos:
       - id: check-added-large-files
         args: ["--maxkb=512"]
 
-  # Pin matches .github/workflows/ci.yml — bump both when upgrading golangci-lint
+  # Pin matches scripts/tool.sh, which CI invokes — bump both together.
   - repo: https://github.com/golangci/golangci-lint
-    rev: v2.11.4
+    rev: v2.13.1
     hooks:
       - id: golangci-lint-config-verify
       - id: golangci-lint-fmt

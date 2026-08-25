@@ -2,11 +2,11 @@
 
 ## Prerequisites
 
-- **Go** toolchain matching the **`go`** line in [`go.mod`](go.mod) (currently **Go 1.26.6**; [Go toolchains](https://go.dev/doc/toolchain) can select that release automatically).
+- **Go** toolchain matching the **`go`** line in [`go.mod`](go.mod) (currently **Go 1.27.0**; [Go toolchains](https://go.dev/doc/toolchain) can select that release automatically).
 - **[Task](https://taskfile.dev)** v3 (CI currently pins **v3.53.1**) for repository build and validation workflows.
 - Repository analyzers require no global installation. [`scripts/tool.sh`](scripts/tool.sh)
   runs reviewed versions of golangci-lint, Gosec, govulncheck, gocyclo, and
-  gocognit under the minimum Go 1.26.6 toolchain. The first run needs network;
+  gocognit under the minimum Go 1.27.0 toolchain. The first run needs network;
   subsequent runs use the Go module and toolchain caches.
 - Optional: **[pre-commit](https://pre-commit.com)** for Git hooks ([`.pre-commit-config.yaml`](.pre-commit-config.yaml)).
 
