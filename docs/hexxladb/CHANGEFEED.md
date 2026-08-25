@@ -115,6 +115,22 @@ Copy-compaction preserves authoritative cursor and outbox keys but does not copy
 
 For a plaintext replacement, retain the existing sidecar at the configured path; reopening may redeliver an unacknowledged intent. An encrypted compacted primary receives a new encryption salt, so the old encrypted sidecar is intentionally incompatible. Either defer replacement when retained history is required, or explicitly re-bootstrap: open the candidate with changelog disabled, inspect and delete every named cursor at its expected sequence, rebuild downstream state from database truth, then enable a fresh sidecar and register new cursors at zero. Archive the original recovery set until validation completes. See [`OPERATIONS.md`](./OPERATIONS.md#compaction).
 
+## Format migration
+
+`MigrateV1ToV2` starts a new MVCC commit timeline and does not copy the source
+sidecar, consumer cursors, projection checkpoint, or pending outbox into the
+destination. Both source and destination changelogs must be disabled during the
+copy. When any durable changelog state exists, migration returns
+`ErrMigrationChangelogState` unless the caller explicitly sets
+`MigrationOptions.ResetChangelog`.
+
+Reset is an operational acknowledgement, not an exactly-once conversion. Before
+using it, archive required source history, stop consumers, and plan to rebuild
+each downstream projection from destination truth. After verified migration,
+enable a fresh sidecar and register new cursors at zero. Preserve the original
+primary/WAL/changelog recovery set until downstream validation completes. See
+[`OPERATIONS.md`](./OPERATIONS.md#format-v1-to-v2-migration).
+
 ## Operations emitted
 
 One event per successful **mutation** on [`Tx`](../../tx.go) / primitives. Stable op codes are [`ChangelogOp*` constants](../../db_changelog.go): **PutCell** (`OpPutCell`), seam insert/update via **PutSeam** (`OpPutSeam`), **ResolveSeam** (`OpResolveSeam` — same encoded seam payload and MVCC keys as **PutSeam**, distinct op for downstream workflows), **PutFacet** / **UpdateFacet** (`OpPutFacet`), **PutEdge** / **LinkCells** (`OpPutEdge`). **MarkConflict** is recorded as **PutSeam** (`OpPutSeam`) with seam payload distinguishing `mark_conflict`. **Read-only** [`View`](../../db.go) emits nothing.

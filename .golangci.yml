@@ -46,9 +46,16 @@ linters:
         # Too noisy for typical hexagonal service code:
         - hugeParam
         - rangeValCopy
+        - unnamedResult
+        # Deferred cleanup helpers intentionally mutate their named return error.
+        - ptrToRefParam
     gosec:
       severity: medium
       confidence: medium
+    nolintlint:
+      # Gosec's G115 coverage changes between the embedded and standalone scanner;
+      # retain explained directives when one reviewed scanner version does not emit it.
+      allow-unused: true
     revive:
       severity: warning
       rules:

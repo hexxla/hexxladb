@@ -35,12 +35,17 @@ func cmdStats(args []string) int {
 		fmt.Fprintf(os.Stderr, "hexxladb stats: %v\n", err)
 		return 1
 	}
+	storage, err := db.StorageStats()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hexxladb stats: storage: %v\n", err)
+		return 1
+	}
 
 	fmt.Printf("Commit seq:     %d\n", stats.CommitSeq)
 	fmt.Printf("Versioned rows: %d\n", stats.VersionedRows)
 	fmt.Printf("Logical cells:  %d\n", stats.LogicalCells)
-	fmt.Printf("Wasted bytes:   %s", humanBytes(int64(stats.WastedBytes))) //nolint:gosec // display only
-	if stats.WastedBytes > 0 {
+	fmt.Printf("Reclaimable:    %s", humanBytesUint(storage.ReclaimableBytes))
+	if storage.ReclaimableBytes > 0 {
 		fmt.Printf("  (compact recommended)")
 	}
 	fmt.Println()

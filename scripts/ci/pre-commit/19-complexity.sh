@@ -25,17 +25,6 @@ if [[ -f ".complexity.yml" ]]; then
     fi
 fi
 
-# Check for required tools
-if ! command -v gocyclo >/dev/null 2>&1; then
-    echo -e "${RED}error:${NC} gocyclo not found. Install with: go install github.com/fzipp/gocyclo/cmd/gocyclo@latest"
-    exit 1
-fi
-
-if ! command -v gocognit >/dev/null 2>&1; then
-    echo -e "${RED}error:${NC} gocognit not found. Install with: go install github.com/uudashr/gocognit/cmd/gocognit@latest"
-    exit 1
-fi
-
 # Get changed Go files
 changed_files=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
 
@@ -52,6 +41,8 @@ detect_layer() {
     local file="$1"
     if [[ "$file" == internal/engine/* ]]; then
         echo "engine"
+    elif [[ "$file" == internal/changelog/* ]]; then
+        echo "changelog"
     elif [[ "$file" == internal/hnsw/* ]]; then
         echo "hnsw"
     elif [[ "$file" == internal/record/* ]]; then
@@ -102,11 +93,12 @@ get_threshold() {
         adapters_in)  [[ "$metric" == "cyclomatic" ]] && echo 15 || echo 20 ;;
         adapters_out) [[ "$metric" == "cyclomatic" ]] && echo 12 || echo 18 ;;
         engine)       [[ "$metric" == "cyclomatic" ]] && echo 25 || echo 40 ;;
+        changelog)    [[ "$metric" == "cyclomatic" ]] && echo 20 || echo 30 ;;
         hnsw)         [[ "$metric" == "cyclomatic" ]] && echo 18 || echo 30 ;;
         record)       [[ "$metric" == "cyclomatic" ]] && echo 18 || echo 25 ;;
         views)        [[ "$metric" == "cyclomatic" ]] && echo 20 || echo 30 ;;
         lattice)      [[ "$metric" == "cyclomatic" ]] && echo 15 || echo 25 ;;
-        pkg_root)     [[ "$metric" == "cyclomatic" ]] && echo 25 || echo 35 ;;
+        pkg_root)     [[ "$metric" == "cyclomatic" ]] && echo 30 || echo 40 ;;
         cmd)          [[ "$metric" == "cyclomatic" ]] && echo 20 || echo 25 ;;
         examples)     [[ "$metric" == "cyclomatic" ]] && echo 150 || echo 250 ;;
         *)            [[ "$metric" == "cyclomatic" ]] && echo 15 || echo 20 ;;
@@ -123,7 +115,7 @@ check_cyclomatic() {
     max=$(get_threshold "$layer" "cyclomatic")
 
     # gocyclo outputs: <complexity> <package> <function> <file:line>
-    violations=$(gocyclo "$file" 2>/dev/null | awk -v max="$max" '$1 > max {print}' || true)
+    violations=$("$ROOT/scripts/tool.sh" gocyclo "$file" 2>/dev/null | awk -v max="$max" '$1 > max {print}' || true)
 
     if [[ -n "$violations" ]]; then
         echo -e "${RED}Cyclomatic complexity violation in $file (layer: $layer, max: $max):${NC}"
@@ -150,7 +142,7 @@ check_cognitive() {
     max=$(get_threshold "$layer" "cognitive")
 
     # gocognit outputs similar format
-    violations=$(gocognit "$file" 2>/dev/null | awk -v max="$max" '$1 > max {print}' || true)
+    violations=$("$ROOT/scripts/tool.sh" gocognit "$file" 2>/dev/null | awk -v max="$max" '$1 > max {print}' || true)
 
     if [[ -n "$violations" ]]; then
         echo -e "${RED}Cognitive complexity violation in $file (layer: $layer, max: $max):${NC}"

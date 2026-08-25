@@ -41,6 +41,11 @@ func cmdInfo(args []string) int {
 		fmt.Fprintf(os.Stderr, "hexxladb info: stats: %v\n", err)
 		return 1
 	}
+	storage, err := db.StorageStats()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hexxladb info: storage: %v\n", err)
+		return 1
+	}
 
 	mvcc := "off"
 	if stats.CommitSeq > 0 {
@@ -57,13 +62,26 @@ func cmdInfo(args []string) int {
 		fmt.Printf("Versioned rows: %d\n", stats.VersionedRows)
 		fmt.Printf("Logical cells:  %d\n", stats.LogicalCells)
 	}
-	if stats.WastedBytes > 0 {
-		fmt.Printf("Wasted bytes:   %s (compact recommended)\n", humanBytes(int64(stats.WastedBytes))) //nolint:gosec // display only
+	if storage.ReclaimableBytes > 0 {
+		fmt.Printf("Reclaimable:    %s (compact recommended)\n", humanBytesUint(storage.ReclaimableBytes))
 	}
 	return 0
 }
 
 func humanBytes(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.2f GiB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.2f MiB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.2f KiB", float64(n)/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
+}
+
+func humanBytesUint(n uint64) string {
 	switch {
 	case n >= 1<<30:
 		return fmt.Sprintf("%.2f GiB", float64(n)/(1<<30))

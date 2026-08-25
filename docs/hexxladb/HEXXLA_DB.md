@@ -100,6 +100,14 @@ The measured 10,000-vector envelope uses 4 KiB B+ tree pages for both 32- and 38
 
 The query and content-search APIs can use embedding similarity for seed selection, but spatial expansion after seed selection remains deterministic and does not require vectors.
 
+Format v1 cannot become v2 by changing the header: cell, facet, seam, and
+secondary physical keys differ. `MigrateV1ToV2` therefore performs a
+source-preserving logical rewrite and verification into a distinct file. It
+retains the visible records, immutable indexes, embedding configuration, and raw
+application key/value rows while starting a new MVCC commit timeline. Incomplete
+destinations carry private `__meta/migration/v1-to-v2/` resume state and are
+refused by ordinary `Open`.
+
 ## Logical changefeed
 
 The consumer-facing changefeed is an append-only sidecar file, `{primary}-changelog`. When enabled, each database commit first stores bounded private intents under `__meta/changelog-outbox/`; those records are the recoverable source for projecting semantic mutation records to the sidecar. A head key supplies commit identifiers independently of sidecar delivery sequence. Acknowledged outbox entries are deleted without advancing MVCC `CommitSeq`.

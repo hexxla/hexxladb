@@ -16,7 +16,7 @@ func At(phase string) {
 		return
 	}
 	if p := os.Getenv("HEXXLADB_TEST_CRASH_READY"); p != "" {
-		//nolint:gosec // G703 test subprocess only; path is chosen by the parent [testing.T] (tempdir).
+		// #nosec G703 -- test subprocess only; path is chosen by the parent [testing.T] (tempdir).
 		_ = os.WriteFile(p, []byte(phase), 0o600)
 	}
 	for {

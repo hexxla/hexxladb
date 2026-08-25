@@ -3,8 +3,11 @@ package engine
 import "errors"
 
 var (
-	// ErrCorruptHeader means the database file header is invalid or unsupported.
-	ErrCorruptHeader = errors.New("engine: corrupt or unsupported database header")
+	// ErrCorruptHeader means the database file header is invalid.
+	ErrCorruptHeader = errors.New("engine: corrupt database header")
+
+	// ErrUnsupportedFormatVersion means the file uses a newer engine format.
+	ErrUnsupportedFormatVersion = errors.New("engine: unsupported format version")
 
 	// ErrCorruptWAL means the WAL is truncated or fails checksum verification.
 	ErrCorruptWAL = errors.New("engine: corrupt WAL")

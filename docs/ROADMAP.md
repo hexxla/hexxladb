@@ -2,30 +2,6 @@
 
 This file contains pending or deliberately deferred work. Completed work belongs in [`CHANGELOG.md`](../CHANGELOG.md); session-level tasks belong in [`TODO.md`](../TODO.md).
 
-## Limitation-remediation program
-
-Execute these workstreams in order. Each workstream begins with a reproducible baseline and ends only when its stated evidence passes. A workstream may preserve an intentional product boundary, but it must leave users with an accurate contract and a supported operational path.
-
-Completed workstreams are recorded in [`CHANGELOG.md`](../CHANGELOG.md). Remaining workstreams retain their original identifiers so session state and prior review references stay unambiguous.
-
-### 11. Compatibility and v1 readiness
-
-**Outcome:** Users must have a tested path from format v1 to MVCC-capable storage and a clear API/on-disk compatibility promise before v1.0.0.
-
-- Define an offline, resumable v1-to-v2 migration built on logical copy with source preservation, destination exclusivity, progress, cancellation, encryption, and post-copy verification.
-- Publish a compatibility matrix for library versions, format versions, encryption/changelog versions, and downgrade refusal.
-- Inventory the root API, mark provisional areas, and require documented deprecation or migration notes for pre-v1 breaking changes.
-- Pin a lint toolchain that can decode the minimum Go version's export data, and reconcile the standalone Gosec baseline with specific fixes or justified suppressions so local and hosted security checks enforce the same policy.
-- Turn the existing v1 graduation criteria into measurable release gates; do not declare stability based on version number alone.
-
-**Completion evidence:** migration fixtures restore equivalent visible data and indexes, interrupted migrations leave the source untouched, compatibility tests enforce open/refusal behavior, the complete lint and security suite runs without an unreconciled baseline on the supported Go toolchain, and every v1 gate has recorded evidence.
-
-### Program sequencing
-
-1. Complete migration and compatibility gates after the preceding contracts have stabilized.
-
-For every workstream: run the narrowest regression first, then package tests and race checks, then `task ci`; update only the owning reference documents and record completed behavior under `CHANGELOG.md` `[Unreleased]`.
-
 ## Deferred security-format work
 
 ### Authenticated primary pages

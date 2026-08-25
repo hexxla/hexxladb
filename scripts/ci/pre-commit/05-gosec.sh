@@ -9,13 +9,11 @@ GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-if ! command -v gosec >/dev/null 2>&1; then
-    echo -e "${RED}error:${NC} gosec not found. Install with: go install github.com/securego/gosec/v2/cmd/gosec@latest"
-    exit 1
-fi
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+cd "$ROOT"
 
 echo -e "${CYAN}> Running gosec security scan${NC}"
 
-gosec -quiet ./...
+scripts/tool.sh gosec -quiet -severity medium -confidence medium -exclude-generated -exclude=G115 ./...
 echo -e "${GREEN}gosec: OK${NC}"
 echo

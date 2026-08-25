@@ -150,7 +150,7 @@ func TestUpdate_cleanupFaultMayRedeliverButDoesNotDuplicatePrimaryCommit(t *test
 	if err != nil || len(changes) != 2 {
 		t.Fatalf("at-least-once redelivery: records=%#v err=%v", changes, err)
 	}
-	if changes[0].Op != changes[1].Op || string(changes[0].Key) != string(changes[1].Key) || changes[0].Hash != changes[1].Hash {
+	if changes[0].Op != changes[1].Op || !bytes.Equal(changes[0].Key, changes[1].Key) || changes[0].Hash != changes[1].Hash {
 		t.Fatalf("redelivered records do not describe the same mutation: %#v", changes)
 	}
 	if err := db.Close(); err != nil {

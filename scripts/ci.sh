@@ -42,31 +42,18 @@ echo "==> go test (compiles packages + runs tests; -race catches data races)"
 go test -count=1 -race -parallel 1 ./...
 
 echo "==> govulncheck (known vulnerabilities in reachable code; https://go.dev/blog/govulncheck)"
-go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+scripts/tool.sh govulncheck ./...
 
-if command -v golangci-lint >/dev/null 2>&1; then
-	echo "==> golangci-lint (see .golangci.yml: standard preset + errorlint, gosec, revive, …)"
-	golangci-lint run ./...
-else
-	echo "==> golangci-lint (skipped — not on PATH)"
-	echo "    Install: https://golangci-lint.run/welcome/install/"
-	echo "    Example: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest"
-	if [[ "${CI:-}" == "true" ]]; then
-		die "golangci-lint is required in CI"
-	fi
-fi
+echo "==> golangci-lint (pinned; see .golangci.yml)"
+scripts/tool.sh golangci-lint run ./...
+
+echo "==> gosec (pinned standalone policy; medium severity and confidence)"
+# G115 is enforced by golangci-lint, whose per-line //nolint:gosec explanations are
+# more precise than standalone Gosec's separate #nosec syntax.
+scripts/tool.sh gosec -quiet -severity medium -confidence medium -exclude-generated -exclude=G115 ./...
 
 echo "==> Complexity analysis (cyclomatic + cognitive + CRAP; see .complexity.yml)"
-if command -v gocyclo >/dev/null 2>&1 && command -v gocognit >/dev/null 2>&1; then
-	bash scripts/ci/pre-push/05-complexity.sh
-else
-	echo "    gocyclo/gocognit not on PATH — skipping"
-	echo "    Install: go install github.com/fzipp/gocyclo/cmd/gocyclo@latest"
-	echo "             go install github.com/uudashr/gocognit/cmd/gocognit@latest"
-	if [[ "${CI:-}" == "true" ]]; then
-		die "gocyclo and gocognit are required in CI"
-	fi
-fi
+bash scripts/ci/pre-push/05-complexity.sh
 
 echo "==> go mod tidy (ensure go.mod / go.sum match module graph)"
 go mod tidy

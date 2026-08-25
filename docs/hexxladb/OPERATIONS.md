@@ -90,6 +90,64 @@ When changelog is enabled, the primary may contain unacknowledged `__meta/change
 
 Durable named consumer cursors and their logical-history checkpoint live in the primary, so `BackupTo` preserves them with the matching sidecar. Restore with changelog enabled to validate the binding before resuming. `ErrChangelogConsumerInvalidated` means the primary and retained logical history do not match; do not reset the cursor or delete the sidecar until the correct backup set has been sought. See [`CHANGEFEED.md`](./CHANGEFEED.md#durable-consumer-cursors) for compare-and-advance and explicit re-bootstrap rules.
 
+## Format v1 to v2 migration
+
+[`MigrateV1ToV2`](../../migration.go) is the supported offline path from a
+single-version format-v1 database to an MVCC-capable format-v2 database. It is
+a logical copy, not an in-place header edit: cells, facets, and seams are decoded
+and rewritten through typed primitives so versioned primary and secondary keys
+are rebuilt. Edges, embeddings/HNSW, and application-owned raw rows are copied
+without changing their logical values.
+
+```go
+err := hexxladb.MigrateV1ToV2(ctx, "memory-v1.db", "memory-v2.db",
+    &hexxladb.MigrationOptions{
+        SourceOptions: &hexxladb.Options{Passphrase: oldPassphrase},
+        DestinationOptions: &hexxladb.Options{Passphrase: newPassphrase},
+        BatchSize: 1024,
+        OnProgress: func(p hexxladb.MigrationProgress) {
+            log.Printf("processed %d source keys", p.ProcessedKeys)
+        },
+    })
+if err != nil {
+    return err
+}
+```
+
+Operational contract:
+
+- Close the source everywhere first. Migration obtains the normal exclusive
+  database lock and never replaces, truncates, or deletes the source or its WAL.
+- The destination must be absent on the first call. It is created exclusively;
+  an unrelated existing database is refused and preserved.
+- Each batch and its resume checkpoint share one destination transaction.
+  Cancellation or failure keeps the partial destination for a later call with
+  the same source content and destination credentials. `Open` returns
+  `ErrMigrationIncomplete` until verification removes the checkpoint.
+- The resume identity is a SHA-256 digest over source rows. It contains no key,
+  passphrase, or decoded content. A changed source or unrelated destination is
+  refused rather than merged.
+- Source page size, value limit, embedding dimension, and distance metric are
+  retained. Destination encryption is independently selected, so migration can
+  preserve, add, remove, or rotate encryption without retaining credentials.
+  Destination cell validators and post-write hooks are intentionally ignored so
+  retries neither reject legacy truth nor repeat application side effects.
+- Changelog sidecars are not copied into the new MVCC timeline. Disable the
+  changelog during migration. If the source contains head, outbox, checkpoint,
+  or named-consumer state, the default is refusal with
+  `ErrMigrationChangelogState`. Set `ResetChangelog: true` only after archiving
+  required history and arranging downstream rebuild/re-bootstrap.
+- After all rows are copied, migration rereads the source and destination and
+  verifies every logical row before making the destination ordinarily openable.
+  Then open the destination, run `HealthCheck` plus application probes, take a
+  backup, and only then publish it as the replacement.
+
+Do not open a partial destination with an older library that predates
+`ErrMigrationIncomplete`; only the current `MigrateV1ToV2` call owns that file.
+Migration creates a new commit timeline rather than manufacturing v1 history.
+Retain the complete v1 recovery set until the replacement and its backup have
+passed restore validation.
+
 ## Encryption
 
 Optional **AES-256-XTS** at the page layer is configured with [`Options`](../../options.go). When the logical changelog is enabled, official database encryption also selects authenticated encrypted changelog format v2. See [`ENCRYPTION.md`](./ENCRYPTION.md) for keys, visible metadata, legacy-log handling, and the unauthenticated primary-page limitation.

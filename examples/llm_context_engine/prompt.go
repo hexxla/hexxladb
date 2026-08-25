@@ -41,7 +41,7 @@ func fitRenderedPrompt(preferences []string, candidates []hexxladb.CellView, use
 		return nil, "", used, errPromptBudgetTooSmall
 	}
 	for _, candidate := range candidates {
-		proposed := append(selected, candidate)
+		proposed := append(slices.Clone(selected), candidate)
 		rendered := renderModelRequest(preferences, proposed, userMessage)
 		tokens, err := count(rendered)
 		if err != nil {

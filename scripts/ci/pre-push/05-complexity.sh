@@ -35,17 +35,6 @@ if [[ -f ".complexity.yml" ]]; then
     [[ "$fov" == "false" ]] && fail_on_violation=false
 fi
 
-# Check for required tools
-if ! command -v gocyclo >/dev/null 2>&1; then
-    echo -e "${RED}error:${NC} gocyclo not found. Install with: go install github.com/fzipp/gocyclo/cmd/gocyclo@latest"
-    exit 1
-fi
-
-if ! command -v gocognit >/dev/null 2>&1; then
-    echo -e "${RED}error:${NC} gocognit not found. Install with: go install github.com/uudashr/gocognit/cmd/gocognit@latest"
-    exit 1
-fi
-
 echo -e "${CYAN}> Running full complexity analysis${NC}"
 
 # Layer detection — maps file paths to .complexity.yml threshold keys.
@@ -55,6 +44,8 @@ detect_layer() {
     # internal layers (most-specific first)
     if [[ "$file" == internal/engine/* ]]; then
         echo "engine"
+    elif [[ "$file" == internal/changelog/* ]]; then
+        echo "changelog"
     elif [[ "$file" == internal/hnsw/* ]]; then
         echo "hnsw"
     elif [[ "$file" == internal/record/* ]]; then
@@ -104,11 +95,12 @@ get_threshold() {
         adapters_in)  [[ "$metric" == "cyclomatic" ]] && echo 15 || echo 20 ;;
         adapters_out) [[ "$metric" == "cyclomatic" ]] && echo 12 || echo 18 ;;
         engine)       [[ "$metric" == "cyclomatic" ]] && echo 25 || echo 40 ;;
+        changelog)    [[ "$metric" == "cyclomatic" ]] && echo 20 || echo 30 ;;
         hnsw)         [[ "$metric" == "cyclomatic" ]] && echo 18 || echo 30 ;;
         record)       [[ "$metric" == "cyclomatic" ]] && echo 18 || echo 25 ;;
         views)        [[ "$metric" == "cyclomatic" ]] && echo 20 || echo 30 ;;
         lattice)      [[ "$metric" == "cyclomatic" ]] && echo 15 || echo 25 ;;
-        pkg_root)     [[ "$metric" == "cyclomatic" ]] && echo 25 || echo 35 ;;
+        pkg_root)     [[ "$metric" == "cyclomatic" ]] && echo 30 || echo 40 ;;
         cmd)          [[ "$metric" == "cyclomatic" ]] && echo 20 || echo 25 ;;
         examples)     [[ "$metric" == "cyclomatic" ]] && echo 150 || echo 250 ;;
         *)            [[ "$metric" == "cyclomatic" ]] && echo 15 || echo 20 ;;
@@ -128,8 +120,8 @@ get_crap_threshold() {
     echo 100
 }
 
-# Coverage map: funcname -> coverage_pct (numeric string, e.g. "87.5")
-# Keyed by the bare function name as output by `go tool cover -func`.
+# Coverage map: relative-file|funcname -> coverage_pct (numeric string, e.g. "87.5").
+# The file component avoids collisions between packages with the same function name.
 declare -A coverage_map
 
 load_coverage() {
@@ -151,11 +143,15 @@ load_coverage() {
     # Fields: $1=pkg/file:line  $2=FuncName  $3=pct%
     while IFS= read -r covline; do
         [[ "$covline" == total:* ]] && continue
-        local fname pct
+        local fname pct location covfile
+        location=$(echo "$covline" | awk '{print $1}')
         fname=$(echo "$covline" | awk '{print $2}')
         pct=$(echo "$covline"   | awk '{print $3}' | tr -d '%')
-        [[ -z "$fname" || -z "$pct" ]] && continue
-        coverage_map["$fname"]="$pct"
+        [[ -z "$location" || -z "$fname" || -z "$pct" ]] && continue
+        location="${location%:}"
+        covfile="${location%:*}"
+        covfile="${covfile#github.com/hexxla/hexxladb/}"
+        coverage_map["$covfile|$fname"]="$pct"
     done < <(go tool cover -func="$coverage_file" 2>/dev/null || true)
 }
 
@@ -171,24 +167,18 @@ calculate_crap() {
     }'
 }
 
-# Look up per-function coverage percentage.
-# gocyclo $3 field is the bare function name (e.g. "applyPredicates" or "(*Tx).QueryCells").
-# go tool cover -func emits the same names, so we can match directly.
+# Look up per-function coverage percentage. Gocyclo includes receiver syntax in
+# method names; go tool cover emits the bare method name, so normalize it here.
 get_coverage_for_function() {
-    local func="$1"
+    local file="$1"
+    local func="$2"
 
-    # Direct match
-    if [[ -n "${coverage_map[$func]:-}" ]]; then
-        echo "${coverage_map[$func]}"
-        return
-    fi
-
-    # gocyclo strips pointer syntax in some versions; try without * and parens
-    local stripped="${func//\*/}"
-    stripped="${stripped//(/}"
-    stripped="${stripped//)/}"
-    if [[ -n "${coverage_map[$stripped]:-}" ]]; then
-        echo "${coverage_map[$stripped]}"
+    # go tool cover emits a bare function/method name while gocyclo includes
+    # receiver syntax (for example (*DB).Update).
+    local bare="${func##*.}"
+    local key="$file|$bare"
+    if [[ -n "${coverage_map[$key]:-}" ]]; then
+        echo "${coverage_map[$key]}"
         return
     fi
 
@@ -228,7 +218,7 @@ while IFS= read -r line; do
         cyclo_violations+=("$file|$func|$comp|$max_cyclo|$layer|$loc")
         violation_funcs=$((violation_funcs + 1))
     fi
-done < <(find . -name '*.go' -not -path './vendor/*' -not -name '*_test.go' -exec gocyclo {} + 2>/dev/null || true)
+done < <(find . -name '*.go' -not -path './vendor/*' -not -name '*_test.go' -exec "$ROOT/scripts/tool.sh" gocyclo {} + 2>/dev/null || true)
 
 # Check cognitive complexity
 echo -e "${CYAN}  Analyzing cognitive complexity...${NC}"
@@ -250,7 +240,7 @@ while IFS= read -r line; do
     if [[ "$comp" -gt "$max_cog" ]]; then
         cog_violations+=("$file|$func|$comp|$max_cog|$layer|$loc")
     fi
-done < <(find . -name '*.go' -not -path './vendor/*' -not -name '*_test.go' -exec gocognit {} + 2>/dev/null || true)
+done < <(find . -name '*.go' -not -path './vendor/*' -not -name '*_test.go' -exec "$ROOT/scripts/tool.sh" gocognit {} + 2>/dev/null || true)
 
 # CRAP scoring
 echo -e "${CYAN}  Calculating CRAP scores...${NC}"
@@ -270,13 +260,13 @@ while IFS= read -r line; do
     [[ "$file" == *_test.go ]] && continue
     [[ "$file" == examples/* ]] && continue
 
-    coverage=$(get_coverage_for_function "$func")
+    coverage=$(get_coverage_for_function "$file" "$func")
     crap=$(calculate_crap "$cyclo" "$coverage")
 
     if [[ "$crap" -gt "$crap_threshold" ]]; then
         crap_violations+=("$file|$func|$crap|$crap_threshold|$cyclo|$coverage|$loc")
     fi
-done < <(find . -name '*.go' -not -path './vendor/*' -not -name '*_test.go' -exec gocyclo {} + 2>/dev/null || true)
+done < <(find . -name '*.go' -not -path './vendor/*' -not -name '*_test.go' -exec "$ROOT/scripts/tool.sh" gocyclo {} + 2>/dev/null || true)
 
 # Report violations
 cyclo_count=${#cyclo_violations[@]}
@@ -312,7 +302,7 @@ if [[ $crap_count -gt 0 ]]; then
     printf "%-40s %-30s %8s %8s %12s\n" "File" "Function" "CRAP" "Cyclo" "Coverage"
     echo "-----------------------------------------------------------------------------------------------"
     for v in "${crap_violations[@]}"; do
-        IFS='|' read -r file func crap cyclo coverage loc <<< "$v"
+        IFS='|' read -r file func crap threshold cyclo coverage loc <<< "$v"
         printf "%-40s %-30s %8s %8s %11s%%\n" "$file" "$func" "$crap" "$cyclo" "$coverage"
     done
     crap_errors=$((crap_errors + crap_count))

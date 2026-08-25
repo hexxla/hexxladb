@@ -2,10 +2,12 @@
 
 ## Prerequisites
 
-- **Go** toolchain matching the **`go`** and **`toolchain`** lines in [`go.mod`](go.mod) (currently **Go 1.26.3**; the **`toolchain`** directive selects that release via [Go toolchains](https://go.dev/doc/toolchain)).
+- **Go** toolchain matching the **`go`** line in [`go.mod`](go.mod) (currently **Go 1.26.6**; [Go toolchains](https://go.dev/doc/toolchain) can select that release automatically).
 - **[Task](https://taskfile.dev)** v3 (CI currently pins **v3.53.1**) for repository build and validation workflows.
-- Optional but recommended: **`golangci-lint`** v2 (same major as [`.golangci.yml`](.golangci.yml)) for `task lint` and full [`scripts/ci.sh`](scripts/ci.sh).
-- **`govulncheck`** is invoked via **`go run golang.org/x/vuln/cmd/govulncheck@latest`** inside [`scripts/ci.sh`](scripts/ci.sh) — no separate install; needs network on first run (module cache afterward).
+- Repository analyzers require no global installation. [`scripts/tool.sh`](scripts/tool.sh)
+  runs reviewed versions of golangci-lint, Gosec, govulncheck, gocyclo, and
+  gocognit under the minimum Go 1.26.6 toolchain. The first run needs network;
+  subsequent runs use the Go module and toolchain caches.
 - Optional: **[pre-commit](https://pre-commit.com)** for Git hooks ([`.pre-commit-config.yaml`](.pre-commit-config.yaml)).
 
 ## Clone and run
@@ -34,7 +36,11 @@ task
 # same as: task ci
 ```
 
-That includes: **`gofmt -l`**, **`go vet ./...`**, **`go test -race ./...`**, **`govulncheck ./...`** (via **`go run`** as above), **`golangci-lint run`**, and **`go mod tidy`** (with a clean `go.mod` / `go.sum` check when **`CI=true`**).
+That includes: **`gofmt -l`**, **`go vet ./...`**, architecture boundaries,
+**`go test -race ./...`**, pinned **govulncheck**, **golangci-lint**, standalone
+**Gosec**, cyclomatic/cognitive/CRAP analysis, and **`go mod tidy`** (with a
+clean `go.mod` / `go.sum` check when **`CI=true`**). No analyzer is skipped when
+it is absent from `PATH`.
 
 Shortcuts:
 
@@ -43,7 +49,7 @@ Shortcuts:
 | `task test`         | Tests with `-race`                                                                                                                                                                                                                                                                                                                                                                                          |
 | `task vet`          | `go vet` only                                                                                                                                                                                                                                                                                                                                                                                               |
 | `task govulncheck`  | Vulnerability scan only (also part of `task ci`)                                                                                                                                                                                                                                                                                                                                                            |
-| `task lint`         | golangci-lint (requires binary on `PATH`)                                                                                                                                                                                                                                                                                                                                                                   |
+| `task lint`         | Pinned golangci-lint through `scripts/tool.sh`                                                                                                                                                                                                                                                                                                                                                              |
 | `task fmt`          | `gofmt -w` on module `.go` files                                                                                                                                                                                                                                                                                                                                                                            |
 | `task clean`        | Remove `bin/` (from `task build`)                                                                                                                                                                                                                                                                                                                                                                           |
 | `task help`         | List Taskfile tasks                                                                                                                                                                                                                                                                                                                                                                                         |

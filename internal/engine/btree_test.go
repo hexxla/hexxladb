@@ -149,13 +149,13 @@ func TestPointLookupHelpersMatchDecodedPages(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		index := leafKeyIndex(keys, key)
-		wantOK := index < len(keys) && bytes.Equal(keys[index], key)
+		keyIndex := leafKeyIndex(keys, key)
+		wantOK := keyIndex < len(keys) && bytes.Equal(keys[keyIndex], key)
 		if ok != wantOK {
 			t.Fatalf("leaf lookup %q: ok=%v want=%v", key, ok, wantOK)
 		}
-		if ok && !bytes.Equal(value, values[index]) {
-			t.Fatalf("leaf lookup %q: value=%q want=%q", key, value, values[index])
+		if ok && !bytes.Equal(value, values[keyIndex]) {
+			t.Fatalf("leaf lookup %q: value=%q want=%q", key, value, values[keyIndex])
 		}
 	}
 
@@ -245,7 +245,7 @@ func TestBTree_descendRange(t *testing.T) {
 	defer func() { _ = e.Close() }()
 	bt := OpenBTree(e)
 	for i := range 500 {
-		key := []byte(fmt.Sprintf("k%04d", i))
+		key := fmt.Appendf(nil, "k%04d", i)
 		if err := bt.Put(key, key); err != nil {
 			t.Fatalf("put %d: %v", i, err)
 		}

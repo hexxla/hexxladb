@@ -227,10 +227,7 @@ func runStrategy(ctx context.Context, cfg config, docs []document, policy placem
 	if err != nil {
 		return report, fmt.Errorf("evaluate initial placement: %w", err)
 	}
-	initialCoordinates := make(map[string]hexxladb.Coord, len(state.byID))
-	for id, coord := range state.byID {
-		initialCoordinates[id] = coord
-	}
+	initialCoordinates := maps.Clone(state.byID)
 	if err := placeDocuments(ctx, db, &state, incremental, policy); err != nil {
 		return report, err
 	}

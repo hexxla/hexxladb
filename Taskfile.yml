@@ -265,7 +265,7 @@ tasks:
   govulncheck:
     desc: Run the Go vulnerability scanner
     cmds:
-      - go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - scripts/tool.sh govulncheck ./...
 
   complexity:
     desc: Run cyclomatic, cognitive, and CRAP complexity checks
@@ -305,7 +305,7 @@ tasks:
   lint:
     desc: Run golangci-lint
     cmds:
-      - golangci-lint run ./...
+      - scripts/tool.sh golangci-lint run ./...
 
   mod-tidy:
     desc: Reconcile go.mod and go.sum with the module graph

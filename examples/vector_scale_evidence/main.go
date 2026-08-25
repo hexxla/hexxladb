@@ -8,7 +8,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -129,7 +128,7 @@ func main() {
 		_, _ = fmt.Fprintf(os.Stderr, "vector scale evidence: %v\n", err)
 		os.Exit(2)
 	}
-	report, err := run(context.Background(), cfg)
+	report, err := run(cfg)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "vector scale evidence: %v\n", err)
 		os.Exit(1)
@@ -170,7 +169,7 @@ func validateConfig(cfg config) error {
 	return nil
 }
 
-func run(ctx context.Context, cfg config) (evidenceReport, error) {
+func run(cfg config) (evidenceReport, error) {
 	var report evidenceReport
 	tempDir, err := os.MkdirTemp("", "hexxladb-vector-evidence-")
 	if err != nil {

@@ -65,42 +65,18 @@ func Open(path string, opts *Options) (*DB, error) {
 }
 
 func openDB(path string, opts *Options, createExclusive bool) (*DB, error) {
-	eopts, xtsKey, err := buildEngineOptions(path, opts)
+	return openDBWithMigration(path, opts, createExclusive, false)
+}
+
+func openDBWithMigration(path string, opts *Options, createExclusive, allowIncompleteMigration bool) (*DB, error) {
+	eopts, xtsKey, err := openEngineOptions(path, opts, createExclusive)
 	if err != nil {
 		return nil, err
 	}
 	defer clear(xtsKey)
-	eopts = mergeEnginePageSize(eopts, opts)
-	eopts = mergeEnginePrimaryFdatasync(eopts, opts)
-	eopts = mergeEngineGroupWAL(eopts, opts)
-	eopts = mergeEngineMaxValueBytes(eopts, opts)
-	eopts = mergeEnginePageCache(eopts, opts)
-	eopts = mergeEngineEmbedding(eopts, opts)
-	if eopts == nil {
-		eopts = &engine.Options{}
-	}
-	eopts.CreateExclusive = createExclusive
 	eng, err := engine.Open(path, eopts)
 	if err != nil {
-		if errors.Is(err, engine.ErrCorruptHeader) || errors.Is(err, engine.ErrCorruptWAL) {
-			return nil, fmt.Errorf("%w: %w", ErrCorruptDatabase, err)
-		}
-		if errors.Is(err, engine.ErrBadEncryptionKey) {
-			return nil, ErrEncryptionKeyMismatch
-		}
-		if errors.Is(err, engine.ErrInvalidMaxValueBytes) {
-			return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-		}
-		if errors.Is(err, engine.ErrInvalidPageSize) {
-			return nil, fmt.Errorf("%w: PageSize must be 4096, 8192, 16384, or 65536", ErrInvalidArgument)
-		}
-		if errors.Is(err, engine.ErrInvalidEmbeddingConfig) {
-			return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-		}
-		if errors.Is(err, engine.ErrDatabaseLocked) {
-			return nil, fmt.Errorf("%w: %s", ErrDatabaseLocked, path)
-		}
-		return nil, err
+		return nil, mapEngineOpenError(path, err)
 	}
 	hdr, err := eng.ReadHeader()
 	if err != nil {
@@ -111,7 +87,7 @@ func openDB(path string, opts *Options, createExclusive bool) (*DB, error) {
 		_ = eng.Close()
 		return nil, err
 	}
-	if eopts != nil && eopts.ExpectEncryptionKeyCheck &&
+	if eopts.ExpectEncryptionKeyCheck &&
 		hdr.Features&engine.FeatureEncryptedDataPages != 0 &&
 		hdr.EncryptionKeyCheck == ([engine.HeaderEncryptionKeyCheckLen]byte{}) {
 		if err := eng.UpdateHeader(func(h *engine.Header) {
@@ -122,6 +98,10 @@ func openDB(path string, opts *Options, createExclusive bool) (*DB, error) {
 		}
 	}
 	bt := engine.OpenBTree(eng)
+	if err := rejectIncompleteMigration(bt, allowIncompleteMigration); err != nil {
+		_ = eng.Close()
+		return nil, err
+	}
 	db := &DB{eng: eng, btree: bt, useMVCC: hdr.FormatVersion >= 2}
 	db.writeSeqNext.Store(hdr.CommitSeq)
 	db.storeCachedHeader(hdr.CommitSeq, hdr.BTreeRoot)
@@ -136,53 +116,109 @@ func openDB(path string, opts *Options, createExclusive bool) (*DB, error) {
 		db.afterPutSeam = opts.AfterPutSeam
 	}
 	if opts != nil && opts.ChangelogEnabled {
-		db.changelogLazy = opts.ChangelogLazy
-		pendingOutbox, pendingErr := db.readPendingChangelogIntents()
-		if pendingErr != nil {
-			_ = eng.Close()
-			return nil, pendingErr
-		}
-		recoverableTail := len(pendingOutbox) > 0
-		clPath := opts.ChangelogPath
-		if clPath == "" {
-			clPath = path + "-changelog"
-		}
-		syncWrites := !opts.ChangelogLazy
-		var cl *changelog.Log
-		if len(xtsKey) > 0 {
-			changelogKey := deriveChangelogKey(xtsKey, hdr.EncryptionSalt)
-			if recoverableTail {
-				cl, err = changelog.OpenEncryptedRecoverable(clPath, syncWrites, changelogKey[:])
-			} else {
-				cl, err = changelog.OpenEncrypted(clPath, syncWrites, changelogKey[:])
-			}
-			clear(changelogKey[:])
-		} else if recoverableTail {
-			cl, err = changelog.OpenRecoverable(clPath, syncWrites)
-		} else {
-			cl, err = changelog.Open(clPath, syncWrites)
-		}
-		if err != nil {
-			_ = eng.Close()
-			return nil, mapChangelogOpenError(err)
-		}
-		db.changelog = cl
-		if err := db.recoverChangelogOutbox(); err != nil {
-			_ = cl.Close()
-			_ = eng.Close()
-			return nil, err
-		}
-		consumers, err := db.readChangelogConsumersLocked()
-		if err == nil {
-			err = db.validateChangelogConsumerHistoryLocked(consumers)
-		}
-		if err != nil {
-			_ = cl.Close()
+		if err := db.openChangelog(path, opts, hdr, xtsKey); err != nil {
 			_ = eng.Close()
 			return nil, err
 		}
 	}
 	return db, nil
+}
+
+func openEngineOptions(path string, opts *Options, createExclusive bool) (*engine.Options, []byte, error) {
+	eopts, xtsKey, err := buildEngineOptions(path, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	eopts = mergeEnginePageSize(eopts, opts)
+	eopts = mergeEnginePrimaryFdatasync(eopts, opts)
+	eopts = mergeEngineGroupWAL(eopts, opts)
+	eopts = mergeEngineMaxValueBytes(eopts, opts)
+	eopts = mergeEnginePageCache(eopts, opts)
+	eopts = mergeEngineEmbedding(eopts, opts)
+	if eopts == nil {
+		eopts = &engine.Options{}
+	}
+	eopts.CreateExclusive = createExclusive
+	return eopts, xtsKey, nil
+}
+
+func (db *DB) openChangelog(path string, opts *Options, hdr engine.Header, xtsKey []byte) error {
+	db.changelogLazy = opts.ChangelogLazy
+	pendingOutbox, err := db.readPendingChangelogIntents()
+	if err != nil {
+		return err
+	}
+	recoverableTail := len(pendingOutbox) > 0
+	clPath := opts.ChangelogPath
+	if clPath == "" {
+		clPath = path + "-changelog"
+	}
+	syncWrites := !opts.ChangelogLazy
+	var cl *changelog.Log
+	switch {
+	case len(xtsKey) > 0 && recoverableTail:
+		changelogKey := deriveChangelogKey(xtsKey, hdr.EncryptionSalt)
+		cl, err = changelog.OpenEncryptedRecoverable(clPath, syncWrites, changelogKey[:])
+		clear(changelogKey[:])
+	case len(xtsKey) > 0:
+		changelogKey := deriveChangelogKey(xtsKey, hdr.EncryptionSalt)
+		cl, err = changelog.OpenEncrypted(clPath, syncWrites, changelogKey[:])
+		clear(changelogKey[:])
+	case recoverableTail:
+		cl, err = changelog.OpenRecoverable(clPath, syncWrites)
+	default:
+		cl, err = changelog.Open(clPath, syncWrites)
+	}
+	if err != nil {
+		return mapChangelogOpenError(err)
+	}
+	db.changelog = cl
+	if err := db.recoverChangelogOutbox(); err != nil {
+		_ = cl.Close()
+		return err
+	}
+	consumers, err := db.readChangelogConsumersLocked()
+	if err == nil {
+		err = db.validateChangelogConsumerHistoryLocked(consumers)
+	}
+	if err != nil {
+		_ = cl.Close()
+		return err
+	}
+	return nil
+}
+
+func mapEngineOpenError(path string, err error) error {
+	switch {
+	case errors.Is(err, engine.ErrUnsupportedFormatVersion):
+		return fmt.Errorf("%w: %w", ErrUnsupportedFormatVersion, err)
+	case errors.Is(err, engine.ErrCorruptHeader), errors.Is(err, engine.ErrCorruptWAL):
+		return fmt.Errorf("%w: %w", ErrCorruptDatabase, err)
+	case errors.Is(err, engine.ErrBadEncryptionKey):
+		return ErrEncryptionKeyMismatch
+	case errors.Is(err, engine.ErrInvalidMaxValueBytes), errors.Is(err, engine.ErrInvalidEmbeddingConfig):
+		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	case errors.Is(err, engine.ErrInvalidPageSize):
+		return fmt.Errorf("%w: PageSize must be 4096, 8192, 16384, or 65536", ErrInvalidArgument)
+	case errors.Is(err, engine.ErrDatabaseLocked):
+		return fmt.Errorf("%w: %s", ErrDatabaseLocked, path)
+	default:
+		return err
+	}
+}
+
+func rejectIncompleteMigration(bt *engine.BTree, allow bool) error {
+	if allow {
+		return nil
+	}
+	incomplete, err := hasIncompleteMigration(bt)
+	if err != nil {
+		return err
+	}
+	if incomplete {
+		return ErrMigrationIncomplete
+	}
+	return nil
 }
 
 func mapChangelogOpenError(err error) error {

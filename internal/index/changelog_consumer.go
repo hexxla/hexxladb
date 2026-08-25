@@ -23,7 +23,7 @@ const (
 // The first byte must be alphanumeric; subsequent bytes may also use '.', '_',
 // ':', or '-'.
 func ValidChangelogConsumerID(id string) bool {
-	if len(id) == 0 || len(id) > ChangelogConsumerMaxIDBytes || !isConsumerIDAlphaNumeric(id[0]) {
+	if id == "" || len(id) > ChangelogConsumerMaxIDBytes || !isConsumerIDAlphaNumeric(id[0]) {
 		return false
 	}
 	for i := 1; i < len(id); i++ {

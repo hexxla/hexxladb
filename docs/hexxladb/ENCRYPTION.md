@@ -54,6 +54,22 @@ Opening with a **wrong** key/passphrase now fails at **`Open`** with **[`ErrEncr
 
 Legacy encrypted files without a verifier are upgraded in-place on successful keyed open (header update only), enabling deterministic mismatch detection on subsequent opens.
 
+## Format migration
+
+`MigrateV1ToV2` accepts independent source and destination `Options`. This
+supports encrypted-to-encrypted migration with a new credential, plaintext to
+encrypted migration, or encrypted to plaintext migration without persisting
+credentials in the destination checkpoint. The source is opened with its normal
+exclusive lock and is never replaced. Destination pages and WAL use the normal
+encryption path from their first write, and post-copy verification occurs through
+the configured read transforms.
+
+The migration does not transplant changelog frames because the destination has a
+new database salt and MVCC timeline. Keep both changelogs disabled during the
+copy. Existing changelog state requires explicit `ResetChangelog` authorization
+and downstream re-bootstrap as described in
+[`OPERATIONS.md`](./OPERATIONS.md#format-v1-to-v2-migration).
+
 ## Related errors
 
 [`ErrEncryptionKeyRequired`](../../errors.go) — file is encrypted, open attempted without key or passphrase.

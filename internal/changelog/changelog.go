@@ -229,7 +229,7 @@ func (l *Log) writeHeader(key []byte) error {
 func (l *Log) readHeaderAndScan(key []byte, repairIncompleteTail bool) error {
 	var prefix [plaintextHeaderSize]byte
 	if _, err := l.f.ReadAt(prefix[:], 0); err != nil {
-		return fmt.Errorf("%w: truncated header: %v", ErrCorrupt, err)
+		return fmt.Errorf("%w: truncated header: %w", ErrCorrupt, err)
 	}
 	if string(prefix[:8]) != headerMagicV1 && string(prefix[:8]) != headerMagicV2 {
 		return fmt.Errorf("%w: bad magic", ErrCorrupt)
@@ -260,7 +260,7 @@ func (l *Log) readHeaderAndScan(key []byte, repairIncompleteTail bool) error {
 
 func (l *Log) readEncryptedHeaderAndScan(key []byte, repairIncompleteTail bool) error {
 	if _, err := l.f.ReadAt(l.header[:], 0); err != nil {
-		return fmt.Errorf("%w: truncated encrypted header: %v", ErrCorrupt, err)
+		return fmt.Errorf("%w: truncated encrypted header: %w", ErrCorrupt, err)
 	}
 	if string(l.header[:8]) != headerMagicV2 || binary.BigEndian.Uint32(l.header[8:12]) != formatV2 {
 		return fmt.Errorf("%w: unknown encrypted format", ErrCorrupt)

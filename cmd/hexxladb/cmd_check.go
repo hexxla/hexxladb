@@ -49,6 +49,11 @@ func cmdCheck(args []string) int {
 		fmt.Fprintf(os.Stderr, "hexxladb check: %v\n", err)
 		return 1
 	}
+	storage, err := db.StorageStats()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hexxladb check: storage: %v\n", err)
+		return 1
+	}
 
 	fmt.Printf("Cells:             %d\n", report.CellCount)
 	fmt.Printf("Seams:             %d (%d resolved, %d unresolved)\n",
@@ -58,8 +63,8 @@ func cmdCheck(args []string) int {
 	fmt.Printf("Source idx errors: %d\n", report.SourceIndexErrors)
 	fmt.Printf("Versioned rows:    %d\n", report.MVCCStats.VersionedRows)
 	fmt.Printf("Logical cells:     %d\n", report.MVCCStats.LogicalCells)
-	if report.MVCCStats.WastedBytes > 0 {
-		fmt.Printf("Wasted bytes:      %s (compact recommended)\n", humanBytes(int64(report.MVCCStats.WastedBytes))) //nolint:gosec // display only
+	if storage.ReclaimableBytes > 0 {
+		fmt.Printf("Reclaimable bytes: %s (compact recommended)\n", humanBytesUint(storage.ReclaimableBytes))
 	}
 	for _, w := range report.Warnings {
 		fmt.Printf("WARNING: %s\n", w)

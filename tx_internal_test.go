@@ -21,10 +21,10 @@ func TestUpdate_changelogFailureRecoversCommittedStateAndEventAfterReopen(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	record := record.CellRecord{Key: coord, RawContent: "recoverable-event"}
+	cellRecord := record.CellRecord{Key: coord, RawContent: "recoverable-event"}
 
 	err = db.Update(func(tx *Tx) error {
-		if err := tx.PutCell(context.Background(), record); err != nil {
+		if err := tx.PutCell(context.Background(), cellRecord); err != nil {
 			return err
 		}
 		return tx.db.changelog.Close()
@@ -46,7 +46,7 @@ func TestUpdate_changelogFailureRecoversCommittedStateAndEventAfterReopen(t *tes
 		if err != nil {
 			return err
 		}
-		if !ok || got.RawContent != record.RawContent {
+		if !ok || got.RawContent != cellRecord.RawContent {
 			t.Fatalf("committed cell after reopen: ok=%v record=%#v", ok, got)
 		}
 		return nil

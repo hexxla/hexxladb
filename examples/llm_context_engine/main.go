@@ -867,7 +867,7 @@ func ollamaReachable() bool {
 }
 
 func ollamaReachableWithClient(client *http.Client, baseURL string) bool {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL, http.NoBody)
 	if err != nil {
 		return false
 	}

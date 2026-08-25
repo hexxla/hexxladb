@@ -1,6 +1,8 @@
 # HexxlaDB public API guide
 
-This guide organizes the stable module-root API by task. It is intentionally not a second copy of every exported declaration. Use [`go doc github.com/hexxla/hexxladb`](https://pkg.go.dev/github.com/hexxla/hexxladb) for the exhaustive, source-derived symbol reference.
+This guide organizes the module-root API by task. During pre-v1 development,
+the commitment and provisional inventory in [`VERSIONING.md`](../../VERSIONING.md#root-api-stability-inventory)
+is authoritative. This guide is intentionally not a second copy of every exported declaration. Use [`go doc github.com/hexxla/hexxladb`](https://pkg.go.dev/github.com/hexxla/hexxladb) for the exhaustive, source-derived symbol reference.
 
 All application imports use:
 
@@ -158,8 +160,14 @@ Pruning does not shrink the primary file. Use compaction after pruning when disk
 | [`DB.StorageStats`](../../storage_stats.go)                                  | Measure physical, reachable, and reclaimable storage.         |
 | [`DB.Compact`, `CompactTo`](../../compact.go)                                | Rewrite live keys into a new compact file.                     |
 | [`DB.CompactWithOptions`, `CompactToWithOptions`](../../compact.go)          | Bound copy batches and receive durable progress checkpoints.  |
+| [`MigrateV1ToV2`](../../migration.go)                                       | Offline, resumable logical migration into an MVCC database.    |
 | [`DeriveKeyFromPassphrase`](../../encryption.go)                             | Derive an encryption key using the database KDF.               |
 | [`RotateEncryption`, `RotateEncryptionWithOptions`](../../rotation.go)       | Perform offline key rotation or encryption migration.          |
+
+`MigrateV1ToV2` requires distinct source and destination paths and keeps the
+source recovery set intact. Its destination is unavailable to ordinary `Open`
+until post-copy verification succeeds. See the
+[`OPERATIONS.md` migration runbook](./OPERATIONS.md#format-v1-to-v2-migration).
 
 See [`CHANGEFEED.md`](./CHANGEFEED.md), [`OPERATIONS.md`](./OPERATIONS.md), [`DURABILITY.md`](./DURABILITY.md), and [`ENCRYPTION.md`](./ENCRYPTION.md) before enabling these deployment features.
 

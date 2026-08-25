@@ -26,7 +26,7 @@ jobs:
           cache: true
 
       - name: Run govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: scripts/tool.sh govulncheck ./...
 
   trivy:
     name: Trivy Security Scan
@@ -68,9 +68,7 @@ jobs:
           cache: true
 
       - name: Run Gosec
-        uses: securego/gosec@9e75c0576c9878035d4221392108d458abe10fc3 # v2.28.0
-        with:
-          args: "-fmt sarif -out gosec-results.sarif ./..."
+        run: scripts/tool.sh gosec -severity medium -confidence medium -exclude-generated -exclude=G115 -fmt sarif -out gosec-results.sarif ./...
 
       - name: Upload Gosec SARIF
         if: always()

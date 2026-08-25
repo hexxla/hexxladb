@@ -1,6 +1,6 @@
 module github.com/hexxla/hexxladb
 
-go 1.26.3
+go 1.26.6
 
 require github.com/oklog/ulid/v2 v2.1.0
 

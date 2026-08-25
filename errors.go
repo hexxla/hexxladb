@@ -31,6 +31,17 @@ var (
 	// HexxlaDB permits one open handle per database path to protect the primary file and WAL.
 	ErrDatabaseLocked = errors.New("hexxladb: database is locked")
 
+	// ErrUnsupportedFormatVersion means the database was created by a newer HexxlaDB format.
+	ErrUnsupportedFormatVersion = errors.New("hexxladb: unsupported database format version")
+
+	// ErrMigrationIncomplete means a destination contains resumable migration state and
+	// must be completed with [MigrateV1ToV2] before ordinary use.
+	ErrMigrationIncomplete = errors.New("hexxladb: migration is incomplete")
+
+	// ErrMigrationChangelogState means a v1 source has durable changelog state that the
+	// caller did not explicitly authorize the migration to reset.
+	ErrMigrationChangelogState = errors.New("hexxladb: migration source has changelog state")
+
 	// ErrTxReadOnly means a write was attempted inside [DB.View] (read-only transaction).
 	ErrTxReadOnly = errors.New("hexxladb: transaction is read-only")
 

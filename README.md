@@ -200,6 +200,7 @@ Public API guide: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE
 | `ReadChangelogSince` / durable consumer cursor methods  | Consume and checkpoint the optional recoverable at-least-once changefeed |
 | `WriteStats` / `GroupWALStats`                          | Observe write contention, phase timing, and WAL batching                |
 | `BackupTo` / `StorageStats` / `CompactWithOptions`      | Back up an open database and manage physical storage                     |
+| `MigrateV1ToV2`                                        | Resumable, verified offline migration into MVCC format v2                 |
 | `HealthCheck`                                           | Validate visible records and secondary indexes                          |
 
 ---
@@ -300,7 +301,12 @@ The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm 
 - **Placement is caller-owned** — the database does not infer semantic coordinates or resolve insert collisions. Use a deterministic first-free policy, preserve existing coordinates during incremental insertion, and measure semantic/lattice divergence with representative records.
 - **Storage is extend-only between maintenance windows** — deletes and pruning expose dead pages but do not shrink the primary; inspect `StorageStats`, then use bounded explicit compaction to create a smaller replacement.
 - **Primary-page integrity** — AES-XTS data pages provide confidentiality, not authenticated tamper detection. Use trusted storage and independently authenticated backups; encrypted WAL and changelog records do fail closed on modification.
-- **Pre-v1** — API may change between minor versions during the v0.y.z phase.
+- **Pre-v1** — API may change between minor versions during the v0.y.z phase;
+  the candidate/provisional inventory and measurable graduation gates are in
+  [`VERSIONING.md`](VERSIONING.md).
+- **Explicit format upgrade** — format-v1 files are never auto-upgraded. Use
+  `MigrateV1ToV2` with a distinct destination; incomplete destinations are
+  refused by ordinary `Open`.
 
 ---
 
@@ -315,6 +321,7 @@ The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm 
 | [`OPERATIONS.md`](docs/hexxladb/OPERATIONS.md)                     | Production ops, benchmarks, backup, encryption           |
 | [`PERFORMANCE_EVIDENCE.md`](docs/hexxladb/PERFORMANCE_EVIDENCE.md) | Correctness, performance, and storage evidence            |
 | [`ROADMAP.md`](docs/ROADMAP.md)                                    | What's next and what's out of scope                      |
+| [`VERSIONING.md`](VERSIONING.md)                                   | Compatibility matrix, API inventory, and v1 gates       |
 
 ---
 

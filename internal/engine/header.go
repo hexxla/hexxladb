@@ -64,6 +64,9 @@ func decodeHeaderPage(page []byte) (Header, error) {
 	case formatVersionV2:
 		h.CommitSeq = binary.BigEndian.Uint64(page[HeaderCommitSeqOffset : HeaderCommitSeqOffset+8])
 	default:
+		if h.FormatVersion > formatVersionV2 {
+			return Header{}, fmt.Errorf("%w: version %d", ErrUnsupportedFormatVersion, h.FormatVersion)
+		}
 		return Header{}, fmt.Errorf("%w: version %d", ErrCorruptHeader, h.FormatVersion)
 	}
 	if !IsValidPageSize(h.PageSize) {

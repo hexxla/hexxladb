@@ -488,8 +488,8 @@ func TestLog_logicalDigestSurvivesReopenAndReencryption(t *testing.T) {
 	for i := range entries {
 		entries[i] = changelog.Entry{
 			Op:      changelog.OpPutCell,
-			Key:     []byte(fmt.Sprintf("cell/%03d", i)),
-			Encoded: []byte(fmt.Sprintf("value-%03d", i)),
+			Key:     fmt.Appendf(nil, "cell/%03d", i),
+			Encoded: fmt.Appendf(nil, "value-%03d", i),
 		}
 	}
 	if err := source.AppendBatch(1234, entries); err != nil {

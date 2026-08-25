@@ -106,7 +106,7 @@ func (db *DB) ViewAtTime(asOf time.Time, fn func(*Tx) error) error {
 
 // Update runs fn inside an exclusive read-write transaction. The database lock remains held
 // through engine commit and finalization; see [docs/hexxladb/TX.md].
-func (db *DB) Update(fn func(*Tx) error) error {
+func (db *DB) Update(fn func(*Tx) error) error { //nolint:gocyclo // durability and recovery ordering is intentionally one state machine.
 	if fn == nil {
 		return ErrNilCallback
 	}
