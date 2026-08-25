@@ -29,7 +29,7 @@ tasks:
   integration:
     desc: Run optional integration tests serially with the race detector
     cmds:
-      - go test -count=1 -race -parallel=1 -timeout=30m -tags=integration ./...
+      - go test -count=1 -race -parallel=1 -timeout=30m -tags=integration -run='^TestIntegration_' ./...
 
   bench-tmp:
     desc: Create the benchmark temporary directory
@@ -116,9 +116,9 @@ tasks:
   fuzz:
     desc: Run short fuzz smoke tests on internal decoders
     cmds:
-      - go test ./internal/record -fuzz=FuzzDecodeCell -fuzztime=2s
-      - go test ./internal/engine -fuzz=FuzzDecodeHeaderPage -fuzztime=2s
-      - go test ./internal/engine -fuzz=FuzzParseAndReplayWAL -fuzztime=2s
+      - go test ./internal/record -run='^$' -fuzz=FuzzDecodeCell -fuzztime=2s
+      - go test ./internal/engine -run='^$' -fuzz=FuzzDecodeHeaderPage -fuzztime=2s
+      - go test ./internal/engine -run='^$' -fuzz=FuzzParseAndReplayWAL -fuzztime=2s
 
   build-cli:
     desc: Build the HexxlaDB operator CLI
@@ -357,14 +357,8 @@ tasks:
     env:
       TARGET: '{{.TARGET | default ""}}'
     cmds:
-      - |
-        if [ -n "$TARGET" ]; then
-          echo "==> Running Gremlins mutation testing: $TARGET"
-          gremlins unleash "$TARGET"
-        else
-          echo "==> Running Gremlins mutation testing (all targets, full)..."
-          GREMLINS_FULL=1 bash scripts/ci/pre-push/06-gremlins.sh
-        fi
+      - 'echo "==> Running Gremlins mutation testing${TARGET:+: $TARGET}"'
+      - GREMLINS_FULL=1 bash scripts/ci/pre-push/06-gremlins.sh
 
   mutation-test-dry:
     desc: Run the fast Gremlins mutation dry-run

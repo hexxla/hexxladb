@@ -156,7 +156,7 @@ The core primitives — spatial locality, provenance, contradiction tracking, re
 - **Game world state** — hex-native tile storage with FOV for visibility queries, Dijkstra pathfinding over weighted cell edges, LOD for distant regions, MVCC snapshots for save/rollback and replay
 - **Knowledge graphs with temporal validity** — facts that expire or get superseded; belief revision via seams; time-travel to any past snapshot with `ViewAt`
 - **Spatial annotation layers** — sensor readings, events, or annotations at coordinates; proximity queries via ring walks; confidence-weighted retrieval for noisy data
-- **Audit trails and event sourcing** — optional recoverable at-least-once changelog with durable named consumer cursors, `SnapshotDiff` for incremental CDC, and MVCC-enabled typed writes for point-in-time views
+- **Audit trails and event sourcing** — optional recoverable at-least-once changelog with durable named consumer cursors; MVCC typed writes support point-in-time views and retained-history `SnapshotDiff` diagnostics
 - **Personal knowledge management** — notes arranged spatially by topic proximity; contradiction surfacing between linked notes; supersession chains for evolving understanding
 - **Simulation state** — reproducible snapshots between runs, diff for regression detection, spatial queries for proximity-based interactions
 
@@ -265,8 +265,8 @@ _Intel Core i9-14900HX · 16 GB · Linux. API benchmark rows: Go 1.26–1.27, `-
 | MVCC latest resolution (100 versions)             | ~6 µs    | Reverse B+ tree seek; does not scan older versions      |
 | MVCC latest resolution (6,000 versions)           | ~12–14 µs | Growth follows tree depth/page occupancy, not chain scan |
 | MVCC historical resolution (6,000 versions)       | ~10–15 µs | Seeks directly to the greatest version at `read_seq`    |
-| `SnapshotDiff` (10 writes)                        | ~159 µs  | Incremental CDC; scales linearly with range              |
-| `SnapshotDiff` (500 writes)                       | ~6.9 ms  |                                                         |
+| `SnapshotDiff` (10 retained writes)               | ~159 µs  | Retained MVCC diagnostic; scales with scanned history    |
+| `SnapshotDiff` (500 retained writes)              | ~6.9 ms  | Use narrow sequence windows for large histories          |
 | `Compact` (512 cells)                             | ~67 ms   | Copy-compaction; run after heavy delete/prune            |
 | `Compact` (2k cells)                              | ~236 ms  | One-time cost; DB is read-only during copy               |
 

@@ -37,6 +37,7 @@ For encrypted databases, WAL records also carry a keyed **HMAC-SHA256** authenti
 - Encrypted databases create changelog format v2 and reject a format-v1 sibling with [`ErrChangelogPlaintext`](../../errors.go). They never append encrypted frames to a plaintext file or plaintext frames to an encrypted file.
 - To handle a legacy plaintext changelog beside an already encrypted database, close the database, preserve the old log according to the application's audit/retention policy, reconcile or rebuild consumers from authoritative database state, move the plaintext file away, and reopen to create a new encrypted log.
 - Offline [`RotateEncryption`](../../rotation.go) re-encrypts and preserves the changelog when both current and new options enable it with the same effective path. Rotation from a plaintext database converts format v1 to encrypted format v2. Rotation rejects changing `ChangelogEnabled` or `ChangelogPath` in the same operation.
+- Rotation uses a synced recovery marker and directory barriers around its filesystem swap. An interrupted uncommitted swap makes `Open` return `ErrRotationIncomplete`; call [`RecoverInterruptedRotation`](../../rotation.go) with the original changelog configuration to restore the old primary/changelog without encryption credentials, then retry. The marker is removed only after the new pair is durable. `ErrRotationCleanup` means the new rotation committed but an obsolete backup containing old encrypted bytes still requires operator removal.
 
 ## Threat model and authenticated-page decision
 

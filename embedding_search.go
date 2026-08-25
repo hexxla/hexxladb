@@ -126,6 +126,8 @@ func (tx *Tx) flatScanEmbeddings(vec []float32, maxResults int, minScore float64
 // collectEmbeddingCandidates scans the embed/ keyspace and returns all stored vectors.
 func (tx *Tx) collectEmbeddingCandidates() ([]flatScanCandidate, error) {
 	var candidates []flatScanCandidate
+	var scanErr error
+	dimension := tx.db.eng.EmbeddingDim()
 	from := []byte(index.EmbedPrefix)
 	to := index.EmbedKeyEnd()
 	err := tx.db.btree.AscendRange(from, to, func(k, v []byte) bool {
@@ -134,16 +136,25 @@ func (tx *Tx) collectEmbeddingCandidates() ([]flatScanCandidate, error) {
 		}
 		coord, parseErr := index.ParseEmbedKey(k)
 		if parseErr != nil {
-			return true // skip malformed
+			scanErr = fmt.Errorf("%w: invalid embedding key: %w", ErrCorruptDatabase, parseErr)
+			return false
+		}
+		vector, decodeErr := decodeEmbedding(v, dimension)
+		if decodeErr != nil {
+			scanErr = decodeErr
+			return false
 		}
 		candidates = append(candidates, flatScanCandidate{
 			coord: coord,
-			vec:   decodeFloat32s(v),
+			vec:   vector,
 		})
 		return true
 	})
 	if err != nil {
 		return nil, err
+	}
+	if scanErr != nil {
+		return nil, scanErr
 	}
 	return candidates, nil
 }

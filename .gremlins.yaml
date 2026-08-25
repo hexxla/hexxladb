@@ -1,8 +1,12 @@
 # Gremlins mutation testing configuration for HexxlaDB.
 # https://github.com/go-gremlins/gremlins
 #
-# Run: make mutation-test (full) or make mutation-test-dry (analysis only)
-# Override target: make mutation-test TARGET=./internal/lattice
+# Run only through the bounded snapshot wrapper:
+#   task mutation-test (full) or task mutation-test-dry (analysis only)
+# Override target: task mutation-test TARGET=./internal/lattice
+# Do not invoke Gremlins directly from the repository root: it copies the whole
+# module once per worker, so its temporary directory must remain outside the
+# source snapshot being copied.
 
 silent: false
 unleash:

@@ -111,12 +111,23 @@ func putGetProbe(t *testing.T, pageSize int, gen func(i int) (key, val []byte), 
 	bt := OpenBTree(eng)
 
 	want := make(map[string][]byte, n)
-	for i := range n {
-		k, v := gen(i)
-		if err := bt.Put(k, v); err != nil {
-			t.Fatalf("Put i=%d (key=%dB val=%dB): %v", i, len(k), len(v), err)
+	const batchSize = 100
+	for start := 0; start < n; start += batchSize {
+		if err := eng.BeginWriteTxn(); err != nil {
+			t.Fatalf("BeginWriteTxn at i=%d: %v", start, err)
 		}
-		want[string(k)] = append([]byte(nil), v...)
+		end := min(start+batchSize, n)
+		for i := start; i < end; i++ {
+			k, v := gen(i)
+			if err := bt.Put(k, v); err != nil {
+				eng.AbortWriteTxn()
+				t.Fatalf("Put i=%d (key=%dB val=%dB): %v", i, len(k), len(v), err)
+			}
+			want[string(k)] = append([]byte(nil), v...)
+		}
+		if err := eng.CommitWriteTxn(); err != nil {
+			t.Fatalf("CommitWriteTxn through i=%d: %v", end-1, err)
+		}
 	}
 
 	// Structural validation (balanced, no orphans, all pages fit).

@@ -2,8 +2,10 @@ package hexxladb
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
@@ -63,14 +65,17 @@ type SnapshotDiffConfig struct {
 
 func diffInclude(p *bool) bool { return p == nil || *p }
 
-// SnapshotDiff returns all cell and seam writes with commit_seq in the half-open range
-// (fromSeq, toSeq]. Both sequences must be valid (≤ current CommitSeq).
+// SnapshotDiff returns retained cell and seam writes with commit_seq in the half-open
+// range (fromSeq, toSeq]. Both sequences must be valid (≤ current CommitSeq).
 // Requires an MVCC database (format v2); returns [ErrMVCCRequired] otherwise.
 //
-// The result is suitable for incremental replication, change-data-capture, and audit trails.
-// Each entry carries the full decoded record at that commit version.
-//
-// Note: pruned versions (removed by [DB.PruneCellVersions]) will not appear in the diff.
+// SnapshotDiff is a retained-history diagnostic, not a complete logical changefeed:
+// versions removed by [DB.PruneCellVersions] do not appear, and non-cell/seam mutations
+// are outside its scope. Use the optional changelog and durable consumers for CDC or
+// audit processing. Each entry carries the full decoded retained record and each slice
+// is sorted by commit sequence with a deterministic logical-key tie-break. The result is
+// materialized while holding a database read lock, so callers should use narrow sequence
+// windows for large histories.
 func (db *DB) SnapshotDiff(ctx context.Context, fromSeq, toSeq uint64, cfg SnapshotDiffConfig) (SnapshotDiff, error) {
 	if db == nil || db.closed.Load() {
 		return SnapshotDiff{}, ErrDatabaseClosed
@@ -169,6 +174,15 @@ func diffScanCells(ctx context.Context, db *DB, fromSeq, toSeq uint64) ([]CellDi
 	if err != nil {
 		return nil, err
 	}
+	slices.SortFunc(out, func(a, b CellDiff) int {
+		if bySeq := cmp.Compare(a.CommitSeq, b.CommitSeq); bySeq != 0 {
+			return bySeq
+		}
+		if byQ := cmp.Compare(a.Coord.Q, b.Coord.Q); byQ != 0 {
+			return byQ
+		}
+		return cmp.Compare(a.Coord.R, b.Coord.R)
+	})
 	return out, scanErr
 }
 
@@ -212,5 +226,11 @@ func diffScanSeams(ctx context.Context, db *DB, fromSeq, toSeq uint64) ([]SeamDi
 	if err != nil {
 		return nil, err
 	}
+	slices.SortFunc(out, func(a, b SeamDiff) int {
+		if bySeq := cmp.Compare(a.CommitSeq, b.CommitSeq); bySeq != 0 {
+			return bySeq
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
 	return out, scanErr
 }

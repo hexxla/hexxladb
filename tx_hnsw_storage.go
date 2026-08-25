@@ -156,7 +156,10 @@ func (s *txHNSWStorage) GetEmbeddingVec(p lattice.PackedCoord) (vec []float32, f
 	if err != nil || !found {
 		return nil, false, err
 	}
-	vector := decodeFloat32s(val)
+	vector, err := decodeEmbedding(val, s.tx.db.eng.EmbeddingDim())
+	if err != nil {
+		return nil, false, err
+	}
 	if s.vectors == nil {
 		s.vectors = make(map[lattice.PackedCoord]cachedEmbedding)
 	}

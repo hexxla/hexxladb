@@ -69,8 +69,9 @@ func collectHexPositions(ctx context.Context, center Coord, maxR int, labelFn fu
 		if labelFn != nil {
 			label = labelFn(c)
 		}
-		if len(label) > 5 {
-			label = label[:5]
+		labelRunes := []rune(label)
+		if len(labelRunes) > 5 {
+			label = string(labelRunes[:5])
 		}
 		cells = append(cells, hexPos{col: col, row: row, label: label})
 		if col < b.minCol {
@@ -126,7 +127,7 @@ func renderGridLines(cells []hexPos, b hexBounds) string {
 }
 
 // RenderHexGridFromDB produces an ASCII hex grid showing which cells are occupied in the database.
-// Occupied cells show "•", empty positions show ".".
+// Occupied cells show "*", empty positions show ".".
 func (tx *Tx) RenderHexGridFromDB(ctx context.Context, center Coord, maxR int) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err

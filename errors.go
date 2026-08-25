@@ -114,6 +114,17 @@ var (
 
 	// ErrEmbeddingDimension means the vector length does not match [DB.EmbeddingDimension].
 	ErrEmbeddingDimension = errors.New("hexxladb: vector dimension mismatch")
+
+	// ErrQueryScanLimit means [Tx.QueryCells] exhausted CellQuery.MaxScanRows.
+	// The returned result slice is partial but sorted and capped as requested.
+	ErrQueryScanLimit = errors.New("hexxladb: query scan limit reached")
+
+	// ErrRotationIncomplete means an interrupted encryption rotation must be
+	// rolled back with [RecoverInterruptedRotation] before the database is opened.
+	ErrRotationIncomplete = errors.New("hexxladb: encryption rotation is incomplete")
+	// ErrRotationCleanup means rotation committed successfully but obsolete
+	// backup artifacts containing old encrypted bytes could not all be removed.
+	ErrRotationCleanup = errors.New("hexxladb: encryption rotation cleanup failed")
 )
 
 // ErrChangelogCorrupt means the logical changelog file failed validation (docs/hexxladb/CHANGEFEED.md).

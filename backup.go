@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/hexxla/hexxladb/internal/engine"
+	"github.com/hexxla/hexxladb/internal/fsutil"
 )
 
 const backupCopyBufferSize = 1024 * 1024
@@ -74,7 +75,16 @@ func requireAbsentBackupPath(path string) error {
 }
 
 func (db *DB) copyBackupFiles(ctx context.Context, files []backupFile, captureStarted func()) (retErr error) {
-	defer finishBackupFiles(files, &retErr)
+	return db.copyBackupFilesWithSync(ctx, files, captureStarted, fsutil.SyncParents)
+}
+
+func (db *DB) copyBackupFilesWithSync(
+	ctx context.Context,
+	files []backupFile,
+	captureStarted func(),
+	syncParents func(...string) error,
+) (retErr error) {
+	defer finishBackupFiles(files, syncParents, &retErr)
 
 	for i := range files {
 		if err := ctx.Err(); err != nil {
@@ -123,10 +133,17 @@ func (db *DB) copyBackupFiles(ctx context.Context, files []backupFile, captureSt
 			return fmt.Errorf("backup: destination %q was replaced during capture", files[i].destPath)
 		}
 	}
+	paths := make([]string, len(files))
+	for i := range files {
+		paths[i] = files[i].destPath
+	}
+	if err := syncParents(paths...); err != nil {
+		return fmt.Errorf("backup: make destination files durable: %w", err)
+	}
 	return nil
 }
 
-func finishBackupFiles(files []backupFile, retErr *error) {
+func finishBackupFiles(files []backupFile, syncParents func(...string) error, retErr *error) {
 	for i := range files {
 		if files[i].dest == nil {
 			continue
@@ -138,6 +155,7 @@ func finishBackupFiles(files []backupFile, retErr *error) {
 	if *retErr == nil {
 		return
 	}
+	removedPaths := make([]string, 0, len(files))
 	for i := range files {
 		if files[i].createdInfo == nil {
 			continue
@@ -153,7 +171,14 @@ func finishBackupFiles(files []backupFile, retErr *error) {
 		default:
 			if err := os.Remove(files[i].destPath); err != nil {
 				*retErr = errors.Join(*retErr, fmt.Errorf("backup: remove partial destination %q: %w", files[i].destPath, err))
+			} else {
+				removedPaths = append(removedPaths, files[i].destPath)
 			}
+		}
+	}
+	if len(removedPaths) > 0 {
+		if err := syncParents(removedPaths...); err != nil {
+			*retErr = errors.Join(*retErr, fmt.Errorf("backup: make partial destination cleanup durable: %w", err))
 		}
 	}
 }

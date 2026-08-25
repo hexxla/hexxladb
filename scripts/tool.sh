@@ -3,7 +3,7 @@
 set -euo pipefail
 
 if (($# == 0)); then
-	echo "usage: $0 <golangci-lint|gocyclo|gocognit|gosec|govulncheck> [args...]" >&2
+	echo "usage: $0 <actionlint|golangci-lint|gocyclo|gocognit|gosec|govulncheck> [args...]" >&2
 	exit 2
 fi
 
@@ -15,6 +15,9 @@ shift
 export GOTOOLCHAIN=go1.27.0
 
 case "$tool" in
+	actionlint)
+		exec go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 "$@"
+		;;
 	golangci-lint)
 		exec go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 "$@"
 		;;

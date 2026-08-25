@@ -156,6 +156,14 @@ Wrong key/passphrase fails deterministically at open with [`ErrEncryptionKeyMism
 
 Use [`RotateEncryption`](../../rotation.go) for offline key rotation/re-encryption. For large databases, prefer [`RotateEncryptionWithOptions`](../../rotation.go) to stream rows in batches and emit progress callbacks. If the changelog is enabled, it must remain enabled at the same effective path in both option sets; rotation preserves its logical records and re-encrypts its frames.
 
+If a host/process interruption leaves `ErrRotationIncomplete`, keep the database
+offline and call `RecoverInterruptedRotation(path, originalOptions)`. Only the
+original changelog enablement/path is inspected; key material is not required.
+Recovery rolls the uncommitted swap back to the old primary and changelog;
+reopen with the old credentials, verify, and retry rotation. If rotation returns
+`ErrRotationCleanup`, the new files are already committed: verify with the new
+credentials and securely remove any reported `.rotate.bak` artifact.
+
 ## Observability
 
 The reference binary [`cmd/hexxladb`](../../cmd/hexxladb/main.go) uses structured logging (`log/slog`) with configurable `LOG_LEVEL` (see [README](../../README.md)). Long-running services should follow the same pattern: log at the composition root and adapters, not inside [`internal/domain`](../../internal/domain).
@@ -283,6 +291,45 @@ For write-path diagnosis, sample [`DB.WriteStats`](../../write_stats.go) twice a
 | 4    | Disk growth sanity         | Note DB + WAL (+ changelog if enabled) size before/after soak; bounded growth after prune per retention policy above.   |
 
 Tune retention and pruning for your workload and soak longer in staging if retention windows are large.
+
+## Release rehearsal and publication
+
+The tag workflow validates the tagged commit before it can publish. It requires
+the tag to be reachable from `main`, runs the complete CI and integration suites
+plus decoder fuzz smoke tests, validates `.goreleaser.yml`, and cross-builds the
+CLI and TUI for Linux, macOS, and Windows on amd64 and arm64. Publication then
+creates SHA-256 checksums, a detached GPG signature for the checksum file, and
+an SPDX JSON SBOM for every release archive.
+
+Configure the GitHub `release` environment before creating a tag:
+
+1. require an approving reviewer and disallow administrator bypass;
+2. store an armored signing key as `GPG_PRIVATE_KEY` and its passphrase as
+   `GPG_PASSPHRASE` in environment secrets;
+3. retain the public key outside GitHub and publish its fingerprint through an
+   independently controlled channel;
+4. permit the workflow's release job to write repository contents only after
+   the validation job and environment approval succeed.
+
+Rehearse from the exact candidate commit without publishing:
+
+```sh
+goreleaser check
+goreleaser build --snapshot --clean
+```
+
+After the candidate evidence is reviewed, create and push an annotated tag.
+Do not move or reuse a published tag. Download the resulting archives on a
+clean Linux/amd64 staging host, verify the checksum signature and archive
+checksum, extract both binaries, and run `hexxladb check` against a restored
+backup. Record the workflow run, signing-key fingerprint, installation result,
+backup/restore result, and upgrade/refusal drill with the release evidence.
+
+Rollback means deploying the previously verified application build against a
+recovery-set copy whose format it supports. Never open the sole upgraded data
+copy with an older library. First prove the older build either opens a staging
+copy safely or refuses it as documented in `VERSIONING.md`; restore the paired
+primary, WAL, and changelog backup when the formats are not backward-readable.
 
 ## Crash recovery drill
 

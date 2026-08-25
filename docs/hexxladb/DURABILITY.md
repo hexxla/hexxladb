@@ -66,6 +66,13 @@ Invariant: **a WAL record for sequence `seq` is fsync’d before** the correspon
 
 On [`Open`](../../internal/engine/engine.go), the engine reads the WAL and applies records with `seq > LastWALSeq` from the header (handling MAC/CRC as configured). That heals **primary pages** when the WAL contains newer redo than the data file (e.g. crash after WAL sync but before primary write completed).
 
+On Linux, successful creation of a database also syncs the parent directory after
+the initialized primary and WAL are durable. New changelog headers use the same
+directory-entry barrier, including when later changelog appends use lazy syncing.
+Physical backups sync every destination file and then each destination parent
+directory before reporting success. This closes the host-crash window in which
+file contents were durable but their newly created directory entries were not.
+
 Tests: [`TestOpen_replaysPendingWAL`](../../internal/engine/engine_test.go), [`TestReplay_restoresStalePrimaryWhenWALAhead`](../../internal/engine/group_commit_spike_test.go).
 
 ---

@@ -69,6 +69,13 @@ func openDB(path string, opts *Options, createExclusive bool) (*DB, error) {
 }
 
 func openDBWithMigration(path string, opts *Options, createExclusive, allowIncompleteMigration bool) (*DB, error) {
+	pendingRotation, err := rotationPending(path)
+	if err != nil {
+		return nil, err
+	}
+	if pendingRotation {
+		return nil, ErrRotationIncomplete
+	}
 	eopts, xtsKey, err := openEngineOptions(path, opts, createExclusive)
 	if err != nil {
 		return nil, err

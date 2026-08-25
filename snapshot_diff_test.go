@@ -1,6 +1,7 @@
 package hexxladb_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -243,6 +244,54 @@ func TestSnapshotDiff_CommitSeqOrdering(t *testing.T) {
 		if diff.Cells[i].CommitSeq < diff.Cells[i-1].CommitSeq {
 			t.Errorf("cell diffs not in ascending commit order at index %d", i)
 		}
+	}
+}
+
+func TestSnapshotDiff_OrdersOppositePhysicalKeysByCommit(t *testing.T) {
+	t.Parallel()
+	db := openDiffDB(t, true)
+	first := packDiffCoord(t, -7, 2)
+	second := packDiffCoord(t, 7, -2)
+	if bytes.Compare(index.CellKeyWithVersion(first, 1), index.CellKeyWithVersion(second, 2)) < 0 {
+		first, second = second, first
+	}
+	for _, packed := range []lattice.PackedCoord{first, second} {
+		if err := db.Update(func(tx *hexxladb.Tx) error {
+			return tx.PutCell(t.Context(), record.CellRecord{Key: packed, RawContent: "ordered"})
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	diff, err := db.SnapshotDiff(t.Context(), 0, 2, hexxladb.SnapshotDiffConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diff.Cells) != 2 || diff.Cells[0].CommitSeq != 1 || diff.Cells[1].CommitSeq != 2 {
+		t.Fatalf("cell diff order = %#v, want commit sequences [1 2]", diff.Cells)
+	}
+}
+
+func TestSnapshotDiffReportsOnlyRetainedVersionsAfterPrune(t *testing.T) {
+	t.Parallel()
+	db := openDiffDB(t, true)
+	for _, content := range []string{"one", "two", "three"} {
+		putDiffCell(t, db, 0, 0, content)
+	}
+	deleted, err := db.PruneCellVersions(4, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 2 {
+		t.Fatalf("pruned versions = %d, want 2", deleted)
+	}
+
+	diff, err := db.SnapshotDiff(t.Context(), 0, 3, hexxladb.SnapshotDiffConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diff.Cells) != 1 || diff.Cells[0].CommitSeq != 3 || diff.Cells[0].Record.RawContent != "three" {
+		t.Fatalf("retained diff = %#v, want only seq 3", diff.Cells)
 	}
 }
 

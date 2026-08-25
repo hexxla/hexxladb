@@ -392,6 +392,11 @@ func TestRotateEncryption_reencryptsDatabase(t *testing.T) {
 	if err := hexxladb.RotateEncryption(path, oldOpts, newOpts); err != nil {
 		t.Fatal(err)
 	}
+	for _, stale := range []string{path + "-wal", path + ".rotate.state"} {
+		if _, err := os.Lstat(stale); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("successful rotation left stale recovery component %q: %v", stale, err)
+		}
+	}
 	_, err = hexxladb.Open(path, oldOpts)
 	if !errors.Is(err, hexxladb.ErrEncryptionKeyMismatch) {
 		t.Fatalf("old key should fail after rotation: got %v", err)

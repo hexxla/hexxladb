@@ -2,9 +2,14 @@ package hexxladb_test
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -389,5 +394,114 @@ func TestMigrationFixtureUsesV1RecordEncoding(t *testing.T) {
 	}
 	if version != record.FormatVersionV1 {
 		t.Fatalf("record version=%d, want %d", version, record.FormatVersionV1)
+	}
+}
+
+func restoreHistoricalFixture(t *testing.T, encodedPath, destination, expectedSHA256 string) {
+	t.Helper()
+	encoded, err := os.Open(encodedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = encoded.Close() }()
+	compressed := base64.NewDecoder(base64.StdEncoding, encoded)
+	reader, err := gzip.NewReader(compressed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(reader)
+	closeErr := reader.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if digest := fmt.Sprintf("%x", sha256.Sum256(data)); digest != expectedSHA256 {
+		t.Fatalf("fixture %s SHA-256=%s, want %s", encodedPath, digest, expectedSHA256)
+	}
+	if err := os.WriteFile(destination, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMigratePublishedV051Fixture(t *testing.T) {
+	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "source.db")
+	destinationPath := filepath.Join(dir, "destination.db")
+	restoreHistoricalFixture(t,
+		"testdata/compat/v0.5.1-format-v1.db.gz.base64",
+		sourcePath,
+		"a8fe280cfaca1029fa0b2f2f7ad72d6b7d4fb986d7c3cce38d980f4e419c8c4c",
+	)
+	restoreHistoricalFixture(t,
+		"testdata/compat/v0.5.1-format-v1.db-wal.gz.base64",
+		sourcePath+"-wal",
+		"bbd197887ac58138eaf970c48a8cef4cecd65d88a4a6d5af0c5b6802888d1be0",
+	)
+	if err := hexxladb.MigrateV1ToV2(t.Context(), sourcePath, destinationPath, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := hexxladb.Pack(hexxladb.Coord{Q: 1, R: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := hexxladb.Pack(hexxladb.Coord{Q: 2, R: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := hexxladb.Open(destinationPath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	err = db.View(func(tx *hexxladb.Tx) error {
+		cell, ok, err := tx.GetCell(first)
+		if err != nil || !ok || cell.RawContent != "published-v0.5.1" || cell.Provenance.SourceID != "historical-fixture" {
+			t.Fatalf("historical cell mismatch: cell=%#v ok=%v err=%v", cell, ok, err)
+		}
+		facet, ok, err := tx.GetFacet(first, 2)
+		if err != nil || !ok || facet.DerivedContent != "historical-facet" {
+			t.Fatalf("historical facet mismatch: facet=%#v ok=%v err=%v", facet, ok, err)
+		}
+		edge, ok, err := tx.GetEdge(first, second, "historical-edge")
+		if err != nil || !ok || edge.Weight != 0.5 {
+			t.Fatalf("historical edge mismatch: edge=%#v ok=%v err=%v", edge, ok, err)
+		}
+		raw, ok, err := tx.Get([]byte("app/historical-v0.5.1"))
+		if err != nil || !ok || !bytes.Equal(raw, []byte("opaque-v0.5.1")) {
+			t.Fatalf("historical raw mismatch: value=%q ok=%v err=%v", raw, ok, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counts := map[string]int{"source": 0, "tag": 0, "time": 0}
+	err = db.View(func(tx *hexxladb.Tx) error {
+		if err := tx.AscendCellsBySource(t.Context(), "historical-fixture", func(hexxladb.CellRecord) bool {
+			counts["source"]++
+			return true
+		}); err != nil {
+			return err
+		}
+		if err := tx.AscendCellsByTag(t.Context(), "historical", func(hexxladb.CellRecord) bool {
+			counts["tag"]++
+			return true
+		}); err != nil {
+			return err
+		}
+		return tx.AscendCellsInTimeBucket(t.Context(), 4, func(hexxladb.CellRecord) bool {
+			counts["time"]++
+			return true
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["source"] != 1 || counts["tag"] != 1 || counts["time"] != 1 {
+		t.Fatalf("historical index counts=%v, want one source/tag/time row", counts)
 	}
 }

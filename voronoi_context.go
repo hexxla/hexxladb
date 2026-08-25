@@ -2,9 +2,15 @@ package hexxladb
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
+)
+
+const (
+	maxVoronoiContextRadius = 64
+	maxVoronoiContextSeeds  = 32
 )
 
 // VoronoiWeightFunc returns an additional traversal cost for a coordinate
@@ -49,12 +55,35 @@ func (tx *Tx) LoadContextVoronoi(ctx context.Context, seeds []Coord, cfg Voronoi
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
 	}
-	cfg.withDefaults()
+	if ctx == nil {
+		return nil, fmt.Errorf("%w: nil context", ErrInvalidArgument)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(seeds) == 0 {
 		return nil, nil
 	}
+	if len(seeds) > maxVoronoiContextSeeds {
+		return nil, fmt.Errorf("%w: Voronoi supports at most %d seeds", ErrInvalidArgument, maxVoronoiContextSeeds)
+	}
+	if cfg.MaxRadius < 0 || cfg.MaxRadius > maxVoronoiContextRadius {
+		return nil, fmt.Errorf("%w: Voronoi radius must be between 0 and %d", ErrInvalidArgument, maxVoronoiContextRadius)
+	}
+	if cfg.MaxCellsPerSeed < 0 {
+		return nil, fmt.Errorf("%w: Voronoi MaxCellsPerSeed must not be negative", ErrInvalidArgument)
+	}
+	cfg.withDefaults()
+	for _, seed := range seeds {
+		if err := validatePackedRadius(seed, cfg.MaxRadius); err != nil {
+			return nil, err
+		}
+	}
 
-	cells, _ := lattice.Voronoi(seeds, cfg.MaxRadius, cfg.WeightFunc)
+	cells, _, err := lattice.VoronoiChecked(seeds, cfg.MaxRadius, cfg.WeightFunc)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	}
 	return tx.loadVoronoiRegions(ctx, seeds, cells, cfg)
 }
 

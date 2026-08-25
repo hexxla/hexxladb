@@ -3,6 +3,7 @@ package hexxladb
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -32,23 +33,11 @@ const defaultQueryScanRadius = 32
 // are applied as in-memory filters. Results are scored and sorted according to
 // [CellQuery.SortBy] then capped to [CellQuery.MaxResults].
 func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, error) {
-	if err := ctx.Err(); err != nil {
+	if err := tx.validateCellQuery(ctx, q); err != nil {
 		return nil, err
-	}
-	if tx == nil || tx.db == nil {
-		return nil, ErrClosed
-	}
-	if q.Radius < 0 {
-		return nil, fmt.Errorf("%w: radius must be non-negative", ErrInvalidArgument)
-	}
-	if q.Radius > 0 {
-		if err := validatePackedRadius(q.Center, q.Radius); err != nil {
-			return nil, err
-		}
 	}
 
 	maxResults := q.MaxResults
-
 	queryLow := strings.ToLower(strings.TrimSpace(q.Query))
 
 	// ── plan: choose primary scan strategy ───────────────────────────────────
@@ -58,6 +47,7 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
 	// scan callback itself, so no intermediate []CellRecord slice is allocated.
 	var results []CellQueryResult
 	var embScores map[lattice.PackedCoord]float64
+	var scanLimitErr error
 
 	if len(q.Embedding) > 0 {
 		// Embedding: bounded ANN fetch, then fused filter+score below.
@@ -75,35 +65,9 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
 			}
 		}
 	} else {
-		// All other paths: fused scan — filter+score inline, no candidates slice.
-		yield := func(rec record.CellRecord) bool {
-			if ctx.Err() != nil {
-				return false
-			}
-			if r, ok := tx.scoreRecord(q, rec, queryLow, nil); ok {
-				results = append(results, r)
-			}
-			return true
-		}
-
-		var err error
-		switch {
-		case len(q.RequireTags) > 0:
-			err = tx.scanByTagFused(ctx, q.RequireTags[0], q.MaxScanRows, yield)
-		case q.SourceID != "":
-			err = tx.scanBySourceFused(ctx, q.SourceID, q.MaxScanRows, yield)
-		case !q.After.IsZero() || !q.Before.IsZero():
-			// A signed week bucket is not lexicographically ordered by its
-			// on-disk uint64 representation. Scan primary cells so ranges that
-			// cross the Unix epoch remain complete without changing the format.
-			err = tx.scanAllCellsFused(ctx, q.MaxScanRows, yield)
-		case q.Radius > 0:
-			err = tx.scanByRadiusFused(ctx, q.Center, q.Radius, q.MaxScanRows, yield)
-		default:
-			err = tx.scanAllCellsFused(ctx, q.MaxScanRows, yield)
-		}
-		if err != nil {
-			return nil, err
+		results, scanLimitErr = tx.queryCellsByIndex(ctx, q, queryLow)
+		if scanLimitErr != nil && !errors.Is(scanLimitErr, ErrQueryScanLimit) {
+			return nil, scanLimitErr
 		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -117,7 +81,62 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
 	if maxResults > 0 && len(results) > maxResults {
 		results = results[:maxResults]
 	}
-	return results, nil
+	return results, scanLimitErr
+}
+
+func (tx *Tx) validateCellQuery(ctx context.Context, q CellQuery) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if tx == nil || tx.db == nil {
+		return ErrClosed
+	}
+	if q.Radius < 0 {
+		return fmt.Errorf("%w: radius must be non-negative", ErrInvalidArgument)
+	}
+	if q.MaxScanRows < 0 {
+		return fmt.Errorf("%w: MaxScanRows must not be negative", ErrInvalidArgument)
+	}
+	if len(q.Embedding) > 0 && q.MaxScanRows > 0 {
+		return fmt.Errorf("%w: MaxScanRows cannot bound embedding graph reads", ErrInvalidArgument)
+	}
+	if q.Radius > 0 {
+		if err := validatePackedRadius(q.Center, q.Radius); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (tx *Tx) queryCellsByIndex(ctx context.Context, q CellQuery, queryLow string) ([]CellQueryResult, error) {
+	var results []CellQueryResult
+	yield := func(rec record.CellRecord) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		if r, ok := tx.scoreRecord(q, rec, queryLow, nil); ok {
+			results = append(results, r)
+		}
+		return true
+	}
+
+	var err error
+	switch {
+	case len(q.RequireTags) > 0:
+		err = tx.scanByTagFused(ctx, q.RequireTags[0], q.MaxScanRows, yield)
+	case q.SourceID != "":
+		err = tx.scanBySourceFused(ctx, q.SourceID, q.MaxScanRows, yield)
+	case !q.After.IsZero() || !q.Before.IsZero():
+		// A signed week bucket is not lexicographically ordered by its
+		// on-disk uint64 representation. Scan primary cells so ranges that
+		// cross the Unix epoch remain complete without changing the format.
+		err = tx.scanAllCellsFused(ctx, q.MaxScanRows, yield)
+	case q.Radius > 0:
+		err = tx.scanByRadiusFused(ctx, q.Center, q.Radius, q.MaxScanRows, yield)
+	default:
+		err = tx.scanAllCellsFused(ctx, q.MaxScanRows, yield)
+	}
+	return results, err
 }
 
 // scanAllCellsFused walks the complete cell/ primary keyspace and yields each
@@ -136,6 +155,11 @@ func (tx *Tx) scanAllCellsFused(ctx context.Context, maxScanRows int, yield func
 			scanErr = err
 			return false
 		}
+		if maxScanRows > 0 && scanned >= maxScanRows {
+			scanErr = ErrQueryScanLimit
+			return false
+		}
+		scanned++
 		if !bytes.HasPrefix(k, from) || len(k) < v1Len {
 			return true
 		}
@@ -156,16 +180,18 @@ func (tx *Tx) scanAllCellsFused(ctx context.Context, maxScanRows int, yield func
 		if !ok {
 			return true
 		}
-		scanned++
 		if !yield(rec) {
 			return false
 		}
-		return maxScanRows <= 0 || scanned < maxScanRows
+		return true
 	})
 	if err != nil {
 		return fmt.Errorf("hexxladb: QueryCells full scan: %w", err)
 	}
-	return scanErr
+	if scanErr != nil {
+		return scanErr
+	}
+	return nil
 }
 
 // scoreRecord applies predicates, scores, and builds a CellQueryResult.
@@ -181,10 +207,17 @@ func (tx *Tx) scoreRecord(q CellQuery, rec record.CellRecord, queryLow string, e
 		return CellQueryResult{}, false
 	}
 
-	// Pre-lowercase tags once per record so scoreCell does not allocate per-call.
-	tagsLow := make([]string, len(rec.Tags))
-	for i, t := range rec.Tags {
-		tagsLow[i] = strings.ToLower(t)
+	// Pre-lowercase and deduplicate tags once per record so repeated stored tags
+	// cannot inflate lexical relevance.
+	tagsLow := make([]string, 0, len(rec.Tags))
+	seenTags := make(map[string]struct{}, len(rec.Tags))
+	for _, tag := range rec.Tags {
+		tagLow := strings.ToLower(tag)
+		if _, seen := seenTags[tagLow]; seen {
+			continue
+		}
+		seenTags[tagLow] = struct{}{}
+		tagsLow = append(tagsLow, tagLow)
 	}
 
 	score := scoreCell(queryLow, tagsLow, rec.RawContent, rec.Provenance.SourceID, rec.Provenance.Confidence)
@@ -222,30 +255,24 @@ func (tx *Tx) scoreRecord(q CellQuery, rec record.CellRecord, queryLow string, e
 // scanByTagFused walks the tag index and calls yield for each decoded record.
 // yield returning false stops the walk early.
 func (tx *Tx) scanByTagFused(ctx context.Context, tag string, maxScanRows int, yield func(record.CellRecord) bool) error {
-	scanned := 0
-	if err := tx.AscendCellsByTag(ctx, tag, func(r record.CellRecord) bool {
-		scanned++
-		if !yield(r) {
-			return false
-		}
-		return maxScanRows <= 0 || scanned < maxScanRows
-	}); err != nil {
+	limitReached, err := tx.ascendCellsByTag(ctx, tag, maxScanRows, yield)
+	if err != nil {
 		return fmt.Errorf("hexxladb: QueryCells tag scan %q: %w", tag, err)
+	}
+	if limitReached {
+		return ErrQueryScanLimit
 	}
 	return nil
 }
 
 // scanBySourceFused walks the source index and calls yield for each decoded record.
 func (tx *Tx) scanBySourceFused(ctx context.Context, sourceID string, maxScanRows int, yield func(record.CellRecord) bool) error {
-	scanned := 0
-	if err := tx.AscendCellsBySource(ctx, sourceID, func(r record.CellRecord) bool {
-		scanned++
-		if !yield(r) {
-			return false
-		}
-		return maxScanRows <= 0 || scanned < maxScanRows
-	}); err != nil {
+	limitReached, err := tx.ascendCellsBySource(ctx, sourceID, maxScanRows, yield)
+	if err != nil {
 		return fmt.Errorf("hexxladb: QueryCells source scan %q: %w", sourceID, err)
+	}
+	if limitReached {
+		return ErrQueryScanLimit
 	}
 	return nil
 }
@@ -258,6 +285,10 @@ func (tx *Tx) scanByRadiusFused(ctx context.Context, center Coord, radius, maxSc
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if maxScanRows > 0 && scanned >= maxScanRows {
+			return ErrQueryScanLimit
+		}
+		scanned++
 		rec, ok, err := tx.GetCell(cp.Packed)
 		if err != nil {
 			return err
@@ -265,11 +296,7 @@ func (tx *Tx) scanByRadiusFused(ctx context.Context, center Coord, radius, maxSc
 		if !ok {
 			continue
 		}
-		scanned++
 		if !yield(rec) {
-			return nil
-		}
-		if maxScanRows > 0 && scanned >= maxScanRows {
 			return nil
 		}
 	}

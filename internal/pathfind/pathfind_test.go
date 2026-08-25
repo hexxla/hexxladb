@@ -1,6 +1,7 @@
 package pathfind_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
@@ -60,6 +61,42 @@ func TestAStar_maxExpand(t *testing.T) {
 	path := pathfind.AStar(start, goal, hexNeighbors, pathfind.UniformCost, pathfind.HexDistanceHeuristic, 5)
 	if path != nil {
 		t.Fatalf("expected nil with maxExpand=5 for distant goal, got len=%d", len(path))
+	}
+}
+
+func TestAStar_staleQueueEntryDoesNotConsumeMaxExpand(t *testing.T) {
+	t.Parallel()
+	start := lattice.Coord{Q: 0}
+	a := lattice.Coord{Q: 1}
+	b := lattice.Coord{Q: 2}
+	c := lattice.Coord{Q: 3}
+	goal := lattice.Coord{Q: 4}
+	neighbors := func(coord lattice.Coord) []lattice.Coord {
+		switch coord {
+		case start:
+			return []lattice.Coord{a, b}
+		case b:
+			return []lattice.Coord{a, c}
+		case c:
+			return []lattice.Coord{goal}
+		default:
+			return nil
+		}
+	}
+	costs := map[[2]lattice.Coord]float64{
+		{start, a}: 5,
+		{start, b}: 1,
+		{b, a}:     1,
+		{b, c}:     10,
+		{c, goal}:  1,
+	}
+	cost := func(from, to lattice.Coord) float64 { return costs[[2]lattice.Coord{from, to}] }
+	zeroHeuristic := func(lattice.Coord, lattice.Coord) float64 { return 0 }
+
+	path := pathfind.AStar(start, goal, neighbors, cost, zeroHeuristic, 4)
+	want := pathfind.Path{start, b, c, goal}
+	if !slices.Equal(path, want) {
+		t.Fatalf("path = %v, want %v", path, want)
 	}
 }
 

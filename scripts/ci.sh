@@ -18,9 +18,36 @@ need_cmd() {
 
 need_cmd go
 need_cmd git
+need_cmd mktemp
+
+# Database stress tests can need several GiB of temporary space. Keep their
+# files on the repository filesystem by default, but isolate each run and
+# remove it on exit. Refuse to stack a new run on top of leftovers from an
+# interrupted run; this keeps repeated failures from silently consuming disk.
+CI_TMP_BASE="${TMPDIR:-$ROOT/.tmp}"
+mkdir -p "$CI_TMP_BASE"
+CI_TMP_BASE="$(cd "$CI_TMP_BASE" && pwd -P)"
+shopt -s nullglob
+stale_ci_runs=("$CI_TMP_BASE"/hexxladb-ci-run.*)
+if ((${#stale_ci_runs[@]} > 0)); then
+	die "stale CI temp run found at ${stale_ci_runs[0]}; remove it after confirming no CI process is active"
+fi
+CI_TMPDIR="$(mktemp -d "$CI_TMP_BASE/hexxladb-ci-run.XXXXXXXX")"
+export TMPDIR="$CI_TMPDIR"
+
+cleanup_ci_tmp() {
+	if [[ -n "$CI_TMPDIR" && "$CI_TMPDIR" == "$CI_TMP_BASE"/hexxladb-ci-run.* ]]; then
+		rm -rf --one-file-system -- "$CI_TMPDIR"
+	fi
+}
+trap cleanup_ci_tmp EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo "==> Format (gofmt -l must be empty)"
-mapfile -t gofiles < <(find . -type f -name '*.go' ! -path './vendor/*' ! -path './.git/*' 2>/dev/null || true)
+# Check tracked and untracked source files while respecting .gitignore, so local
+# build caches and generated evidence under ignored directories cannot pollute CI.
+mapfile -t gofiles < <(git ls-files --cached --others --exclude-standard -- '*.go' | grep -v '^vendor/' || true)
 if ((${#gofiles[@]} > 0)); then
 	out=$(gofmt -l "${gofiles[@]}")
 	if [[ -n "${out}" ]]; then
@@ -36,10 +63,13 @@ go vet ./...
 echo "==> Hex boundaries (full hexagonal architecture validation per HEXAGONAL_ARCHITECTURE.md)"
 bash scripts/check-hex-boundaries.sh
 
+echo "==> GitHub Actions workflow lint (pinned actionlint)"
+scripts/tool.sh actionlint .github/workflows/*.yml
+
 echo "==> go test (compiles packages + runs tests; -race catches data races)"
 # -parallel 1: internal/engine tests share sync.Pool-backed read buffers; parallel subtests can
 # false-positive the race detector on unrelated tests in the same package.
-go test -count=1 -race -parallel 1 ./...
+go test -count=1 -race -parallel 1 -timeout=30m ./...
 
 echo "==> govulncheck (known vulnerabilities in reachable code; https://go.dev/blog/govulncheck)"
 scripts/tool.sh govulncheck ./...

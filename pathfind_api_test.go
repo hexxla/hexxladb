@@ -360,7 +360,7 @@ func TestLoadContext_ByEdges_basic(t *testing.T) {
 	err = db.View(func(tx *hexxladb.Tx) error {
 		pack, err := tx.LoadContext(context.Background(), hexxladb.LoadContextConfig{
 			Seeds:      []hexxladb.Coord{coords[0]},
-			EdgeFilter: "",
+			EdgeFilter: "seq",
 			MaxHops:    5,
 			MaxCells:   10,
 			Assembly:   hexxladb.ContextAssemblyConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
@@ -372,10 +372,11 @@ func TestLoadContext_ByEdges_basic(t *testing.T) {
 			t.Fatalf("expected 3 cells via edges, got %d", len(pack.Cells))
 		}
 		bounded, err := tx.LoadContext(context.Background(), hexxladb.LoadContextConfig{
-			Seeds:    []hexxladb.Coord{coords[0]},
-			MaxHops:  5,
-			MaxCells: 2,
-			Assembly: hexxladb.ContextAssemblyConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
+			Seeds:      []hexxladb.Coord{coords[0]},
+			EdgeFilter: "seq",
+			MaxHops:    5,
+			MaxCells:   2,
+			Assembly:   hexxladb.ContextAssemblyConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
 		})
 		if err != nil {
 			return err
@@ -385,6 +386,24 @@ func TestLoadContext_ByEdges_basic(t *testing.T) {
 		}
 		if !bounded.Stats.ResultLimitReached {
 			t.Fatal("bounded edge context did not report result limit")
+		}
+		ringOnly, err := tx.LoadContext(context.Background(), hexxladb.LoadContextConfig{
+			Seeds:    []hexxladb.Coord{coords[0]},
+			MaxRing:  1,
+			MaxHops:  5,
+			MaxCells: 10,
+			Assembly: hexxladb.ContextAssemblyConfig{Assemble: hexxladb.DefaultAssembleCellViewOpts()},
+		})
+		if err != nil {
+			return err
+		}
+		if len(ringOnly.Cells) != 2 {
+			t.Fatalf("MaxHops without EdgeFilter loaded %d cells, want 2 from ring radius 1", len(ringOnly.Cells))
+		}
+		for _, cell := range ringOnly.Cells {
+			if cell.Coord == coords[2] {
+				t.Fatal("MaxHops without EdgeFilter unexpectedly selected graph traversal")
+			}
 		}
 		return nil
 	})

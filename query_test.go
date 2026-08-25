@@ -648,3 +648,100 @@ func TestSearchCells_StillWorks(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestQueryCells_MaxScanRowsReturnsPartialResultsAndSignal(t *testing.T) {
+	t.Parallel()
+	db := openQueryDB(t)
+	putQueryCell(t, db, hexxladb.Coord{Q: 0}, "first", "src", []string{"alpha"}, 1, time.Time{})
+	putQueryCell(t, db, hexxladb.Coord{Q: 1}, "second", "src", []string{"alpha"}, 1, time.Time{})
+
+	var results []hexxladb.CellQueryResult
+	err := db.View(func(tx *hexxladb.Tx) error {
+		var queryErr error
+		results, queryErr = tx.QueryCells(t.Context(), hexxladb.CellQuery{
+			RequireTags: []string{"alpha"},
+			MaxScanRows: 1,
+		})
+		return queryErr
+	})
+	if !errors.Is(err, hexxladb.ErrQueryScanLimit) {
+		t.Fatalf("QueryCells error = %v, want ErrQueryScanLimit", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("partial results = %d, want 1", len(results))
+	}
+}
+
+func TestQueryCells_MaxScanRowsCountsPhysicalMVCCRows(t *testing.T) {
+	t.Parallel()
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "query-mvcc.db"), &hexxladb.Options{EnableMVCC: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	for _, content := range []string{"one", "two", "three"} {
+		putQueryCell(t, db, hexxladb.Coord{}, content, "src", nil, 1, time.Time{})
+	}
+
+	var results []hexxladb.CellQueryResult
+	err = db.View(func(tx *hexxladb.Tx) error {
+		var queryErr error
+		results, queryErr = tx.QueryCells(t.Context(), hexxladb.CellQuery{MaxScanRows: 2})
+		return queryErr
+	})
+	if !errors.Is(err, hexxladb.ErrQueryScanLimit) {
+		t.Fatalf("QueryCells error = %v, want ErrQueryScanLimit", err)
+	}
+	if len(results) != 1 || results[0].Cell.RawContent != "three" {
+		t.Fatalf("partial MVCC results = %#v, want latest logical cell", results)
+	}
+}
+
+func TestQueryCells_MaxScanRowsExactBoundaryIsComplete(t *testing.T) {
+	t.Parallel()
+	db := openQueryDB(t)
+	putQueryCell(t, db, hexxladb.Coord{}, "only", "src", []string{"alpha"}, 1, time.Time{})
+
+	tests := map[string]hexxladb.CellQuery{
+		"full":   {MaxScanRows: 1},
+		"source": {SourceID: "src", MaxScanRows: 1},
+		"tag":    {RequireTags: []string{"alpha"}, MaxScanRows: 1},
+		"radius": {Center: hexxladb.Coord{}, Radius: 1, MaxScanRows: 7},
+	}
+	for name, query := range tests {
+		t.Run(name, func(t *testing.T) {
+			err := db.View(func(tx *hexxladb.Tx) error {
+				results, err := tx.QueryCells(t.Context(), query)
+				if err != nil {
+					return err
+				}
+				if len(results) != 1 || results[0].Cell.RawContent != "only" {
+					t.Fatalf("results = %#v, want the only row", results)
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("exact-boundary QueryCells error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+func TestQueryCells_MaxScanRowsValidation(t *testing.T) {
+	t.Parallel()
+	db := openQueryDB(t)
+	for name, query := range map[string]hexxladb.CellQuery{
+		"negative":  {MaxScanRows: -1},
+		"embedding": {Embedding: []float32{1}, MaxScanRows: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := db.View(func(tx *hexxladb.Tx) error {
+				_, err := tx.QueryCells(t.Context(), query)
+				return err
+			})
+			if !errors.Is(err, hexxladb.ErrInvalidArgument) {
+				t.Fatalf("QueryCells error = %v, want ErrInvalidArgument", err)
+			}
+		})
+	}
+}

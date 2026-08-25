@@ -24,7 +24,8 @@
 //     lifecycle: [DB.StatsMVCC], [DB.PruneCellVersions], [DB.SuggestedPruneBeforeSeq], [PruneScheduler]
 //     (see docs/hexxladb/OPERATIONS.md). Encryption operations include [RotateEncryption].
 //     [MigrateV1ToV2] performs the offline, resumable, verified upgrade from a format-v1 source.
-//   - [DB.SnapshotDiff] — MVCC change diff between two commit sequences; yields [SnapshotDiff] with [CellDiff]/[SeamDiff] slices.
+//   - [DB.SnapshotDiff] — retained MVCC cell/seam history between two commit sequences;
+//     use the logical changelog for complete CDC or audit processing.
 //   - [DB.View], [DB.ViewAt], [DB.ViewAtTime], [DB.Update], [DB.Batch], [Tx] —
 //     Bolt-style transactions; [DB.Batch] is an alias for [DB.Update]; see docs/hexxladb/TX.md.
 //     [DB.WriteStats] and [DB.GroupWALStats] expose cumulative write-phase timing and batching counters.

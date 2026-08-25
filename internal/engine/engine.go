@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"unsafe"
+
+	"github.com/hexxla/hexxladb/internal/fsutil"
 )
 
 // Engine is a minimal page-oriented store with redo WAL.
@@ -70,22 +72,30 @@ func WalPath(primary string) string {
 
 // Open opens or creates a database at path and replays the WAL.
 func Open(path string, opts *Options) (*Engine, error) {
+	return open(path, opts, fsutil.SyncParents)
+}
+
+func open(path string, opts *Options, syncParents func(...string) error) (*Engine, error) {
 	var hooks PageHooks
 	if opts != nil && opts.Hooks != nil {
 		hooks = *opts.Hooks
 	}
 	usePrimaryFdatasync := opts != nil && opts.UsePrimaryFdatasync
 
-	flags := os.O_RDWR | os.O_CREATE
-	if opts != nil && opts.CreateExclusive {
-		flags |= os.O_EXCL
+	exclusiveOpen := opts != nil && opts.CreateExclusive
+	var db *os.File
+	var dbCreated bool
+	var err error
+	if exclusiveOpen {
+		// #nosec G304 -- path is the caller-chosen database file (public Open API).
+		db, err = os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+		dbCreated = err == nil
+	} else {
+		db, dbCreated, err = fsutil.OpenReadWrite(path, 0o600)
 	}
-	// #nosec G304 -- path is the caller-chosen database file (public Open API).
-	db, err := os.OpenFile(path, flags, 0o600)
 	if err != nil {
 		return nil, err
 	}
-	exclusiveOpen := opts != nil && opts.CreateExclusive
 	exclusiveComplete := !exclusiveOpen
 	walPath := WalPath(path)
 	walCreated := false
@@ -126,17 +136,18 @@ func Open(path string, opts *Options) (*Engine, error) {
 		return nil, err
 	}
 
-	walFlags := os.O_RDWR | os.O_CREATE
+	var wal *os.File
 	if exclusiveOpen {
-		walFlags |= os.O_EXCL
+		// #nosec G304 -- WAL path is derived from the primary DB path (same contract as primary).
+		wal, err = os.OpenFile(walPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+		walCreated = err == nil
+	} else {
+		wal, walCreated, err = fsutil.OpenReadWrite(walPath, 0o600)
 	}
-	// #nosec G304 -- WAL path is derived from the primary DB path (same contract as primary).
-	wal, err := os.OpenFile(walPath, walFlags, 0o600)
 	if err != nil {
 		_ = db.Close()
 		return nil, err
 	}
-	walCreated = exclusiveOpen
 
 	newLast, walMACEnabled, walMACKey, err := openReplayWAL(db, wal, &hdr, opts, effectivePageSize, usePrimaryFdatasync)
 	if err != nil {
@@ -156,6 +167,13 @@ func Open(path string, opts *Options) (*Engine, error) {
 		_ = db.Close()
 		_ = wal.Close()
 		return nil, err
+	}
+	if dbCreated || walCreated {
+		if err := syncParents(path, walPath); err != nil {
+			_ = db.Close()
+			_ = wal.Close()
+			return nil, fmt.Errorf("engine: make database files durable: %w", err)
+		}
 	}
 
 	e := &Engine{

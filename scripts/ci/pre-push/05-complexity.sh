@@ -193,6 +193,30 @@ cyclo_violations=()
 cog_violations=()
 crap_violations=()
 
+# Analyze only repository source files. This includes untracked work under
+# review while excluding ignored build caches, fixtures, and generated trees.
+source_files=()
+while IFS= read -r -d '' file; do
+    [[ "$file" == *_test.go || "$file" == vendor/* ]] && continue
+    source_files+=("$file")
+done < <(git ls-files -z --cached --others --exclude-standard -- '*.go')
+if ((${#source_files[@]} == 0)); then
+    echo -e "${RED}error:${NC} No production Go source files found for complexity analysis" >&2
+    exit 1
+fi
+
+# Run each pinned analyzer once and retain its output for all report passes.
+# Analyzer failures are hard failures; treating missing output as a clean scan
+# would make the gate fail open when a tool cannot be downloaded or executed.
+if ! cyclo_output=$("$ROOT/scripts/tool.sh" gocyclo "${source_files[@]}"); then
+    echo -e "${RED}error:${NC} gocyclo execution failed" >&2
+    exit 1
+fi
+if ! cognit_output=$("$ROOT/scripts/tool.sh" gocognit "${source_files[@]}"); then
+    echo -e "${RED}error:${NC} gocognit execution failed" >&2
+    exit 1
+fi
+
 # Process all Go files - cyclomatic
 while IFS= read -r line; do
     [[ -z "$line" ]] && continue
@@ -218,7 +242,7 @@ while IFS= read -r line; do
         cyclo_violations+=("$file|$func|$comp|$max_cyclo|$layer|$loc")
         violation_funcs=$((violation_funcs + 1))
     fi
-done < <(find . -name '*.go' -not -path './vendor/*' -not -name '*_test.go' -exec "$ROOT/scripts/tool.sh" gocyclo {} + 2>/dev/null || true)
+done <<< "$cyclo_output"
 
 # Check cognitive complexity
 echo -e "${CYAN}  Analyzing cognitive complexity...${NC}"
@@ -240,7 +264,7 @@ while IFS= read -r line; do
     if [[ "$comp" -gt "$max_cog" ]]; then
         cog_violations+=("$file|$func|$comp|$max_cog|$layer|$loc")
     fi
-done < <(find . -name '*.go' -not -path './vendor/*' -not -name '*_test.go' -exec "$ROOT/scripts/tool.sh" gocognit {} + 2>/dev/null || true)
+done <<< "$cognit_output"
 
 # CRAP scoring
 echo -e "${CYAN}  Calculating CRAP scores...${NC}"
@@ -266,7 +290,7 @@ while IFS= read -r line; do
     if [[ "$crap" -gt "$crap_threshold" ]]; then
         crap_violations+=("$file|$func|$crap|$crap_threshold|$cyclo|$coverage|$loc")
     fi
-done < <(find . -name '*.go' -not -path './vendor/*' -not -name '*_test.go' -exec "$ROOT/scripts/tool.sh" gocyclo {} + 2>/dev/null || true)
+done <<< "$cyclo_output"
 
 # Report violations
 cyclo_count=${#cyclo_violations[@]}

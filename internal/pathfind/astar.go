@@ -26,6 +26,9 @@ func AStar(start, goal lattice.Coord, neighbors NeighborFunc, cost CostFunc, heu
 
 	for s.open.Len() > 0 {
 		cur := heap.Pop(&s.open).(*pqItem)
+		if best, ok := s.gScore[cur.coord]; !ok || cur.g != best {
+			continue
+		}
 		if cur.coord == goal {
 			return reconstructPath(s.cameFrom, goal)
 		}

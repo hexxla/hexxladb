@@ -94,11 +94,11 @@ type CellQuery struct {
 
 	// --- Scan safety ---
 
-	// MaxScanRows caps the number of index rows examined during the primary scan.
-	// Zero means unlimited (current behaviour). Set this to protect against
-	// accidentally unbounded full-index walks when SourceID is set but MaxResults
-	// is not. When the limit is hit, results collected so far are returned;
-	// no error is raised and no truncation flag is set (conservative).
+	// MaxScanRows caps physical rows examined by cell/tag/source scans or coordinate
+	// probes attempted by a radius scan. Zero means unlimited. If additional work
+	// exists beyond the budget, QueryCells returns the partial sorted results and
+	// [ErrQueryScanLimit]. MaxScanRows is rejected for embedding queries because it
+	// cannot bound HNSW graph reads.
 	MaxScanRows int
 
 	// --- Embedding / vector ---

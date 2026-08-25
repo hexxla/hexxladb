@@ -79,7 +79,11 @@ func (tx *Tx) GetEmbedding(coord lattice.PackedCoord) (vec []float32, ok bool, e
 	if getErr != nil || !found {
 		return nil, false, getErr
 	}
-	return decodeFloat32s(val), true, nil
+	vector, err := decodeEmbedding(val, dim)
+	if err != nil {
+		return nil, false, err
+	}
+	return vector, true, nil
 }
 
 // DeleteEmbedding removes the vector embedding for the cell at coord. Idempotent.
@@ -124,12 +128,25 @@ func encodeFloat32s(v []float32) []byte {
 	return buf
 }
 
-// decodeFloat32s decodes raw little-endian bytes into a float32 slice.
-func decodeFloat32s(b []byte) []float32 {
-	n := len(b) / 4
-	v := make([]float32, n)
-	for i := range n {
-		v[i] = math.Float32frombits(binary.LittleEndian.Uint32(b[i*4:]))
+// decodeEmbedding validates and decodes a persisted little-endian vector.
+func decodeEmbedding(encoded []byte, dimension uint16) ([]float32, error) {
+	wantBytes := int(dimension) * 4
+	if dimension == 0 || len(encoded) != wantBytes {
+		return nil, fmt.Errorf(
+			"%w: embedding has %d encoded bytes, want %d for dimension %d",
+			ErrCorruptDatabase,
+			len(encoded),
+			wantBytes,
+			dimension,
+		)
 	}
-	return v
+	vector := make([]float32, int(dimension))
+	for i := range vector {
+		value := math.Float32frombits(binary.LittleEndian.Uint32(encoded[i*4:]))
+		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+			return nil, fmt.Errorf("%w: embedding component %d is not finite", ErrCorruptDatabase, i)
+		}
+		vector[i] = value
+	}
+	return vector, nil
 }

@@ -1,6 +1,7 @@
 package hexxladb
 
 import (
+	"strings"
 	"time"
 
 	"github.com/hexxla/hexxladb/internal/record"
@@ -59,10 +60,14 @@ func NewSystemPromptCell(coord PackedCoord, content, version string) record.Cell
 // Facts are typically extracted from conversation and tagged with their source and category.
 func NewFactCell(coord PackedCoord, content, sourceID, factType string, confidence float64) record.CellRecord {
 	now := time.Now().UTC().UnixNano()
+	tags := []string{"fact"}
+	if factType != "" && !strings.EqualFold(factType, "fact") {
+		tags = append(tags, factType)
+	}
 	return record.CellRecord{
 		Key:        coord,
 		RawContent: content,
-		Tags:       []string{"fact", factType},
+		Tags:       tags,
 		Provenance: record.ProvenanceWire{
 			SourceID:   sourceID,
 			Confidence: confidence,

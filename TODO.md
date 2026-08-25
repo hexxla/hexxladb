@@ -4,6 +4,11 @@ Immediate next steps. Update after each session.
 
 ## Current
 
+- [ ] Complete one uninterrupted post-commit `task ci` candidate run and attach its output.
+- [ ] Regenerate controlled, vector-scale, observation, and lattice-placement evidence on the final candidate tree; run a representative sustained soak against declared deployment targets.
+- [ ] Run the protected tag workflow with the production signing key, then perform clean-host upgrade and rollback/refusal drills.
+- [ ] Complete a bounded limited-production pilot with a named owner, monitoring window, and restore report before designating the profile production-ready.
+
 ## Pending (next sessions)
 
 - [ ] **`BatchDeleteCells`** (or equivalent) — batched/chunked **`DeleteCell`** helper + docs/tests; reference **`docs/ROADMAP.md`** Near-term bullet

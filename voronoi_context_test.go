@@ -2,7 +2,9 @@ package hexxladb_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/hexxla/hexxladb"
@@ -243,5 +245,55 @@ func TestLoadContextVoronoi_weightFunc(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLoadContextVoronoiRejectsInvalidWeight(t *testing.T) {
+	t.Parallel()
+	db := openVoronoiTestDB(t)
+	err := db.View(func(tx *hexxladb.Tx) error {
+		_, err := tx.LoadContextVoronoi(
+			t.Context(),
+			[]lattice.Coord{{Q: 0, R: 0}},
+			hexxladb.VoronoiContextConfig{
+				MaxRadius: 1,
+				WeightFunc: func(lattice.Coord) float64 {
+					return math.NaN()
+				},
+			},
+		)
+		return err
+	})
+	if !errors.Is(err, hexxladb.ErrInvalidArgument) {
+		t.Fatalf("error = %v, want ErrInvalidArgument", err)
+	}
+}
+
+func TestLoadContextVoronoiRejectsUnboundedWork(t *testing.T) {
+	t.Parallel()
+	db := openVoronoiTestDB(t)
+	tests := map[string]struct {
+		seeds []lattice.Coord
+		cfg   hexxladb.VoronoiContextConfig
+	}{
+		"radius": {
+			seeds: []lattice.Coord{{Q: 0, R: 0}},
+			cfg:   hexxladb.VoronoiContextConfig{MaxRadius: 65},
+		},
+		"seed-count": {
+			seeds: make([]lattice.Coord, 33),
+			cfg:   hexxladb.VoronoiContextConfig{MaxRadius: 1},
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			err := db.View(func(tx *hexxladb.Tx) error {
+				_, err := tx.LoadContextVoronoi(t.Context(), test.seeds, test.cfg)
+				return err
+			})
+			if !errors.Is(err, hexxladb.ErrInvalidArgument) {
+				t.Fatalf("error = %v, want ErrInvalidArgument", err)
+			}
+		})
 	}
 }

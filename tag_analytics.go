@@ -35,7 +35,12 @@ func (tx *Tx) TagCounts(ctx context.Context) ([]TagCount, error) {
 		}
 		out = append(out, TagCount{Tag: tag, Count: n})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Count > out[j].Count })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Tag < out[j].Tag
+	})
 	return out, nil
 }
 

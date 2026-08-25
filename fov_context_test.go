@@ -2,6 +2,7 @@ package hexxladb_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"testing"
@@ -199,5 +200,24 @@ func TestLoadContextFOV_negativeRadius(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLoadContextFOV_rejectsUnboundedWork(t *testing.T) {
+	t.Parallel()
+	db := openFOVTestDB(t)
+	opacityCalls := 0
+	err := db.View(func(tx *hexxladb.Tx) error {
+		_, err := tx.LoadContextFOV(t.Context(), lattice.Coord{}, 257, func(lattice.Coord) bool {
+			opacityCalls++
+			return false
+		}, hexxladb.FOVContextConfig{})
+		return err
+	})
+	if !errors.Is(err, hexxladb.ErrInvalidArgument) {
+		t.Fatalf("error = %v, want ErrInvalidArgument", err)
+	}
+	if opacityCalls != 0 {
+		t.Fatalf("opacity callback called %d times for rejected radius", opacityCalls)
 	}
 }

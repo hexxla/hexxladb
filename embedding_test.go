@@ -601,6 +601,60 @@ func TestEmbedding_ReindexSkipRemoves(t *testing.T) {
 	}
 }
 
+func TestEmbedding_ReindexRejectsNilCallback(t *testing.T) {
+	t.Parallel()
+	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
+	err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.ReindexEmbeddings(t.Context(), nil)
+	})
+	if !errors.Is(err, hexxladb.ErrNilCallback) {
+		t.Fatalf("ReindexEmbeddings error = %v, want ErrNilCallback", err)
+	}
+}
+
+func TestEmbedding_ReindexEstablishesDimension(t *testing.T) {
+	t.Parallel()
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "reindex-auto.db"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	coord := mustPackEmb(t, 1, 0)
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.PutCell(t.Context(), record.CellRecord{Key: coord, RawContent: "auto"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.ReindexEmbeddings(t.Context(), func(context.Context, record.CellRecord) ([]float32, error) {
+			return []float32{1, 0}, nil
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if db.EmbeddingDimension() != 2 {
+		t.Fatalf("EmbeddingDimension = %d, want 2", db.EmbeddingDimension())
+	}
+}
+
+func TestEmbedding_ReindexReportsMalformedCellKey(t *testing.T) {
+	t.Parallel()
+	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.Put([]byte("cell/x"), []byte("malformed"))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.ReindexEmbeddings(t.Context(), func(context.Context, record.CellRecord) ([]float32, error) {
+			return []float32{1, 0, 0}, nil
+		})
+	})
+	if !errors.Is(err, hexxladb.ErrCorruptDatabase) {
+		t.Fatalf("ReindexEmbeddings error = %v, want ErrCorruptDatabase", err)
+	}
+}
+
 func TestEmbedding_DBAccessors(t *testing.T) {
 	t.Parallel()
 	db := openEmbeddingDB(t, 384, hexxladb.DistanceL2)

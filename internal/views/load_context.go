@@ -78,7 +78,7 @@ func LoadContext(ctx context.Context, tx TxReader, p LoadContextParams) (Context
 	p = normalizeParams(p)
 
 	switch {
-	case p.EdgeFilter != "" || p.MaxHops > 0:
+	case p.EdgeFilter != "":
 		walker, ok := tx.(TxEdgeWalker)
 		if !ok {
 			return ContextPack{}, ErrEdgeWalkerRequired

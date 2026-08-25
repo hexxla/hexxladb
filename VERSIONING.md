@@ -56,6 +56,57 @@ For backup and file pairing (primary + WAL), see [`docs/hexxladb/OPERATIONS.md`]
 
 Optional at-rest encryption is described in [`docs/hexxladb/ENCRYPTION.md`](docs/hexxladb/ENCRYPTION.md). Offline key rotation, including an enabled changelog, is available via [`RotateEncryption`](rotation.go); online re-encryption and authenticated primary-page format migration remain out of scope for the current versioning story.
 
+## Production-readiness profile
+
+Production readiness is a bounded claim about a tested deployment profile, not
+a synonym for reaching `v1.0.0`. HexxlaDB may complete this profile while still
+using a `v0.y.z` version; the v1 API commitment remains a separate decision.
+
+The initial candidate profile is:
+
+- the Go module embedded in one Linux/amd64 process using Go 1.27.0 or newer;
+- exactly one open owner for each database path and serialized public writes;
+- a trusted local filesystem that honors exclusive creation, file locking, and
+  `fsync`/`fdatasync` durability for the primary, WAL, and optional changelog;
+- engine format v2 for new deployments, or a completed and verified v1-to-v2
+  migration, with 4 KiB pages;
+- MVCC enabled, with encrypted changelog, durable consumers, and AES-XTS
+  primary encryption exercised together when the deployment enables those
+  optional features;
+- at most 10,000 stored vectors at 32 or 384 dimensions with a 64 MiB page
+  cache unless the deployment regenerates vector-scale evidence for its larger
+  or different vector workload;
+- low-to-moderate serialized writes or bounded batch ingestion whose measured
+  latency, file growth, and maintenance windows meet the deployment's targets;
+- application-owned monitoring, idempotent changefeed consumption, backup
+  retention, restore drills, MVCC pruning, and explicit compaction.
+
+The production-readiness claim excludes network service operation, concurrent
+or distributed writers, replication, automatic failover, unbounded vector or
+record scale, high-volume random-write workloads, and protection from an
+attacker who can modify primary-file ciphertext. Primary-page integrity still
+depends on trusted storage and independently authenticated backups as described
+in [`ENCRYPTION.md`](docs/hexxladb/ENCRYPTION.md#threat-model-and-authenticated-page-decision).
+
+Every adopting deployment must declare its expected dataset and vector sizes,
+read/write mix, enabled options, latency/throughput objectives, backup interval,
+RPO, and RTO. It must then pass the bounded production-readiness gates below.
+The repository records mechanisms and reproducible evidence; it does not invent
+site-specific service-level objectives.
+
+| Bounded production-readiness gate | Pass condition | Current status |
+| --- | --- | --- |
+| Candidate validation | `task ci`, `task integration`, fuzz smoke tests, and supported-platform builds pass on the same commit without skipped or unreconciled checks. | **Implementation checks pass; pending post-commit candidate run** |
+| Recovery set durability | Crash-barrier, combined encrypted backup/restore, migration, changelog-consumer, compaction, and required directory-durability checks pass on the candidate commit. | **Automated set passes; pending post-commit run and operator restore drill** |
+| Performance and soak | Controlled, observation, vector-scale, and placement evidence passes on release hardware; a representative sustained workload meets the adopting deployment's declared targets. | **Not met** |
+| Release operations | Reproducible artifacts, checksums, signing, SBOM generation, installation, upgrade, and rollback/refusal drills pass from the candidate commit. | **Local signed/SBOM/install rehearsal passes; protected tag and rollback drills pending** |
+| Limited-production adoption | A named owner records the deployed profile, monitoring window, backup/restore drill, and upgrade report with no unresolved correctness or data-loss finding. | **Not met** |
+
+These gates do not promote provisional APIs to a v1 compatibility promise. A
+pre-v1 production adopter must pin the module version, isolate provisional
+surfaces, and review documented migration notes before every upgrade. The
+separate v1 gates additionally require resolving the complete API inventory.
+
 ## Compatibility matrix
 
 “Read/write” means the library recognizes the format and preserves its contract;
@@ -114,8 +165,8 @@ recorded result, not permission to infer readiness from a version number.
 | --- | --- | --- | --- |
 | Production adoption | At least one named production deployment has an owner-confirmed backup/restore drill and upgrade report. | No production deployment evidence is recorded in the repository. | **Not met** |
 | API commitment | Every root file in the inventory is v1-candidate or deprecated; no provisional row remains; all pre-v1 breaks have migration notes. | Provisional retrieval, derived-algorithm, and convenience rows remain above. | **Not met** |
-| Format upgrade and refusal | v1 fixture migrates to logically equivalent v2 data/indexes; cancel/resume preserves source; encryption and collision cases pass; newer formats are refused. | `migration_test.go`: `TestMigrateV1ToV2*`, `TestOpenRefusesNewerFormatVersion`. | **Pass** |
-| Supported toolchain policy | `task ci` runs format, vet, boundaries, race, vulnerability, pinned lint, standalone security, complexity, and tidy without skipped or unreconciled checks on Go 1.27.0. | Pinned versions and toolchain are in `scripts/tool.sh`; release evidence must attach the successful `task ci` output. | **Pending release run** |
+| Format upgrade and refusal | v1 fixture migrates to logically equivalent v2 data/indexes; cancel/resume preserves source; encryption and collision cases pass; newer formats are refused. | `migration_test.go`: `TestMigrateV1ToV2*`, `TestMigratePublishedV051Fixture`, `TestOpenRefusesNewerFormatVersion`. The published-v0.5.1 fixture primary and WAL are SHA-256 locked under `testdata/compat/`. | **Pass** |
+| Supported toolchain policy | `task ci` runs format, vet, boundaries, workflow lint, race, vulnerability, pinned Go lint, standalone security, complexity, and tidy without skipped or unreconciled checks on Go 1.27.0. | Pinned versions and toolchain are in `scripts/tool.sh`; release evidence must attach the successful `task ci` output. | **Pending release run** |
 | Crash and recovery | `task integration` passes on the release commit, including named crash barriers; a recovery drill is recorded. | Test procedure exists in `CONTRIBUTING.md` and `OPERATIONS.md`; no v1-candidate run is recorded. | **Not met** |
 | Performance envelope | Seeded performance, vector-scale, and lattice-placement evidence is regenerated on release hardware and stays within documented thresholds. | Reproducible commands and current baselines exist in `PERFORMANCE_EVIDENCE.md`; no v1-candidate run is recorded. | **Not met** |
 | Release operations | Signed/tagged release rehearsal, SBOM generation, backup drill, and rollback/downgrade refusal drill complete from the candidate commit. | Workflows and drills exist; no v1-candidate rehearsal is recorded. | **Not met** |

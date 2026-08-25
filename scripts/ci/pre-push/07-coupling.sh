@@ -28,7 +28,7 @@ fi
 # Check for goda
 if ! command -v goda >/dev/null 2>&1; then
     echo -e "${RED}error:${NC} goda not found."
-    echo -e "${YELLOW}> Install with: go install github.com/loov/goda@latest${NC}"
+    echo -e "${YELLOW}> Install with: go install github.com/loov/goda@v0.10.1${NC}"
     exit 1
 fi
 

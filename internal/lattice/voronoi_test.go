@@ -1,6 +1,9 @@
 package lattice_test
 
 import (
+	"errors"
+	"math"
+	"slices"
 	"testing"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
@@ -178,6 +181,66 @@ func TestVoronoi_weighted(t *testing.T) {
 	_, ownerU := lattice.Voronoi([]lattice.Coord{sA, sB}, 8, nil)
 	if ownerU[mid] != 0 {
 		t.Fatalf("uniform: midpoint (3,0) should belong to seed A (idx 0) on tie, got %d", ownerU[mid])
+	}
+}
+
+func TestVoronoiCheckedFinalOwnershipIsUnique(t *testing.T) {
+	t.Parallel()
+	seeds := []lattice.Coord{{Q: -3, R: 0}, {Q: 3, R: 0}}
+	cells, owner, err := lattice.VoronoiChecked(seeds, 6, func(coord lattice.Coord) float64 {
+		if coord.Q == -1 {
+			return 4
+		}
+		return 0
+	})
+	if err != nil {
+		t.Fatalf("VoronoiChecked: %v", err)
+	}
+	seen := make(map[lattice.Coord]struct{}, len(cells))
+	for _, cell := range cells {
+		if _, duplicate := seen[cell.Coord]; duplicate {
+			t.Fatalf("coordinate %+v appears more than once", cell.Coord)
+		}
+		seen[cell.Coord] = struct{}{}
+		if owner[cell.Coord] != cell.SeedIdx {
+			t.Fatalf("coordinate %+v cell owner = %d, map owner = %d", cell.Coord, cell.SeedIdx, owner[cell.Coord])
+		}
+	}
+	if len(cells) != len(owner) {
+		t.Fatalf("cells = %d, owners = %d", len(cells), len(owner))
+	}
+	cellsAgain, _, err := lattice.VoronoiChecked(seeds, 6, func(coord lattice.Coord) float64 {
+		if coord.Q == -1 {
+			return 4
+		}
+		return 0
+	})
+	if err != nil {
+		t.Fatalf("second VoronoiChecked: %v", err)
+	}
+	if !slices.Equal(cells, cellsAgain) {
+		t.Fatal("weighted Voronoi output order changed across identical calls")
+	}
+}
+
+func TestVoronoiCheckedRejectsInvalidWeights(t *testing.T) {
+	t.Parallel()
+	for name, weight := range map[string]float64{
+		"negative":          -1,
+		"positive-infinity": math.Inf(1),
+		"negative-infinity": math.Inf(-1),
+		"not-a-number":      math.NaN(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := lattice.VoronoiChecked(
+				[]lattice.Coord{{Q: 0, R: 0}},
+				1,
+				func(lattice.Coord) float64 { return weight },
+			)
+			if !errors.Is(err, lattice.ErrInvalidWeight) {
+				t.Fatalf("error = %v, want ErrInvalidWeight", err)
+			}
+		})
 	}
 }
 

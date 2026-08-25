@@ -103,6 +103,11 @@ The canonical record families and key encodings are in [`HEXXLA_DB.md`](./HEXXLA
 
 [`Tx.QueryCells`](../../query_exec.go) executes structured [`CellQuery`](../../query.go) filters and uses an applicable secondary index when possible. [`Tx.SearchCells`](../../search.go) provides ranked lexical, substring, tag, source, temporal, and optional embedding-assisted retrieval.
 
+`CellQuery.MaxScanRows` bounds physical cell/tag/source rows or spatial
+coordinate probes. If additional work exists beyond the budget, the query
+returns sorted partial results together with `ErrQueryScanLimit`; it is rejected
+for embedding queries because candidate counts cannot bound HNSW graph reads.
+
 Typical retrieval flow:
 
 ```text
@@ -111,6 +116,14 @@ SearchCells or QueryCells
   -> LoadContext, LoadContextFOV, or LoadContextVoronoi
   -> ContextPack
 ```
+
+Weighted Voronoi output contains each coordinate exactly once under its final
+lowest-cost owner. Weight callbacks must return finite, non-negative costs;
+invalid costs return `ErrInvalidArgument`.
+
+Spatial work is bounded before lattice expansion: FOV accepts radii through 256;
+Voronoi accepts radii through 64 and at most 32 seeds. Result limits remain
+separate (`MaxCells` and `MaxCellsPerSeed`).
 
 Use [`RenderHexGrid`](../../hex_render.go) for bounded diagnostic rendering. It is a presentation helper, not a query primitive.
 
@@ -123,9 +136,13 @@ Embeddings are optional. Configure a dimension and distance metric with [`Option
 | [`Tx.PutEmbedding`, `Tx.GetEmbedding`, `Tx.DeleteEmbedding`](../../tx_embedding.go) | Manage one vector per cell.                                                               |
 | [`Tx.SearchByEmbedding`](../../embedding_search.go)                                 | HNSW-assisted nearest-neighbor search with flat-scan fallback.                            |
 | [`Tx.SearchByEmbeddingWithStats`](../../embedding_search.go)                        | The same search plus the selected HNSW/flat path and effective HNSW query breadth.        |
-| [`Tx.ReindexEmbeddings`](../../embedding_reindex.go)                                | Recompute stored vectors in a transaction.                                                |
+| [`Tx.ReindexEmbeddings`](../../embedding_reindex.go)                                | Recompute vectors transactionally; the first vector can establish an unset dimension.    |
 
 `EmbeddingSearchConfig.EfSearch` trades HNSW latency and allocation for recall. Zero uses a bounded dimension-aware default; explicit values from 1 through 10,000 are accepted and are raised to at least `MaxResults`. `EmbeddingSearchStats` exposes the effective value. `CellQuery.Embedding` and `CellSearchConfig.Embedding` integrate vector similarity into the query and search paths. HexxlaDB remains usable without embeddings through explicit coordinates and indexed metadata.
+
+Embedding reads validate the persisted vector length, configured dimension, and
+component finiteness. Malformed persisted embedding keys or values return
+`ErrCorruptDatabase`; they are never silently skipped or decoded as partial vectors.
 
 ## Derived super-hex occupancy
 
@@ -143,9 +160,13 @@ MVCC is enabled only when creating a new database with `Options.EnableMVCC`.
 | [`DB.PruneCellVersions`, `DB.PruneCellVersionsByProfile`](../../mvcc_lifecycle.go) | Remove eligible old versions in bounded passes.       |
 | [`PruneScheduler`](../../mvcc_lifecycle.go)                                        | Drive pruning from an application-owned timer.        |
 | [`DB.TagSnapshot`, `DB.ViewAtTag`, `DB.DeleteSnapshotTag`](../../snapshot_tags.go) | Name and revisit commit snapshots.                    |
-| [`DB.SnapshotDiff`](../../snapshot_diff.go)                                        | Compare cell and seam writes across commit sequences. |
+| [`DB.SnapshotDiff`](../../snapshot_diff.go)                                        | Inspect retained cell and seam versions across commit sequences. |
 
 Pruning does not shrink the primary file. Use compaction after pruning when disk reclamation is required.
+
+`SnapshotDiff` is a deterministic retained-history diagnostic. Pruned versions
+and mutations outside the cell/seam families are absent; use the optional
+logical changelog with durable consumer cursors for CDC and audit processing.
 
 ## Changefeed, health, and maintenance
 

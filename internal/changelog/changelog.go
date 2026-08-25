@@ -18,6 +18,8 @@ import (
 	"sort"
 
 	"golang.org/x/crypto/chacha20poly1305"
+
+	"github.com/hexxla/hexxladb/internal/fsutil"
 )
 
 const (
@@ -160,8 +162,18 @@ func OpenEncryptedRecoverable(path string, syncWrites bool, key []byte) (*Log, e
 }
 
 func open(path string, syncWrites bool, key []byte, repairIncompleteTail bool) (*Log, error) {
-	// #nosec G304 -- path is the caller-selected database companion path, matching hexxladb.Open.
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	return openWithSync(path, syncWrites, key, repairIncompleteTail, fsutil.SyncParents)
+}
+
+func openWithSync(
+	path string,
+	syncWrites bool,
+	key []byte,
+	repairIncompleteTail bool,
+	syncParents func(...string) error,
+) (*Log, error) {
+	// path is the caller-selected database companion path, matching hexxladb.Open.
+	f, created, err := fsutil.OpenReadWrite(path, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +191,18 @@ func open(path string, syncWrites bool, key []byte, repairIncompleteTail bool) (
 		if err := l.writeHeader(key); err != nil {
 			_ = f.Close()
 			return nil, err
+		}
+		if !syncWrites {
+			if err := f.Sync(); err != nil {
+				_ = f.Close()
+				return nil, fmt.Errorf("changelog: sync new header: %w", err)
+			}
+		}
+		if created {
+			if err := syncParents(path); err != nil {
+				_ = f.Close()
+				return nil, fmt.Errorf("changelog: make new file durable: %w", err)
+			}
 		}
 		return l, nil
 	}

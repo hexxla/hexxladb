@@ -58,11 +58,14 @@ Shortcuts:
 | `task bench`        | Benchmarks (`go test -bench=. -benchmem ./...`); **not** run in default CI                                                                                                                                                                                                                                                                                                                                  |
 | `task bench-stress` | Longer **`BenchmarkAPI_*`** (preload 512 / 2k / 10k per sub-bench); **not** in CI                                                                                                                                                                                                                                                                                                                           |
 | `task fuzz`         | Short fuzz smoke on internal decoders (~2s per target); **not** in default CI                                                                                                                                                                                                                                                                                                                               |
+| `task mutation-test-dry` | Gremlins analysis from a bounded, isolated source snapshot; part of `task ci-full`                                                                                                                                                                                                                                                                                                                     |
+| `task mutation-test` | Full mutation run with efficacy and coverage gates; optionally set `TARGET=./package`                                                                                                                                                                                                                                                                                                                       |
 
 ## Benchmarks and fuzzing
 
 - **`task bench`** runs all benchmarks in the module. For a single package: `go test -bench=. -benchmem ./internal/lattice`.
 - **`task fuzz`** runs a **short** smoke (`-fuzztime=2s` per target) on [`internal/record`](internal/record) and [`internal/engine`](internal/engine). For longer or corpus-updating runs, use e.g. `go test ./internal/record -fuzz=FuzzDecodeCell -fuzztime=30s` (see [Go fuzzing](https://go.dev/doc/security/fuzz/)).
+- Run Gremlins only through **`task mutation-test-dry`** or **`task mutation-test`**. The task wrapper keeps Gremlins worker storage outside a size-bounded source snapshot and refuses to start when an interrupted run left stale work under `.tmp`.
 
 Compatibility expectations for releases and on-disk format: **[`VERSIONING.md`](VERSIONING.md)**.
 
@@ -80,7 +83,7 @@ Technical backlog, explicit non-goals, and **documented vs implemented** audit n
 
 Prefer **table-driven** tests and **`t.Parallel()`** where data is independent. **Durability / heavier tests** use **`//go:build integration`** (see [`db_durability_test.go`](db_durability_test.go) vs [`durability_integration_test.go`](durability_integration_test.go)); run them with **`task integration`**. Default **`task ci`** does **not** include the integration tag so PRs stay fast.
 
-**Crash ordering (`SIGKILL`):** [`crash_ordering_integration_test.go`](crash_ordering_integration_test.go) spawns **`TestIntegration_crashChild`** subprocesses blocked on named barriers (`HEXXLADB_TEST_CRASH_AT`). Use **`task integration`** or **`go test -race -parallel=1 -tags=integration ./...`** (not a high **`go test -parallel`**) locally so these do not overlap each other.
+**Crash ordering (`SIGKILL`):** [`crash_ordering_integration_test.go`](crash_ordering_integration_test.go) spawns **`TestIntegration_crashChild`** subprocesses blocked on named barriers (`HEXXLADB_TEST_CRASH_AT`). Use **`task integration`** or **`go test -race -parallel=1 -timeout=30m -tags=integration -run='^TestIntegration_' ./...`** (not a high **`go test -parallel`**) locally so these do not overlap each other. The name filter selects only the tagged integration set; `task ci` owns the ordinary unit/race suite.
 
 **Scale integration:** [`scale_integration_test.go`](scale_integration_test.go) writes **~10k** `PutCell` rows ( **~1k** when **`go test -short`** is set) plus secondary index checks and reopen verification. Expect **seconds** of runtime and **tens of MB** temp disk under `-race`; run before release or when changing the btree / secondaries.
 
