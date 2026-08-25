@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Research experiment roadmap** — added evidence-gated experiments for Bf-tree-inspired record caching, bidirectional shortest paths, hex-native spatial ordering, incremental FOV, structured derivation provenance, and external terrain analysis. Each experiment names its informing paper and defines representative measurements and stopping conditions without committing to a public API or storage-format change.
+
 ## [0.6.0] - 2026-08-25
 
 ### Added
