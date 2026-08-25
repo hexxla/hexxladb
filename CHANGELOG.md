@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Conservative pilot qualification** — added a bounded five-minute, minimum-sample reference workload for the documented Linux/amd64 production profile. It exercises 10,000 encrypted MVCC cells and 32-dimensional HNSW vectors under a 95/5 read/write mix with separately gated cell writes and vector updates, durable changelog consumption, encrypted backup/restore, primary reopen, health checks, explicit latency/throughput/RPO/RTO gates, and hard 1 GiB heap and 2 GiB storage caps. The aggregate-only report and exact temporary-directory cleanup make release-host evidence reproducible without opening an existing database.
+
 ## [0.7.0] - 2026-08-25
 
 ### Changed

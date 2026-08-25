@@ -43,7 +43,7 @@ Cells sit at `(q, r)` hex coordinates. Related records sit nearby when the appli
 go get github.com/hexxla/hexxladb
 ```
 
-Six runnable examples cover conversational memory, LLM context assembly, spatial algorithms, and reproducible evidence workloads: [`examples/`](examples/).
+Seven runnable examples cover conversational memory, LLM context assembly, spatial algorithms, and reproducible evidence workloads: [`examples/`](examples/).
 
 ### Open a database
 
@@ -288,6 +288,7 @@ The context assembly operations (`LoadContext`, `LoadContextFOV`, `LoadContextVo
 | [Performance Evidence](examples/performance_evidence/)                     | `task evidence-observe`           | Dijkstra, FOV, super-hex sync, allocation, and storage observations   |
 | [Vector Scale Evidence](examples/vector_scale_evidence/)                   | `task evidence-vector-scale`      | HNSW build, recall, reopen, churn, memory, and disk                    |
 | [Lattice Placement Evidence](examples/lattice_placement_evidence/)         | `task evidence-lattice-placement` | Placement stability and semantic/spatial divergence                   |
+| [Conservative Pilot Soak](examples/pilot_soak/)                            | `task soak-pilot`                 | Sustained mixed load, SLO gates, encrypted backup/restore, resources  |
 
 The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm && task demo-llm`
 

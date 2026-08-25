@@ -281,6 +281,49 @@ constraints, output files, and decision gates are documented in
 
 Use after meaningful storage/MVCC changes or before tagging a release. Capture machine type, git SHA, and wall-clock duration in your release notes.
 
+The repository's conservative reference qualification is runnable as
+`task soak-pilot`. It defaults to five measured minutes, 10,000 cells with one
+32-dimensional vector each,
+20 operations per second, 95% reads and 5% serialized writes, MVCC, AES-XTS
+primary encryption, an authenticated encrypted changelog, one durable consumer,
+4 KiB pages, and a 64 MiB page cache. The read mix covers point reads, bounded
+FOV, HNSW search, and bounded tag scans. It performs and validates an encrypted
+online backup plus a primary reopen. Runs longer than the 15-minute backup
+interval also repeat the backup/restore drill during the measured workload.
+Deterministic seeding precedes the measured window and is reported separately.
+
+The reference gates are zero operation or health errors, at least 95% of target
+throughput, at least 5,000 total operations, and minimum samples of 1,000 point
+reads, 250 FOV reads, 300 vector searches, 200 tag scans, 50 ordinary cell
+writes, and 10 vector updates. Their p95 latency must remain at or below 5 ms
+for point reads, 10 ms for FOV, 25 ms
+for vector search and ordinary cell writes, 50 ms for bounded tag scans, and
+2 seconds for the distinct HNSW-maintaining vector-update class. One in every
+ten writes updates a vector; keeping that distribution separate prevents rare
+graph maintenance from hiding an ordinary-write regression. Heap in-use is
+capped at 1 GiB; combined primary, WAL, and changelog storage is capped at
+2 GiB. One temporary backup recovery set exists only during each restore drill
+and is removed immediately afterward; every restore must finish within 30
+minutes. The 15-minute backup interval is the declared RPO. The runner stops
+on a correctness or resource error,
+uses no existing database, emits aggregate-only JSON to
+`.tmp/evidence/pilot-soak.json`, and removes its exact run directory on exit.
+If a process is killed without running its exit trap, the next invocation
+refuses to reuse the stale directory instead of adding another workload.
+
+Run the reference qualification from a clean release commit:
+
+```sh
+task soak-pilot
+```
+
+Retain the JSON report with the exact release commit, machine/storage
+description, and named owner. The minimum operation samples, deterministic
+storage churn tests, vector-scale churn evidence, integration suite, and
+recovery drills are the qualification boundary; elapsed time alone is not a
+release gate. Deployments with different profiles should record their own
+declared limits and evidence.
+
 For write-path diagnosis, sample [`DB.WriteStats`](../../write_stats.go) twice and subtract the cumulative fields. `LockWait` identifies reader/writer contention before an update starts; `Callback`, `Durability`, and `Finalization` divide the time spent holding the exclusive lock. Pair this with [`DB.GroupWALStats`](../../db.go): serialized public writes should report zero multi-job batches, while each authoritative commit still has one WAL sync. A positive `GroupWALMaxBatchWait` adds directly to public write and reader-blocking latency and is intended only for direct engine users that can enqueue jobs concurrently.
 
 | Step | Command                    | Pass criteria                                                                                                           |
@@ -288,7 +331,7 @@ For write-path diagnosis, sample [`DB.WriteStats`](../../write_stats.go) twice a
 | 1    | `task ci`                  | Exits `0`; includes unit tests + race.                                                                                  |
 | 2    | `task integration`         | Exits `0`; includes `TestIntegration_MVCC_sustainedPutCellSameKey` and `TestIntegration_MVCC_latticeAndHighChurnPrune`. |
 | 3    | _(Optional)_ `task stress` | Large cell load, not MVCC churn; skip on resource-constrained CI.                                                       |
-| 4    | Disk growth sanity         | Note DB + WAL (+ changelog if enabled) size before/after soak; bounded growth after prune per retention policy above.   |
+| 4    | `task soak-pilot`          | Aggregate report passes every sample, latency, throughput, backup/restore, health, heap, and storage gate.              |
 
 Tune retention and pruning for your workload and soak longer in staging if retention windows are large.
 

@@ -113,6 +113,11 @@ tasks:
       PLACEMENT_EVIDENCE_ARGS: '{{.PLACEMENT_EVIDENCE_ARGS | default ""}}'
       PLACEMENT_EVIDENCE_OUTPUT: '{{.PLACEMENT_EVIDENCE_OUTPUT | default ".tmp/evidence/lattice-placement.json"}}'
 
+  soak-pilot:
+    desc: Run the conservative five-minute, minimum-sample pilot qualification
+    cmds:
+      - bash scripts/pilot-soak.sh {{.PILOT_SOAK_ARGS | default ""}}
+
   fuzz:
     desc: Run short fuzz smoke tests on internal decoders
     cmds:
@@ -176,6 +181,13 @@ tasks:
       - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-evidence-lattice-placement{{.EXE}}" ./examples/lattice_placement_evidence
       - 'echo "  → {{.BINDIR}}/hexxladb-evidence-lattice-placement{{.EXE}}"'
 
+  build-pilot-soak:
+    desc: Build the conservative pilot soak runner
+    cmds:
+      - mkdir -p "{{.BINDIR}}"
+      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-pilot-soak{{.EXE}}" ./examples/pilot_soak
+      - 'echo "  → {{.BINDIR}}/hexxladb-pilot-soak{{.EXE}}"'
+
   build-examples:
     desc: Build all examples
     cmds:
@@ -185,6 +197,7 @@ tasks:
       - task: build-evidence-performance
       - task: build-evidence-vector-scale
       - task: build-evidence-lattice-placement
+      - task: build-pilot-soak
 
   build:
     desc: Build the CLI, TUI, and examples for the selected OS and architecture

@@ -43,6 +43,7 @@ task evidence-controlled
 task evidence-observe
 task evidence-vector-scale
 task evidence-lattice-placement
+task soak-pilot
 ```
 
 The default observation workload uses 2,000 cells, 100 samples, seed `1`, FOV
@@ -77,6 +78,14 @@ task evidence-lattice-placement \
   PLACEMENT_EVIDENCE_ARGS='-documents-per-topic 20 -initial-per-topic 12' \
   PLACEMENT_EVIDENCE_OUTPUT='.tmp/evidence/lattice-placement-120.json'
 ```
+
+The separate pilot qualification uses the bounded production-readiness profile
+and hard pass/fail gates documented in
+[`OPERATIONS.md`](OPERATIONS.md#pre-release-soak-checklist).
+Its five-minute default must also meet per-operation minimum sample counts, so
+elapsed time alone cannot produce a passing report. The aggregate report is written to
+`.tmp/evidence/pilot-soak.json`, while the database and backup drills stay in
+one isolated run directory that is removed on exit.
 
 ## What is measured
 

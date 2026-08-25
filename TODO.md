@@ -4,7 +4,6 @@ Immediate next steps. Update after each session.
 
 ## Current
 
-- [ ] Declare the adopting deployment's dataset/vector sizes, read/write mix, enabled options, latency/throughput objectives, backup interval, RPO, and RTO; run a representative sustained soak against those targets.
 - [ ] Run the protected tag workflow with the production signing key, then record an adopting-operator backup/restore and upgrade/rollback drill from the published artifacts.
 - [ ] Complete a bounded limited-production pilot with a named owner, monitoring window, and restore report before designating the profile production-ready.
 

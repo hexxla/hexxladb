@@ -219,6 +219,7 @@ Do not compare error strings.
 - [`examples/performance_evidence`](../../examples/performance_evidence) — controlled evidence collection for spatial algorithms and super-hex occupancy.
 - [`examples/vector_scale_evidence`](../../examples/vector_scale_evidence) — bounded HNSW build, recall, reopen, churn, memory, and disk evidence.
 - [`examples/lattice_placement_evidence`](../../examples/lattice_placement_evidence) — deterministic placement, collision, incremental-stability, supersession, and semantic/lattice divergence evidence.
+- [`examples/pilot_soak`](../../examples/pilot_soak) — bounded sustained mixed-load qualification with encrypted backup/restore, durable-consumer, health, latency, throughput, memory, and storage gates.
 
 Examples demonstrate workflows; they are not expected to call every exported symbol.
 
