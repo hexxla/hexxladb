@@ -164,14 +164,14 @@ second time, and repeats the oracle comparison. It also requires the reported
 execution path to be HNSW. The JSON contains aggregate durations and resource
 counts only; the temporary database is removed.
 
-The 2026-08-24 reference runs used an Intel Core i9-14900HX, Linux/amd64,
-Go 1.27.0, seed 1, 25 queries, recall@10, 100 updates and 100 deletes, 4 KiB
-pages, and a 64 MiB cache:
+The 2026-08-25 release-candidate runs on commit `7c94398` used an Intel Core
+i9-14900HX, Linux/amd64, Go 1.27.0, seed 1, 25 queries, recall@10, 100 updates
+and 100 deletes, 4 KiB pages, and a 64 MiB cache:
 
 | Workload | Batch | Build | Query before reopen p50/p95 | Recall before/reopen/churn | Query after churn p50/p95 | Heap after build/churn | Primary/live/reclaimable |
 | -------- | ----- | ----- | ---------------------------- | -------------------------- | --------------------------- | ---------------------- | ------------------------ |
-| 10k×32d  | 500   | 78.1 s; 128.1 vectors/s | 5.75/8.65 ms | .992/.992/.992 | 4.80/7.03 ms | 18.4/25.0 MB | 23.87/23.07/0.80 MB |
-| 10k×384d | 100   | 141.2 s; 70.8 vectors/s | 32.81/37.05 ms | .956/.956/.960 | 29.37/35.62 ms | 97.8/68.1 MB | 66.06/64.50/1.56 MB |
+| 10k×32d  | 500   | 74.4 s; 134.4 vectors/s | 5.42/8.13 ms | .992/.992/.992 | 5.36/8.35 ms | 18.7/25.0 MB | 23.87/23.07/0.80 MB |
+| 10k×384d | 100   | 156.5 s; 63.9 vectors/s | 30.64/39.39 ms | .956/.956/.960 | 32.68/39.80 ms | 99.3/67.9 MB | 66.06/64.50/1.56 MB |
 
 The 32-dimensional run used the minimum default `ef_search=100`; the
 dimension-aware 384-dimensional run used `ef_search=384`. The latter setting

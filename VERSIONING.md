@@ -2,7 +2,7 @@
 
 **Current published version:** `v0.6.0`
 
-**Next release candidate:** not selected
+**Next release candidate:** `v0.7.0`
 
 This document describes how **module versions**, **Go API stability**, and **on-disk format** relate for [`github.com/hexxla/hexxladb`](https://github.com/hexxla/hexxladb).
 
@@ -96,10 +96,10 @@ site-specific service-level objectives.
 
 | Bounded production-readiness gate | Pass condition | Current status |
 | --- | --- | --- |
-| Candidate validation | `task ci`, `task integration`, fuzz smoke tests, and supported-platform builds pass on the same commit without skipped or unreconciled checks. | **Implementation checks pass; pending post-commit candidate run** |
-| Recovery set durability | Crash-barrier, combined encrypted backup/restore, migration, changelog-consumer, compaction, and required directory-durability checks pass on the candidate commit. | **Automated set passes; pending post-commit run and operator restore drill** |
-| Performance and soak | Controlled, observation, vector-scale, and placement evidence passes on release hardware; a representative sustained workload meets the adopting deployment's declared targets. | **Not met** |
-| Release operations | Reproducible artifacts, checksums, signing, SBOM generation, installation, upgrade, and rollback/refusal drills pass from the candidate commit. | **Local signed/SBOM/install rehearsal passes; protected tag and rollback drills pending** |
+| Candidate validation | `task ci`, `task integration`, fuzz smoke tests, and supported-platform builds pass on the same commit without skipped or unreconciled checks. | **Pass on candidate code commit `7c94398`; the protected tag workflow must repeat the same gates on the exact `v0.7.0` tag** |
+| Recovery set durability | Crash-barrier, combined encrypted backup/restore, migration, changelog-consumer, compaction, and required directory-durability checks pass on the candidate commit. | **Automated set and local synthetic restore rehearsal pass on `7c94398`; adopting-operator restore drill pending** |
+| Performance and soak | Controlled, observation, vector-scale, and placement evidence passes on release hardware; a representative sustained workload meets the adopting deployment's declared targets. | **Reproducible evidence passes on `7c94398`; deployment targets and sustained representative soak pending** |
+| Release operations | Reproducible artifacts, checksums, signing, SBOM generation, installation, upgrade, and rollback/refusal drills pass from the candidate commit. | **Cross-build, isolated Linux install, published-fixture migration, and newer-format refusal pass on `7c94398`; final signed protected tag and adopting-operator rollback drill pending** |
 | Limited-production adoption | A named owner records the deployed profile, monitoring window, backup/restore drill, and upgrade report with no unresolved correctness or data-loss finding. | **Not met** |
 
 These gates do not promote provisional APIs to a v1 compatibility promise. A

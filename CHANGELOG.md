@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-25
+
 ### Changed
 
 - **Production correctness and release hardening** — hardened retained-history snapshot diagnostics, MVCC tag analytics, weighted Voronoi assignment, bounded queries and spatial work, embedding decoding/reindexing, A* traversal, lexical scoring, template generation, and UTF-8 rendering against corrupt, stale, duplicate, or unbounded inputs. New database, WAL, changelog, backup, and encryption-rotation paths now persist affected directory entries; interrupted rotation fails closed and has an explicit configuration-checked recovery path. Release automation is least-privilege, immutable-action pinned, tool-version pinned, GPG checksum-signed, and produces per-archive SPDX SBOMs after CI, integration, fuzz, and cross-build gates.
@@ -388,7 +390,8 @@
 
 _First release._
 
-[Unreleased]: https://github.com/hexxla/hexxladb/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/hexxla/hexxladb/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/hexxla/hexxladb/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/hexxla/hexxladb/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/hexxla/hexxladb/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/hexxla/hexxladb/compare/v0.4.0...v0.5.0

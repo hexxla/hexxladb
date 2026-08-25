@@ -254,8 +254,8 @@ _Intel Core i9-14900HX · 16 GB · Linux. API benchmark rows: Go 1.26–1.27, `-
 | --------------------------------- | --------- | ------------------------------------------------------ |
 | `QueryCells` embedding (500×32d)  | ~13 ms    | Full HNSW ANN + post-filter pipeline                   |
 | `QueryCells` embedding (500×128d) | ~11 ms    | Higher dim; fewer graph candidates needed              |
-| HNSW search (10k×32d, recall@10=.992)  | ~5.8 ms p50  | 4 KiB pages, 64 MiB cache, `ef_search=100`          |
-| HNSW search (10k×384d, recall@10=.956) | ~32.8 ms p50 | 4 KiB pages, 64 MiB cache, `ef_search=384`          |
+| HNSW search (10k×32d, recall@10=.992)  | ~5.4 ms p50  | 4 KiB pages, 64 MiB cache, `ef_search=100`          |
+| HNSW search (10k×384d, recall@10=.956) | ~30.6 ms p50 | 4 KiB pages, 64 MiB cache, `ef_search=384`          |
 | `SearchCells` lexical (2k cells)  | ~28–41 ms | Full-scan scorer; pre-filter with tags or source first |
 
 ### MVCC and maintenance
