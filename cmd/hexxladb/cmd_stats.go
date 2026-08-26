@@ -12,7 +12,7 @@ func cmdStats(args []string) int {
 	fs := flag.NewFlagSet("stats", flag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: hexxladb stats <database>")
-		fmt.Fprintln(os.Stderr, "\nPrint MVCC statistics: versioned rows, logical cells, commit seq, wasted bytes.")
+		fmt.Fprintln(os.Stderr, "\nPrint MVCC and reclaimable-storage statistics.")
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2

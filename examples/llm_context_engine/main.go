@@ -628,7 +628,7 @@ func run(dbPath string) error {
 		{
 			"Auditable memory",
 			"No history of what the LLM 'knew' at a given time",
-			"MVCC ViewAt pins a snapshot; SnapshotDiff shows what changed between turns",
+			"MVCC ViewAt pins a snapshot; SnapshotDiff diagnoses retained cell/seam changes between turns",
 		},
 	}
 

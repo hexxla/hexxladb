@@ -12,7 +12,7 @@ func cmdInfo(args []string) int {
 	fs := flag.NewFlagSet("info", flag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: hexxladb info <database>")
-		fmt.Fprintln(os.Stderr, "\nPrint database header information: page size, MVCC status, commit seq, file size.")
+		fmt.Fprintln(os.Stderr, "\nPrint database information: page size, value limit, commit seq, file size, and reclaimable storage.")
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -47,16 +47,10 @@ func cmdInfo(args []string) int {
 		return 1
 	}
 
-	mvcc := "off"
-	if stats.CommitSeq > 0 {
-		mvcc = "on"
-	}
-
 	fmt.Printf("Path:           %s\n", dbPath)
 	fmt.Printf("Size:           %s (%d bytes)\n", humanBytes(fi.Size()), fi.Size())
 	fmt.Printf("Page size:      %d bytes\n", db.PageSize())
 	fmt.Printf("Max value:      %d bytes\n", db.MaxValueBytes())
-	fmt.Printf("MVCC:           %s\n", mvcc)
 	fmt.Printf("Commit seq:     %d\n", stats.CommitSeq)
 	if stats.CommitSeq > 0 {
 		fmt.Printf("Versioned rows: %d\n", stats.VersionedRows)

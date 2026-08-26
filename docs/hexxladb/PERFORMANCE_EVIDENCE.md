@@ -32,6 +32,7 @@ This writes:
 - `.tmp/evidence/changelog-read-bench.txt`
 - `.tmp/evidence/api-bench.txt`
 - `.tmp/evidence/encryption-page-bench.txt`
+- `.tmp/evidence/allocator-churn-bench.txt`
 - `.tmp/evidence/superhex-sync-bench.txt`
 - `.tmp/evidence/storage-churn.txt`
 - `.tmp/evidence/workload.json`
@@ -58,7 +59,7 @@ task evidence-observe \
 ```
 
 Input bounds are deliberate: at most 100,000 cells, 10,000 samples, and FOV
-radius 512. This keeps an accidentally oversized observation run bounded.
+radius 256. This matches the public FOV limit and keeps an accidentally oversized observation run bounded.
 
 The vector runner defaults to deferred ingestion plus an atomic rebuild of
 10,000 32-dimensional unit vectors, 25 exact-oracle query samples, recall@10,

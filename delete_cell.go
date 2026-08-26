@@ -15,12 +15,13 @@ import (
 // Idempotent: deleting a non-existent cell returns nil. Use [Tx.DeleteCellWithOutcome]
 // when callers need to know whether a visible cell was actually removed.
 //
-// On format-v2 (MVCC) databases the primary cell key is tombstoned (zero-length
-// value) so [DB.ViewAt] snapshots before the delete remain consistent. Facets
-// receive the same tombstone treatment. [DB.PruneCellVersions] removes stale
+// On MVCC databases (plaintext format v2 or authenticated format v3) the primary
+// cell key is tombstoned (zero-length value) so [DB.ViewAt] snapshots before the
+// delete remain consistent. Facets receive the same tombstone treatment.
+// [DB.PruneCellVersions] removes stale
 // non-latest versions (seq < beforeSeq); it never removes the latest row per coord,
-// so a tombstone that is still the head version remains until superseded. Outbound edges are hard-deleted in both formats
-// (edges are not MVCC-versioned).
+// so a tombstone that is still the head version remains until superseded.
+// Outbound edges are hard-deleted in every format (edges are not MVCC-versioned).
 //
 // Seams are NOT removed. Seams reference two cells; removing one endpoint is a
 // domain decision. Orphaned seams surface via [DB.HealthCheck].

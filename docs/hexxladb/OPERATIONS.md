@@ -41,7 +41,7 @@ The walk is proportional to reachable pages and blocks writers, so sample it dur
 
 ### Deletes, tombstones, and why the file size barely moves
 
-On **format v2 (MVCC)**, [`DeleteCell`](../../delete_cell.go) does **not** remove the cell’s primary history: it appends a **tombstone** row (zero-length value at a new `commit_seq`). That **adds** a physical btree entry and usually **grows** WAL and sometimes the primary (new pages or split pages), even while the **visible** cell count drops.
+On **MVCC formats v2 and v3**, [`DeleteCell`](../../delete_cell.go) does **not** remove the cell’s primary history: it appends a **tombstone** row (zero-length value at a new `commit_seq`). That **adds** a physical btree entry and usually **grows** WAL and sometimes the primary (new pages or split pages), even while the **visible** cell count drops.
 
 So a pattern like “82 cells → delete 10 → file still **576 KiB**” is **normal**: obsolete pages remain allocated until compaction. To **reduce bytes on disk**:
 
@@ -56,7 +56,7 @@ Without **prune + compact**, expect similar **file** size; [`StatsMVCC`](../../m
 [`DB.StatsMVCC`](../../mvcc_lifecycle.go) counts **physical** `cell/<coord><seq>` rows and **distinct coords** that still have **any** stored version (including the latest **tombstone**):
 
 - **`VersionedRows`** — total versioned primary rows (grows with puts **and** deletes).
-- **`LogicalCells`** — number of distinct coordinates that still have at least one version row (coords you deleted are **still counted** until history is pruned away from the latest tombstone case per your retention story — the latest row per coord always remains until pruned per `PruneCellVersions` rules).
+- **`LogicalCells`** — number of distinct coordinates that still have at least one version row. A deleted coordinate remains counted because its latest tombstone is retained indefinitely by the current pruning contract, unless a later cell value supersedes it.
 
 **Visible** cells (non-tombstone latest value) are what [`DB.HealthCheck`](../../health.go) **CellCount** reflects, or what you get from [`GetCell`](../../primitives.go) / query APIs. Do not equate **`logical_cells`** with “rows the user can see.”
 
@@ -310,11 +310,11 @@ credentials and securely remove any reported `.rotate.bak` artifact.
 
 ## Observability
 
-The reference binary [`cmd/hexxladb`](../../cmd/hexxladb/main.go) uses structured logging (`log/slog`) with configurable `LOG_LEVEL` (see [README](../../README.md)). Long-running services should follow the same pattern: log at the composition root and adapters, not inside [`internal/domain`](../../internal/domain).
+The [`examples/remote_access`](../../examples/remote_access) owner-service boundary and [`cmd/tui`](../../cmd/tui) use structured `log/slog` logging at their composition roots. Long-running services should follow that pattern and own their log-level configuration; the `hexxladb` inspection CLI prints directly to stdout/stderr. Do not add logging to [`internal/domain`](../../internal/domain).
 
 ## MVCC retention and pruning
 
-For format-v2 databases (open a **new** database with [`Options.EnableMVCC`](../../options.go)):
+For MVCC formats v2 and v3 (`EnableMVCC` selects v2 for new plaintext files; official encryption creates v3):
 
 - [`Options.MVCCRetention.RetainCommitsBehindHead`](../../options.go) configures how much commit history to retain when deriving a suggested prune watermark. Only versions with strictly lower `commit_seq` than `(header.CommitSeq - RetainCommitsBehindHead)` may be reclaimed, and never the latest visible version per logical cell.
 - While **`CommitSeq ≤ RetainCommitsBehindHead`**, [`SuggestedPruneBeforeSeq`](../../mvcc_lifecycle.go) yields **`beforeSeq = 0`**, so [`PruneCellVersions`](../../mvcc_lifecycle.go) **`seq < beforeSeq`** matches **no** rows — **automatic prune ticks become a no-op** until commits accumulate beyond the retention depth. Embedders with short-lived MCP sessions therefore need a retention value **below** typical peak `CommitSeq` (inspect [`StatsMVCC`](../../mvcc_lifecycle.go) `.CommitSeq`) or explicit `beforeSeq`.
@@ -586,8 +586,11 @@ goreleaser build --snapshot --clean
 After the candidate evidence is reviewed, create and push an annotated tag.
 Do not move or reuse a published tag. Download the resulting archives on a
 clean Linux/amd64 staging host, verify the checksum signature and archive
-checksum, extract both binaries, and run `hexxladb check` against a restored
-backup. Record the workflow run, signing-key fingerprint, installation result,
+checksum and extract both binaries. For a plaintext restored backup, run
+`hexxladb check`; the inspection command does not accept encryption credentials.
+For the recommended encrypted profile, use a small credential-aware verification
+program that opens the restored copy with the production `Options`, calls
+`HealthCheck`, and closes it cleanly. Record the workflow run, signing-key fingerprint, installation result,
 backup/restore result, and upgrade/refusal drill with the release evidence.
 
 Rollback means deploying the previously verified application build against a
@@ -627,7 +630,7 @@ primary, WAL, and changelog backup when the formats are not backward-readable.
 
 **Signal:** `PruneCellVersions` or `StatsMVCC` ascent fails mid-operation.
 
-**Response:** Stop writing; backup files; restore from known-good snapshot. Only use `Update` / primitives — avoid raw `Tx.Put` reordering `cell/` vs `__meta/commit-time/` keys on format v2.
+**Response:** Stop writing; backup files; restore from known-good snapshot. Only use `Update` / primitives — avoid raw `Tx.Put` reordering `cell/` vs `__meta/commit-time/` keys on MVCC formats v2 and v3.
 
 The historical `leaf page full` variant caused by an incomplete cascading split is fixed. The B+ tree insert path now guarantees that emitted pages fit within `pageSize` and remain reachable from the root. A persisted `ErrCorruptTree` on a database written by a fixed build indicates genuine file or media corruption, not that historical split defect; restore from backup.
 

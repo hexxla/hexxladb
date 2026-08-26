@@ -158,7 +158,7 @@ var seedConversation = []seedMessage{
 	},
 	{
 		"assistant",
-		"Yes. AES-256-XTS encrypts each data page independently. A raw Options.EncryptionKey is stretched with HKDF-SHA256; Options.Passphrase uses Argon2id with the per-database salt. Official encryption automatically authenticates WAL records and uses XChaCha20-Poly1305 for the optional changelog. Primary XTS pages provide confidentiality but not authenticated tamper detection.",
+		"Yes. New encrypted databases use authenticated format v3: XChaCha20-Poly1305 data pages, an authenticated header, and keyed WAL records. A raw Options.EncryptionKey is expanded with HKDF-SHA256; Options.Passphrase uses Argon2id with the per-database salt. Existing AES-256-XTS v1/v2 files remain readable through the legacy confidentiality-only path.",
 		[]string{"fact", "security", "encryption", "aes-xts", "argon2id", "user-123"},
 	},
 	{
@@ -178,7 +178,7 @@ var seedConversation = []seedMessage{
 	},
 	{
 		"assistant",
-		"Yes. DB.SnapshotDiff(ctx, fromSeq, toSeq, config) returns cell and seam changes in (fromSeq, toSeq]. Each CellDiff carries the Coord, CommitSeq, and either DiffOpPut with its decoded record or DiffOpDelete for a tombstone. It is suitable for incremental audit and CDC workflows and requires MVCC (format v2).",
+		"DB.SnapshotDiff(ctx, fromSeq, toSeq, config) returns retained cell and seam versions in (fromSeq, toSeq] on MVCC formats v2 and v3. Pruned versions and non-cell/seam mutations are absent, so it is a bounded diagnostic rather than complete CDC or audit input. Use the durable changelog consumers for complete logical change processing.",
 		[]string{"fact", "snapshot-diff", "cdc", "api", "user-123"},
 	},
 
@@ -328,7 +328,7 @@ var seedConversation = []seedMessage{
 	},
 	{
 		"assistant",
-		"Each agent writes cells with its own source_id. Shared facts can be tagged with a common topic. Use ViewAt for read isolation — agents reading concurrently pin their own CommitSeq snapshot. Seams (MarkConflict, MarkSupersedes) handle disagreements between agents. SnapshotDiff lets a coordinator observe what changed between rounds.",
+		"Each agent writes cells with its own source_id. Shared facts can be tagged with a common topic. Use ViewAt for read isolation — agents reading concurrently pin their own CommitSeq snapshot. Seams (MarkConflict, MarkSupersedes) handle disagreements between agents. SnapshotDiff can diagnose retained cell/seam changes between rounds; use the changelog for complete coordination events.",
 		[]string{"fact", "llm", "multi-agent", "architecture", "hexxladb", "user-123"},
 	},
 	{
@@ -423,7 +423,7 @@ var seedConversation = []seedMessage{
 	},
 	{
 		"assistant",
-		"3-2-1 rule: 3 copies, 2 different media, 1 offsite. For HexxlaDB: snapshot the data file + WAL while the DB is closed (or use RotateEncryption with a backup key as a copy mechanism). Test restores monthly. Use object storage (S3, GCS) with versioning for offsite. Automate and alert on backup age.",
+		"3-2-1 rule: 3 copies, 2 different media, 1 offsite. For an open HexxlaDB, use DB.BackupTo to capture a consistent primary, WAL, and enabled changelog without changing the source. A closed-file recovery set must include the same components. RotateEncryption replaces the database and is not a backup mechanism. Test restores regularly and monitor backup age.",
 		[]string{"fact", "operations", "backup", "database", "hexxladb", "user-123"},
 	},
 	{

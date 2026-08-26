@@ -128,10 +128,11 @@ long-range and have subunit weights.
 
 # Embedding in your program
 
-Follow the wiring pattern in cmd/hexxladb/main.go: configuration, structured
-logging, Open with DB.Close, inject dependencies into your application layer.
-Outbound adapters should call only types and functions exported from package
-hexxladb, not internal/engine (see docs/architecture/HEXAGONAL_ARCHITECTURE.md).
+The examples/remote_access command demonstrates configuration,
+structured logging, Open with DB.Close, and dependency injection at
+an application boundary. Outbound adapters should call only types and
+functions exported from package hexxladb, not internal/engine (see
+docs/architecture/HEXAGONAL_ARCHITECTURE.md).
 
 CONSTANTS
 
@@ -1004,8 +1005,8 @@ func (db *DB) ReclaimTail() (uint64, error)
 func (db *DB) SnapshotDiff(ctx context.Context, fromSeq, toSeq uint64, cfg SnapshotDiffConfig) (SnapshotDiff, error)
     SnapshotDiff returns retained cell and seam writes with commit_seq in the
     half-open range (fromSeq, toSeq]. Both sequences must be valid (≤ current
-    CommitSeq). Requires an MVCC database (format v2); returns ErrMVCCRequired
-    otherwise.
+    CommitSeq). Requires an MVCC database (plaintext format v2 or authenticated
+    format v3); returns ErrMVCCRequired otherwise.
 
     SnapshotDiff is a retained-history diagnostic, not a complete logical
     changefeed: versions removed by DB.PruneCellVersions do not appear, and
@@ -1747,13 +1748,13 @@ func (tx *Tx) DeleteCell(ctx context.Context, key PackedCoord) error
     Tx.DeleteCellWithOutcome when callers need to know whether a visible cell
     was actually removed.
 
-    On format-v2 (MVCC) databases the primary cell key is tombstoned
-    (zero-length value) so DB.ViewAt snapshots before the delete
-    remain consistent. Facets receive the same tombstone treatment.
-    DB.PruneCellVersions removes stale non-latest versions (seq < beforeSeq);
-    it never removes the latest row per coord, so a tombstone that is still the
-    head version remains until superseded. Outbound edges are hard-deleted in
-    both formats (edges are not MVCC-versioned).
+    On MVCC databases (plaintext format v2 or authenticated format v3) the
+    primary cell key is tombstoned (zero-length value) so DB.ViewAt snapshots
+    before the delete remain consistent. Facets receive the same tombstone
+    treatment. DB.PruneCellVersions removes stale non-latest versions (seq <
+    beforeSeq); it never removes the latest row per coord, so a tombstone that
+    is still the head version remains until superseded. Outbound edges are
+    hard-deleted in every format (edges are not MVCC-versioned).
 
     Seams are NOT removed. Seams reference two cells; removing one endpoint is a
     domain decision. Orphaned seams surface via DB.HealthCheck.

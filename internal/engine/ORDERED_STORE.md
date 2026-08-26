@@ -64,7 +64,7 @@ Invariant: child page **ptr0** contains keys `< key[0]`; **ptr[i+1]** contains k
 
 ## Allocator
 
-- New pages use the engine’s **`next_page_id`** discipline: the next allocated id is the current **`NextPageID`** from the header before **`WritePage`** (see ENGINE_FORMAT). The allocator is **extend-only** and has no persistent freelist; operators reclaim dead pages through explicit compaction.
+- New pages use the engine’s **`next_page_id`** discipline: the next allocated id is the current **`NextPageID`** from the header before **`WritePage`** (see ENGINE_FORMAT). Plaintext and legacy encrypted v1/v2 allocation is extend-only; operators reclaim dead pages through explicit compaction. Authenticated v3 persists generation-linked reusable page ids inside the authenticated transaction/WAL boundary, consumes the lowest free id before extending, and supports bounded tail reclaim.
 
 ## Key encoding (application layer)
 
@@ -74,6 +74,6 @@ Byte keys are **opaque** to **`BTree`**. Canonical **`cell/`** keys live in **[`
 
 Tree pages are ordinary data pages: **`WritePage`** appends WAL records and updates the header’s **`last_wal_seq`**. No separate WAL format beyond ENGINE_FORMAT.
 
-## MVCC (format v2) and raw `Put`
+## MVCC (formats v2 and v3) and raw `Put`
 
 The B+ tree remains **byte-key ordered** and opaque to MVCC versioning. Application writers should use **`Tx.PutCell`** / **`Update`** paths so **`cell/`** and **`__meta/`** timeline keys stay consistent. Raw **`Tx.Put`** with **`cell/`** keys inserted before **`__meta/commit-time/`** keys can stress delete/rebalance paths; avoid unless you control ordering end-to-end.

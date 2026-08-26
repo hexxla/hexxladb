@@ -13,7 +13,7 @@
 ## Snapshot semantics and MVCC
 
 - **Format v1:** A **`View`** sees the **ordered store** (B+ tree) as it was when the read lock was acquired—i.e. **last committed state** at that moment.
-- **Format v2 (MVCC):** Open a **new** database with **[`Options.EnableMVCC`](../../options.go)**. **`View`** pins **`read_seq = header.CommitSeq`** at transaction start (last committed snapshot). **`ViewAt(read_seq uint64)`** pins an **older** committed snapshot; **`read_seq`** must not exceed **`CommitSeq`** or **[`ErrReadSeqFuture`](../../errors.go)** is returned. **`ViewAtTime(time.Time)`** maps wall-clock to the most recent commit with `commit_time <= as_of` and pins that snapshot. If no commit exists at/before `as_of`, it resolves to `read_seq=0` (empty snapshot). Each successful **`Update`** / **`Batch`** records an **`__meta/commit-time/`** entry (wall time sampled at **transaction start**, before the callback) and advances **`CommitSeq`** in the same engine transaction as the versioned data and durable changefeed intents.
+- **MVCC formats v2 and v3:** **[`Options.EnableMVCC`](../../options.go)** selects format v2 when creating a plaintext database; official encryption creates authenticated format v3 with MVCC regardless of that flag. **`View`** pins **`read_seq = header.CommitSeq`** at transaction start (last committed snapshot). **`ViewAt(read_seq uint64)`** pins an **older** committed snapshot; **`read_seq`** must not exceed **`CommitSeq`** or **[`ErrReadSeqFuture`](../../errors.go)** is returned. **`ViewAtTime(time.Time)`** maps wall-clock to the most recent commit with `commit_time <= as_of` and pins that snapshot. If no commit exists at/before `as_of`, it resolves to `read_seq=0` (empty snapshot). Each successful **`Update`** / **`Batch`** records an **`__meta/commit-time/`** entry (wall time sampled at **transaction start**, before the callback) and advances **`CommitSeq`** in the same engine transaction as the versioned data and durable changefeed intents.
 
 ## `Close`
 
@@ -66,7 +66,7 @@ Single-version **read filters** on the current committed cell and seam (not MVCC
 
 ## MVCC temporal semantics
 
-For format-v2 databases the authoritative visibility clock is **`CommitSeq`** in the engine header (see [`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md)). Each successful [`Update`](../../tx.go) / [`Batch`](../../tx.go) advances `CommitSeq` atomically with its engine transaction; a reopened database therefore cannot expose versioned pages under an older reused sequence.
+For MVCC formats v2 and v3 the authoritative visibility clock is **`CommitSeq`** in the engine header (see [`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md)). Each successful [`Update`](../../tx.go) / [`Batch`](../../tx.go) advances `CommitSeq` atomically with its engine transaction; a reopened database therefore cannot expose versioned pages under an older reused sequence.
 
 - **[`DB.ViewAt(readSeq)`](../../tx.go)** pins `read_seq` for the callback. Cell, facet, and seam point reads use the version suffix's byte ordering to seek directly to the largest stored `commit_seq <= read_seq`, then stop after one valid version. [`ErrReadSeqFuture`](../../errors.go) is returned if `read_seq` exceeds the header's `CommitSeq`.
 - **[`DB.ViewAtTime(asOf)`](../../tx.go)** maps UTC wall time to a `read_seq` using the commit timeline: during each MVCC `Update`, an `__meta/commit-time/` btree key records `(wall_unix_nano, writeSeq)` (wall timestamp sampled at transaction start). The resolver performs a reverse bounded seek and picks the maximum `commit_seq` at or before `asOf`. Determinism requires stable UTC clock usage; the same `asOf` yields the same snapshot for a given database history.
@@ -85,7 +85,7 @@ Per [HEXXLA_DB.md](./HEXXLA_DB.md) Storage Layout, **`PutCell`** dual-writes sec
 - **`seam-source/<u16be len><source_id>/<ulid>`** — when **[`SeamRecord.Provenance.SourceID`](../../internal/record/types.go)** is non-empty after trim ([`index.SeamSourceKey`](../../internal/index/seam_secondary_keys.go)).
 - **`seam-time/<int64be week_bucket>/<ulid>`** — when **`SeamRecord.Validity.ValidFrom`** is set (same week bucket scheme as cells).
 
-**`PutSeam`** removes stale seam secondaries only for format v1 overwrite semantics. Under MVCC v2, seam primaries and seam source/time secondaries are versioned by `commit_seq`, and read paths select the visible version for the transaction snapshot.
+**`PutSeam`** removes stale seam secondaries only for format v1 overwrite semantics. Under MVCC formats v2 and v3, seam primaries and seam source/time secondaries are versioned by `commit_seq`, and read paths select the visible version for the transaction snapshot.
 
 On v1 overwrite, stale secondaries are removed via **[`engine.BTree.Delete`](../../internal/engine/btree_delete.go)** before attaching new index keys.
 

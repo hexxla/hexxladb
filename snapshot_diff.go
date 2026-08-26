@@ -67,7 +67,8 @@ func diffInclude(p *bool) bool { return p == nil || *p }
 
 // SnapshotDiff returns retained cell and seam writes with commit_seq in the half-open
 // range (fromSeq, toSeq]. Both sequences must be valid (≤ current CommitSeq).
-// Requires an MVCC database (format v2); returns [ErrMVCCRequired] otherwise.
+// Requires an MVCC database (plaintext format v2 or authenticated format v3);
+// returns [ErrMVCCRequired] otherwise.
 //
 // SnapshotDiff is a retained-history diagnostic, not a complete logical changefeed:
 // versions removed by [DB.PruneCellVersions] do not appear, and non-cell/seam mutations

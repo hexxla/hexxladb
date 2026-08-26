@@ -99,8 +99,8 @@
 //
 // # Embedding in your program
 //
-// Follow the wiring pattern in cmd/hexxladb/main.go: configuration, structured
-// logging, [Open] with [DB.Close], inject dependencies into your application
-// layer. Outbound adapters should call only types and functions exported from
+// The examples/remote_access command demonstrates configuration, structured
+// logging, [Open] with [DB.Close], and dependency injection at an application
+// boundary. Outbound adapters should call only types and functions exported from
 // package hexxladb, not internal/engine (see docs/architecture/HEXAGONAL_ARCHITECTURE.md).
 package hexxladb

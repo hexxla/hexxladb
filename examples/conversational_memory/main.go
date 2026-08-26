@@ -885,7 +885,7 @@ func run(dbPath string) error {
 	fmt.Println()
 
 	printSubHeader("DB.SnapshotDiff — MVCC change diff")
-	printNote("Returns all cell+seam writes in (fromSeq, toSeq]. Requires MVCC (format v2).")
+	printNote("Shows retained cell+seam versions in (fromSeq, toSeq] on MVCC v2/v3; use the changelog for complete CDC.")
 	fmt.Println()
 	diffStats, err := db.StatsMVCC()
 	if err != nil {
@@ -1385,7 +1385,7 @@ func run(dbPath string) error {
 	_, _ = infoStyle.Println("  Production next steps:")
 	_, _ = dimStyle.Println("    •  Render and token-fit the complete model request in your application")
 	_, _ = dimStyle.Println("    •  Wire AfterPutCell/AfterPutSeam for real-time CDC or audit logging")
-	_, _ = dimStyle.Println("    •  Use SnapshotDiff for incremental replication pipelines")
+	_, _ = dimStyle.Println("    •  Use durable changelog consumers for replication or CDC pipelines")
 	_, _ = dimStyle.Println("    •  Use LoadContextFOV for sparse grids to avoid irrelevant candidates")
 	_, _ = dimStyle.Println("    •  Build edge graphs for topic-navigation and graph-based retrieval")
 	_, _ = dimStyle.Println("    •  Enable encryption (Options.Passphrase / Options.EncryptionKey)")

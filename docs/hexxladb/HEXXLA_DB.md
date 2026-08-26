@@ -30,7 +30,7 @@ Applications must use the public root API rather than importing these packages.
 
 ### Cell
 
-A cell is addressed by `PackedCoord` and stores raw content, provenance, validity, tags, and an optional cluster hint. `PutCell` maintains the applicable source, time, tag, embedding, and MVCC data associated with the logical cell.
+A cell is addressed by `PackedCoord` and stores raw content, provenance, validity, tags, and an optional cluster hint. `PutCell` maintains the applicable source, time, tag, and MVCC data associated with the logical cell. Embeddings are separate records: callers that change content must call `PutEmbedding` explicitly, preferably in the same transaction, or deliberately retain/delete the existing vector.
 
 ### Facet
 

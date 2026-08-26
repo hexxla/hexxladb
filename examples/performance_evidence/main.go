@@ -28,7 +28,7 @@ import (
 const (
 	maxCells   = 100_000
 	maxSamples = 10_000
-	maxFOVRing = 512
+	maxFOVRing = 256
 	seedBatch  = 256
 )
 
@@ -114,7 +114,7 @@ func main() {
 	flag.IntVar(&cfg.cells, "cells", 2000, "synthetic cells to seed (32..100000)")
 	flag.IntVar(&cfg.samples, "samples", 100, "queries and incremental updates to observe (1..10000)")
 	flag.Uint64Var(&cfg.seed, "seed", 1, "deterministic workload seed")
-	flag.IntVar(&cfg.fovRadius, "fov-radius", 10, "field-of-view radius (0..512)")
+	flag.IntVar(&cfg.fovRadius, "fov-radius", 10, "field-of-view radius (0..256)")
 	flag.IntVar(&cfg.superHexLevel, "superhex-level", 2, "aperture-7 hierarchy level (at least 1)")
 	flag.Parse()
 

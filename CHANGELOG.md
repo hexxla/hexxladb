@@ -44,6 +44,7 @@
 
 ### Changed
 
+- **Documentation and runnable examples** — align MVCC guidance across plaintext v2 and authenticated v3, describe `SnapshotDiff` as a retained-history diagnostic rather than complete CDC, direct backups to `DB.BackupTo` instead of key rotation, correct current encryption and page-allocation descriptions, and align evidence/CLI guidance with implemented bounds and output.
 - **Complete public API guidance** — package and task-oriented documentation now covers streaming cell JSON transfer and its partial-commit boundary, raw spatial compatibility scans, density/tag diagnostics and their work limits, embedding introspection, snapshot enumeration, durable changefeed cursor operations, MVCC prune planning, and interrupted-rotation recovery.
 - **Strict typed-write invariants** ⚠️ **breaking pre-v1** — cell, facet, edge, seam, embedding, delete, endpoint, and cluster-hint coordinates must now be valid `Pack` outputs; provenance confidence, edge weights, and seam confidence deltas must be finite. Invalid typed writes return `ErrInvalidArgument` before changing storage. Raw application key/value rows remain unchanged.
 - **Explicitly bounded spatial work** ⚠️ **breaking pre-v1** — context loads now cap radius, seeds, results, hops, and combined coordinate probes; raw/ring/seam queries preflight the complete packable region and enforce documented radius, secondary-row, and result limits. Eager coordinate disks and per-ring allocations were replaced with lazy iterators.
