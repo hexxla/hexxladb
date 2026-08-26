@@ -25,6 +25,9 @@ type CompactOptions struct {
 	// CopiedKeys is cumulative and monotonic. Cancel the operation through the
 	// context; callbacks must not call write methods on the source DB.
 	OnProgress func(CompactProgress)
+	// VerifyDestination runs a full health check after the copy and header update.
+	// A failed check removes the candidate destination like any other compaction error.
+	VerifyDestination bool
 }
 
 // CompactProgress is a durable progress checkpoint emitted by compaction.
@@ -62,7 +65,7 @@ func CompactToWithOptions(ctx context.Context, srcPath, destPath string, opts *O
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	batchSize, onProgress, err := resolveCompactOptions(compactOpts)
+	batchSize, onProgress, verifyDestination, err := resolveCompactOptions(compactOpts)
 	if err != nil {
 		return err
 	}
@@ -91,7 +94,7 @@ func CompactToWithOptions(ctx context.Context, srcPath, destPath string, opts *O
 	}
 	ch := src.cachedHdr.Load()
 	srcTx := &Tx{db: src, readSeq: ch.commitSeq, cachedBTreeRoot: ch.btreeRoot}
-	return compactFromTx(ctx, srcTx, destPath, compactDestOpts(srcHdr, opts), srcHdr, batchSize, onProgress)
+	return compactFromTx(ctx, srcTx, destPath, compactDestOpts(srcHdr, opts), srcHdr, batchSize, onProgress, verifyDestination, nil)
 }
 
 // Compact creates a compacted copy of the open database at destPath. The source
@@ -113,7 +116,7 @@ func (db *DB) CompactWithOptions(ctx context.Context, destPath string, compactOp
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	batchSize, onProgress, err := resolveCompactOptions(compactOpts)
+	batchSize, onProgress, verifyDestination, err := resolveCompactOptions(compactOpts)
 	if err != nil {
 		return err
 	}
@@ -132,29 +135,38 @@ func (db *DB) CompactWithOptions(ctx context.Context, destPath string, compactOp
 	}
 	ch := db.cachedHdr.Load()
 	srcTx := &Tx{db: db, readSeq: ch.commitSeq, cachedBTreeRoot: ch.btreeRoot}
-	return compactFromTx(ctx, srcTx, destPath, compactDestOpts(srcHdr, nil), srcHdr, batchSize, onProgress)
+	return compactFromTx(ctx, srcTx, destPath, compactDestOpts(srcHdr, nil), srcHdr, batchSize, onProgress, verifyDestination, nil)
 }
 
-func resolveCompactOptions(opts *CompactOptions) (batchSize int, onProgress func(CompactProgress), err error) {
+func resolveCompactOptions(opts *CompactOptions) (
+	batchSize int,
+	onProgress func(CompactProgress),
+	verifyDestination bool,
+	err error,
+) {
 	batchSize = compactBatchSize
 	if opts == nil {
-		return batchSize, nil, nil
+		return batchSize, nil, false, nil
 	}
 	if opts.BatchSize < 0 || opts.BatchSize > compactBatchSize {
-		return 0, nil, fmt.Errorf("%w: compact BatchSize must be zero or between 1 and %d", ErrInvalidArgument, compactBatchSize)
+		return 0, nil, false, fmt.Errorf("%w: compact BatchSize must be zero or between 1 and %d", ErrInvalidArgument, compactBatchSize)
 	}
 	if opts.BatchSize > 0 {
 		batchSize = opts.BatchSize
 	}
-	return batchSize, opts.OnProgress, nil
+	return batchSize, opts.OnProgress, opts.VerifyDestination, nil
 }
 
 // compactDestOpts builds Options for the destination DB from the source header.
 func compactDestOpts(hdr engine.Header, srcOpts *Options) *Options {
 	o := &Options{
-		EnableMVCC:    hdr.FormatVersion >= 2,
-		PageSize:      hdr.PageSize,
-		MaxValueBytes: hdr.MaxValueBytes,
+		newIncompleteCompaction: true,
+		newLegacyEncryption:     hdr.FormatVersion != engine.AuthenticatedFormatVersion,
+		EnableMVCC:              hdr.FormatVersion >= 2,
+		PageSize:                hdr.PageSize,
+		MaxValueBytes:           hdr.MaxValueBytes,
+		EmbeddingDimension:      hdr.EmbeddingDim,
+		DistanceMetric:          DistanceMetric(hdr.EmbeddingMetric),
 	}
 	// Forward encryption credentials from caller (source opts).
 	if srcOpts != nil {
@@ -175,6 +187,8 @@ func compactFromTx(
 	srcHdr engine.Header,
 	batchSize int,
 	onProgress func(CompactProgress),
+	verifyDestination bool,
+	skipKey func([]byte) bool,
 ) (retErr error) {
 	dest, err := openDB(destPath, destOpts, true)
 	if err != nil {
@@ -189,8 +203,7 @@ func compactFromTx(
 			removeDBFiles(destPath)
 		}
 	}()
-
-	if err := compactCopyTx(ctx, srcTx, dest, batchSize, onProgress); err != nil {
+	if err := compactCopyTx(ctx, srcTx, dest, batchSize, onProgress, skipKey); err != nil {
 		return err
 	}
 	if srcHdr.FormatVersion >= 2 {
@@ -207,11 +220,33 @@ func compactFromTx(
 			return fmt.Errorf("compact: update dest header: %w", err)
 		}
 	}
+	if verifyDestination {
+		report, err := dest.HealthCheck(ctx, DefaultHealthCheckConfig())
+		if err != nil {
+			return fmt.Errorf("compact: verify destination: %w", err)
+		}
+		if healthReportHasErrors(report) {
+			return fmt.Errorf(
+				"compact: verify destination: %w: orphaned_seams=%d tag_index_errors=%d source_index_errors=%d",
+				ErrCorruptDatabase,
+				len(report.OrphanedSeams),
+				report.TagIndexErrors,
+				report.SourceIndexErrors,
+			)
+		}
+	}
+	if err := updateCompactIncompleteMarker(ctx, dest, false); err != nil {
+		return fmt.Errorf("compact: finalize destination marker: %w", err)
+	}
 	complete = true
 	return nil
 }
 
-func compactCopyTx(ctx context.Context, srcTx *Tx, dest *DB, batchSize int, onProgress func(CompactProgress)) error {
+func healthReportHasErrors(report HealthReport) bool {
+	return len(report.OrphanedSeams) > 0 || report.TagIndexErrors > 0 || report.SourceIndexErrors > 0
+}
+
+func compactCopyTx(ctx context.Context, srcTx *Tx, dest *DB, batchSize int, onProgress func(CompactProgress), skipKey func([]byte) bool) error {
 	batch := make([]compactPair, 0, batchSize)
 	var copiedKeys uint64
 	var copyErr error
@@ -231,6 +266,9 @@ func compactCopyTx(ctx context.Context, srcTx *Tx, dest *DB, batchSize int, onPr
 	}
 
 	err := srcTx.AscendRange(nil, nil, func(k, v []byte) bool {
+		if skipKey != nil && skipKey(k) {
+			return true
+		}
 		if len(batch)%compactCtxCheckInterval == 0 {
 			if err := ctx.Err(); err != nil {
 				copyErr = err
@@ -252,6 +290,29 @@ func compactCopyTx(ctx context.Context, srcTx *Tx, dest *DB, batchSize int, onPr
 	if !flush() {
 		return fmt.Errorf("compact: copy: %w", copyErr)
 	}
+	return nil
+}
+
+func updateCompactIncompleteMarker(ctx context.Context, dest *DB, present bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	dest.mu.Lock()
+	defer dest.mu.Unlock()
+	if dest.activeEng() == nil {
+		return ErrDatabaseClosed
+	}
+	header, err := dest.eng.UpdateHeaderGet(func(header *engine.Header) {
+		if present {
+			header.Features |= engine.FeatureIncompleteCompaction
+		} else {
+			header.Features &^= engine.FeatureIncompleteCompaction
+		}
+	})
+	if err != nil {
+		return err
+	}
+	dest.storeCachedHeader(header.CommitSeq, header.BTreeRoot)
 	return nil
 }
 

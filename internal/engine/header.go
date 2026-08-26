@@ -16,7 +16,7 @@ type Header struct {
 	NextPageID    uint64
 	// BTreeRoot is the B+ tree root page id (0 = empty tree). See ORDERED_STORE.md.
 	BTreeRoot uint64
-	// Features bit field (offset 40). Bit 0 = data pages use at-rest encryption (AES-XTS via hooks).
+	// Features bit field (offset 40). See the Feature* constants below.
 	Features uint32
 	// EncryptionSalt is used for Argon2id passphrase KDF when Features&FeatureEncryptedDataPages; otherwise zeros.
 	EncryptionSalt [16]byte
@@ -30,6 +30,17 @@ type Header struct {
 	EmbeddingDim uint16
 	// EmbeddingMetric is the distance function for embedding search. Only valid when EmbeddingDim > 0.
 	EmbeddingMetric DistanceMetric
+	// AuthTag authenticates format-v3 header metadata. It is zero in older formats.
+	AuthTag [HeaderAuthTagLen]byte
+	// BTreeRootGeneration is the authenticated rewrite generation expected for BTreeRoot.
+	BTreeRootGeneration uint64
+	// FreelistHead and FreelistHeadGeneration authenticate the first external
+	// freelist metadata page. FreelistCount includes inline and external free ids.
+	FreelistHead           uint64
+	FreelistHeadGeneration uint64
+	FreelistCount          uint64
+	// InlineFreelist avoids allocating metadata pages for small free sets.
+	InlineFreelist [HeaderInlineFreelistCapacity]uint64
 }
 
 // FeatureEncryptedDataPages marks btree data pages (page_id >= 1) as encrypted on disk and in the WAL.
@@ -37,6 +48,14 @@ const FeatureEncryptedDataPages uint32 = 1 << 0
 
 // FeatureWALKeyedMAC marks WAL records as carrying a keyed MAC trailer for tamper detection.
 const FeatureWALKeyedMAC uint32 = 1 << 1
+
+// FeatureIncompleteCompaction marks a copy-compaction destination that has not
+// completed validation and publication as an ordinary database candidate.
+const FeatureIncompleteCompaction uint32 = 1 << 2
+
+// FeatureAuthenticatedDataPages marks format-v3 data pages as XChaCha20-Poly1305
+// envelopes with a persisted rewrite generation and random nonce.
+const FeatureAuthenticatedDataPages uint32 = 1 << 3
 
 func decodeHeaderPage(page []byte) (Header, error) {
 	if len(page) < headerPrefixSize {
@@ -58,13 +77,22 @@ func decodeHeaderPage(page []byte) (Header, error) {
 	h.MaxValueBytes = binary.BigEndian.Uint32(page[HeaderMaxValueBytesOffset : HeaderMaxValueBytesOffset+4])
 	h.EmbeddingDim = binary.BigEndian.Uint16(page[HeaderEmbeddingDimOffset : HeaderEmbeddingDimOffset+2])
 	h.EmbeddingMetric = DistanceMetric(page[HeaderEmbeddingMetricOffset])
+	copy(h.AuthTag[:], page[HeaderAuthTagOffset:HeaderAuthTagOffset+HeaderAuthTagLen])
+	h.BTreeRootGeneration = binary.BigEndian.Uint64(page[HeaderBTreeRootGenerationOffset : HeaderBTreeRootGenerationOffset+8])
+	h.FreelistHead = binary.BigEndian.Uint64(page[HeaderFreelistHeadOffset : HeaderFreelistHeadOffset+8])
+	h.FreelistHeadGeneration = binary.BigEndian.Uint64(page[HeaderFreelistHeadGenerationOffset : HeaderFreelistHeadGenerationOffset+8])
+	h.FreelistCount = binary.BigEndian.Uint64(page[HeaderFreelistCountOffset : HeaderFreelistCountOffset+8])
+	for i := range h.InlineFreelist {
+		off := HeaderInlineFreelistOffset + i*8
+		h.InlineFreelist[i] = binary.BigEndian.Uint64(page[off : off+8])
+	}
 	switch h.FormatVersion {
 	case formatVersionV1:
 		h.CommitSeq = 0
-	case formatVersionV2:
+	case formatVersionV2, formatVersionV3:
 		h.CommitSeq = binary.BigEndian.Uint64(page[HeaderCommitSeqOffset : HeaderCommitSeqOffset+8])
 	default:
-		if h.FormatVersion > formatVersionV2 {
+		if h.FormatVersion > formatVersionV3 {
 			return Header{}, fmt.Errorf("%w: version %d", ErrUnsupportedFormatVersion, h.FormatVersion)
 		}
 		return Header{}, fmt.Errorf("%w: version %d", ErrCorruptHeader, h.FormatVersion)
@@ -85,7 +113,7 @@ func encodeHeaderPage(h Header) []byte {
 	binary.BigEndian.PutUint64(page[32:40], h.BTreeRoot)
 	binary.BigEndian.PutUint32(page[40:44], h.Features)
 	copy(page[44:60], h.EncryptionSalt[:])
-	if h.FormatVersion == formatVersionV2 {
+	if h.FormatVersion >= formatVersionV2 {
 		binary.BigEndian.PutUint64(page[HeaderCommitSeqOffset:HeaderCommitSeqOffset+8], h.CommitSeq)
 	} else {
 		binary.BigEndian.PutUint64(page[HeaderCommitSeqOffset:HeaderCommitSeqOffset+8], 0)
@@ -94,6 +122,15 @@ func encodeHeaderPage(h Header) []byte {
 	binary.BigEndian.PutUint32(page[HeaderMaxValueBytesOffset:HeaderMaxValueBytesOffset+4], h.MaxValueBytes)
 	binary.BigEndian.PutUint16(page[HeaderEmbeddingDimOffset:HeaderEmbeddingDimOffset+2], h.EmbeddingDim)
 	page[HeaderEmbeddingMetricOffset] = byte(h.EmbeddingMetric)
+	copy(page[HeaderAuthTagOffset:HeaderAuthTagOffset+HeaderAuthTagLen], h.AuthTag[:])
+	binary.BigEndian.PutUint64(page[HeaderBTreeRootGenerationOffset:HeaderBTreeRootGenerationOffset+8], h.BTreeRootGeneration)
+	binary.BigEndian.PutUint64(page[HeaderFreelistHeadOffset:HeaderFreelistHeadOffset+8], h.FreelistHead)
+	binary.BigEndian.PutUint64(page[HeaderFreelistHeadGenerationOffset:HeaderFreelistHeadGenerationOffset+8], h.FreelistHeadGeneration)
+	binary.BigEndian.PutUint64(page[HeaderFreelistCountOffset:HeaderFreelistCountOffset+8], h.FreelistCount)
+	for i, pageID := range h.InlineFreelist {
+		off := HeaderInlineFreelistOffset + i*8
+		binary.BigEndian.PutUint64(page[off:off+8], pageID)
+	}
 	return page
 }
 

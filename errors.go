@@ -35,8 +35,12 @@ var (
 	ErrUnsupportedFormatVersion = errors.New("hexxladb: unsupported database format version")
 
 	// ErrMigrationIncomplete means a destination contains resumable migration state and
-	// must be completed with [MigrateV1ToV2] before ordinary use.
+	// must be completed with [MigrateV1ToV2] or [MigrateToAuthenticated] before ordinary use.
 	ErrMigrationIncomplete = errors.New("hexxladb: migration is incomplete")
+
+	// ErrCompactionIncomplete means a destination contains an interrupted
+	// compaction marker and must be removed before retrying compaction.
+	ErrCompactionIncomplete = errors.New("hexxladb: compaction is incomplete")
 
 	// ErrMigrationChangelogState means a v1 source has durable changelog state that the
 	// caller did not explicitly authorize the migration to reset.
@@ -62,6 +66,14 @@ var (
 
 	// ErrCellNotFound means no cell exists at the key required for the operation (e.g. [Tx.UpdateFacet]).
 	ErrCellNotFound = errors.New("hexxladb: cell not found")
+
+	// ErrNoFreeCellPlacement means every coordinate within the bounded search radius
+	// passed to [Tx.FindFreeCellPlacement] contains a visible cell.
+	ErrNoFreeCellPlacement = errors.New("hexxladb: no free cell placement")
+
+	// ErrInsufficientSpace means a maintenance preflight found less available
+	// filesystem capacity than its conservative copy requirement.
+	ErrInsufficientSpace = errors.New("hexxladb: insufficient free space")
 
 	// ErrFacetDerivationMismatch means [Tx.UpdateFacet] was rejected: facet DerivationHash does not match SHA-256 of the cell RawContent.
 	ErrFacetDerivationMismatch = errors.New("hexxladb: facet derivation hash mismatch")
@@ -114,6 +126,13 @@ var (
 
 	// ErrEmbeddingDimension means the vector length does not match [DB.EmbeddingDimension].
 	ErrEmbeddingDimension = errors.New("hexxladb: vector dimension mismatch")
+	// ErrEmbeddingIndexChanged means authoritative embeddings changed while
+	// [DB.RebuildEmbeddingIndex] was building a replacement graph. The old graph
+	// remains unpublished and searches continue through the exact flat path.
+	ErrEmbeddingIndexChanged = errors.New("hexxladb: embeddings changed during index rebuild")
+	// ErrEmbeddingIndexTooLarge means a rebuild would exceed its explicit
+	// in-memory vector bound.
+	ErrEmbeddingIndexTooLarge = errors.New("hexxladb: embedding index rebuild exceeds vector limit")
 
 	// ErrQueryScanLimit means [Tx.QueryCells] exhausted CellQuery.MaxScanRows.
 	// The returned result slice is partial but sorted and capped as requested.

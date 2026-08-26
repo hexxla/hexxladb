@@ -31,9 +31,11 @@ This writes:
 - `.tmp/evidence/fov-bench.txt`
 - `.tmp/evidence/changelog-read-bench.txt`
 - `.tmp/evidence/api-bench.txt`
+- `.tmp/evidence/encryption-page-bench.txt`
 - `.tmp/evidence/superhex-sync-bench.txt`
 - `.tmp/evidence/storage-churn.txt`
 - `.tmp/evidence/workload.json`
+- `.tmp/evidence/write-path.json`
 - `.tmp/evidence/lattice-placement.json`
 
 Run the streams separately when iteration time matters:
@@ -41,6 +43,7 @@ Run the streams separately when iteration time matters:
 ```bash
 task evidence-controlled
 task evidence-observe
+task evidence-write-path
 task evidence-vector-scale
 task evidence-lattice-placement
 task soak-pilot
@@ -57,16 +60,22 @@ task evidence-observe \
 Input bounds are deliberate: at most 100,000 cells, 10,000 samples, and FOV
 radius 512. This keeps an accidentally oversized observation run bounded.
 
-The vector runner defaults to 10,000 32-dimensional unit vectors, 25 exact-
-oracle query samples, recall@10, 100 updates plus 100 deletes, 4 KiB pages, and
-a 64 MiB page cache. It writes aggregate JSON to
+The vector runner defaults to deferred ingestion plus an atomic rebuild of
+10,000 32-dimensional unit vectors, 25 exact-oracle query samples, recall@10,
+100 updates plus 100 deletes, 4 KiB pages, and a 64 MiB page cache. It writes
+aggregate JSON to
 `.tmp/evidence/vector-scale.json`. Override bounded inputs and the output path:
 
 ```bash
 task evidence-vector-scale \
-  VECTOR_EVIDENCE_ARGS='-cells 10000 -dimension 384 -batch-size 100' \
+  VECTOR_EVIDENCE_ARGS='-cells 10000 -dimension 384 -batch-size 100 -build-mode deferred-rebuild' \
   VECTOR_EVIDENCE_OUTPUT='.tmp/evidence/vector-scale-10000-384d.json'
 ```
+
+Use `-build-mode synchronous` for a same-host comparison with per-write graph
+maintenance. Deferred runs reject more than 20,000 vectors, and the rebuild API
+also applies its vector, estimated-memory/transient-WAL, and filesystem-capacity
+preflight before marking the current graph stale.
 
 The placement runner defaults to six synthetic topics with 20 documents each,
 places 12 per topic before an incremental append, and compares a stable
@@ -163,17 +172,65 @@ was established. Capacity-sensitive users should still rerun representative
 data-size and page-density workloads; the benchmark does not turn a toolchain
 upgrade into a storage-size guarantee.
 
+### Authenticated-page format evidence
+
+The format-v3 decision used two focused comparisons on the 2026-08-26
+Linux/amd64 Intel Core i9-14900HX host:
+
+```bash
+go test -run '^$' -bench '^BenchmarkEncryptionPageTransform$' \
+  -benchtime=500ms -count=5 .
+go test -run '^$' \
+  -bench 'BenchmarkAPI_GetCell_(MVCC|MVCC_Encrypted)/cells_2000$' \
+  -benchtime=1s -count=5 .
+```
+
+The preselected acceptance budgets were no more than 30% median regression in
+the page transform, no additional transform allocation count, and no more than
+2% primary-file overhead at the default 4 KiB logical page size. Median direct
+transform results were:
+
+| Logical page | Transform | Legacy AES-XTS | V3 XChaCha20-Poly1305 |
+| --- | --- | ---: | ---: |
+| 4 KiB | seal | 9,257 ns | 2,630 ns |
+| 4 KiB | open | 8,562 ns | 2,411 ns |
+| 64 KiB | seal | 143,039 ns | 39,622 ns |
+| 64 KiB | open | 141,767 ns | 35,885 ns |
+
+Both paths used one allocation per transform. XChaCha was materially faster on
+this CPU, so the latency gate passed without a storage-specific optimization.
+The authenticated envelope adds 48 bytes per allocated data page: 1.171875% at
+4 KiB and 0.0732421875% at 64 KiB, passing the space gate.
+
+The public point-read comparison controls for v3's mandatory MVCC behavior by
+comparing plaintext MVCC v2 with authenticated MVCC v3, not with unversioned
+v1. The five-sample medians at 2,000 cells were 15,733 ns/op for v2 and 15,819
+ns/op for v3 (+0.55%); both reported 451 allocations and approximately 34.7 KiB
+allocated per operation. The difference is within run variation and establishes
+no read-path regression from authenticated decryption. It also shows that the
+larger cost in the README table belongs to the current MVCC version-seek path,
+not the page cipher; future MVCC allocation work requires its own profile and
+acceptance target.
+
+These are in-process CPU and synthetic point-read measurements, not a durability
+or storage-device throughput claim. Crash-marker recovery, tamper faults,
+migration, compaction, backup/restore, and rotation are correctness gates and
+remain covered by their dedicated tests.
+
 ### Vector-search evidence
 
 The runner generates seeded unit vectors and queries in memory, builds the
-persisted HNSW graph through the public transaction API, and compares each ANN
-result with an exact cosine top-k oracle. It closes and reopens the database,
+persisted HNSW graph through either synchronous public writes or deferred
+authoritative writes plus `RebuildEmbeddingIndex`, and compares each ANN result
+with an exact cosine top-k oracle. Deferred mode additionally requires exact
+flat search before publication. It closes and reopens the database,
 then updates and deletes the requested number of vectors, closes and reopens a
 second time, and repeats the oracle comparison. It also requires the reported
 execution path to be HNSW. The JSON contains aggregate durations and resource
-counts only; the temporary database is removed.
+counts, including sampled peak build heap, only; the temporary database is
+removed.
 
-The 2026-08-25 release-candidate runs on commit `7c94398` used an Intel Core
+The 2026-08-25 synchronous-construction baseline runs on commit `7c94398` used an Intel Core
 i9-14900HX, Linux/amd64, Go 1.27.0, seed 1, 25 queries, recall@10, 100 updates
 and 100 deletes, 4 KiB pages, and a 64 MiB cache:
 
@@ -189,6 +246,34 @@ latency. Total Go allocation over the complete build/query/reopen/churn process
 was 132.1 GB for 32 dimensions and 237.9 GB for 384 dimensions. Those cumulative
 allocation figures make graph construction an explicit offline or batched
 write cost even though steady heap and database size remain bounded.
+
+The 2026-08-26 deferred-rebuild runs used the same machine, Go 1.27.0, seed,
+query/churn counts, page size, and cache. A 10 ms sampler records peak heap and
+therefore makes these build times conservative relative to an unsampled run:
+
+| Workload | Batch | Ingest + rebuild + publish | Query before reopen p50/p95 | Recall before/reopen/churn | Query after churn p50/p95 | Peak build heap; heap after build/churn | Primary/live/reclaimable |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 10k×32d | 500 | 9.28 s; 1,078 vectors/s | 6.03/8.72 ms | .992/.992/.992 | 5.32/8.10 ms | 451.7 MB; 12.8/15.0 MB | 13.57/13.32/0.25 MB |
+| 20k×32d | 500 | 23.59 s; 848 vectors/s | 8.56/14.33 ms | .992/.992/.992 | 7.17/11.43 ms | 963.7 MB; 28.9/32.4 MB | 30.14/29.86/0.27 MB |
+| 10k×384d | 100 | 35.99 s; 278 vectors/s | 43.14/61.69 ms | .952/.952/.956 | 40.25/49.87 ms | 571.2 MB; 68.5/57.5 MB | 55.76/54.66/1.10 MB |
+
+Total Go allocation over the complete build/query/reopen/churn process was
+8.93 GB, 19.43 GB, and 16.36 GB respectively. Five interleaved 1k×32d runs
+isolated the lifecycle change: median end-to-end throughput increased from
+271.4 to 2,420.2 vectors/s (8.9×), while median cumulative allocation fell from
+10,222.7 to 888.4 MiB (11.5× lower). All ten samples retained recall 1.0 before
+reopen, after reopen, and after churn, with overlapping query-latency and
+steady-heap ranges.
+
+The original *Efficient and Robust Approximate Nearest Neighbor Search Using
+Hierarchical Navigable Small World Graphs* describes incremental HNSW
+construction. *The DiskANN Library: Graph-Based Indices for Fast, Fresh and
+Filtered Vector Search* highlights recall degradation from untreated graph
+deletions and the need for repair/consolidation. HexxlaDB retains its existing
+bounded neighbor repair for online mutations; the new lifecycle addresses bulk
+construction by keeping embeddings authoritative, forcing exact search while
+stale, and publishing only a complete revision. It does not import DiskANN,
+add background workers, or claim DiskANN's streaming-update scale.
 
 Page-layout trials identified 4 KiB as the supported HNSW profile rather than
 the prior 64 KiB recommendation. At 2k×384d, 4 KiB pages built at 162.2
@@ -212,22 +297,23 @@ allocation-free B+ tree page selection, and transaction-local HNSW decode
 caches account for the reduction; the persisted B+ tree and HNSW encodings did
 not change.
 
-These measurements support 10,000 vectors at 32 and 384 dimensions with the
-tested settings. They are not a claim of an unbounded capacity or a service-
-level objective. For larger sets, other dimensions, non-random vector
+These measurements support deferred rebuilds through 20,000 vectors at 32
+dimensions and 10,000 at 384 dimensions with the tested settings. They are not
+a claim of an unbounded capacity or a service-level objective. For larger sets,
+other dimensions, non-random vector
 distributions, stricter recall targets, or different hardware, rerun the same
 command with representative inputs and retain the JSON before choosing
-`EfSearch`, batch size, cache, or page settings. A new index or bulk builder
-remains unjustified until that evidence misses an explicit target.
+`EfSearch`, batch size, cache, page settings, or rebuild resource ceilings.
 
 ### Lattice-placement evidence
 
 The runner creates the same deterministic six-topic, 120-document corpus in two
 temporary databases. The topic-clustered policy probes from a fixed per-topic
 anchor in deterministic ring order. The intentionally interleaved policy probes
-from one shared anchor while inserting topics round-robin. Both check occupancy
-with `GetCell` before `PutCell`, append eight documents per topic without moving
-the initial twelve, and use the same deterministic embeddings. Evaluation uses
+from one shared anchor while inserting topics round-robin. Both use
+`FindFreeCellPlacement` followed by `PutCell` in the same update, append eight
+documents per topic without moving the initial twelve, and use the same
+deterministic embeddings. Evaluation uses
 only read transactions; it does not repair or mutate poor placement.
 
 The report defines:
@@ -287,6 +373,49 @@ go test -run '^$' -bench '^(BenchmarkAPI_WritePath|BenchmarkAPI_WriteReaderBlock
 
 The acceptance gate is that zero-wait public writes report no artificial collection delay, an explicit positive window remains measurable, public multi-job batches remain zero under the serialized lock contract, batching retains lower per-cell latency, and race tests prove readers cannot enter before finalization.
 
+For the limitation-reduction programme, `task evidence-write-path` adds bounded
+per-commit distributions and resource measurements for three MVCC workloads:
+one ordinary cell, 100 cells in one commit, and one cell plus a 32-dimensional
+embedding after a 200-vector warm-up. The runner uses 4 KiB pages, removes its
+temporary databases, emits aggregate JSON only, and rejects configurations
+above 1,000 measured commits, 500 cells per batch, or 2,000 embedding warm-up
+rows.
+
+The following are conservative reference-host gates, not portable hardware
+guarantees. An adopting operator must rerun the workload on representative
+storage and may declare stricter service objectives. A code change may be
+promoted only when at least five same-host before/after runs show a material
+gain outside normal variation while all gates still hold.
+
+| Workload | Latency and throughput | Allocation | Durability and growth |
+| --- | --- | --- | --- |
+| One MVCC cell per commit | p95 <= 25 ms; >= 40 commits/s | <= 512 KiB/commit | <= 1 WAL sync/commit; <= 2 MiB primary growth/commit |
+| 100 MVCC cells per commit | p95 <= 30 ms; >= 4,000 cells/s | <= 256 KiB/cell | <= 1 WAL sync/commit; <= 2 MiB primary growth/cell |
+| Cell + 32d embedding | p95 <= 100 ms; >= 10 commits/s | <= 64 MiB/commit | <= 1 WAL sync/commit; <= 8 MiB primary growth/commit |
+
+For every workload, lock wait, callback/index work, durability, and changelog
+finalization must remain attributable through `WriteStats`; heap after the
+measured interval must remain bounded by the configured workload; and reopen,
+race, and crash-barrier checks must retain their existing results. Missing an
+absolute gate calls for profiling on the target host, not an automatic storage
+engine redesign. In particular, Bf-tree-style mini-pages or an independent
+commit pipeline remain experiments unless profiles isolate page-granularity
+write amplification or serialized durability as the limiting cost.
+
+The 2026-08-26 bounded run used Go 1.27.0 on an Intel Core i9-14900HX and an
+encrypted Btrfs SSD volume. Five baseline and five changed-worktree runs used
+the default workload, with each temporary database removed after its run. A
+single page-ownership copy was eliminated only when the write transform
+returned the engine-owned input buffer; transforms returning another buffer
+retain the defensive copy. Median allocation fell from 454,266 to 402,740
+bytes per single-cell commit (11.3%) and from 87,284 to 72,577 bytes per cell
+in 100-cell commits (16.8%). Median single-cell p95 fell from 4.57 ms to 4.06
+ms, while batch and embedding latency ranges overlapped and are treated as
+unchanged. Every changed run retained one WAL sync per commit, zero multi-job
+batches, bounded heap and file growth, and passed the calibrated gates. The
+result justifies the ownership-copy reduction and caller batching, but not
+Bf-tree buffering or a concurrent commit-pipeline redesign.
+
 ### Storage-maintenance evidence
 
 `TestStorageMaintenanceRepresentativeChurn` applies four generations to 48 MVCC cells, tombstones half, prunes every eligible non-latest cell version, and compacts with 16-key destination batches. It reports `StorageStats` after each phase and verifies that physical bytes never shrink during tombstone/prune operations, durable progress is monotonic and bounded, and the compacted database has fewer physical and unreachable bytes. Run the cancellation/retry contract beside it:
@@ -297,7 +426,31 @@ go test -count=3 -run '^(TestStorageMaintenanceRepresentativeChurn|TestCompactWi
 
 On the 2026-08-24 reference run (Go 1.26.3, 4 KiB pages), all three churn samples produced the same byte counts: puts `2,523,136` primary / `1,036,288` live / `1,486,848` reclaimable; tombstones `2,650,112` / `1,064,960` / `1,585,152`; prune `2,650,112` / `122,880` / `2,527,232`; and compact `106,496` / `106,496` / `0`. Pruning removed 168 stale cell rows. These are deterministic layout measurements for this fixture, not a production capacity forecast.
 
-The result supports explicit compaction: it recovered all whole unreachable pages and additional low-fill space without a freelist or format change. Persistent reuse remains evidence-gated because it would add allocator state that must be ordered with WAL replay; reconsider it only if measured compaction windows or peak disk budgets fail an operator requirement.
+That historical result established the amount explicit compaction could recover
+before format-v3 reuse was added. Compaction remains necessary for low-fill and
+fragmented layouts; authenticated v3 can now reuse whole freed pages and reclaim
+only a contiguous free tail without copying the database.
+
+The generation-safe allocator comparison uses a 20 KiB incompressible overflow
+value and one durable delete transaction plus one durable put transaction per
+cycle. The control is the same authenticated format and page transform with
+reuse disabled internally, isolating allocator behavior. Run five fixed-work
+samples:
+
+```bash
+go test -run '^$' -bench '^BenchmarkAuthenticatedOverflowChurn$' \
+  -benchmem -benchtime=100x -count=5 ./internal/engine
+```
+
+On the 2026-08-26 reference host (Go 1.27.0, Intel Core i9-14900HX), every
+extend-only sample grew by exactly 29,008 primary bytes per cycle and every
+reuse sample grew by zero after setup. Median latency was 186,833 ns/op for the
+control and 180,247 ns/op for reuse; the ranges overlap, so latency is treated
+as unchanged. Median allocation count increased from 217 to 232 per cycle due
+to bounded freelist validation/materialization. Reopen, abort, stale-WAL,
+external-chain, steady-state, and SIGKILL-before/after-truncate tests provide
+the correctness gate. This justifies allocator state for bounded disk growth,
+not as a latency optimization.
 
 The super-hex correctness soak applies deterministic randomized puts, repeated
 updates, and deletes at hierarchy levels 1, 2, and 3. After every batch it fully

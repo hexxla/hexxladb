@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
-	"github.com/hexxla/hexxladb/internal/record"
 )
 
 const (
@@ -51,7 +50,7 @@ func (cfg *VoronoiContextConfig) withDefaults() {
 // boundaries using confidence, recency, or semantic similarity scores.
 //
 // Returns a map from seed index to the cells in that seed's region.
-func (tx *Tx) LoadContextVoronoi(ctx context.Context, seeds []Coord, cfg VoronoiContextConfig) (map[int][]record.CellRecord, error) {
+func (tx *Tx) LoadContextVoronoi(ctx context.Context, seeds []Coord, cfg VoronoiContextConfig) (map[int][]CellRecord, error) {
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
 	}
@@ -88,9 +87,9 @@ func (tx *Tx) LoadContextVoronoi(ctx context.Context, seeds []Coord, cfg Voronoi
 }
 
 // loadVoronoiRegions fetches cells for each Voronoi region, respecting per-seed caps.
-func (tx *Tx) loadVoronoiRegions(ctx context.Context, seeds []Coord, cells []lattice.VoronoiCell, cfg VoronoiContextConfig) (map[int][]record.CellRecord, error) {
+func (tx *Tx) loadVoronoiRegions(ctx context.Context, seeds []Coord, cells []lattice.VoronoiCell, cfg VoronoiContextConfig) (map[int][]CellRecord, error) {
 	counts := make(map[int]int, len(seeds))
-	result := make(map[int][]record.CellRecord, len(seeds))
+	result := make(map[int][]CellRecord, len(seeds))
 
 	for _, vc := range cells {
 		if err := ctx.Err(); err != nil {
@@ -112,7 +111,7 @@ func (tx *Tx) loadVoronoiRegions(ctx context.Context, seeds []Coord, cells []lat
 }
 
 // fetchVoronoiCell packs and fetches a single cell from the Voronoi partition.
-func (tx *Tx) fetchVoronoiCell(vc lattice.VoronoiCell) (*record.CellRecord, error) {
+func (tx *Tx) fetchVoronoiCell(vc lattice.VoronoiCell) (*CellRecord, error) {
 	p, err := lattice.Pack(vc.Coord)
 	if err != nil {
 		return nil, nil //nolint:nilerr // out-of-range coords are silently skipped

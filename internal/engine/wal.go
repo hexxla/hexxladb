@@ -89,9 +89,6 @@ func parseAndReplayWALWithMAC(
 		if seq <= lastApplied {
 			continue
 		}
-		if pageID < 1 {
-			return 0, ErrBadPageID
-		}
 		if err := apply(seq, pageID, payload); err != nil {
 			return 0, err
 		}

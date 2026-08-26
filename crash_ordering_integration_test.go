@@ -29,7 +29,9 @@ func TestIntegration_crashChild(t *testing.T) {
 		t.Fatal("set HEXXLADB_TEST_DB_PATH")
 	}
 	var opts *hexxladb.Options
-	if os.Getenv("HEXXLADB_TEST_CHANGEFEED") == "1" {
+	if os.Getenv("HEXXLADB_TEST_AUTHENTICATED") == "1" {
+		opts = &hexxladb.Options{EncryptionKey: []byte("authenticated crash barrier key")}
+	} else if os.Getenv("HEXXLADB_TEST_CHANGEFEED") == "1" {
 		opts = &hexxladb.Options{EnableMVCC: true, ChangelogEnabled: true}
 	}
 	db, err := hexxladb.Open(path, opts)
@@ -130,36 +132,51 @@ func TestIntegration_groupCommitPhasesAfterSigKill(t *testing.T) {
 	// Do not use t.Parallel here: each case execs a subprocess that blocks in crashtest.At until
 	// SIGKILL. Running them concurrently (default go test -parallel) under -race overwhelms the
 	// machine and looks like a hang after repeated "=== RUN   TestIntegration_crashChild" lines.
-	for _, phase := range phases {
-		t.Run(phase, func(t *testing.T) {
-			dir := t.TempDir()
-			path := filepath.Join(dir, "crash.db")
-			ready := filepath.Join(dir, "ready")
-			if err := startChildAndKill9(t, path, ready, phase); err != nil {
-				t.Fatal(err)
-			}
-			db, err := hexxladb.Open(path, nil)
-			if err != nil {
-				t.Fatalf("reopen: %v", err)
-			}
-			defer func() { _ = db.Close() }()
-			if err := db.View(func(tx *hexxladb.Tx) error {
-				v, ok, e := tx.Get([]byte("crash_key"))
-				if e != nil {
-					return e
-				}
-				if ok && string(v) != "crash_val" {
-					t.Errorf("torn or corrupt value: %q", v)
-				}
-				return nil
-			}); err != nil {
-				t.Fatal(err)
+	for _, mode := range []struct {
+		name          string
+		authenticated bool
+		opts          *hexxladb.Options
+	}{
+		{name: "plaintext"},
+		{
+			name:          "authenticated",
+			authenticated: true,
+			opts:          &hexxladb.Options{EncryptionKey: []byte("authenticated crash barrier key")},
+		},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			for _, phase := range phases {
+				t.Run(phase, func(t *testing.T) {
+					dir := t.TempDir()
+					path := filepath.Join(dir, "crash.db")
+					ready := filepath.Join(dir, "ready")
+					if err := startChildAndKill9(t, path, ready, phase, mode.authenticated); err != nil {
+						t.Fatal(err)
+					}
+					db, err := hexxladb.Open(path, mode.opts)
+					if err != nil {
+						t.Fatalf("reopen: %v", err)
+					}
+					defer func() { _ = db.Close() }()
+					if err := db.View(func(tx *hexxladb.Tx) error {
+						v, ok, e := tx.Get([]byte("crash_key"))
+						if e != nil {
+							return e
+						}
+						if ok && string(v) != "crash_val" {
+							t.Errorf("torn or corrupt value: %q", v)
+						}
+						return nil
+					}); err != nil {
+						t.Fatal(err)
+					}
+				})
 			}
 		})
 	}
 }
 
-func startChildAndKill9(t *testing.T, dbPath, readyFile, phase string) error {
+func startChildAndKill9(t *testing.T, dbPath, readyFile, phase string, authenticated bool) error {
 	t.Helper()
 	if os.Getenv("HEXXLADB_IN_CHILD") == "1" {
 		return errors.New("unexpected child env in parent")
@@ -171,6 +188,9 @@ func startChildAndKill9(t *testing.T, dbPath, readyFile, phase string) error {
 		"HEXXLADB_TEST_CRASH_AT="+phase,
 		"HEXXLADB_TEST_CRASH_READY="+readyFile,
 	)
+	if authenticated {
+		cmd.Env = append(cmd.Env, "HEXXLADB_TEST_AUTHENTICATED=1")
+	}
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
 		return err

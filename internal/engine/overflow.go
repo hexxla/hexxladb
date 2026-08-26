@@ -67,7 +67,8 @@ func decodeOverflowStub(stub []byte) (logicalLen uint32, firstPageID uint64) {
 }
 
 // writeOverflowChain writes data across one or more overflow pages and returns
-// the page ID of the first page in the chain. Pages are allocated via NextPageID.
+// the page ID of the first page in the chain. Authenticated transactions reuse
+// freelist pages before extending NextPageID.
 func (t *BTree) writeOverflowChain(data []byte) (uint64, error) {
 	ps := t.pageSize()
 	chunkSize := overflowPayloadPerPage(ps)
@@ -81,20 +82,30 @@ func (t *BTree) writeOverflowChain(data []byte) (uint64, error) {
 		nPages = 1
 	}
 
-	// Allocate all page IDs in one header update (O(1) instead of O(N)).
-	hdr, err := t.eng.ReadHeader()
-	if err != nil {
-		return 0, err
-	}
-	firstID := hdr.NextPageID
 	pageIDs := make([]uint64, nPages)
-	for i := range nPages {
-		pageIDs[i] = firstID + uint64(i)
-	}
-	if err := t.eng.UpdateHeader(func(h *Header) {
-		h.NextPageID = firstID + uint64(nPages) //nolint:gosec // G115: nPages derived from len(); always non-negative
-	}); err != nil {
-		return 0, err
+	if t.eng.wtxn != nil && t.eng.wtxn.hdr.FormatVersion == formatVersionV3 {
+		for i := range nPages {
+			pageID, err := t.allocPageID()
+			if err != nil {
+				return 0, err
+			}
+			pageIDs[i] = pageID
+		}
+	} else {
+		// Legacy formats retain the contiguous extend-only reservation.
+		hdr, err := t.eng.ReadHeader()
+		if err != nil {
+			return 0, err
+		}
+		firstID := hdr.NextPageID
+		for i := range nPages {
+			pageIDs[i] = firstID + uint64(i)
+		}
+		if err := t.eng.UpdateHeader(func(h *Header) {
+			h.NextPageID = firstID + uint64(nPages) //nolint:gosec // G115: nPages derived from len(); always non-negative
+		}); err != nil {
+			return 0, err
+		}
 	}
 
 	off := 0
@@ -151,22 +162,27 @@ func (t *BTree) readOverflowChain(firstPageID uint64, logicalLen uint32) ([]byte
 	return result, nil
 }
 
-// freeOverflowChain walks an overflow chain and accounts for the wasted bytes.
-// Pages are not physically reclaimed (no freelist — dead space is reclaimed by Compact),
-// but the cumulative waste is tracked in [Engine.wastedBytes] for operator observability.
-func (t *BTree) freeOverflowChain(firstPageID uint64) {
+// freeOverflowChain walks an overflow chain, queues authenticated pages for
+// transactional reuse, and accounts for legacy extend-only waste.
+func (t *BTree) freeOverflowChain(firstPageID uint64) error {
 	ps := t.pageSize()
 	payload := uint64(overflowPayloadPerPage(ps)) //nolint:gosec // G115: ps >= overflowPtrSize always
 	pid := firstPageID
 	for pid != 0 {
 		page, release, err := t.eng.readPagePooled(pid)
 		if err != nil {
-			release()
-			return
+			return err
 		}
 		nextID := binary.BigEndian.Uint64(page[0:8])
 		release()
-		t.eng.wastedBytes.Add(payload)
+		if t.eng.wtxn != nil && t.eng.wtxn.hdr.FormatVersion == formatVersionV3 {
+			if err := t.eng.releasePageID(pid); err != nil {
+				return err
+			}
+		} else {
+			t.eng.wastedBytes.Add(payload)
+		}
 		pid = nextID
 	}
+	return nil
 }

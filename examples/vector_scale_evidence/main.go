@@ -8,6 +8,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -38,6 +39,7 @@ type config struct {
 	seed       uint64
 	pageSize   uint
 	cacheBytes int64
+	buildMode  string
 }
 
 type latencySummary struct {
@@ -74,11 +76,17 @@ type evidenceReport struct {
 		Seed       uint64 `json:"seed"`
 		PageSize   uint   `json:"page_size"`
 		CacheBytes int64  `json:"cache_bytes"`
+		BuildMode  string `json:"build_mode"`
 	} `json:"workload"`
 	Build struct {
-		Latency          latencySummary `json:"batch_latency"`
-		DurationNS       int64          `json:"duration_ns"`
-		VectorsPerSecond float64        `json:"vectors_per_second"`
+		Latency                latencySummary               `json:"batch_latency"`
+		DurationNS             int64                        `json:"duration_ns"`
+		VectorsPerSecond       float64                      `json:"vectors_per_second"`
+		IngestDurationNS       int64                        `json:"ingest_duration_ns"`
+		IngestVectorsPerSecond float64                      `json:"ingest_vectors_per_second"`
+		RebuildDurationNS      int64                        `json:"rebuild_duration_ns"`
+		PublishDurationNS      int64                        `json:"publish_duration_ns"`
+		PathBeforeRebuild      hexxladb.EmbeddingSearchPath `json:"path_before_rebuild,omitempty"`
 	} `json:"build"`
 	BeforeReopen queryReport `json:"before_reopen"`
 	Reopen       struct {
@@ -95,6 +103,7 @@ type evidenceReport struct {
 	} `json:"churn"`
 	Resources struct {
 		TotalAllocBytes     uint64 `json:"total_alloc_bytes"`
+		PeakHeapInuseBuild  uint64 `json:"peak_heap_inuse_during_build"`
 		HeapInuseAfterBuild uint64 `json:"heap_inuse_after_build"`
 		HeapInuseAfterChurn uint64 `json:"heap_inuse_after_churn"`
 		PrimaryBytes        uint64 `json:"primary_bytes"`
@@ -122,6 +131,7 @@ func main() {
 	flag.Uint64Var(&cfg.seed, "seed", 1, "deterministic vector seed")
 	flag.UintVar(&cfg.pageSize, "page-size", 4096, "new database page size")
 	flag.Int64Var(&cfg.cacheBytes, "cache-bytes", 64<<20, "page-cache byte budget (-1 disables)")
+	flag.StringVar(&cfg.buildMode, "build-mode", "deferred-rebuild", "graph build mode: synchronous or deferred-rebuild")
 	flag.Parse()
 
 	if err := validateConfig(cfg); err != nil {
@@ -166,6 +176,12 @@ func validateConfig(cfg config) error {
 	if cfg.cacheBytes < -1 {
 		return errors.New("cache-bytes must be -1, 0, or positive")
 	}
+	if cfg.buildMode != "synchronous" && cfg.buildMode != "deferred-rebuild" {
+		return errors.New("build-mode must be synchronous or deferred-rebuild")
+	}
+	if cfg.buildMode == "deferred-rebuild" && cfg.cells > hexxladb.MaxEmbeddingIndexRebuildVectors {
+		return fmt.Errorf("deferred-rebuild cells must not exceed %d", hexxladb.MaxEmbeddingIndexRebuildVectors)
+	}
 	return nil
 }
 
@@ -200,12 +216,39 @@ func run(cfg config) (evidenceReport, error) {
 		}
 	}()
 
+	stopHeapSampler := startHeapSampler()
+	heapSamplerStopped := false
+	defer func() {
+		if !heapSamplerStopped {
+			_ = stopHeapSampler()
+		}
+	}()
 	buildStarted := time.Now()
-	buildLatency, err := putVectors(db, set.coords, set.vectors, cfg.batchSize)
+	ingestStarted := time.Now()
+	deferred := cfg.buildMode == "deferred-rebuild"
+	buildLatency, err := putVectors(db, set.coords, set.vectors, cfg.batchSize, deferred)
 	if err != nil {
 		return report, fmt.Errorf("build graph: %w", err)
 	}
+	ingestDuration := time.Since(ingestStarted)
+	var rebuildStats hexxladb.EmbeddingIndexRebuildStats
+	var pathBeforeRebuild hexxladb.EmbeddingSearchPath
+	if deferred {
+		pathBeforeRebuild, err = searchPath(db, queries[0], cfg.topK)
+		if err != nil {
+			return report, fmt.Errorf("query before rebuild: %w", err)
+		}
+		if pathBeforeRebuild != hexxladb.EmbeddingSearchPathFlat {
+			return report, fmt.Errorf("search path before rebuild %q, want flat", pathBeforeRebuild)
+		}
+		rebuildStats, err = db.RebuildEmbeddingIndex(context.Background(), &hexxladb.EmbeddingIndexRebuildOptions{MaxVectors: cfg.cells})
+		if err != nil {
+			return report, fmt.Errorf("rebuild graph: %w", err)
+		}
+	}
 	buildDuration := time.Since(buildStarted)
+	peakHeapInuseBuild := stopHeapSampler()
+	heapSamplerStopped = true
 	runtime.GC()
 	var memoryAfterBuild runtime.MemStats
 	runtime.ReadMemStats(&memoryAfterBuild)
@@ -273,9 +316,15 @@ func run(cfg config) (evidenceReport, error) {
 	report.Workload.Seed = cfg.seed
 	report.Workload.PageSize = cfg.pageSize
 	report.Workload.CacheBytes = cfg.cacheBytes
+	report.Workload.BuildMode = cfg.buildMode
 	report.Build.Latency = summarize(buildLatency)
 	report.Build.DurationNS = buildDuration.Nanoseconds()
 	report.Build.VectorsPerSecond = float64(cfg.cells) / buildDuration.Seconds()
+	report.Build.IngestDurationNS = ingestDuration.Nanoseconds()
+	report.Build.IngestVectorsPerSecond = float64(cfg.cells) / ingestDuration.Seconds()
+	report.Build.RebuildDurationNS = rebuildStats.BuildDuration.Nanoseconds()
+	report.Build.PublishDurationNS = rebuildStats.PublishDuration.Nanoseconds()
+	report.Build.PathBeforeRebuild = pathBeforeRebuild
 	report.BeforeReopen = beforeReopen
 	report.Reopen.DurationNS = reopenDuration.Nanoseconds()
 	report.Reopen.Query = afterReopen
@@ -286,6 +335,7 @@ func run(cfg config) (evidenceReport, error) {
 	report.Churn.ReopenDurationNS = churnReopenDuration.Nanoseconds()
 	report.Churn.Query = afterChurn
 	report.Resources.TotalAllocBytes = memoryAfterChurn.TotalAlloc - memoryBefore.TotalAlloc
+	report.Resources.PeakHeapInuseBuild = peakHeapInuseBuild
 	report.Resources.HeapInuseAfterBuild = memoryAfterBuild.HeapInuse
 	report.Resources.HeapInuseAfterChurn = memoryAfterChurn.HeapInuse
 	report.Resources.PrimaryBytes = storage.PrimaryBytes
@@ -319,14 +369,14 @@ func generateWorkload(cfg config) (*vectorSet, [][]float32, error) {
 	return set, queries, nil
 }
 
-func putVectors(db *hexxladb.DB, coords []hexxladb.PackedCoord, vectors [][]float32, batchSize int) ([]time.Duration, error) {
+func putVectors(db *hexxladb.DB, coords []hexxladb.PackedCoord, vectors [][]float32, batchSize int, deferred bool) ([]time.Duration, error) {
 	latencies := make([]time.Duration, 0, (len(coords)+batchSize-1)/batchSize)
 	for start := 0; start < len(coords); start += batchSize {
 		end := min(start+batchSize, len(coords))
 		started := time.Now()
 		err := db.Update(func(tx *hexxladb.Tx) error {
 			for i := start; i < end; i++ {
-				if err := tx.PutEmbedding(coords[i], vectors[i]); err != nil {
+				if err := tx.PutEmbeddingWithOptions(coords[i], vectors[i], hexxladb.EmbeddingWriteOptions{DeferIndexMaintenance: deferred}); err != nil {
 					return err
 				}
 			}
@@ -346,7 +396,7 @@ func applyChurn(db *hexxladb.DB, set *vectorSet, cfg config) ([]time.Duration, [
 	for i := range updates {
 		updates[i] = randomUnitVector(rng, cfg.dimension)
 	}
-	updateLatency, err := putVectors(db, set.coords[:cfg.churn], updates, cfg.batchSize)
+	updateLatency, err := putVectors(db, set.coords[:cfg.churn], updates, cfg.batchSize, false)
 	if err != nil {
 		return nil, nil, fmt.Errorf("update churn: %w", err)
 	}
@@ -375,6 +425,16 @@ func applyChurn(db *hexxladb.DB, set *vectorSet, cfg config) ([]time.Duration, [
 		}
 	}
 	return updateLatency, deleteLatency, nil
+}
+
+func searchPath(db *hexxladb.DB, query []float32, topK int) (hexxladb.EmbeddingSearchPath, error) {
+	var path hexxladb.EmbeddingSearchPath
+	err := db.View(func(tx *hexxladb.Tx) error {
+		_, stats, err := tx.SearchByEmbeddingWithStats(query, hexxladb.EmbeddingSearchConfig{MaxResults: topK})
+		path = stats.Path
+		return err
+	})
+	return path, err
 }
 
 func measureQueries(db *hexxladb.DB, set *vectorSet, queries [][]float32, topK int) (queryReport, error) {
@@ -518,4 +578,34 @@ func summarize(samples []time.Duration) latencySummary {
 func percentile(sorted []int64, percent int) int64 {
 	index := (len(sorted) - 1) * percent / 100
 	return sorted[index]
+}
+
+func startHeapSampler() func() uint64 {
+	stop := make(chan struct{})
+	done := make(chan uint64, 1)
+	go func() {
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		var peak uint64
+		read := func() {
+			var memory runtime.MemStats
+			runtime.ReadMemStats(&memory)
+			peak = max(peak, memory.HeapInuse)
+		}
+		read()
+		for {
+			select {
+			case <-ticker.C:
+				read()
+			case <-stop:
+				read()
+				done <- peak
+				return
+			}
+		}
+	}()
+	return func() uint64 {
+		close(stop)
+		return <-done
+	}
 }

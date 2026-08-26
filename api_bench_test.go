@@ -203,6 +203,7 @@ func BenchmarkAPI_WritePath(b *testing.B) {
 				}
 			}
 			b.StopTimer()
+			reportWriteMetrics(b, db)
 			reportGroupWALMetrics(b, db)
 		})
 	}
@@ -258,6 +259,16 @@ func reportGroupWALMetrics(b *testing.B, db *hexxladb.DB) {
 	b.ReportMetric(float64(walSyncs)/operations, "wal-syncs/op")
 }
 
+func reportWriteMetrics(b *testing.B, db *hexxladb.DB) {
+	b.Helper()
+	stats := db.WriteStats()
+	calls := float64(max(stats.Calls, 1))
+	b.ReportMetric(float64(stats.LockWait.Nanoseconds())/calls, "lock-wait-ns/call")
+	b.ReportMetric(float64(stats.Callback.Nanoseconds())/calls, "callback-ns/call")
+	b.ReportMetric(float64(stats.Durability.Nanoseconds())/calls, "durability-ns/call")
+	b.ReportMetric(float64(stats.Finalization.Nanoseconds())/calls, "finalization-ns/call")
+}
+
 // BenchmarkAPI_GetCell measures random-access read after preloading n cells (sub-benchmark per n).
 func BenchmarkAPI_GetCell(b *testing.B) {
 	for _, n := range apiBenchPreloadSizes(b) {
@@ -285,6 +296,27 @@ func BenchmarkAPI_GetCell_Encrypted(b *testing.B) {
 		b.Run(fmt.Sprintf("cells_%d", n), func(b *testing.B) {
 			opts := &hexxladb.Options{EncryptionKey: []byte("sixteen.byte.key!!")}
 			db, key := benchAPIPreloadCellsWithOptions(b, n, opts)
+			b.Cleanup(func() { _ = db.Close() })
+			b.ReportMetric(float64(n), "cells")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				err := db.View(func(tx *hexxladb.Tx) error {
+					_, _, err := tx.GetCell(key)
+					return err
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkAPI_GetCell_MVCC(b *testing.B) {
+	for _, n := range apiBenchPreloadSizes(b) {
+		b.Run(fmt.Sprintf("cells_%d", n), func(b *testing.B) {
+			db, key := benchAPIPreloadCellsWithOptions(b, n, &hexxladb.Options{EnableMVCC: true})
 			b.Cleanup(func() { _ = db.Close() })
 			b.ReportMetric(float64(n), "cells")
 			b.ReportAllocs()

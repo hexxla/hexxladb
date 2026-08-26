@@ -2,7 +2,9 @@ package hexxladb
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/hexxla/hexxladb/internal/changelog"
@@ -244,9 +246,11 @@ func (tx *Tx) Get(key []byte) (val []byte, ok bool, err error) {
 		return nil, false, ErrDatabaseClosed
 	}
 	if !tx.writable {
-		return tx.db.btree.GetUsingRoot(tx.cachedBTreeRoot, key)
+		val, ok, err = tx.db.btree.GetUsingRoot(tx.cachedBTreeRoot, key)
+		return val, ok, mapEngineDataError(err)
 	}
-	return tx.db.btree.Get(key)
+	val, ok, err = tx.db.btree.Get(key)
+	return val, ok, mapEngineDataError(err)
 }
 
 // Put inserts or replaces a key/value pair. Only allowed inside [DB.Update].
@@ -263,16 +267,18 @@ func (tx *Tx) Put(key, val []byte) error {
 			return fmt.Errorf("%w: MVCC databases require version-suffixed cell/ keys — use Tx.PutCell: %w", ErrInvalidArgument, err)
 		}
 	}
-	return tx.db.btree.Put(key, val)
+	return mapEngineDataError(tx.db.btree.Put(key, val))
 }
 
 // getDirect reads a value by key without public API guards.
 // Used by internal subsystems (HNSW storage adapter, embeddings).
 func (tx *Tx) getDirect(key []byte) (val []byte, ok bool, err error) {
 	if !tx.writable {
-		return tx.db.btree.GetUsingRoot(tx.cachedBTreeRoot, key)
+		val, ok, err = tx.db.btree.GetUsingRoot(tx.cachedBTreeRoot, key)
+		return val, ok, mapEngineDataError(err)
 	}
-	return tx.db.btree.Get(key)
+	val, ok, err = tx.db.btree.Get(key)
+	return val, ok, mapEngineDataError(err)
 }
 
 // putDirect writes a key/value pair without MVCC format validation.
@@ -283,7 +289,7 @@ func (tx *Tx) putDirect(key, val []byte) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}
-	return tx.db.btree.Put(key, val)
+	return mapEngineDataError(tx.db.btree.Put(key, val))
 }
 
 // deleteDirect removes a key without going through the public Tx API.
@@ -293,7 +299,7 @@ func (tx *Tx) deleteDirect(key []byte) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}
-	return tx.db.btree.Delete(key)
+	return mapEngineDataError(tx.db.btree.Delete(key))
 }
 
 // AscendRange calls fn for keys in [from, to] inclusive (byte order). If from is nil, starts at the smallest key.
@@ -306,9 +312,17 @@ func (tx *Tx) AscendRange(from, to []byte, fn func(k, v []byte) bool) error {
 		return ErrDatabaseClosed
 	}
 	if !tx.writable && tx.cachedBTreeRoot != 0 {
-		return tx.db.btree.AscendRangeFromRoot(tx.cachedBTreeRoot, from, to, fn)
+		return mapEngineDataError(tx.db.btree.AscendRangeFromRoot(tx.cachedBTreeRoot, from, to, fn))
 	}
-	return tx.db.btree.AscendRange(from, to, fn)
+	return mapEngineDataError(tx.db.btree.AscendRange(from, to, fn))
+}
+
+func mapEngineDataError(err error) error {
+	if errors.Is(err, engine.ErrPageAuthentication) || errors.Is(err, engine.ErrCorruptTree) ||
+		errors.Is(err, engine.ErrBadPageSize) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return fmt.Errorf("%w: %w", ErrCorruptDatabase, err)
+	}
+	return err
 }
 
 // descendRange calls fn for keys in [from, to] inclusive in reverse byte order.
@@ -321,9 +335,9 @@ func (tx *Tx) descendRange(from, to []byte, fn func(k, v []byte) bool) error {
 		return ErrDatabaseClosed
 	}
 	if !tx.writable {
-		return tx.db.btree.DescendRangeFromRoot(tx.cachedBTreeRoot, from, to, fn)
+		return mapEngineDataError(tx.db.btree.DescendRangeFromRoot(tx.cachedBTreeRoot, from, to, fn))
 	}
-	return tx.db.btree.DescendRange(from, to, fn)
+	return mapEngineDataError(tx.db.btree.DescendRange(from, to, fn))
 }
 
 // Writable reports whether this transaction was started with [DB.Update].
@@ -357,7 +371,7 @@ func (db *DB) resolveReadSeqAtOrBeforeUnixNano(unixNano int64) (uint64, error) {
 		return false // stop at the first (largest) match
 	})
 	if err != nil {
-		return 0, err
+		return 0, mapEngineDataError(err)
 	}
 	return readSeq, nil
 }

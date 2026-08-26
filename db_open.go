@@ -11,6 +11,9 @@ import (
 const hkdfInfoXTS = "hexxladb-m9-aes-xts-v1"
 
 func engineOptsWithMVCC(base *engine.Options, opts *Options) *engine.Options {
+	if base != nil && base.UseFormatV3 {
+		return base
+	}
 	if opts == nil || !opts.EnableMVCC {
 		return base
 	}
@@ -50,6 +53,31 @@ func buildEngineOptions(path string, opts *Options) (*engine.Options, []byte, er
 	}
 
 	if len(opts.EncryptionKey) > 0 {
+		isNew, err := isDatabaseNew(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		if isNew && !opts.newLegacyEncryption {
+			return buildNewAuthenticatedRawKeyEngineOpts(opts)
+		}
+		if !isNew {
+			hdr, err := engine.ReadHeaderFile(path)
+			if err != nil {
+				return nil, nil, err
+			}
+			if hdr.FormatVersion == engine.AuthenticatedFormatVersion {
+				master, err := deriveAuthenticatedMaster(opts.EncryptionKey)
+				if err != nil {
+					return nil, nil, err
+				}
+				eopts, err := buildAuthenticatedEngineOpts(opts, master, hdr.EncryptionSalt, false)
+				if err != nil {
+					clear(master)
+					return nil, nil, err
+				}
+				return eopts, master, nil
+			}
+		}
 		xtsKey, err := deriveXTSKeyMaterial(opts.EncryptionKey, nil, []byte(hkdfInfoXTS))
 		if err != nil {
 			return nil, nil, err
@@ -75,6 +103,18 @@ func buildPassphraseEngineOpts(path string, opts *Options) (*engine.Options, []b
 		var salt [16]byte
 		if _, err := rand.Read(salt[:]); err != nil {
 			return nil, nil, err
+		}
+		if !opts.newLegacyEncryption {
+			master, err := derivePassphraseAuthenticatedMaster(opts.Passphrase, salt[:])
+			if err != nil {
+				return nil, nil, err
+			}
+			eopts, err := buildAuthenticatedEngineOpts(opts, master, salt, true)
+			if err != nil {
+				clear(master)
+				return nil, nil, err
+			}
+			return eopts, master, nil
 		}
 		xtsKey, err := derivePassphraseXTSKey(opts.Passphrase, salt[:])
 		if err != nil {
@@ -102,6 +142,18 @@ func buildPassphraseEngineOpts(path string, opts *Options) (*engine.Options, []b
 	if hdr.Features&engine.FeatureEncryptedDataPages == 0 {
 		return nil, nil, ErrDatabaseNotEncrypted
 	}
+	if hdr.FormatVersion == engine.AuthenticatedFormatVersion {
+		master, err := derivePassphraseAuthenticatedMaster(opts.Passphrase, hdr.EncryptionSalt[:])
+		if err != nil {
+			return nil, nil, err
+		}
+		eopts, err := buildAuthenticatedEngineOpts(opts, master, hdr.EncryptionSalt, false)
+		if err != nil {
+			clear(master)
+			return nil, nil, err
+		}
+		return eopts, master, nil
+	}
 	xtsKey, err := derivePassphraseXTSKey(opts.Passphrase, hdr.EncryptionSalt[:])
 	if err != nil {
 		return nil, nil, err
@@ -120,12 +172,60 @@ func buildPassphraseEngineOpts(path string, opts *Options) (*engine.Options, []b
 	}, opts), xtsKey, nil
 }
 
+func buildNewAuthenticatedRawKeyEngineOpts(opts *Options) (*engine.Options, []byte, error) {
+	var salt [16]byte
+	if _, err := rand.Read(salt[:]); err != nil {
+		return nil, nil, err
+	}
+	master, err := deriveAuthenticatedMaster(opts.EncryptionKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	eopts, err := buildAuthenticatedEngineOpts(opts, master, salt, true)
+	if err != nil {
+		clear(master)
+		return nil, nil, err
+	}
+	return eopts, master, nil
+}
+
+func buildAuthenticatedEngineOpts(opts *Options, master []byte, salt [16]byte, newDatabase bool) (*engine.Options, error) {
+	hooks, err := buildAuthenticatedEncryptionHooks(master, salt)
+	if err != nil {
+		return nil, err
+	}
+	eopts := &engine.Options{
+		Hooks:                    hooks,
+		UseFormatV3:              true,
+		NewEncryptedDB:           newDatabase,
+		NewAuthenticatedDB:       newDatabase,
+		EncryptionSalt:           salt,
+		EncryptionKeyCheck:       deriveEncryptionKeyCheck(master, salt),
+		ExpectEncryptionKeyCheck: true,
+		WALMACKey:                deriveWALMACKey(master),
+		EnableWALMAC:             true,
+		HeaderMACKey:             deriveHeaderMACKey(master, salt),
+		EnableHeaderMAC:          true,
+	}
+	return engineOptsWithMVCC(eopts, opts), nil
+}
+
+func derivePassphraseAuthenticatedMaster(passphrase string, salt []byte) ([]byte, error) {
+	raw, err := DeriveKeyFromPassphrase(passphrase, salt)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(raw)
+	return deriveAuthenticatedMaster(raw)
+}
+
 // derivePassphraseXTSKey derives XTS key material from a passphrase and salt.
 func derivePassphraseXTSKey(passphrase string, salt []byte) ([]byte, error) {
 	raw, err := DeriveKeyFromPassphrase(passphrase, salt)
 	if err != nil {
 		return nil, err
 	}
+	defer clear(raw)
 	return deriveXTSKeyMaterial(raw, nil, []byte(hkdfInfoXTS))
 }
 

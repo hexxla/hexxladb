@@ -9,18 +9,26 @@ import (
 )
 
 // StorageStats reports current physical file sizes and page reachability.
-// AllocatedPages and ReachablePages include the header page. LiveBytes is the
+// AllocatedPages and ReachablePages include the header page; ReachablePages also
+// includes authenticated freelist metadata. LiveBytes is the physical
 // page-rounded size of reachable pages, not the encoded logical payload size.
-// ReclaimableBytes counts whole pages that are unreachable from the current B+
-// tree; compaction may reclaim additional space by repacking partially filled
-// reachable pages.
+// ReclaimableBytes counts whole pages outside the tree and allocator metadata;
+// this includes ReusablePages. Compaction may reclaim additional space by
+// repacking partially filled reachable pages.
 type StorageStats struct {
-	PageSize         uint64
+	PageSize uint64
+	// PhysicalPageSize includes any authenticated-page envelope. It equals
+	// PageSize for plaintext and legacy XTS databases.
+	PhysicalPageSize uint64
 	PrimaryBytes     uint64
 	WALBytes         uint64
 	ChangelogBytes   uint64
 	AllocatedPages   uint64
 	ReachablePages   uint64
+	// AllocatorPages counts authenticated freelist metadata pages.
+	AllocatorPages uint64
+	// ReusablePages counts pages available to authenticated transactions.
+	ReusablePages    uint64
 	LiveBytes        uint64
 	ReclaimableBytes uint64
 }
@@ -58,11 +66,14 @@ func (db *DB) StorageStats() (StorageStats, error) {
 	}
 	return StorageStats{
 		PageSize:         engineStats.PageSize,
+		PhysicalPageSize: engineStats.PhysicalPageSize,
 		PrimaryBytes:     engineStats.PrimaryBytes,
 		WALBytes:         engineStats.WALBytes,
 		ChangelogBytes:   changelogBytes,
 		AllocatedPages:   engineStats.AllocatedPages,
 		ReachablePages:   engineStats.ReachablePages,
+		AllocatorPages:   engineStats.AllocatorPages,
+		ReusablePages:    engineStats.ReusablePages,
 		LiveBytes:        engineStats.LiveBytes,
 		ReclaimableBytes: engineStats.ReclaimableBytes,
 	}, nil

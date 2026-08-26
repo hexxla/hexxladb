@@ -76,6 +76,7 @@ tasks:
     cmds:
       - task: evidence-controlled
       - task: evidence-observe
+      - task: evidence-write-path
       - task: evidence-lattice-placement
 
   evidence-controlled:
@@ -86,6 +87,8 @@ tasks:
       - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go test -count=1 -run='^$' -bench='Benchmark(FieldOfViewShadowcast|FieldOfViewRaycast)$' -benchmem -benchtime=1s ./internal/lattice 2>&1 | tee .tmp/evidence/fov-bench.txt"
       - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go test -count=3 -run='^$' -bench='BenchmarkLog_ReadSinceTail$' -benchmem -benchtime=300ms ./internal/changelog 2>&1 | tee .tmp/evidence/changelog-read-bench.txt"
       - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go test -count=1 -run='^$' -bench='BenchmarkAPI_(BatchPutCells|FindEdgePathDegree|LoadContextFOV|MVCCVersionResolution|SuperHexRebuild|SuperHexSummaryForCoord|SuperHexSummaries|WritePath|WriteReaderBlocking)$' -benchmem -benchtime=1s . 2>&1 | tee .tmp/evidence/api-bench.txt"
+      - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go test -count=5 -run='^$' -bench='^BenchmarkEncryptionPageTransform$' -benchmem -benchtime=500ms . 2>&1 | tee .tmp/evidence/encryption-page-bench.txt"
+      - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go test -count=5 -run='^$' -bench='^BenchmarkAuthenticatedOverflowChurn$' -benchmem -benchtime=100x ./internal/engine 2>&1 | tee .tmp/evidence/allocator-churn-bench.txt"
       - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp HEXXLA_SYNC_BENCH=1 go test -count=1 -run='^$' -bench='BenchmarkEvidence_SuperHexSyncCatchUp$' -benchmem -benchtime=1x . 2>&1 | tee .tmp/evidence/superhex-sync-bench.txt"
       - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go test -count=3 -run='^TestStorageMaintenanceRepresentativeChurn$' -v . 2>&1 | tee .tmp/evidence/storage-churn.txt"
 
@@ -94,6 +97,12 @@ tasks:
     cmds:
       - mkdir -p .tmp/evidence .tmp/go-build
       - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go run ./examples/performance_evidence {{.EVIDENCE_ARGS | default ""}} | tee .tmp/evidence/workload.json"
+
+  evidence-write-path:
+    desc: Run the bounded aggregate-only write-path workload
+    cmds:
+      - mkdir -p .tmp/evidence
+      - bash -o pipefail -c "go run ./examples/write_path_evidence {{.WRITE_EVIDENCE_ARGS | default ""}} | tee .tmp/evidence/write-path.json"
 
   evidence-vector-scale:
     desc: Run the bounded vector/HNSW scale, recall, reopen, and churn workload
@@ -160,12 +169,26 @@ tasks:
       - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-demo-spatial{{.EXE}}" ./examples/spatial_algorithms
       - 'echo "  → {{.BINDIR}}/hexxladb-demo-spatial{{.EXE}}"'
 
+  build-demo-remote:
+    desc: Build the remote-access owner-service example
+    cmds:
+      - mkdir -p "{{.BINDIR}}"
+      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-demo-remote{{.EXE}}" ./examples/remote_access
+      - 'echo "  → {{.BINDIR}}/hexxladb-demo-remote{{.EXE}}"'
+
   build-evidence-performance:
     desc: Build the aggregate performance-evidence runner
     cmds:
       - mkdir -p "{{.BINDIR}}"
       - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-evidence-performance{{.EXE}}" ./examples/performance_evidence
       - 'echo "  → {{.BINDIR}}/hexxladb-evidence-performance{{.EXE}}"'
+
+  build-evidence-write-path:
+    desc: Build the bounded write-path evidence runner
+    cmds:
+      - mkdir -p "{{.BINDIR}}"
+      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-evidence-write-path{{.EXE}}" ./examples/write_path_evidence
+      - 'echo "  → {{.BINDIR}}/hexxladb-evidence-write-path{{.EXE}}"'
 
   build-evidence-vector-scale:
     desc: Build the vector-scale evidence runner
@@ -192,38 +215,52 @@ tasks:
     desc: Build all examples
     cmds:
       - task: build-demo
+        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
       - task: build-demo-llm
+        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
       - task: build-demo-spatial
+        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
+      - task: build-demo-remote
+        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
       - task: build-evidence-performance
+        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
+      - task: build-evidence-write-path
+        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
       - task: build-evidence-vector-scale
+        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
       - task: build-evidence-lattice-placement
+        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
       - task: build-pilot-soak
+        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
 
   build:
     desc: Build the CLI, TUI, and examples for the selected OS and architecture
     cmds:
       - task: build-cli
+        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
       - task: build-tui
+        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
       - task: build-examples
+        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
       - 'echo "==> Built all targets for {{.GOOS}}/{{.GOARCH}}"'
 
   build-linux:
     desc: Build all targets for Linux
     cmds:
       - task: build
-        vars: { GOOS: linux, GOARCH: "{{.GOARCH}}" }
+        vars: { GOOS: linux, GOARCH: "{{.GOARCH}}", BINDIR: '{{.BUILD_ROOT | default "bin"}}/linux-{{.GOARCH}}', EXE: "" }
 
   build-darwin:
     desc: Build all targets for macOS
     cmds:
       - task: build
-        vars: { GOOS: darwin, GOARCH: "{{.GOARCH}}" }
+        vars: { GOOS: darwin, GOARCH: "{{.GOARCH}}", BINDIR: '{{.BUILD_ROOT | default "bin"}}/darwin-{{.GOARCH}}', EXE: "" }
 
   build-windows:
     desc: Build all targets for Windows
     cmds:
       - task: build
-        vars: { GOOS: windows, GOARCH: "{{.GOARCH}}" }
+        vars: { GOOS: windows, GOARCH: "{{.GOARCH}}", BINDIR: '{{.BUILD_ROOT | default "bin"}}/windows-{{.GOARCH}}', EXE: ".exe" }
 
   build-all:
     desc: Build all targets for Linux, macOS, and Windows
@@ -231,7 +268,7 @@ tasks:
       - task: build-linux
       - task: build-darwin
       - task: build-windows
-      - 'echo "==> Built all platforms into bin/"'
+      - 'echo "==> Built all platforms into {{.BUILD_ROOT | default "bin"}}/"'
 
   clean:
     desc: Remove build artifacts
@@ -279,6 +316,11 @@ tasks:
         else
           go run ./examples/spatial_algorithms
         fi
+
+  demo-remote:
+    desc: Run the loopback-only remote-access owner-service example
+    cmds:
+      - go run ./examples/remote_access
 
   demo-all:
     desc: Run every demonstration in sequence
@@ -346,6 +388,11 @@ tasks:
     desc: Format all Go files with gofmt
     cmds:
       - gofmt -w $(find . -type f -name '*.go' ! -path './vendor/*' ! -path './.git/*')
+
+  api-check:
+    desc: Verify the committed exported Go API and documentation baseline
+    cmds:
+      - go run ./scripts/api_surface.go
 
   lint:
     desc: Run golangci-lint

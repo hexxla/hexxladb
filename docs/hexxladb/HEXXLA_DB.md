@@ -8,6 +8,12 @@ HexxlaDB is an embedded, hex-native database implemented by this module. The sta
 
 The engine uses one B+ tree over byte-ordered key families, backed by fixed-size pages and a redo WAL. Coordinates are Morton-packed so spatial addresses have a stable ordered representation. Lattice operations, records, and secondary indexes are part of the database implementation rather than adapters over a third-party SQL or key-value engine.
 
+`PageSize` is the logical B+ tree page capacity. Plaintext and legacy encrypted
+v1/v2 files use the same physical stride. Authenticated encrypted v3 adds a
+48-byte generation/nonce/tag envelope to every data page while leaving page 0
+at one logical page. The exact byte layout belongs to
+[`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md).
+
 The principal private packages are:
 
 | Package            | Owns                                                      |
@@ -65,6 +71,7 @@ The notation below describes logical identities. Concrete encodings use binary s
 | Embedding          | `embed/<packed_coord>` → fixed-dimension float32 vector              |
 | HNSW metadata      | `hnsw/meta`, `hnsw/entry` → graph configuration and entry point      |
 | HNSW node          | `hnsw/node/<packed_coord>` → graph layers and neighbor lists         |
+| HNSW lifecycle     | `hnsw/state` → revision and exact-fallback/graph-current state        |
 | Changefeed head    | `__meta/changelog-head` → latest durable outbox commit identifier    |
 | Changefeed outbox  | `__meta/changelog-outbox/<commit>/<ordinal>/<key>` → bounded intent  |
 
@@ -76,11 +83,25 @@ Cell and seam source/time/tag secondaries are maintained by their typed write me
 
 Format v1 stores one physical value for each logical key and overwrites it in place.
 
-When a new database is created with `Options.EnableMVCC`, format v2 appends a commit-sequence suffix to versioned cell, facet, edge, seam, and secondary keys. Multiple committed versions then coexist. Cell, facet, and seam point reads seek backward from the transaction's `read_seq` bound and stop at the newest visible version; they do not scan the logical key's full history.
+When a new plaintext database is created with `Options.EnableMVCC`, format v2
+appends a commit-sequence suffix to versioned cell, facet, edge, seam, and
+secondary keys. New encrypted databases use authenticated format v3 and the
+same MVCC physical-key rules regardless of `EnableMVCC`. Multiple committed
+versions then coexist. Cell, facet, and seam point reads seek backward from the
+transaction's `read_seq` bound and stop at the newest visible version; they do
+not scan the logical key's full history.
 
 Cells use a zero-length latest value as a tombstone. Deletion therefore adds a version rather than immediately removing physical history. Pruning can remove eligible non-latest versions; compaction rewrites the remaining physical keys into a new file.
 
-The page allocator is extend-only. [`DB.StorageStats`](../../storage_stats.go) walks the current B+ tree and overflow chains to report page-rounded live bytes and whole unreachable pages that compaction can reclaim. It does not treat unused capacity inside a reachable page as dead, so compacted output may be smaller than `PrimaryBytes - ReclaimableBytes` after repacking low-fill pages.
+Authenticated format v3 persists reusable B+ tree and overflow-page ids in the
+authenticated transaction boundary and consumes them before extending the
+primary. [`DB.ReclaimTail`](../../reclaim.go) can truncate only a contiguous
+allocator-owned suffix; plaintext and legacy formats remain extend-only.
+[`DB.StorageStats`](../../storage_stats.go) walks the current B+ tree, overflow
+chains, and allocator metadata to report page-rounded live, reusable, and whole
+unreachable bytes. It does not treat unused capacity inside a reachable page as
+dead, so compacted output may be smaller than
+`PrimaryBytes - ReclaimableBytes` after repacking low-fill pages.
 
 Timeline keys map wall time to commit snapshots:
 
@@ -96,7 +117,20 @@ Embeddings are optional. `Options.EmbeddingDimension` and `Options.DistanceMetri
 
 `PutEmbedding` maintains the persisted HNSW graph. Node levels are derived deterministically from the packed coordinate, so the same vectors and insertion order produce the same graph layout without persisted random state. `SearchByEmbedding` uses HNSW when available and falls back to a flat scan when required; `SearchByEmbeddingWithStats` exposes the selected path and effective query breadth. `DeleteCell` also removes the cell's embedding and HNSW node.
 
-The measured 10,000-vector envelope uses 4 KiB B+ tree pages for both 32- and 384-dimensional vectors. HNSW graph maintenance performs many small random reads and rewrites, so increasing the page size can amplify copying, dirty-page retention, file growth, and transaction memory even though each graph record is small. The vector-scale evidence runner and reference measurements are documented in [`PERFORMANCE_EVIDENCE.md`](./PERFORMANCE_EVIDENCE.md).
+`PutEmbeddingWithOptions` can defer graph maintenance during bounded bulk
+ingestion. The vector under `embed/` remains authoritative and the lifecycle
+state becomes dirty, so queries use exact flat search rather than a stale
+graph. `RebuildEmbeddingIndex` advances the persisted revision, snapshots the
+authoritative vectors, builds and validates a bounded in-memory graph, then
+replaces the graph keys and marks that same revision current in one database
+commit. Every embedding mutation during a dirty interval advances the revision;
+an intervening write therefore prevents publication. Cancellation and failed
+publication leave the prior graph records intact but inactive, with flat search
+available until a successful retry. This is a logical-key addition, not an
+engine-format or page-layout change, and backup, compaction, and migration
+preserve it as ordinary primary data.
+
+The measured deferred-rebuild envelope uses 4 KiB B+ tree pages for 20,000 vectors at 32 dimensions and 10,000 at 384 dimensions. HNSW graph maintenance performs many small random reads and rewrites, so increasing the page size can amplify copying, dirty-page retention, file growth, and transaction memory even though each graph record is small. Rebuild preflight bounds vectors, estimated memory/transient WAL, and available filesystem capacity. The vector-scale evidence runner and reference measurements are documented in [`PERFORMANCE_EVIDENCE.md`](./PERFORMANCE_EVIDENCE.md).
 
 The query and content-search APIs can use embedding similarity for seed selection, but spatial expansion after seed selection remains deterministic and does not require vectors.
 
@@ -107,6 +141,11 @@ retains the visible records, immutable indexes, embedding configuration, and raw
 application key/value rows while starting a new MVCC commit timeline. Incomplete
 destinations carry private `__meta/migration/v1-to-v2/` resume state and are
 refused by ordinary `Open`.
+
+`MigrateToAuthenticated` creates a distinct encrypted v3 candidate from v1 or
+v2. It preserves the source and rebuilds v1 versioned/derived keys or retains
+the full v2 MVCC keyspace as appropriate. Older libraries refuse v3; the source
+or a pre-upgrade backup is the downgrade path.
 
 ## Logical changefeed
 

@@ -208,12 +208,21 @@ func (e *Engine) groupWriteWAL(jobs []*groupJob) error {
 	for _, job := range jobs {
 		for i := range job.pending {
 			p := &job.pending[i]
-			rec := encodeWALRecordWithMAC(p.seq, p.pageID, p.plain, e.walMACKey, e.walMACEnabled, e.pageSize)
+			rec := encodeWALRecordWithMAC(p.seq, p.pageID, p.plain, e.walMACKey, e.walMACEnabled, e.physicalPageSize)
 			n, err := e.wal.Write(rec)
 			e.walSize += int64(n)
 			if err != nil {
 				return err
 			}
+		}
+	}
+	if e.headerMACEnabled {
+		final := groupFinalHeader(jobs)
+		rec := e.encodeHeaderWALRecord(final)
+		n, err := e.wal.Write(rec)
+		e.walSize += int64(n)
+		if err != nil {
+			return err
 		}
 	}
 	return nil
@@ -235,6 +244,20 @@ func (e *Engine) groupWritePrimary(jobs []*groupJob) error {
 
 // groupFinalizeHeader writes the final header with updated LastWALSeq, syncs, and clears staging.
 func (e *Engine) groupFinalizeHeader(jobs []*groupJob) error {
+	final := groupFinalHeader(jobs)
+	if err := e.writeHeader(final); err != nil {
+		return err
+	}
+	crashtest.At("group_header_written")
+	if err := e.syncPrimary(); err != nil {
+		return err
+	}
+	e.lastSeq = final.LastWALSeq
+	e.clearGroupUnflushed()
+	return nil
+}
+
+func groupFinalHeader(jobs []*groupJob) Header {
 	var lastRedoSeq uint64
 	for _, job := range jobs {
 		for i := range job.pending {
@@ -245,16 +268,7 @@ func (e *Engine) groupFinalizeHeader(jobs []*groupJob) error {
 	}
 	final := jobs[len(jobs)-1].hdr
 	final.LastWALSeq = lastRedoSeq
-	if err := writeHeaderAt(e.db, final); err != nil {
-		return err
-	}
-	crashtest.At("group_header_written")
-	if err := e.syncPrimary(); err != nil {
-		return err
-	}
-	e.lastSeq = lastRedoSeq
-	e.clearGroupUnflushed()
-	return nil
+	return final
 }
 
 // groupTruncateWAL resets the WAL after the primary is durable.
@@ -291,7 +305,10 @@ func (e *Engine) commitWriteTxnGrouped(txn *writeTxnState) error {
 // header-only path synchronously and returns (nil, nil).
 func (e *Engine) enqueueGroupWALJob(txn *writeTxnState) (wait func() error, err error) {
 	if len(txn.pending) == 0 {
-		if err := writeHeaderAt(e.db, txn.hdr); err != nil {
+		if e.headerMACEnabled {
+			return nil, e.commitAuthenticatedHeaderOnly(txn.hdr)
+		}
+		if err := e.writeHeader(txn.hdr); err != nil {
 			return nil, err
 		}
 		if err := e.syncPrimary(); err != nil {
@@ -299,6 +316,7 @@ func (e *Engine) enqueueGroupWALJob(txn *writeTxnState) (wait func() error, err 
 		}
 		return nil, nil
 	}
+	txn.hdr.LastWALSeq = txn.pending[len(txn.pending)-1].seq
 
 	for i := range txn.pending {
 		p := &txn.pending[i]

@@ -40,6 +40,8 @@ type DB struct {
 	pendingOutboxEntries int
 	// commitFaults is test-only deterministic boundary injection; production construction leaves it nil.
 	commitFaults *commitFaultHooks
+	// embeddingRebuildFaults is test-only deterministic boundary injection.
+	embeddingRebuildFaults *embeddingRebuildFaultHooks
 	// cachedHdr is the fast-path header snapshot for readers. Writers store a new pointer
 	// after every commit; readers load it without holding any lock.
 	cachedHdr atomic.Pointer[dbCachedHeader]
@@ -90,6 +92,10 @@ func openDBWithMigration(path string, opts *Options, createExclusive, allowIncom
 		_ = eng.Close()
 		return nil, err
 	}
+	if hdr.Features&engine.FeatureIncompleteCompaction != 0 && (opts == nil || !opts.newIncompleteCompaction) {
+		_ = eng.Close()
+		return nil, ErrCompactionIncomplete
+	}
 	if err := openValidateEncryption(opts, hdr); err != nil {
 		_ = eng.Close()
 		return nil, err
@@ -107,14 +113,14 @@ func openDBWithMigration(path string, opts *Options, createExclusive, allowIncom
 	bt := engine.OpenBTree(eng)
 	if err := rejectIncompleteMigration(bt, allowIncompleteMigration); err != nil {
 		_ = eng.Close()
-		return nil, err
+		return nil, mapEngineDataError(err)
 	}
 	db := &DB{eng: eng, btree: bt, useMVCC: hdr.FormatVersion >= 2}
 	db.writeSeqNext.Store(hdr.CommitSeq)
 	db.storeCachedHeader(hdr.CommitSeq, hdr.BTreeRoot)
 	if err := db.initializeChangefeedHead(); err != nil {
 		_ = eng.Close()
-		return nil, err
+		return nil, mapEngineDataError(err)
 	}
 	if opts != nil {
 		db.mvccRetention = opts.MVCCRetention
@@ -146,6 +152,9 @@ func openEngineOptions(path string, opts *Options, createExclusive bool) (*engin
 		eopts = &engine.Options{}
 	}
 	eopts.CreateExclusive = createExclusive
+	if opts != nil {
+		eopts.NewIncompleteCompaction = opts.newIncompleteCompaction
+	}
 	return eopts, xtsKey, nil
 }
 
@@ -199,7 +208,7 @@ func mapEngineOpenError(path string, err error) error {
 	switch {
 	case errors.Is(err, engine.ErrUnsupportedFormatVersion):
 		return fmt.Errorf("%w: %w", ErrUnsupportedFormatVersion, err)
-	case errors.Is(err, engine.ErrCorruptHeader), errors.Is(err, engine.ErrCorruptWAL):
+	case errors.Is(err, engine.ErrCorruptHeader), errors.Is(err, engine.ErrCorruptWAL), errors.Is(err, engine.ErrPageAuthentication):
 		return fmt.Errorf("%w: %w", ErrCorruptDatabase, err)
 	case errors.Is(err, engine.ErrBadEncryptionKey):
 		return ErrEncryptionKeyMismatch

@@ -41,10 +41,8 @@ func (t *BTree) Delete(key []byte) error {
 	if err != nil {
 		return err
 	}
-	// Free overflow chain if the deleted entry was an overflow stub.
-	if isOverflowStub(ld.vals[keyIdx]) {
-		_, firstPage := decodeOverflowStub(ld.vals[keyIdx])
-		t.freeOverflowChain(firstPage)
+	if err := t.releaseDeletedOverflow(ld.vals[keyIdx]); err != nil {
+		return err
 	}
 	ld.keys = append(ld.keys[:keyIdx], ld.keys[keyIdx+1:]...)
 	ld.vals = append(ld.vals[:keyIdx], ld.vals[keyIdx+1:]...)
@@ -69,16 +67,21 @@ func (t *BTree) Delete(key []byte) error {
 	}
 	if len(ld.keys) == 0 {
 		if hdr.BTreeRoot == leafPID {
-			return t.eng.UpdateHeader(func(h *Header) { h.BTreeRoot = 0 })
+			if err := t.eng.UpdateHeader(func(h *Header) { h.BTreeRoot = 0 }); err != nil {
+				return err
+			}
+			return t.eng.releasePageID(leafPID)
 		}
 		newRoot, err := t.removeChildFromParentChain(parentPIDs, childIdxs, hdr.BTreeRoot)
 		if err != nil {
 			return err
 		}
 		if newRoot != hdr.BTreeRoot {
-			return t.eng.UpdateHeader(func(h *Header) { h.BTreeRoot = newRoot })
+			if err := t.eng.UpdateHeader(func(h *Header) { h.BTreeRoot = newRoot }); err != nil {
+				return err
+			}
 		}
-		return nil
+		return t.eng.releasePageID(leafPID)
 	}
 	if hdr.BTreeRoot == leafPID || len(ld.keys) >= minLeafKeysForPage(t.pageSize()) {
 		return nil
@@ -91,6 +94,14 @@ func (t *BTree) Delete(key []byte) error {
 		return t.eng.UpdateHeader(func(h *Header) { h.BTreeRoot = newRoot })
 	}
 	return nil
+}
+
+func (t *BTree) releaseDeletedOverflow(value []byte) error {
+	if !isOverflowStub(value) {
+		return nil
+	}
+	_, firstPage := decodeOverflowStub(value)
+	return t.freeOverflowChain(firstPage)
 }
 
 // leafPath is the internal-node path to a leaf: parentPIDs[k] chooses child childIdxs[k].
@@ -163,10 +174,16 @@ func (t *BTree) removeInternalChild(parentPID uint64, childIdx int, root uint64)
 	// whole tree is empty.
 	if parentPID == hdr.BTreeRoot {
 		if len(newPtrs) == 0 {
+			if err := t.eng.releasePageID(parentPID); err != nil {
+				return root, err
+			}
 			return 0, nil
 		}
 		if len(newPtrs) == 1 {
 			if err := t.setParent(newPtrs[0], 0); err != nil {
+				return root, err
+			}
+			if err := t.eng.releasePageID(parentPID); err != nil {
 				return root, err
 			}
 			return newPtrs[0], nil
@@ -190,7 +207,14 @@ func (t *BTree) removeInternalChild(parentPID uint64, childIdx int, root uint64)
 		if !found {
 			return root, fmt.Errorf("%w: parent of internal %d not found", ErrCorruptTree, parentPID)
 		}
-		return t.removeInternalChild(gp, gidx, root)
+		newRoot, err := t.removeInternalChild(gp, gidx, root)
+		if err != nil {
+			return root, err
+		}
+		if err := t.eng.releasePageID(parentPID); err != nil {
+			return root, err
+		}
+		return newRoot, nil
 	}
 	// Non-root internal with ≥1 remaining child: keep it in place (even with 1 ptr / 0 keys).
 	// Splicing it into its grandparent (the previous behavior) would place one grandparent slot
@@ -477,6 +501,9 @@ func (t *BTree) mergeRightLeaf(_ []uint64, leftPID uint64, ld, rd *leafData, rig
 	newR, err := t.removeInternalChild(remParent, ri, root)
 	if err != nil {
 		return root, fmt.Errorf("mergeRightLeaf: %w", err)
+	}
+	if err := t.eng.releasePageID(rightPageID); err != nil {
+		return root, err
 	}
 	return newR, nil
 }

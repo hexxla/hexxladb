@@ -15,11 +15,78 @@ import (
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
+// MaxCellPlacementRadius is the largest radius accepted by
+// [Tx.FindFreeCellPlacement]. A full search inspects at most 49,537 coordinates.
+const MaxCellPlacementRadius = 128
+
+// CellPlacement identifies a free coordinate selected around a semantic anchor.
+// Probes is the number of occupied coordinates inspected before Coord and Key.
+type CellPlacement struct {
+	Coord  Coord
+	Key    PackedCoord
+	Probes int
+}
+
+// FindFreeCellPlacement finds the first coordinate without a visible cell in
+// deterministic ring order around anchor, up to and including maxRadius.
+// It is writable-transaction-only so callers can pass the returned Key directly
+// to [Tx.PutCell] before the [DB.Update] callback returns without another writer
+// claiming it first. The result is not reserved inside the transaction: call
+// PutCell before searching again when distinct placements are required.
+//
+// A tombstoned MVCC coordinate has no visible cell and may be selected; writing
+// there creates a new version while historical snapshots retain the old value.
+// The complete search disk must fit within the packable coordinate range.
+func (tx *Tx) FindFreeCellPlacement(ctx context.Context, anchor Coord, maxRadius int) (CellPlacement, error) {
+	if err := ctx.Err(); err != nil {
+		return CellPlacement{}, err
+	}
+	if err := tx.requireWritable(); err != nil {
+		return CellPlacement{}, err
+	}
+	if maxRadius < 0 || maxRadius > MaxCellPlacementRadius {
+		return CellPlacement{}, fmt.Errorf(
+			"%w: cell placement radius must be between 0 and %d",
+			ErrInvalidArgument,
+			MaxCellPlacementRadius,
+		)
+	}
+	if err := validatePackedRadius(anchor, maxRadius); err != nil {
+		return CellPlacement{}, err
+	}
+
+	probes := 0
+	for candidate := range lattice.WalkRingsPackedSeq(anchor, maxRadius) {
+		if err := ctx.Err(); err != nil {
+			return CellPlacement{}, err
+		}
+		_, occupied, err := tx.GetCell(candidate.Packed)
+		if err != nil {
+			return CellPlacement{}, err
+		}
+		if !occupied {
+			return CellPlacement{
+				Coord:  candidate.Coord,
+				Key:    candidate.Packed,
+				Probes: probes,
+			}, nil
+		}
+		probes++
+	}
+	return CellPlacement{}, fmt.Errorf(
+		"%w: anchor=(%d,%d) radius=%d",
+		ErrNoFreeCellPlacement,
+		anchor.Q,
+		anchor.R,
+		maxRadius,
+	)
+}
+
 // PutCell writes a cell record at cell/<packed> for rec.Key (v1) or version-suffixed keys (MVCC).
 // It maintains source/, time/, and tag/ secondary indexes (see [Tx.AscendCellsBySource],
 // [Tx.AscendCellsInTimeBucket], [Tx.AscendCellsByTag]).
 // Only allowed inside [DB.Update].
-func (tx *Tx) PutCell(ctx context.Context, rec record.CellRecord) error {
+func (tx *Tx) PutCell(ctx context.Context, rec CellRecord) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -86,7 +153,7 @@ func (tx *Tx) PutCell(ctx context.Context, rec record.CellRecord) error {
 }
 
 // GetCell returns the decoded cell visible at the transaction's snapshot, or (zero, false, nil) if missing.
-func (tx *Tx) GetCell(key lattice.PackedCoord) (record.CellRecord, bool, error) {
+func (tx *Tx) GetCell(key PackedCoord) (CellRecord, bool, error) {
 	if tx == nil || tx.db == nil {
 		return record.CellRecord{}, false, ErrClosed
 	}
@@ -104,7 +171,7 @@ func (tx *Tx) GetCell(key lattice.PackedCoord) (record.CellRecord, bool, error) 
 // WalkRing visits each coordinate on the hex ring at distance ring from center
 // (same order as [Ring]). For each cell, fn receives raw bytes or ok=false if
 // no cell record exists. Stops early if fn returns false. ctx is checked between cells.
-func (tx *Tx) WalkRing(ctx context.Context, center lattice.Coord, ring int, fn func(lattice.Coord, []byte, bool) bool) error {
+func (tx *Tx) WalkRing(ctx context.Context, center Coord, ring int, fn func(Coord, []byte, bool) bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -139,7 +206,7 @@ func (tx *Tx) WalkRing(ctx context.Context, center lattice.Coord, ring int, fn f
 // WalkRingAt visits the same coordinates as [Tx.WalkRing], but decodes each cell and calls fn
 // only when a cell exists and [record.ValidAt] holds for rec.Validity at asOf (interpreted in UTC).
 // Coordinates with no cell or a cell that fails the validity filter are omitted (fn is not called).
-func (tx *Tx) WalkRingAt(ctx context.Context, center lattice.Coord, ring int, asOf time.Time, fn func(lattice.Coord, record.CellRecord) bool) error {
+func (tx *Tx) WalkRingAt(ctx context.Context, center Coord, ring int, asOf time.Time, fn func(Coord, CellRecord) bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -294,7 +361,7 @@ const (
 // MarkConflict creates a manual seam between two cells (spec: mark_conflict): new ULID,
 // canonical endpoints via [record.CanonicalCellPair], SeamType "mark_conflict", and DetectedAt set to now.
 // Only allowed inside [DB.Update].
-func (tx *Tx) MarkConflict(cellA, cellB lattice.Coord, reason string) error {
+func (tx *Tx) MarkConflict(cellA, cellB Coord, reason string) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}
@@ -330,7 +397,7 @@ func (tx *Tx) MarkConflict(cellA, cellB lattice.Coord, reason string) error {
 // "superseded is superseded by superseder"). Context assembly with [ContextAssemblyConfig.FilterSuperseded]
 // walks these chains and excludes stale cells from the [ContextPack].
 // Only allowed inside [DB.Update].
-func (tx *Tx) MarkSupersedes(superseder, superseded lattice.Coord, reason string) error {
+func (tx *Tx) MarkSupersedes(superseder, superseded Coord, reason string) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}
@@ -367,13 +434,13 @@ func (tx *Tx) MarkSupersedes(superseder, superseded lattice.Coord, reason string
 // The implementation uses the seam-by-cells secondary index: for each cell in the
 // ball of radius R around center, range scans list incident seams; results are
 // deduplicated by ULID.
-func (tx *Tx) FindSeams(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool) ([]SeamRecord, error) {
+func (tx *Tx) FindSeams(ctx context.Context, center Coord, radius int, unresolvedOnly bool) ([]SeamRecord, error) {
 	return tx.findSeams(ctx, center, radius, unresolvedOnly, nil)
 }
 
 // FindSeamsAt is like [Tx.FindSeams] but only includes seams whose [ValidityWire]
 // contains asOf (single-version read filter; not MVCC).
-func (tx *Tx) FindSeamsAt(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool, asOf time.Time) ([]SeamRecord, error) {
+func (tx *Tx) FindSeamsAt(ctx context.Context, center Coord, radius int, unresolvedOnly bool, asOf time.Time) ([]SeamRecord, error) {
 	return tx.findSeams(ctx, center, radius, unresolvedOnly, &asOf)
 }
 
@@ -516,7 +583,7 @@ func (tx *Tx) collectSeamFind(out *[]record.SeamRecord, seen map[string]struct{}
 
 // ScanContextRaw walks concentric rings from center and collects up to maxCells
 // existing cell records. Raw primitive; prefer [Tx.LoadContext] for new callers.
-func (tx *Tx) ScanContextRaw(ctx context.Context, center lattice.Coord, maxR, maxCells int) ([]record.CellRecord, error) {
+func (tx *Tx) ScanContextRaw(ctx context.Context, center Coord, maxR, maxCells int) ([]CellRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -557,7 +624,7 @@ func (tx *Tx) ScanContextRaw(ctx context.Context, center lattice.Coord, maxR, ma
 
 // ScanContextAtRaw is like [Tx.ScanContextRaw] but skips cells whose validity does not contain asOf.
 // Raw primitive; prefer [Tx.LoadContext] with AsOf field for new callers.
-func (tx *Tx) ScanContextAtRaw(ctx context.Context, center lattice.Coord, maxR, maxCells int, asOf time.Time) ([]record.CellRecord, error) {
+func (tx *Tx) ScanContextAtRaw(ctx context.Context, center Coord, maxR, maxCells int, asOf time.Time) ([]CellRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -603,7 +670,7 @@ func (tx *Tx) ScanContextAtRaw(ctx context.Context, center lattice.Coord, maxR, 
 // are rejected with [ErrInvalidArgument]. Cost is O(ring_cells × popcount(facetMask)) btree lookups
 // in the typical case ([Tx.GetFacet] per set bit). Facets are returned in ascending facet_id order;
 // missing facet keys are omitted from the slice.
-func (tx *Tx) WalkRingFacets(ctx context.Context, center lattice.Coord, ring int, facetMask uint8, asOf *time.Time, fn func(lattice.Coord, record.CellRecord, []record.FacetRecord) bool) error {
+func (tx *Tx) WalkRingFacets(ctx context.Context, center Coord, ring int, facetMask uint8, asOf *time.Time, fn func(Coord, CellRecord, []FacetWalkRecord) bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

@@ -24,6 +24,9 @@ var (
 	// ErrBadEncryptionKey means the provided encryption key/passphrase does not match the database verifier.
 	ErrBadEncryptionKey = errors.New("engine: encryption key mismatch")
 
+	// ErrPageAuthentication means an authenticated page or header failed verification.
+	ErrPageAuthentication = errors.New("engine: page authentication failed")
+
 	// ErrCorruptTree means a B+ tree page failed validation.
 	ErrCorruptTree = errors.New("engine: corrupt B+ tree page")
 

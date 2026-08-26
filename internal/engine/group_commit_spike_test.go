@@ -24,8 +24,8 @@ func TestSpike_twoWALRecordsOneSyncThenPersist(t *testing.T) {
 	p1 := bytes.Repeat([]byte{0x11}, e.pageSize)
 	p2 := bytes.Repeat([]byte{0x22}, e.pageSize)
 
-	rec1 := encodeWALRecordWithMAC(1, 1, p1, e.walMACKey, e.walMACEnabled, e.pageSize)
-	rec2 := encodeWALRecordWithMAC(2, 2, p2, e.walMACKey, e.walMACEnabled, e.pageSize)
+	rec1 := encodeWALRecordWithMAC(1, 1, p1, e.walMACKey, e.walMACEnabled, e.physicalPageSize)
+	rec2 := encodeWALRecordWithMAC(2, 2, p2, e.walMACKey, e.walMACEnabled, e.physicalPageSize)
 
 	if _, err := e.wal.Write(rec1); err != nil {
 		t.Fatal(err)

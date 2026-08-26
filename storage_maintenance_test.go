@@ -25,10 +25,13 @@ func assertStorageAccounting(t *testing.T, stats hexxladb.StorageStats) {
 	if stats.PageSize == 0 || stats.AllocatedPages == 0 || stats.ReachablePages == 0 {
 		t.Fatalf("invalid storage stats: %#v", stats)
 	}
-	if stats.PrimaryBytes != stats.AllocatedPages*stats.PageSize {
+	if stats.PhysicalPageSize == 0 {
+		t.Fatalf("missing physical page size: %#v", stats)
+	}
+	if stats.PrimaryBytes != stats.PageSize+(stats.AllocatedPages-1)*stats.PhysicalPageSize {
 		t.Fatalf("physical page accounting mismatch: %#v", stats)
 	}
-	if stats.LiveBytes != stats.ReachablePages*stats.PageSize {
+	if stats.LiveBytes != stats.PageSize+(stats.ReachablePages-1)*stats.PhysicalPageSize {
 		t.Fatalf("live page accounting mismatch: %#v", stats)
 	}
 	if stats.PrimaryBytes != stats.LiveBytes+stats.ReclaimableBytes {
@@ -285,5 +288,28 @@ func TestStorageStatsEncryptedChangelogAndClosedHandle(t *testing.T) {
 	var nilDB *hexxladb.DB
 	if _, err := nilDB.StorageStats(); !errors.Is(err, hexxladb.ErrDatabaseClosed) {
 		t.Fatalf("nil StorageStats: got %v, want ErrDatabaseClosed", err)
+	}
+}
+
+func TestReclaimTailPublicBoundary(t *testing.T) {
+	t.Parallel()
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "reclaim.db"), &hexxladb.Options{
+		EncryptionKey: []byte("authenticated reclaim public boundary key"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reclaimed, err := db.ReclaimTail(); err != nil || reclaimed != 0 {
+		t.Fatalf("empty reclaim = %d, %v", reclaimed, err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ReclaimTail(); !errors.Is(err, hexxladb.ErrDatabaseClosed) {
+		t.Fatalf("closed ReclaimTail: got %v, want ErrDatabaseClosed", err)
+	}
+	var nilDB *hexxladb.DB
+	if _, err := nilDB.ReclaimTail(); !errors.Is(err, hexxladb.ErrDatabaseClosed) {
+		t.Fatalf("nil ReclaimTail: got %v, want ErrDatabaseClosed", err)
 	}
 }

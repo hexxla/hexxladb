@@ -254,6 +254,13 @@ func TestCompactTo_encrypted(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = dest.Close() })
+	storage, err := dest.StorageStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storage.PhysicalPageSize <= storage.PageSize {
+		t.Fatalf("compacted encrypted page sizes = %d/%d, want authenticated envelope", storage.PageSize, storage.PhysicalPageSize)
+	}
 
 	p, _ := lattice.Pack(lattice.Coord{Q: 0, R: 0})
 	_ = dest.View(func(tx *hexxladb.Tx) error {

@@ -2,8 +2,6 @@ package hexxladb
 
 import (
 	"context"
-
-	"github.com/hexxla/hexxladb/internal/record"
 )
 
 // ── Pre-write validation ──────────────────────────────────────────────────────
@@ -12,14 +10,14 @@ import (
 // Implementations return a non-nil error to reject the cell; the error is
 // propagated as-is from [Tx.PutCell].
 type CellValidator interface {
-	ValidateCell(rec record.CellRecord) error
+	ValidateCell(rec CellRecord) error
 }
 
 // CellValidatorFunc adapts a plain function to [CellValidator].
-type CellValidatorFunc func(record.CellRecord) error
+type CellValidatorFunc func(CellRecord) error
 
 // ValidateCell implements [CellValidator].
-func (f CellValidatorFunc) ValidateCell(rec record.CellRecord) error { return f(rec) }
+func (f CellValidatorFunc) ValidateCell(rec CellRecord) error { return f(rec) }
 
 // AfterPutCellHook is called synchronously after a successful [Tx.PutCell] inside the
 // current [DB.Update] callback. The written record is passed for inspection.
@@ -30,14 +28,14 @@ func (f CellValidatorFunc) ValidateCell(rec record.CellRecord) error { return f(
 // the staged write to commit. Use this for synchronous validation-adjacent reactions or
 // metrics, and keep irreversible external side effects idempotent.
 type AfterPutCellHook interface {
-	AfterPutCell(ctx context.Context, rec record.CellRecord) error
+	AfterPutCell(ctx context.Context, rec CellRecord) error
 }
 
 // AfterPutCellHookFunc adapts a plain function to [AfterPutCellHook].
-type AfterPutCellHookFunc func(ctx context.Context, rec record.CellRecord) error
+type AfterPutCellHookFunc func(ctx context.Context, rec CellRecord) error
 
 // AfterPutCell implements [AfterPutCellHook].
-func (f AfterPutCellHookFunc) AfterPutCell(ctx context.Context, rec record.CellRecord) error {
+func (f AfterPutCellHookFunc) AfterPutCell(ctx context.Context, rec CellRecord) error {
 	return f(ctx, rec)
 }
 

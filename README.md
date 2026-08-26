@@ -25,7 +25,7 @@ Single binary, zero network dependencies, no daemon.
 
 ## How it works
 
-Cells sit at `(q, r)` hex coordinates. Related records sit nearby when the application applies a meaningful placement policy; HexxlaDB preserves supplied coordinates but does not infer semantic position. `LoadContext` walks outward from seed coordinates, applies caller-selected assembly options such as supersession resolution and seam inclusion, and returns a deterministic context pack bounded by result count.
+Cells sit at `(q, r)` hex coordinates. Related records sit nearby when the application supplies a meaningful semantic anchor; `FindFreeCellPlacement` can select the exact free coordinate deterministically, but HexxlaDB does not infer semantic position. `LoadContext` walks outward from seed coordinates, applies caller-selected assembly options such as supersession resolution and seam inclusion, and returns a deterministic context pack bounded by result count.
 
 | Primitive     | Description                                                                   |
 | ------------- | ----------------------------------------------------------------------------- |
@@ -43,7 +43,9 @@ Cells sit at `(q, r)` hex coordinates. Related records sit nearby when the appli
 go get github.com/hexxla/hexxladb
 ```
 
-Seven runnable examples cover conversational memory, LLM context assembly, spatial algorithms, and reproducible evidence workloads: [`examples/`](examples/).
+Nine runnable examples cover conversational memory, LLM context assembly,
+spatial algorithms, a remote-access ownership boundary, and reproducible
+evidence workloads: [`examples/`](examples/).
 
 ### Open a database
 
@@ -144,7 +146,27 @@ if err := db.Update(func(tx *hexxladb.Tx) error {
 }
 ```
 
-> All in-process, no network calls. Embed → search → filter → assemble — one library.
+> The library remains embedded and makes no network calls. Remote clients can
+> use an application-owned service boundary without sharing database files; see
+> the [remote-access example](examples/remote_access/).
+
+### Safe file maintenance
+
+The operator CLI preflights copy capacity and path collisions before migration
+or compaction. Dry runs do not create a candidate or copy new migration batches:
+
+```bash
+hexxladb compact --dry-run -o memory.compacted.db memory.db
+hexxladb migrate-v1-to-v2 --dry-run -o memory-v2.db memory-v1.db
+HEXXLA_DESTINATION_PASSPHRASE='...' \
+  hexxladb migrate-to-authenticated --dry-run -o memory-v3.db memory.db
+```
+
+Remove `--dry-run` to create a distinct candidate with durable progress and
+post-copy health verification. Sources are never replaced or deleted. Encrypted
+credentials come from named environment variables—not command arguments; see
+the [`OPERATIONS.md` runbook](docs/hexxladb/OPERATIONS.md) before publication or
+replacement.
 
 ---
 
@@ -178,7 +200,11 @@ The core primitives — spatial locality, provenance, contradiction tracking, re
 | Embedded (no network)              |    ✓     |     —      |     —     |     ✓      |
 | Encryption at rest                 |    ✓     |   varies   |     —     |     ✓      |
 
-Encryption scope matters: primary data pages use AES-256-XTS for confidentiality but are not cryptographically authenticated. Encrypted WAL records use a keyed MAC, and encrypted changelog frames use XChaCha20-Poly1305. See [`ENCRYPTION.md`](docs/hexxladb/ENCRYPTION.md) for the threat model.
+New encrypted databases use authenticated XChaCha20-Poly1305 engine format v3,
+including authenticated headers and keyed WAL publication. Legacy encrypted
+v1/v2 AES-XTS files remain readable but confidentiality-only until migrated.
+See [`ENCRYPTION.md`](docs/hexxladb/ENCRYPTION.md) for the exact threat model and
+rollback limits.
 
 ---
 
@@ -188,8 +214,10 @@ Public API guide: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE
 
 | Operation                                               | What it does                                                            |
 | ------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `FindFreeCellPlacement`                                 | Select a collision-safe cell key near a caller-owned semantic anchor    |
 | `PutCell` / `GetCell` / `DeleteCell`                    | Store, retrieve, or tombstone a memory                                  |
 | `PutEmbedding` / `SearchByEmbedding`                    | Store a vector; HNSW nearest-neighbor search                            |
+| `PutEmbeddingWithOptions` / `RebuildEmbeddingIndex`     | Defer graph work for bulk ingestion, then validate and publish atomically |
 | `SearchByEmbeddingWithStats`                            | Search with the selected HNSW/flat path and effective breadth           |
 | `QueryCells` / `SearchCells`                            | Hybrid ANN+filter search or multi-term lexical search                   |
 | `LoadContext` / `LoadContextFOV` / `LoadContextVoronoi` | Result-bounded context assembly — ring walk, FOV, or multi-seed Voronoi |
@@ -199,8 +227,9 @@ Public API guide: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE
 | `ViewAt` / `ViewAtTime` / `SnapshotDiff`                | MVCC time-travel and change detection                                   |
 | `ReadChangelogSince` / durable consumer cursor methods  | Consume and checkpoint the optional recoverable at-least-once changefeed |
 | `WriteStats` / `GroupWALStats`                          | Observe write contention, phase timing, and WAL batching                |
-| `BackupTo` / `StorageStats` / `CompactWithOptions`      | Back up an open database and manage physical storage                     |
-| `MigrateV1ToV2`                                        | Resumable, verified offline migration into MVCC format v2                 |
+| `BackupTo` / `StorageStats` / `ReclaimTail` / `CompactWithOptions` | Back up an open database and manage physical storage          |
+| `PreflightCompactTo` / migration preflights             | Validate maintenance paths, source state, credentials, and conservative capacity |
+| `MigrateV1ToV2` / `MigrateToAuthenticated`              | Source-preserving offline migration into MVCC v2 or authenticated encrypted v3 |
 | `HealthCheck`                                           | Validate visible records and secondary indexes                          |
 
 ---
@@ -217,9 +246,9 @@ _Intel Core i9-14900HX · 16 GB · Linux. API benchmark rows: Go 1.26–1.27, `-
 
 | Operation                             | Latency | Notes                                                                     |
 | ------------------------------------- | ------- | ------------------------------------------------------------------------- |
-| `GetCell` (2k cells)                  | ~20 µs  | O(log n) B+ tree                                                          |
-| `GetCell` encrypted (2k cells)        | ~21 µs  | AES-256-XTS; ~1 µs overhead vs plaintext                                  |
-| `GetCell` MVCC + encrypted (2k cells) | ~26 µs  | Combined bounded MVCC version seek + decryption                            |
+| `GetCell` plaintext v1 (2k cells)     | ~1.8 µs | O(log n) B+ tree                                                          |
+| `GetCell` plaintext MVCC v2 (2k cells)| ~16.4 µs| Bounded MVCC version seek                                                 |
+| `GetCell` authenticated v3 (2k cells) | ~16.3 µs| MVCC + XChaCha20-Poly1305; within run variation of plaintext MVCC          |
 | `WalkRing` r=2 (19 cells/walk, 2k DB) | ~162 µs | Scales with ring area, not DB size                                        |
 | `QueryCells` tag-only (2k cells)      | ~15 µs  | Index-only; no page reads                                                 |
 | `QueryCells` spatial r=5 (2k DB)      | ~634 µs | 91-cell ring area walk + filter (3r²+3r+1)                                |
@@ -247,6 +276,8 @@ _Intel Core i9-14900HX · 16 GB · Linux. API benchmark rows: Go 1.26–1.27, `-
 | `BatchPutCells` batch=100           | ~0.063 ms/cell | About 8× lower per-cell latency than single MVCC writes |
 | `PutEmbedding` dim=32 (HNSW insert) | ~53 ms/op      | Full HNSW graph maintenance per write                |
 | `PutEmbedding` dim=384              | ~74 ms/op      | Encode + graph insert scales with dimension          |
+| Deferred HNSW build 10k×32d         | ~9.28 s total  | ~1,078 vectors/s; bounded build plus atomic publish  |
+| Deferred HNSW build 10k×384d        | ~36.0 s total  | ~278 vectors/s; dimension-aware recall profile       |
 
 ### Semantic and lexical search
 
@@ -285,8 +316,10 @@ The context assembly operations (`LoadContext`, `LoadContextFOV`, `LoadContextVo
 | [Conversational Memory](examples/conversational_memory/)                   | `task demo`                       | Cells, seams, tags, MVCC, queries, context, FOV, pathfinding          |
 | [LLM Context Engine](examples/llm_context_engine/)                         | `task demo-llm`                   | Ollama embeddings, semantic search, supersession, FOV                 |
 | [Spatial Algorithms](examples/spatial_algorithms/)                         | `task demo-spatial`               | FOV, LOD, Voronoi, Dijkstra, BFS — side-by-side                       |
+| [Remote Access Owner Service](examples/remote_access/)                     | `task demo-remote`                | Loopback service, authentication, admission, and single file owner   |
 | [Performance Evidence](examples/performance_evidence/)                     | `task evidence-observe`           | Dijkstra, FOV, super-hex sync, allocation, and storage observations   |
-| [Vector Scale Evidence](examples/vector_scale_evidence/)                   | `task evidence-vector-scale`      | HNSW build, recall, reopen, churn, memory, and disk                    |
+| [Write-path Evidence](examples/write_path_evidence/)                       | `task evidence-write-path`        | Bounded write latency, throughput, allocation, and file growth       |
+| [Vector Scale Evidence](examples/vector_scale_evidence/)                   | `task evidence-vector-scale`      | Synchronous/deferred HNSW build, recall, reopen, churn, memory, and disk |
 | [Lattice Placement Evidence](examples/lattice_placement_evidence/)         | `task evidence-lattice-placement` | Placement stability and semantic/spatial divergence                   |
 | [Conservative Pilot Soak](examples/pilot_soak/)                            | `task soak-pilot`                 | Sustained mixed load, SLO gates, encrypted backup/restore, resources  |
 
@@ -296,19 +329,26 @@ The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm 
 
 ## Caveats
 
-- **Write throughput** — B+ tree with single writer; not suited for high-volume random write workloads. Use batch writes (`db.Update` with many operations) where possible.
-- **In-process only** — no network server; one process owns the file at a time.
-- **Measured HNSW envelope** — 10,000 vectors at 32 and 384 dimensions pass build, recall, reopen, and update/delete churn with 4 KiB pages and a 64 MiB page-cache budget. This is evidence for that tested scale, not an unbounded capacity claim; run `task evidence-vector-scale` with representative vectors before relying on larger sets or dimensions. Flat-scan fallback remains available, and `SearchByEmbeddingWithStats` reports the selected path.
+- **Write throughput** — B+ tree commits remain serialized and are not suited for high-volume independent random writes. Use bounded batch writes (`db.Update` with many operations) where possible, and run `task evidence-write-path` on representative storage to measure single-cell, 100-cell, and 32-dimensional cell/vector commit gates.
+- **Embedded, single-owner files** — the core has no built-in network server,
+  and exactly one process owns a database's files. Remote clients must use an
+  application-owned transport with authentication, authorization, admission,
+  and TLS. The bounded [remote-access example](examples/remote_access/)
+  validates that boundary but is not a production service product.
+- **Measured HNSW envelope** — the deferred lifecycle passes 20,000 vectors at 32 dimensions and 10,000 at 384 dimensions with 4 KiB pages and a 64 MiB page-cache budget. Deferred writes use exact flat search until a bounded `RebuildEmbeddingIndex` validates and atomically publishes HNSW; the default/hard rebuild bounds are 10,000/20,000 vectors and preflight also enforces a memory estimate and available filesystem space. This is evidence for those tested tiers, not an unbounded capacity claim; run `task evidence-vector-scale` with representative vectors before relying on other sizes, dimensions, or distributions. `SearchByEmbeddingWithStats` reports the selected path.
 - **Coordinates are sparse** — hex grid is a logical namespace, not a dense array. No compaction of coordinate space happens automatically.
-- **Placement is caller-owned** — the database does not infer semantic coordinates or resolve insert collisions. Use a deterministic first-free policy, preserve existing coordinates during incremental insertion, and measure semantic/lattice divergence with representative records.
-- **Storage is extend-only between maintenance windows** — deletes and pruning expose dead pages but do not shrink the primary; inspect `StorageStats`, then use bounded explicit compaction to create a smaller replacement.
-- **Primary-page integrity** — AES-XTS data pages provide confidentiality, not authenticated tamper detection. Use trusted storage and independently authenticated backups; encrypted WAL and changelog records do fail closed on modification.
+- **Semantic placement is caller-owned** — the database does not infer anchors from content, tags, embeddings, or model providers. `FindFreeCellPlacement` resolves the bounded geometric collision search around an anchor; preserve existing coordinates during incremental insertion and measure semantic/lattice divergence with representative records.
+- **Storage reclaim is format-dependent** — authenticated v3 transactions reuse whole freed B+ tree and overflow pages before extending the primary; `ReclaimTail` safely truncates a contiguous reusable suffix. Plaintext and legacy formats remain extend-only, and every format still needs explicit compaction to repack low-fill pages or fragmented historical layouts. Inspect `StorageStats` before maintenance.
+- **Rollback integrity** — authenticated v3 detects page modification, cross-page swaps, header/WAL tampering, and stale-root replay. Same-slot replay of an older valid non-root page and coordinated rollback of the complete recovery set require a trusted per-page catalog or external monotonic anchor; use independently authenticated, versioned backups. Legacy AES-XTS pages remain confidentiality-only.
 - **Pre-v1** — API may change between minor versions during the v0.y.z phase;
   the candidate/provisional inventory and measurable graduation gates are in
   [`VERSIONING.md`](VERSIONING.md).
 - **Explicit format upgrade** — format-v1 files are never auto-upgraded. Use
-  `MigrateV1ToV2` with a distinct destination; incomplete destinations are
-  refused by ordinary `Open`.
+  `MigrateV1ToV2` or the preflighted `hexxladb migrate-v1-to-v2` workflow with
+  a distinct destination. Use `MigrateToAuthenticated` or
+  `hexxladb migrate-to-authenticated` for a source-preserving v1/v2-to-v3
+  upgrade. Incomplete candidates are refused or removed; older libraries refuse
+  v3 and there is no downgrade writer.
 
 ---
 

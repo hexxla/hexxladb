@@ -139,7 +139,7 @@ func (tx *Tx) cellTagScanBounds(tag string) (from, to []byte, err error) {
 
 // AscendCellsBySource scans the source/ secondary index for sourceID and calls fn with each
 // decoded cell at that source (same PackedCoord as in the index key). ctx is checked between entries.
-func (tx *Tx) AscendCellsBySource(ctx context.Context, sourceID string, fn func(record.CellRecord) bool) error {
+func (tx *Tx) AscendCellsBySource(ctx context.Context, sourceID string, fn func(CellRecord) bool) error {
 	_, err := tx.ascendCellsBySource(ctx, sourceID, 0, fn)
 	return err
 }
@@ -205,7 +205,7 @@ func (tx *Tx) ascendCellsBySource(
 
 // AscendCellsInTimeBucket scans the time/ secondary index for the UTC week bucket (see [index.WeekBucketFromValidity])
 // and calls fn with each decoded cell in that bucket.
-func (tx *Tx) AscendCellsInTimeBucket(ctx context.Context, bucket int64, fn func(record.CellRecord) bool) error {
+func (tx *Tx) AscendCellsInTimeBucket(ctx context.Context, bucket int64, fn func(CellRecord) bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -249,7 +249,7 @@ func (tx *Tx) AscendCellsInTimeBucket(ctx context.Context, bucket int64, fn func
 
 // AscendCellsByTag scans the tag/ secondary index for tag and calls fn with each decoded cell
 // that lists that tag. ctx is checked between entries.
-func (tx *Tx) AscendCellsByTag(ctx context.Context, tag string, fn func(record.CellRecord) bool) error {
+func (tx *Tx) AscendCellsByTag(ctx context.Context, tag string, fn func(CellRecord) bool) error {
 	_, err := tx.ascendCellsByTag(ctx, tag, 0, fn)
 	return err
 }

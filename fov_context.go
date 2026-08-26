@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
-	"github.com/hexxla/hexxladb/internal/record"
 )
 
 const maxFOVContextRadius = 256
@@ -33,7 +32,7 @@ func (cfg *FOVContextConfig) withDefaults() {
 // not consume the context budget. Compared to plain radial loading, FOV skips
 // cells that are occluded behind opaque barriers, spending budget only on
 // semantically reachable cells.
-func (tx *Tx) LoadContextFOV(ctx context.Context, center Coord, maxR int, opaque func(Coord) bool, cfg FOVContextConfig) ([]record.CellRecord, error) {
+func (tx *Tx) LoadContextFOV(ctx context.Context, center Coord, maxR int, opaque func(Coord) bool, cfg FOVContextConfig) ([]CellRecord, error) {
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
 	}
@@ -63,8 +62,8 @@ func (tx *Tx) LoadContextFOV(ctx context.Context, center Coord, maxR int, opaque
 
 // fetchVisibleCells packs and fetches cells from a deterministic nearest-first
 // list of visible coordinates.
-func (tx *Tx) fetchVisibleCells(ctx context.Context, coords []Coord, maxCells int) ([]record.CellRecord, error) {
-	out := make([]record.CellRecord, 0, min(len(coords), maxCells))
+func (tx *Tx) fetchVisibleCells(ctx context.Context, coords []Coord, maxCells int) ([]CellRecord, error) {
+	out := make([]CellRecord, 0, min(len(coords), maxCells))
 	for _, c := range coords {
 		if err := ctx.Err(); err != nil {
 			return nil, err

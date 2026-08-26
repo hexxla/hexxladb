@@ -31,7 +31,7 @@
 
 1. For MVCC, stage the commit timeline before invoking the callback.
 2. After a successful callback, stage bounded changefeed intents under private `__meta/changelog-outbox/` keys and stage the new header `CommitSeq`.
-3. Commit data pages, the outbox, its head, and `CommitSeq` through one engine/WAL boundary.
+3. Commit data pages, the outbox, its head, and `CommitSeq` through one engine/WAL boundary. On authenticated v3, page releases and freelist metadata are part of this same boundary; an abort cannot publish reusable ids from an uncommitted tree mutation.
 4. Project those intents to the external changelog. Once its frames are durable, remove the acknowledged outbox keys in an internal cleanup transaction that does not advance `CommitSeq` or emit events.
 
 If the callback or a pre-commit stage fails, the engine transaction is aborted. If the engine reports an error while committing, **[`ErrCommitFinalization`](../../errors.go)** means the outcome is uncertain; close and reopen before inspecting authoritative state or retrying.
@@ -102,4 +102,4 @@ Semantics, cursors, at-least-once delivery, and durability modes are documented 
 
 ## Encryption
 
-Optional **AES-256-XTS** at the engine page boundary is configured via **[`Options`](../../options.go)** on **[`Open`](../../db.go)** (`EncryptionKey` and/or `Passphrase`). Transactions see **plaintext**; ciphertext applies to data pages on disk and in the WAL. Threat model, WAL behavior, and limitations are documented in **[`ENCRYPTION.md`](./ENCRYPTION.md)**.
+Official at-rest encryption is configured via **[`Options`](../../options.go)** on **[`Open`](../../db.go)** (`EncryptionKey` or `Passphrase`). Transactions see plaintext; new encrypted databases use authenticated engine format v3, while existing v1/v2 AES-XTS files remain readable through the legacy path. Threat model, WAL publication, migration, and residual rollback limits are documented in **[`ENCRYPTION.md`](./ENCRYPTION.md)**.

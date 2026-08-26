@@ -392,6 +392,13 @@ func TestRotateEncryption_reencryptsDatabase(t *testing.T) {
 	if err := hexxladb.RotateEncryption(path, oldOpts, newOpts); err != nil {
 		t.Fatal(err)
 	}
+	header, err := engine.ReadHeaderFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if header.FormatVersion != engine.AuthenticatedFormatVersion {
+		t.Fatalf("rotated format = %d, want authenticated v3", header.FormatVersion)
+	}
 	for _, stale := range []string{path + "-wal", path + ".rotate.state"} {
 		if _, err := os.Lstat(stale); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("successful rotation left stale recovery component %q: %v", stale, err)

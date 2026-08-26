@@ -23,18 +23,23 @@
 //     MVCC on new databases via [Options.EnableMVCC] / [Options.MVCCRetention];
 //     lifecycle: [DB.StatsMVCC], [DB.PruneCellVersions], [DB.SuggestedPruneBeforeSeq], [PruneScheduler]
 //     (see docs/hexxladb/OPERATIONS.md). Encryption operations include [RotateEncryption].
-//     [MigrateV1ToV2] performs the offline, resumable, verified upgrade from a format-v1 source.
+//     [PreflightMigrateV1ToV2] and [MigrateV1ToV2] provide an offline,
+//     capacity-checked, resumable, verified upgrade from a format-v1 source.
+//     [PreflightMigrateToAuthenticated] and [MigrateToAuthenticated] create a
+//     verified authenticated encrypted v3 candidate from a closed v1 or v2 source.
 //   - [DB.SnapshotDiff] — retained MVCC cell/seam history between two commit sequences;
 //     use the logical changelog for complete CDC or audit processing.
 //   - [DB.View], [DB.ViewAt], [DB.ViewAtTime], [DB.Update], [DB.Batch], [Tx] —
 //     Bolt-style transactions; [DB.Batch] is an alias for [DB.Update]; see docs/hexxladb/TX.md.
 //     [DB.WriteStats] and [DB.GroupWALStats] expose cumulative write-phase timing and batching counters.
-//   - [DB.StorageStats] — physical, live, and reclaimable storage accounting.
+//   - [DB.StorageStats] — physical, live, reusable, and reclaimable storage accounting;
+//     [DB.ReclaimTail] safely truncates a contiguous authenticated-freelist suffix.
 //   - [DB.BackupTo] — consistent online physical backup of the primary, WAL, and optional changelog.
 //   - [DB.Compact], [DB.CompactWithOptions], [CompactTo], [CompactToWithOptions] — bounded copy-compaction to reclaim dead pages
-//     with optional durable progress reporting (see docs/hexxladb/OPERATIONS.md).
+//     with optional durable progress and destination verification; [PreflightCompactTo]
+//     checks paths, source storage, and capacity (see docs/hexxladb/OPERATIONS.md).
 //   - [Tx.Get], [Tx.Put], [Tx.AscendRange] — byte-key ordered store.
-//     Lattice primitives: [Tx.PutCell], [Tx.GetCell], [Tx.DeleteCell], [Tx.DeleteCellWithOutcome], [Tx.WalkRing], [Tx.PutSeam],
+//     Lattice primitives: [Tx.FindFreeCellPlacement], [Tx.PutCell], [Tx.GetCell], [Tx.DeleteCell], [Tx.DeleteCellWithOutcome], [Tx.WalkRing], [Tx.PutSeam],
 //     [Tx.FindSeams], [Tx.FindSeamsAt], [Tx.LoadContext], [Tx.ResolveSeam] (see [primitives.go]);
 //     facets/edges: [Tx.PutFacet], [Tx.GetFacet], [Tx.AscendFacetsForCell],
 //     [Tx.PutEdge], [Tx.GetEdge], [Tx.AscendEdgesFrom] ([facets_edges.go]);
@@ -53,16 +58,19 @@
 //     [SuperHexSummary] (rebuildable aperture-7 occupancy summaries).
 //   - Embedding / vector search: dimension auto-detected from first [Tx.PutEmbedding]
 //     (or pre-set via [Options.EmbeddingDimension]); [Options.DistanceMetric] (default cosine);
-//     [Tx.PutEmbedding], [Tx.GetEmbedding], [Tx.DeleteEmbedding];
+//     [Tx.PutEmbedding], [Tx.PutEmbeddingWithOptions], [Tx.GetEmbedding], [Tx.DeleteEmbedding];
 //     [Tx.SearchByEmbedding] (HNSW-accelerated ANN, flat-scan fallback),
 //     [Tx.SearchByEmbeddingWithStats] (execution path and effective breadth), [EmbeddingSearchConfig];
+//     bounded derived-index publication through [DB.RebuildEmbeddingIndex];
 //     [Tx.ReindexEmbeddings]; [CellQuery.Embedding] / [CellSearchConfig.Embedding] integrate
 //     vector search into [Tx.QueryCells] / [Tx.SearchCells] (see docs/hexxladb/API_REFERENCE.md).
 //   - Sentinel errors are defined in errors.go and support [errors.Is]. Recovery-sensitive
 //     categories include lifecycle ([ErrDatabaseClosed], [ErrDatabaseLocked]), format and migration
-//     refusal ([ErrUnsupportedFormatVersion], [ErrMigrationIncomplete], [ErrMigrationChangelogState]),
+//     refusal ([ErrUnsupportedFormatVersion], [ErrMigrationIncomplete], [ErrMigrationChangelogState], [ErrCompactionIncomplete]),
 //     commit finalization ([ErrCommitFinalization], [ErrCommitDurable]), encryption and changelog
 //     integrity ([ErrEncryptionKeyMismatch], [ErrChangelogCorrupt], [ErrChangelogConsumerInvalidated]),
+//     placement ([ErrNoFreeCellPlacement]), embedding rebuild
+//     ([ErrEmbeddingIndexChanged], [ErrEmbeddingIndexTooLarge]), maintenance capacity ([ErrInsufficientSpace]),
 //     and MVCC snapshot errors ([ErrReadSeqFuture], [ErrMVCCRequired]).
 //
 // Lattice types ([Coord], [PackedCoord], [Pack], [Unpack], [Ring], [WalkRings]) are

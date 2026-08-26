@@ -34,17 +34,17 @@ Distance is the minimum number of neighbor steps between two cells. A ring at ra
 
 ## Placement policy and invariants
 
-HexxlaDB stores the coordinate an application supplies; it does not infer semantic position, relocate cells, or interpret `ClusterHint` as an allocation instruction. Meaningful proximity therefore depends on an explicit application placement policy.
+HexxlaDB stores an exact coordinate but does not infer semantic position, relocate cells, or interpret `ClusterHint` as an allocation instruction. An application may supply that coordinate directly or give `FindFreeCellPlacement` a semantic anchor and bounded radius for deterministic geometric allocation. Meaningful proximity still depends on explicit application policy.
 
 A reproducible policy should maintain these invariants:
 
-1. Assign one logical record to one unoccupied coordinate. Writing at an occupied coordinate intentionally replaces the visible record, so applications that mean “insert” must check occupancy before writing.
-2. Choose collision candidates in a stable order. A fixed topic anchor followed by deterministic concentric-ring order provides reproducible first-free allocation.
+1. Assign one logical record to one unoccupied coordinate. Writing at an occupied coordinate intentionally replaces the visible record, so insertion workflows should use `FindFreeCellPlacement` and `PutCell` in the same update.
+2. Choose collision candidates in a stable order. `FindFreeCellPlacement` applies deterministic concentric-ring order around the caller's fixed anchor and reports the occupied positions it probes.
 3. Never shift existing coordinates during ordinary insertion. Append new records at the next free candidate so stored links, external references, and neighborhood explanations remain stable.
 4. Treat `ClusterHint` as caller-owned metadata. HexxlaDB persists it but does not validate the hint, place the cell near it, or keep hinted groups together.
 5. Model relocation as lifecycle history: create the successor at a new free coordinate, write its semantic and provenance metadata, and record an explicit directional supersession in the same update. Keep the predecessor addressable for audit; context assembly substitutes the successor only when the caller requests supersession filtering.
 
-Applications should retain a stable record-ID-to-coordinate mapping or enough record metadata to reconstruct it. Collision resolution, semantic clustering, anchor selection, relocation triggers, and acceptable neighborhood-quality thresholds are product policy, not database guarantees.
+Applications should retain a stable record-ID-to-coordinate mapping or enough record metadata to reconstruct it. HexxlaDB owns only bounded geometric collision resolution; semantic clustering, anchor selection, relocation triggers, and acceptable neighborhood-quality thresholds remain product policy.
 
 Inspect placement through deterministic neighborhood walks, bounded context assembly, semantic-neighbor queries, labelled grids, and density summaries. Compare semantic-neighbor topic distribution with lattice-neighbor distribution rather than assuming that high semantic-retrieval quality implies useful spatial neighborhoods. The repeatable reference evaluation is documented in [`PERFORMANCE_EVIDENCE.md`](./PERFORMANCE_EVIDENCE.md#lattice-placement-evidence).
 

@@ -26,7 +26,7 @@ import (
 // domain decision. Orphaned seams surface via [DB.HealthCheck].
 //
 // Only allowed inside [DB.Update].
-func (tx *Tx) DeleteCell(ctx context.Context, key lattice.PackedCoord) error {
+func (tx *Tx) DeleteCell(ctx context.Context, key PackedCoord) error {
 	_, err := tx.DeleteCellWithOutcome(ctx, key)
 	return err
 }
@@ -36,7 +36,7 @@ func (tx *Tx) DeleteCell(ctx context.Context, key lattice.PackedCoord) error {
 // delete on the same coordinate returns removed=false with a nil error.
 //
 // Only allowed inside [DB.Update].
-func (tx *Tx) DeleteCellWithOutcome(ctx context.Context, key lattice.PackedCoord) (removed bool, err error) {
+func (tx *Tx) DeleteCellWithOutcome(ctx context.Context, key PackedCoord) (removed bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}

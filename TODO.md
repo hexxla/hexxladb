@@ -10,7 +10,7 @@ Immediate next steps. Update after each session.
 ## Pending (next sessions)
 
 - [ ] **`BatchDeleteCells`** (or equivalent) — batched/chunked **`DeleteCell`** helper + docs/tests; reference **`docs/ROADMAP.md`** Near-term bullet
-- [ ] **Engine and retention investigations** — optional **`DB.Path()`**, partial reclaim research, physical purge semantics, and prune extensions; see **`docs/ROADMAP.md`**
+- [ ] **Engine and retention investigations** — optional **`DB.Path()`**, physical purge semantics, and prune extensions; see **`docs/ROADMAP.md`**
 - [ ] Monitor for v1.0.0 graduation criteria (per VERSIONING.md)
 
 ---

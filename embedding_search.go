@@ -91,11 +91,17 @@ func (tx *Tx) SearchByEmbeddingWithStats(vec []float32, cfg EmbeddingSearchConfi
 	}
 	efSearch = max(efSearch, maxResults)
 
-	// Try HNSW graph first.
-	if results, used, err := tx.searchHNSW(vec, maxResults, cfg.MinScore, efSearch, metric); err != nil {
+	state, stateFound, err := tx.loadEmbeddingIndexState()
+	if err != nil {
 		return nil, EmbeddingSearchStats{}, err
-	} else if used {
-		return results, EmbeddingSearchStats{Path: EmbeddingSearchPathHNSW, EfSearch: efSearch}, nil
+	}
+	if !stateFound || !state.dirty {
+		// Try HNSW graph first when the persisted lifecycle state says it is current.
+		if results, used, searchErr := tx.searchHNSW(vec, maxResults, cfg.MinScore, efSearch, metric); searchErr != nil {
+			return nil, EmbeddingSearchStats{}, searchErr
+		} else if used {
+			return results, EmbeddingSearchStats{Path: EmbeddingSearchPathHNSW, EfSearch: efSearch}, nil
+		}
 	}
 
 	// Flat-scan fallback.

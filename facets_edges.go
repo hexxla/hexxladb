@@ -13,7 +13,7 @@ import (
 )
 
 // PutFacet writes a facet record at facet/<packed>/<facet_id>. Only allowed inside [DB.Update].
-func (tx *Tx) PutFacet(rec record.FacetRecord) error {
+func (tx *Tx) PutFacet(rec FacetWalkRecord) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}
@@ -40,7 +40,7 @@ func (tx *Tx) PutFacet(rec record.FacetRecord) error {
 // UpdateFacet writes a facet only if rec.DerivationHash equals SHA-256 of the cell's current RawContent
 // (see docs/hexxladb/HEXXLA.md Facet lifecycle). Use [Tx.PutFacet] to write without this check.
 // Only allowed inside [DB.Update].
-func (tx *Tx) UpdateFacet(rec record.FacetRecord) error {
+func (tx *Tx) UpdateFacet(rec FacetWalkRecord) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}
@@ -59,7 +59,7 @@ func (tx *Tx) UpdateFacet(rec record.FacetRecord) error {
 }
 
 // GetFacet returns the facet at (key, facetID), or (zero, false, nil) if missing.
-func (tx *Tx) GetFacet(key lattice.PackedCoord, facetID byte) (record.FacetRecord, bool, error) {
+func (tx *Tx) GetFacet(key PackedCoord, facetID byte) (FacetWalkRecord, bool, error) {
 	if tx == nil || tx.db == nil {
 		return record.FacetRecord{}, false, ErrClosed
 	}
@@ -82,7 +82,7 @@ func (tx *Tx) GetFacet(key lattice.PackedCoord, facetID byte) (record.FacetRecor
 
 // AscendFacetsForCell visits every facet for the given cell (facet_id 0..5) in key order.
 // Stops early if fn returns false.
-func (tx *Tx) AscendFacetsForCell(key lattice.PackedCoord, fn func(record.FacetRecord) bool) error {
+func (tx *Tx) AscendFacetsForCell(key PackedCoord, fn func(FacetWalkRecord) bool) error {
 	if tx == nil || tx.db == nil {
 		return ErrClosed
 	}
@@ -126,7 +126,7 @@ func (tx *Tx) AscendFacetsForCell(key lattice.PackedCoord, fn func(record.FacetR
 }
 
 // PutEdge writes an edge at edge/<from>/<to>/<relation_type>. Only allowed inside [DB.Update].
-func (tx *Tx) PutEdge(rec record.EdgeRecord) error {
+func (tx *Tx) PutEdge(rec EdgeWalkRecord) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ func (tx *Tx) PutEdge(rec record.EdgeRecord) error {
 }
 
 // GetEdge returns the edge for (from, to, relationType), or (zero, false, nil) if missing.
-func (tx *Tx) GetEdge(from, to lattice.PackedCoord, relationType string) (record.EdgeRecord, bool, error) {
+func (tx *Tx) GetEdge(from, to PackedCoord, relationType string) (EdgeWalkRecord, bool, error) {
 	if tx == nil || tx.db == nil {
 		return record.EdgeRecord{}, false, ErrClosed
 	}
@@ -185,7 +185,7 @@ func (tx *Tx) GetEdge(from, to lattice.PackedCoord, relationType string) (record
 
 // AscendEdgesFrom visits every edge whose from-cell matches from (prefix scan in key order).
 // Stops when fn returns false or when keys leave the from-prefix (see internal/index.EdgeFromPrefix).
-func (tx *Tx) AscendEdgesFrom(from lattice.PackedCoord, fn func(record.EdgeRecord) bool) error {
+func (tx *Tx) AscendEdgesFrom(from PackedCoord, fn func(EdgeWalkRecord) bool) error {
 	if tx == nil || tx.db == nil {
 		return ErrClosed
 	}
@@ -213,7 +213,7 @@ func (tx *Tx) AscendEdgesFrom(from lattice.PackedCoord, fn func(record.EdgeRecor
 
 // LinkCells is the spec-shaped helper for link_cells: packs endpoints and [Tx.PutEdge].
 // relationType must be non-empty. Only allowed inside [DB.Update].
-func (tx *Tx) LinkCells(from, to lattice.Coord, relationType string, weight float64, prov record.ProvenanceWire) error {
+func (tx *Tx) LinkCells(from, to Coord, relationType string, weight float64, prov ProvenanceWire) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}

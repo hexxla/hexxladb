@@ -134,6 +134,13 @@ func TestBackupToEncryptedChangelogUsesDestinationSidecar(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = restored.Close() })
+	storage, err := restored.StorageStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storage.PhysicalPageSize <= storage.PageSize {
+		t.Fatalf("restored encrypted page sizes = %d/%d, want authenticated envelope", storage.PageSize, storage.PhysicalPageSize)
+	}
 	records, err := restored.ReadChangelogSince(0, 10)
 	if err != nil {
 		t.Fatal(err)

@@ -2,21 +2,46 @@
 
 This file contains pending or deliberately deferred work. Completed work belongs in [`CHANGELOG.md`](../CHANGELOG.md); session-level tasks belong in [`TODO.md`](../TODO.md).
 
-## Deferred security-format work
+## Active limitation-reduction programme
 
-### Authenticated primary pages
+These workstreams are ordered by implementation dependency. “Active” means each
+is ready for bounded planning and evidence collection, not that an engine
+redesign ships without first demonstrating the need. Complete and move one
+workstream to `CHANGELOG.md` before beginning an overlapping implementation.
+Workstream numbers remain stable when completed items are removed.
 
-**Outcome:** Replace confidentiality-only AES-XTS data pages with a versioned authenticated format that detects primary-file modification without nonce reuse, silent downgrade, or weaker crash recovery.
+| README caveat | Active response |
+| --- | --- |
+| Serialized write throughput | Retain serialized correctness, use bounded caller batching, and rerun the write-path gates before considering commit-pipeline changes. |
+| Measured HNSW envelope | Retain the measured 20,000×32d and 10,000×384d limits; rerun bounded vector evidence before raising them. |
+| Sparse coordinates | Retain sparsity as a logical property; use authenticated page reuse, bounded tail reclaim, and explicit compaction for physical storage. |
+| Caller-owned semantic placement | Retain this as a product boundary: applications own meaning and anchor selection; the database must not infer either. |
+| Extend-only storage | Authenticated v3 reuses generation-safe pages and supports explicit tail reclaim; plaintext/legacy formats retain documented compaction. |
+| Pre-v1 API stability | Preserve the candidate baseline while collecting the graduation evidence below. |
 
-- Define the page-level threat model and representative latency, throughput, space, and recovery budgets before selecting an AEAD construction.
-- Persist a unique rewrite generation or nonce and authentication tag for every page image; bind the page identity, format version, and generation as associated data.
-- Integrate authenticated page images with WAL replay and header publication so interruption at each write boundary recovers one valid generation and never reuses a nonce.
-- Provide an offline, source-preserving migration and explicit downgrade refusal. Keep the current XTS format readable only through the documented legacy path.
-- Exercise ciphertext, tag, nonce, generation, page-swap, WAL-swap, truncation, wrong-key, interrupted-migration, reopen, and backup/restore faults.
+### 7. Eventual v1 graduation evidence
 
-**Completion evidence:** all primary-page modifications fail closed before decoded data is returned; crash-injection tests recover a single authenticated state without nonce reuse; migration fixtures preserve logical data and indexes; and published benchmarks show the supported performance and space envelope.
+**Outcome:** Graduate only after production and release evidence supports the
+already classified candidate API, without accelerating the version number.
 
-## Near-term
+- Preserve the exact exported-API baseline, migration notes, and at least one
+  minor-release deprecation window except for urgent correctness or security
+  failures.
+- Complete a named limited-production adoption, recovery drill,
+  deployment-specific supported-scale evidence, and signed release rehearsal on
+  the eventual candidate commit.
+
+**Completion evidence:** compatibility checks and migration notes pass, and
+every measurable v1 gate in
+[`VERSIONING.md`](../VERSIONING.md) has current evidence. Until then the project
+remains on the `v0.y.z` line.
+
+Sparse coordinates remain an intentional logical-namespace property: empty
+coordinates consume no records and existing coordinates are never renumbered
+for cosmetic density. Improvements belong in bounded allocation, diagnostics,
+page reuse, and compaction rather than coordinate-space rewriting.
+
+## Other near-term work
 
 - **Bulk cell deletion** — add a `BatchPutCells`-style helper for bounded or chunked deletion, with MVCC-aware per-row outcomes, progress, and documented changelog behavior. Disk reclamation remains an explicit prune-then-compact operation.
 
@@ -33,6 +58,7 @@ These are plausible extensions, not commitments. Promote one only when a represe
 - **Large-graph shortest paths** — reconsider advanced SSSP algorithms such as BMSSP only when graph sizes and profiles show Dijkstra expansion is the limiting cost. Current bounded workloads do not justify the implementation complexity.
 - **Page-level corruption fault injection** — extend current decoder, WAL, overflow-chain, and B+ tree invariant tests with byte-level primary-file faults when a defined recovery or fail-closed requirement identifies coverage that structural unit tests do not provide.
 - **Resource-failure injection** — add deterministic ENOSPC, sync, allocation, or file-descriptor fault seams only when an operator requirement defines the expected transaction outcome and recovery evidence; avoid non-reproducible host-exhaustion tests.
+- **Complete same-slot replay detection** — prototype a Merkle or equivalent authenticated per-page generation catalog only when an adopter requires defense against replay of an older valid non-root page on hostile storage. Require bounded metadata growth, crash-consistent root publication, no recursive trust cycle, representative read/write amplification, migration, and external-anchor semantics before changing format v3.
 
 ## Research experiments
 
@@ -48,14 +74,13 @@ These experiments test research-derived hypotheses without committing to a publi
 ## Engine and retention investigations
 
 - **`DB.Path()`** — small API ergonomics candidate for embedders that must inspect the backing file.
-- **Partial file reclaim** — persistent freelist reuse, tail truncation, and platform-specific hole punching remain deferred until measured prune-then-compact windows miss an operator requirement. Any future design must generation-protect reused pages from stale WAL replay and prove allocator recovery before replacing the supported [`PruneCellVersions`](./hexxladb/OPERATIONS.md#mvcc-retention-and-pruning) followed by compaction path.
 - **Physical coordinate purge** — define whether removing the latest tombstone can coexist with explicit historical-snapshot guarantees before considering an API.
 - **Changefeed-coordinated pruning** — consider alternative pruning modes only with a precise retained-sequence contract.
 
 ## Out of scope
 
 - Distributed replication and high availability; HexxlaDB is an embedded single-owner database.
-- Automatic primary-file shrinking; compaction is explicit.
+- Unbounded background primary-file rewriting or implicit compaction; maintenance remains explicit even if generation-safe page reuse and tail reclamation are added.
 - Online re-encryption; rotation is offline.
 - Pluggable SQLite or third-party key-value storage cores.
 - Automatic truth assessment, confidence decay, relationship reinforcement, or other product-policy mutation inside the database.

@@ -37,6 +37,75 @@ func TestWriteTxn_readYourWritesBeforeCommit(t *testing.T) {
 	}
 }
 
+func TestWriteTxn_WritePageOwnsBufferedBytes(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "owned.db")
+	reusedHookOutput := make([]byte, DefaultPageSize)
+	e, err := Open(path, &Options{Hooks: &PageHooks{
+		BeforeWrite: func(_ uint64, plain []byte) ([]byte, error) {
+			copy(reusedHookOutput, plain)
+			return reusedHookOutput, nil
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = e.Close() }()
+
+	if err := e.BeginWriteTxn(); err != nil {
+		t.Fatal(err)
+	}
+	want := bytes.Repeat([]byte{0x42}, DefaultPageSize)
+	input := bytes.Clone(want)
+	if err := e.WritePage(1, input); err != nil {
+		t.Fatal(err)
+	}
+	clear(input)
+	clear(reusedHookOutput)
+	if err := e.CommitWriteTxn(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := e.ReadPage(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("buffered page changed after caller and hook buffers were mutated")
+	}
+}
+
+func TestWriteTxn_WritePageOwnsCallerInputWithoutHook(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "owned-plain.db")
+	e, err := Open(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = e.Close() }()
+
+	if err := e.BeginWriteTxn(); err != nil {
+		t.Fatal(err)
+	}
+	want := bytes.Repeat([]byte{0x37}, DefaultPageSize)
+	input := bytes.Clone(want)
+	if err := e.WritePage(1, input); err != nil {
+		t.Fatal(err)
+	}
+	clear(input)
+	if err := e.CommitWriteTxn(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := e.ReadPage(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("buffered page changed after caller input was mutated")
+	}
+}
+
 func TestWriteTxn_abortRevertsToDisk(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

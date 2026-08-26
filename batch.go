@@ -41,7 +41,7 @@ type BatchPutCellResult struct {
 
 // BatchPutCells writes multiple cells in batched transactions with optional progress.
 // Each batch commits BatchSize cells in a single [DB.Update] call.
-func (db *DB) BatchPutCells(ctx context.Context, cells []record.CellRecord, opts *BatchPutCellOptions) (BatchPutCellResult, error) {
+func (db *DB) BatchPutCells(ctx context.Context, cells []CellRecord, opts *BatchPutCellOptions) (BatchPutCellResult, error) {
 	batchSize := 128
 	var onProgress func(int)
 	continueOnError := false

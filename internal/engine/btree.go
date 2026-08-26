@@ -104,11 +104,18 @@ func OpenBTree(e *Engine) *BTree {
 	return &BTree{eng: e}
 }
 
-// allocPageID returns the next page id that WritePage will allocate (see ENGINE_FORMAT).
+// allocPageID returns a reusable authenticated page when possible, otherwise
+// reserves the next page id (see ENGINE_FORMAT).
 func (t *BTree) allocPageID() (uint64, error) {
+	if pageID, ok := t.eng.allocateReusablePageID(); ok {
+		return pageID, nil
+	}
 	hdr, err := t.eng.ReadHeader()
 	if err != nil {
 		return 0, err
+	}
+	if t.eng.wtxn != nil && hdr.FormatVersion == formatVersionV3 {
+		t.eng.wtxn.hdr.NextPageID++
 	}
 	return hdr.NextPageID, nil
 }
@@ -217,14 +224,56 @@ func (t *BTree) Put(key, val []byte) error {
 	if hdr.BTreeRoot == 0 {
 		return t.putFirst(key, leafVal)
 	}
+	oldOverflowPage, hadOldOverflow, err := t.storedOverflowPage(hdr.BTreeRoot, key)
+	if err != nil {
+		return err
+	}
 	refs, err := t.insertAt(hdr.BTreeRoot, key, leafVal)
 	if err != nil {
 		return err
 	}
-	if len(refs) == 0 {
-		return nil
+	if len(refs) != 0 {
+		if err := t.growRoot(hdr.BTreeRoot, refs); err != nil {
+			return err
+		}
 	}
-	return t.growRoot(hdr.BTreeRoot, refs)
+	if hadOldOverflow {
+		return t.freeOverflowChain(oldOverflowPage)
+	}
+	return nil
+}
+
+// storedOverflowPage returns the first overflow page for an existing raw leaf
+// value. It intentionally does not decode the value like GetUsingRoot.
+func (t *BTree) storedOverflowPage(root uint64, key []byte) (uint64, bool, error) {
+	pid := root
+	for {
+		page, release, err := t.eng.readPagePooled(pid)
+		if err != nil {
+			return 0, false, err
+		}
+		switch page[5] {
+		case btreeKindLeaf:
+			value, ok, lookupErr := lookupLeafValue(page, key)
+			if lookupErr != nil || !ok || !isOverflowStub(value) {
+				release()
+				return 0, false, lookupErr
+			}
+			_, firstPage := decodeOverflowStub(value)
+			release()
+			return firstPage, true, nil
+		case btreeKindInternal:
+			child, lookupErr := lookupInternalChild(page, key)
+			release()
+			if lookupErr != nil {
+				return 0, false, lookupErr
+			}
+			pid = child
+		default:
+			release()
+			return 0, false, ErrCorruptTree
+		}
+	}
 }
 
 // growRoot installs one or more new internal levels above oldRoot after a split

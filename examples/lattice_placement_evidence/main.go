@@ -28,7 +28,6 @@ import (
 const (
 	vectorDimension      = 12
 	maxDocumentsPerTopic = 100
-	maxPlacementRadius   = 128
 )
 
 type config struct {
@@ -314,22 +313,18 @@ func placeDocuments(ctx context.Context, db *hexxladb.DB, state *placementState,
 			if policy == clustered {
 				anchor = topicByID(doc.topicID).anchor
 			}
-			coord, probes, err := firstFreeCoordinate(tx, anchor)
+			placement, err := tx.FindFreeCellPlacement(ctx, anchor, hexxladb.MaxCellPlacementRadius)
 			if err != nil {
 				return fmt.Errorf("allocate %s: %w", doc.id, err)
 			}
-			state.collisionProbes += probes
-			packed, err := hexxladb.Pack(coord)
-			if err != nil {
-				return fmt.Errorf("pack %s: %w", doc.id, err)
-			}
+			state.collisionProbes += placement.Probes
 			clusterHint := topicByID(doc.topicID).anchor
 			clusterPacked, err := hexxladb.Pack(clusterHint)
 			if err != nil {
 				return fmt.Errorf("pack cluster hint %s: %w", doc.id, err)
 			}
 			record := hexxladb.CellRecord{
-				Key:         packed,
+				Key:         placement.Key,
 				RawContent:  doc.content,
 				Tags:        []string{"topic:" + doc.topicID, "document:" + doc.id},
 				ClusterHint: new(clusterPacked),
@@ -341,35 +336,14 @@ func placeDocuments(ctx context.Context, db *hexxladb.DB, state *placementState,
 			if err := tx.PutCell(ctx, record); err != nil {
 				return fmt.Errorf("put cell %s: %w", doc.id, err)
 			}
-			if err := tx.PutEmbedding(packed, doc.vector); err != nil {
+			if err := tx.PutEmbedding(placement.Key, doc.vector); err != nil {
 				return fmt.Errorf("put embedding %s: %w", doc.id, err)
 			}
-			state.byID[doc.id] = coord
-			state.byCoord[coord] = doc
+			state.byID[doc.id] = placement.Coord
+			state.byCoord[placement.Coord] = doc
 		}
 		return nil
 	})
-}
-
-func firstFreeCoordinate(tx *hexxladb.Tx, anchor hexxladb.Coord) (hexxladb.Coord, int, error) {
-	probes := 0
-	for radius := range maxPlacementRadius + 1 {
-		for _, candidate := range hexxladb.Ring(anchor, radius) {
-			packed, err := hexxladb.Pack(candidate)
-			if err != nil {
-				return hexxladb.Coord{}, probes, err
-			}
-			_, occupied, err := tx.GetCell(packed)
-			if err != nil {
-				return hexxladb.Coord{}, probes, err
-			}
-			if !occupied {
-				return candidate, probes, nil
-			}
-			probes++
-		}
-	}
-	return hexxladb.Coord{}, probes, errors.New("no free coordinate within bounded placement radius")
 }
 
 func evaluate(ctx context.Context, db *hexxladb.DB, docsByCoord map[hexxladb.Coord]document, cfg config) (qualityMetrics, error) {
@@ -549,24 +523,23 @@ func exerciseRelocation(ctx context.Context, db *hexxladb.DB, state *placementSt
 	successor.content += " This successor records an application-requested relocation."
 	var newCoord hexxladb.Coord
 	err := db.Update(func(tx *hexxladb.Tx) error {
-		var probes int
-		var err error
-		newCoord, probes, err = firstFreeCoordinate(tx, topicByID(old.topicID).anchor)
+		placement, err := tx.FindFreeCellPlacement(
+			ctx,
+			topicByID(old.topicID).anchor,
+			hexxladb.MaxCellPlacementRadius,
+		)
 		if err != nil {
 			return err
 		}
-		state.collisionProbes += probes
-		packed, err := hexxladb.Pack(newCoord)
-		if err != nil {
-			return err
-		}
+		newCoord = placement.Coord
+		state.collisionProbes += placement.Probes
 		hint := topicByID(old.topicID).anchor
 		hintPacked, err := hexxladb.Pack(hint)
 		if err != nil {
 			return err
 		}
 		if err := tx.PutCell(ctx, hexxladb.CellRecord{
-			Key:         packed,
+			Key:         placement.Key,
 			RawContent:  successor.content,
 			Tags:        []string{"topic:" + successor.topicID, "document:" + successor.id},
 			ClusterHint: new(hintPacked),
@@ -577,7 +550,7 @@ func exerciseRelocation(ctx context.Context, db *hexxladb.DB, state *placementSt
 		}); err != nil {
 			return err
 		}
-		if err := tx.PutEmbedding(packed, successor.vector); err != nil {
+		if err := tx.PutEmbedding(placement.Key, successor.vector); err != nil {
 			return err
 		}
 		return tx.MarkSupersedes(newCoord, oldCoord, "application-requested stable relocation")

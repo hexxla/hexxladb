@@ -9,10 +9,13 @@ import (
 // Page counts include the header page (page 0).
 type StorageStats struct {
 	PageSize         uint64
+	PhysicalPageSize uint64
 	PrimaryBytes     uint64
 	WALBytes         uint64
 	AllocatedPages   uint64
 	ReachablePages   uint64
+	AllocatorPages   uint64
+	ReusablePages    uint64
 	LiveBytes        uint64
 	ReclaimableBytes uint64
 }
@@ -39,12 +42,13 @@ func (t *BTree) StorageStats() (StorageStats, error) {
 		return StorageStats{}, fmt.Errorf("%w: negative file size", ErrCorruptTree)
 	}
 
-	pageSize := uint64(t.pageSize())           //nolint:gosec // page size is one of the supported positive values.
-	primaryBytes := uint64(primaryInfo.Size()) //nolint:gosec // size was checked non-negative above.
-	if primaryBytes%pageSize != 0 {
+	pageSize := uint64(t.pageSize())                   //nolint:gosec // page size is one of the supported positive values.
+	physicalPageSize := uint64(t.eng.physicalPageSize) //nolint:gosec // the physical stride is validated positive at open.
+	primaryBytes := uint64(primaryInfo.Size())         //nolint:gosec // size was checked non-negative above.
+	if primaryBytes < pageSize || (primaryBytes-pageSize)%physicalPageSize != 0 {
 		return StorageStats{}, fmt.Errorf("%w: primary size %d is not page aligned", ErrCorruptTree, primaryBytes)
 	}
-	allocatedPages := primaryBytes / pageSize
+	allocatedPages := 1 + (primaryBytes-pageSize)/physicalPageSize
 	if allocatedPages == 0 || hdr.NextPageID == 0 || hdr.NextPageID > allocatedPages {
 		return StorageStats{}, fmt.Errorf(
 			"%w: allocator next page %d outside %d physical pages",
@@ -55,6 +59,15 @@ func (t *BTree) StorageStats() (StorageStats, error) {
 	}
 
 	visited := map[uint64]struct{}{0: {}}
+	freelistPages, err := t.eng.freelistMetadataIDs(hdr)
+	if err != nil {
+		return StorageStats{}, err
+	}
+	for _, pageID := range freelistPages {
+		if err := markReachablePage(pageID, hdr.NextPageID, visited); err != nil {
+			return StorageStats{}, err
+		}
+	}
 	if hdr.BTreeRoot != 0 {
 		if err := t.walkReachableTreePage(hdr.BTreeRoot, hdr.NextPageID, visited); err != nil {
 			return StorageStats{}, err
@@ -67,12 +80,15 @@ func (t *BTree) StorageStats() (StorageStats, error) {
 
 	return StorageStats{
 		PageSize:         pageSize,
+		PhysicalPageSize: physicalPageSize,
 		PrimaryBytes:     primaryBytes,
 		WALBytes:         uint64(walInfo.Size()), //nolint:gosec // size was checked non-negative above.
 		AllocatedPages:   allocatedPages,
 		ReachablePages:   reachablePages,
-		LiveBytes:        reachablePages * pageSize,
-		ReclaimableBytes: (allocatedPages - reachablePages) * pageSize,
+		AllocatorPages:   uint64(len(freelistPages)), //nolint:gosec // bounded by allocated page count.
+		ReusablePages:    hdr.FreelistCount,
+		LiveBytes:        pageSize + (reachablePages-1)*physicalPageSize,
+		ReclaimableBytes: (allocatedPages - reachablePages) * physicalPageSize,
 	}, nil
 }
 

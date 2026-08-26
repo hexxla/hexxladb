@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/hexxla/hexxladb"
+	"github.com/hexxla/hexxladb/internal/engine"
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/record"
 )
@@ -292,14 +293,13 @@ func TestMigrateV1ToV2CancellationResumesAndPreservesSource(t *testing.T) {
 	assertMigrationFixture(t, destinationPath, nil, fixture)
 }
 
-func TestMigrateV1ToV2EncryptedSourceAndDestination(t *testing.T) {
+func TestMigrateV1ToV2PlaintextSourceAndEncryptedDestination(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	sourcePath := filepath.Join(dir, "source.db")
 	destinationPath := filepath.Join(dir, "destination.db")
-	fixture := seedMigrationFixture(t, sourcePath, &hexxladb.Options{Passphrase: "old-secret", EmbeddingDimension: 3})
+	fixture := seedMigrationFixture(t, sourcePath, &hexxladb.Options{EmbeddingDimension: 3})
 	err := hexxladb.MigrateV1ToV2(t.Context(), sourcePath, destinationPath, &hexxladb.MigrationOptions{
-		SourceOptions:      &hexxladb.Options{Passphrase: "old-secret"},
 		DestinationOptions: &hexxladb.Options{Passphrase: "new-secret"},
 	})
 	if err != nil {
@@ -309,6 +309,124 @@ func TestMigrateV1ToV2EncryptedSourceAndDestination(t *testing.T) {
 		t.Fatalf("old destination credential error=%v, want ErrEncryptionKeyMismatch", err)
 	}
 	assertMigrationFixture(t, destinationPath, &hexxladb.Options{Passphrase: "new-secret"}, fixture)
+}
+
+func TestMigrateV1ToAuthenticatedLogicalEquivalence(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "source.db")
+	destinationPath := filepath.Join(dir, "authenticated.db")
+	fixture := seedMigrationFixture(t, sourcePath, &hexxladb.Options{EmbeddingDimension: 3})
+	destinationOptions := &hexxladb.Options{Passphrase: "authenticated-destination"}
+	if err := hexxladb.MigrateToAuthenticated(t.Context(), sourcePath, destinationPath, &hexxladb.MigrationOptions{
+		DestinationOptions: destinationOptions,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	hdr, err := engine.ReadHeaderFile(destinationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hdr.FormatVersion != engine.AuthenticatedFormatVersion || hdr.Features&engine.FeatureAuthenticatedDataPages == 0 {
+		t.Fatalf("destination header = %+v, want authenticated v3", hdr)
+	}
+	assertMigrationFixture(t, destinationPath, destinationOptions, fixture)
+	if source, err := hexxladb.Open(sourcePath, nil); err != nil {
+		t.Fatalf("source was not preserved: %v", err)
+	} else if err := source.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMigrateV2LegacyEncryptionToAuthenticatedWithNewCredential(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	v1Path := filepath.Join(dir, "v1.db")
+	v2Path := filepath.Join(dir, "v2-legacy.db")
+	v3Path := filepath.Join(dir, "v3-authenticated.db")
+	fixture := seedMigrationFixture(t, v1Path, &hexxladb.Options{EmbeddingDimension: 3})
+	oldOptions := &hexxladb.Options{Passphrase: "legacy-secret"}
+	if err := hexxladb.MigrateV1ToV2(t.Context(), v1Path, v2Path, &hexxladb.MigrationOptions{
+		DestinationOptions: oldOptions,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	newOptions := &hexxladb.Options{Passphrase: "authenticated-secret"}
+	if err := hexxladb.MigrateToAuthenticated(t.Context(), v2Path, v3Path, &hexxladb.MigrationOptions{
+		SourceOptions:      oldOptions,
+		DestinationOptions: newOptions,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hexxladb.Open(v3Path, oldOptions); !errors.Is(err, hexxladb.ErrEncryptionKeyMismatch) {
+		t.Fatalf("old credential error = %v, want ErrEncryptionKeyMismatch", err)
+	}
+	assertMigrationFixture(t, v3Path, newOptions, fixture)
+	if source, err := hexxladb.Open(v2Path, oldOptions); err != nil {
+		t.Fatalf("legacy source was not preserved: %v", err)
+	} else if err := source.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPreflightMigrateToAuthenticatedDoesNotCreateDestination(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	v1Path := filepath.Join(dir, "v1.db")
+	v2Path := filepath.Join(dir, "v2.db")
+	v3Path := filepath.Join(dir, "v3.db")
+	seedMigrationFixture(t, v1Path, &hexxladb.Options{EmbeddingDimension: 3})
+	if err := hexxladb.MigrateV1ToV2(t.Context(), v1Path, v2Path, nil); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := hexxladb.PreflightMigrateToAuthenticated(
+		t.Context(),
+		v2Path,
+		v3Path,
+		&hexxladb.MigrationOptions{
+			DestinationOptions: &hexxladb.Options{EncryptionKey: []byte("authenticated preflight key")},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.SourceStorage.PrimaryBytes == 0 || len(plan.Space) != 1 || plan.Resumable {
+		t.Fatalf("preflight = %#v", plan)
+	}
+	if _, err := os.Stat(v3Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("preflight created destination: %v", err)
+	}
+}
+
+func TestMigrateV2ToAuthenticatedCancellationRemovesCandidate(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	v1Path := filepath.Join(dir, "v1.db")
+	v2Path := filepath.Join(dir, "v2.db")
+	v3Path := filepath.Join(dir, "v3.db")
+	seedMigrationFixture(t, v1Path, &hexxladb.Options{EmbeddingDimension: 3})
+	if err := hexxladb.MigrateV1ToV2(t.Context(), v1Path, v2Path, nil); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	err := hexxladb.MigrateToAuthenticated(ctx, v2Path, v3Path, &hexxladb.MigrationOptions{
+		DestinationOptions: &hexxladb.Options{EncryptionKey: []byte("authenticated migration cancellation")},
+		BatchSize:          1,
+		OnProgress: func(hexxladb.MigrationProgress) {
+			cancel()
+		},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+	if _, err := os.Stat(v3Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("partial authenticated destination remains: %v", err)
+	}
+	if source, err := hexxladb.Open(v2Path, nil); err != nil {
+		t.Fatalf("source was not preserved: %v", err)
+	} else if err := source.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestMigrateV1ToV2ChangelogResetIsExplicit(t *testing.T) {
@@ -372,7 +490,7 @@ func TestOpenRefusesNewerFormatVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary.BigEndian.PutUint32(data[8:12], 3)
+	binary.BigEndian.PutUint32(data[8:12], 4)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}

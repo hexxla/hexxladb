@@ -63,6 +63,9 @@ go vet ./...
 echo "==> Hex boundaries (full hexagonal architecture validation per HEXAGONAL_ARCHITECTURE.md)"
 bash scripts/check-hex-boundaries.sh
 
+echo "==> Exported API compatibility baseline"
+go run ./scripts/api_surface.go
+
 echo "==> GitHub Actions workflow lint (pinned actionlint)"
 scripts/tool.sh actionlint .github/workflows/*.yml
 

@@ -5,6 +5,9 @@ import "fmt"
 // DefaultPageSize is the page size for newly created databases (4 KiB).
 const DefaultPageSize = 4 << 10
 
+// AuthenticatedFormatVersion is the MVCC engine format with authenticated data pages.
+const AuthenticatedFormatVersion uint32 = 3
+
 // LegacyPageSize is the page size used by databases created before
 // configurable page size was introduced.
 const LegacyPageSize = 64 << 10
@@ -38,7 +41,8 @@ const (
 	headerMagic      = "HEXXLADB"
 	headerPrefixSize = 512
 	formatVersionV1  = uint32(1)
-	formatVersionV2  = uint32(2) // MVCC: commit_seq in header (see ENGINE_FORMAT.md).
+	formatVersionV2  = uint32(2)                  // MVCC: commit_seq in header (see ENGINE_FORMAT.md).
+	formatVersionV3  = AuthenticatedFormatVersion // MVCC plus authenticated data-page envelopes.
 
 	btreeNodeMagic = "HXBT"
 )
@@ -65,3 +69,32 @@ const HeaderEmbeddingDimOffset = 104
 
 // HeaderEmbeddingMetricOffset is the byte offset of the distance metric (uint8).
 const HeaderEmbeddingMetricOffset = 106
+
+// HeaderAuthTagOffset is the byte offset of the authenticated-format header MAC.
+const HeaderAuthTagOffset = 107
+
+// HeaderAuthTagLen is the byte length of the authenticated-format header MAC.
+const HeaderAuthTagLen = 32
+
+// HeaderBTreeRootGenerationOffset is the rewrite generation expected for the root page.
+const HeaderBTreeRootGenerationOffset = HeaderAuthTagOffset + HeaderAuthTagLen
+
+// HeaderFreelistHeadOffset is the byte offset of the first authenticated
+// freelist metadata page id. A zero id means all free ids fit in the header.
+const HeaderFreelistHeadOffset = HeaderBTreeRootGenerationOffset + 8
+
+// HeaderFreelistHeadGenerationOffset is the byte offset of the expected
+// rewrite generation for HeaderFreelistHead.
+const HeaderFreelistHeadGenerationOffset = HeaderFreelistHeadOffset + 8
+
+// HeaderFreelistCountOffset is the byte offset of the total reusable-page count.
+const HeaderFreelistCountOffset = HeaderFreelistHeadGenerationOffset + 8
+
+// HeaderInlineFreelistOffset starts the authenticated inline free-id array.
+const HeaderInlineFreelistOffset = HeaderFreelistCountOffset + 8
+
+// HeaderInlineFreelistCapacity keeps small free sets entirely in page 0.
+const HeaderInlineFreelistCapacity = 40
+
+// AuthenticatedPageOverhead is generation(8) + XChaCha20 nonce(24) + tag(16).
+const AuthenticatedPageOverhead = 48

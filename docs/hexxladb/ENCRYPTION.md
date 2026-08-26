@@ -1,96 +1,114 @@
 # At-rest encryption
 
-**Audience:** Callers configuring [`Options`](../../options.go) on [`Open`](../../db.go).
+**Audience:** callers configuring [`Options`](../../options.go) on [`Open`](../../db.go), and operators migrating legacy encrypted files.
 
-## What is encrypted
+## Current formats
 
-- **Data pages** (page id **≥ 1**) use **AES-256-XTS** with the **page id** as the tweak (sector index). Length is unchanged (equals the database's page size), so the on-disk B+ tree layout is unchanged.
-- **Page 0** (file header) is **not** encrypted so magic, format version, allocator fields, and encryption metadata remain readable without a key.
-- When [`Options.ChangelogEnabled`](../../options.go) is set, an encrypted database creates an authenticated encrypted **changelog format v2**. Its logical keys, operations, timestamps, hashes, and inline payloads use **XChaCha20-Poly1305**. The outer frame sequence and length remain visible, so an observer can estimate record count, order, and size.
+New databases created with `EncryptionKey` or `Passphrase` use engine **format v3**:
 
-## Header metadata
+- data pages use **XChaCha20-Poly1305** authenticated encryption;
+- page 0 remains readable but carries a keyed HMAC-SHA256 authenticator;
+- WAL records contain the same authenticated physical page images plus a keyed MAC;
+- the final authenticated header is recorded as the v3 WAL commit marker; and
+- an enabled changelog uses its independent authenticated encrypted format v2.
 
-When encryption is enabled on a **new** database, the engine sets header **`Features`** bit **`FeatureEncryptedDataPages`** and stores:
+Plaintext creation remains unchanged: `EnableMVCC: false` creates engine v1 and `EnableMVCC: true` creates engine v2. Existing encrypted v1/v2 databases remain readable through the legacy AES-256-XTS path; opening one does not silently rewrite it.
 
-- a **16-byte** **`EncryptionSalt`** (random), and
-- an **`encryption_key_check`** verifier for deterministic wrong-key detection.
+## Authenticated page layout
 
-See [`internal/engine/ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md) for offsets.
+Each v3 logical page has 48 physical bytes of overhead:
+
+```text
+rewrite generation (8) | random nonce (24) | ciphertext (logical page size) | tag (16)
+```
+
+The associated data binds the database salt/identity, format version, logical page size, page id, and rewrite generation. A modified generation, nonce, ciphertext, tag, or a page image moved to a different page id fails before plaintext is returned. The authenticated header pins the current B+ tree root generation and the first external freelist generation; each freelist metadata page pins the next. This protects allocator publication and reuse metadata, but does not create a trusted generation catalog for every ordinary non-root tree page.
+
+XChaCha20-Poly1305 is the established `golang.org/x/crypto/chacha20poly1305.NewX` construction. Its 24-byte nonce is suitable for random generation and avoids making database correctness depend on reconstructing a global nonce counter after a crash. See the [official Go package documentation](https://pkg.go.dev/golang.org/x/crypto/chacha20poly1305) and the [CFRG XChaCha construction](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-xchacha).
+
+At a 4 KiB logical page size, the primary-file overhead is 48/4096 = **1.171875%** per allocated data page. `StorageStats.PageSize` reports the logical size and `StorageStats.PhysicalPageSize` reports the physical stride.
+
+## Header and visible metadata
+
+Page 0 is not encrypted. Magic, format, page size, allocation fields, feature bits, salt, commit sequence, and embedding configuration remain visible. In v3, HMAC-SHA256 authenticates the complete fixed 512-byte header prefix, including the current root and its generation.
+
+Traffic analysis remains possible. An observer can estimate allocated page count, page size, WAL activity, changelog record count/order, and frame sizes. Encryption does not hide file paths, access timing, or file growth.
 
 ## Key material
 
-- **Raw key:** [`Options.EncryptionKey`](../../options.go) — arbitrary secret; stretched to a **64-byte** XTS key with **HKDF-SHA256**. The historical info label `hexxladb-m9-aes-xts-v1` is part of the encrypted-file compatibility contract.
-- **Passphrase:** [`Options.Passphrase`](../../options.go) — **[Argon2id](https://pkg.go.dev/golang.org/x/crypto/argon2)** derives **32 bytes** from the passphrase and **`EncryptionSalt`**; then the same HKDF produces the XTS key. Use [`DeriveKeyFromPassphrase`](../../encryption.go) only if you need the same KDF outside `Open`.
-- **Changelog:** a database- and purpose-specific master key is derived from the XTS key and database salt. Format v2 derives separate header-MAC and frame-AEAD subkeys from that master and a random per-log nonce prefix; it never reuses the page or WAL key directly.
+- **Raw key:** [`Options.EncryptionKey`](../../options.go) accepts an arbitrary secret. Use at least 128 bits of entropy. New v3 databases derive a 32-byte authenticated master with HKDF-SHA256, then domain-separated page, header, WAL, verifier, and changelog keys.
+- **Passphrase:** [`Options.Passphrase`](../../options.go) uses [Argon2id](https://pkg.go.dev/golang.org/x/crypto/argon2) with the random 16-byte database salt, then the same v3 key hierarchy.
+- **Legacy v1/v2:** the historical `hexxladb-m9-aes-xts-v1` HKDF label and 64-byte AES-256-XTS key derivation are frozen for read compatibility.
 
-Do **not** use [`EncryptionKey`](../../options.go) and [`Passphrase`](../../options.go) together; [`Open`](../../db.go) returns [`ErrEncryptionOptions`](../../errors.go).
+Do not set `EncryptionKey` and `Passphrase` together, or combine either with custom page hooks. `Open` returns [`ErrEncryptionOptions`](../../errors.go). Key material and decrypted pages in process memory are not protected from an attacker with process-memory access.
 
-## WAL policy
+## WAL and recovery
 
-Redo WAL records store the **same bytes** written to the primary file **after** `BeforeWrite` — i.e. **ciphertext** when encryption is enabled. Replay applies those full page images to the primary without a second transform, matching the engine’s normal write path.
+The WAL stores physical page images after encryption. Its HMAC-SHA256 covers `sequence || page_id || payload`, so modification or page-id substitution is rejected.
 
-For encrypted databases, WAL records also carry a keyed **HMAC-SHA256** authenticator (`seq || page_id || payload`) so tampering is rejected during replay.
+For v3 transactions, the WAL ends with an authenticated header commit marker. Recovery validates the WAL and marker, writes the committed page generation set, syncs the primary, publishes the matching authenticated header, syncs again, and only then reuses the WAL extent. A crash at a named write barrier therefore reopens to the old state or the complete marked state; it does not publish a new root without its pages.
+
+## Threat model and residual limits
+
+The in-scope attacker can read and modify the primary, WAL, or changelog while the database is closed and does not possess the encryption secret. V3 detects:
+
+- header-field modification;
+- data-page generation, nonce, ciphertext, or tag modification;
+- moving a valid page image to a different page id;
+- replay of an older current-root image while the authenticated header remains current;
+- WAL payload or page-id modification; and
+- truncation encountered while reading reachable authenticated pages.
+
+Two rollback classes remain outside the v3 local-file guarantee:
+
+1. **Same-slot non-root replay.** An older, valid image for the same non-root page id has valid associated data. Detecting it requires a trusted expected generation for every reachable page, such as a Merkle/generation catalog whose root is independently pinned. HexxlaDB does not yet add that second metadata tree.
+2. **Coordinated recovery-set rollback.** Replacing the primary, header, WAL, and related state with one older internally consistent set cannot be distinguished by self-contained files. Prevention requires an external monotonic trust anchor or independently versioned authenticated backup policy.
+
+Use least-privilege file ownership and independently authenticated, offline backups. The AEAD supplies integrity, but it does not make hostile storage available or prevent deletion.
+
+Legacy AES-XTS data pages provide confidentiality only. B+ tree decoding may detect some damage, but it is not a cryptographic integrity check. Migrate legacy files before relying on the v3 guarantees.
 
 ## Changelog policy
 
-- Plaintext databases continue to use changelog format v1.
-- Encrypted databases create changelog format v2 and reject a format-v1 sibling with [`ErrChangelogPlaintext`](../../errors.go). They never append encrypted frames to a plaintext file or plaintext frames to an encrypted file.
-- To handle a legacy plaintext changelog beside an already encrypted database, close the database, preserve the old log according to the application's audit/retention policy, reconcile or rebuild consumers from authoritative database state, move the plaintext file away, and reopen to create a new encrypted log.
-- Offline [`RotateEncryption`](../../rotation.go) re-encrypts and preserves the changelog when both current and new options enable it with the same effective path. Rotation from a plaintext database converts format v1 to encrypted format v2. Rotation rejects changing `ChangelogEnabled` or `ChangelogPath` in the same operation.
-- Rotation uses a synced recovery marker and directory barriers around its filesystem swap. An interrupted uncommitted swap makes `Open` return `ErrRotationIncomplete`; call [`RecoverInterruptedRotation`](../../rotation.go) with the original changelog configuration to restore the old primary/changelog without encryption credentials, then retry. The marker is removed only after the new pair is durable. `ErrRotationCleanup` means the new rotation committed but an obsolete backup containing old encrypted bytes still requires operator removal.
+- Plaintext databases use changelog format v1.
+- Encrypted databases use authenticated encrypted changelog format v2 and reject a plaintext sibling with [`ErrChangelogPlaintext`](../../errors.go).
+- Frame sequences and lengths remain visible; logical keys, operations, timestamps, hashes, and inline payloads are encrypted.
+- Existing plaintext changelog history is never silently mixed with encrypted frames. Archive/reconcile it according to application retention policy, then create a new encrypted log.
+- [`RotateEncryption`](../../rotation.go) re-encrypts changelog history when both option sets enable the same effective changelog path. Its recovery marker makes interrupted filesystem swaps explicit through `ErrRotationIncomplete` and `RecoverInterruptedRotation`.
 
-## Threat model and authenticated-page decision
+## Migration and rotation
 
-The WAL has a keyed MAC and changelog v2 uses an AEAD, so modification of either is rejected. **AES-XTS data pages remain confidential but unauthenticated**: modified primary-file ciphertext can decrypt to arbitrary bytes. B+ tree validation may detect some resulting structural damage, but it is not a cryptographic integrity guarantee.
+[`MigrateToAuthenticated`](../../migration.go) creates a distinct encrypted v3 candidate from a closed v1 or v2 source. The source is locked and preserved. Independent source and destination credentials are supported.
 
-Authenticated primary pages are deferred to a future on-disk format rather than added as an unsafe patch. Pages are rewritten in place, so an AEAD design needs a unique persisted nonce/generation and authentication tag per rewrite, crash-consistent WAL integration, revised page capacity, migration and downgrade rules, and representative performance evidence. The current fixed-size XTS format cannot add those properties compatibly.
+- v1 uses the bounded, resumable logical migration path and rebuilds MVCC physical keys and derived indexes;
+- v2 copies the complete physical MVCC keyspace through a bounded logical destination writer, verifies the candidate, and removes it on interruption; retry from the preserved source; and
+- neither path transplants changelog frames. Existing changelog state requires explicit `ResetChangelog` authorization and consumer re-bootstrap.
 
-Until that format exists, use trusted storage and access controls plus independently authenticated, offline backups or a storage layer that explicitly provides authenticated integrity. Ordinary full-disk encryption may also use an unauthenticated mode and must not be assumed to detect tampering.
+Run an exact dry run before copying:
 
-**Runtime:** key material and decrypted pages in memory are **not** hardened against a local attacker with memory access; that is outside the at-rest threat model.
+```bash
+HEXXLA_DESTINATION_PASSPHRASE='...' \
+  hexxladb migrate-to-authenticated --dry-run -o memory-v3.db memory.db
 
-## Wrong key
+HEXXLA_DESTINATION_PASSPHRASE='...' \
+  hexxladb migrate-to-authenticated -o memory-v3.db memory.db
+```
 
-Opening with a **wrong** key/passphrase now fails at **`Open`** with **[`ErrEncryptionKeyMismatch`](../../errors.go)** when the database has an `encryption_key_check` verifier (new encrypted DBs and legacy encrypted DBs after first successful open with a key).
+The command accepts credential **environment-variable names**, never credential values as arguments. Standard-base64 raw keys use `HEXXLA_SOURCE_ENCRYPTION_KEY` and `HEXXLA_DESTINATION_ENCRYPTION_KEY`. Environment variables remain visible to sufficiently privileged same-host actors; avoid shared wrappers and checked-in env files, and unset values after maintenance.
 
-Legacy encrypted files without a verifier are upgraded in-place on successful keyed open (header update only), enabling deterministic mismatch detection on subsequent opens.
+[`RotateEncryption`](../../rotation.go) always writes a fresh authenticated v3 destination under the replacement credential. It is therefore also the supported offline key-rotation path for an existing v3 database and an upgrade path for a legacy encrypted database when in-place source preservation is not required. Retain a verified recovery set until the replacement reopens successfully.
 
-## Format migration
+## Downgrade policy
 
-`MigrateV1ToV2` accepts independent source and destination `Options`. This
-supports encrypted-to-encrypted migration with a new credential, plaintext to
-encrypted migration, or encrypted to plaintext migration without persisting
-credentials in the destination checkpoint. The source is opened with its normal
-exclusive lock and is never replaced. Destination pages and WAL use the normal
-encryption path from their first write, and post-copy verification occurs through
-the configured read transforms.
+Older libraries do not understand engine v3 and must return `ErrUnsupportedFormatVersion`. There is no v3-to-v2 downgrade writer. Restore the preserved legacy source or an independently authenticated pre-upgrade backup if rollback is required.
 
-The migration does not transplant changelog frames because the destination has a
-new database salt and MVCC timeline. Keep both changelogs disabled during the
-copy. Existing changelog state requires explicit `ResetChangelog` authorization
-and downstream re-bootstrap as described in
-[`OPERATIONS.md`](./OPERATIONS.md#format-v1-to-v2-migration).
+## Related errors and invariants
 
-## Related errors
+- [`ErrEncryptionKeyRequired`](../../errors.go): encrypted file opened without a credential.
+- [`ErrEncryptionKeyMismatch`](../../errors.go): key/passphrase does not match the database verifier.
+- [`ErrCorruptDatabase`](../../db.go): authenticated header/page/WAL validation or reachable-page truncation failed.
+- [`ErrMigrationIncomplete`](../../errors.go): a resumable v1 migration candidate is not publishable.
+- [`ErrCompactionIncomplete`](../../errors.go): an interrupted copy candidate is not publishable.
+- [`ErrChangelogCorrupt`](../../errors.go): authenticated changelog validation failed.
 
-[`ErrEncryptionKeyRequired`](../../errors.go) — file is encrypted, open attempted without key or passphrase.
-
-[`ErrDatabaseNotEncrypted`](../../errors.go) — encryption options supplied but the existing file is plaintext.
-
-[`ErrEncryptionOptions`](../../errors.go) — encryption combined with custom page hooks or conflicting key options.
-
-[`ErrEncryptionKeyMismatch`](../../errors.go) — provided key/passphrase does not match the database verifier.
-
-[`ErrChangelogPlaintext`](../../errors.go) — an encrypted database encountered a legacy plaintext changelog; it is rejected without modification.
-
-[`ErrChangelogEncryptionKeyRequired`](../../errors.go) — a plaintext database/open configuration encountered an encrypted changelog.
-
-[`ErrChangelogEncryptionKeyMismatch`](../../errors.go) — the changelog header does not authenticate with the database-specific changelog key.
-
-## Security invariants
-
-- Wrong key/passphrase fails deterministically at `Open` for encrypted files with an `encryption_key_check`.
-- Corrupt/truncated WAL remains rejected on replay (`ErrCorruptWAL` -> public `ErrCorruptDatabase` path).
-- Changelog format v2 rejects wrong keys and modified headers or frames before returning logical data.
-- Offline key rotation preserves logical key/value and changelog contents and invalidates old credentials when changelog configuration is preserved.
-- Primary data-page tamper detection remains an explicitly accepted residual risk pending an authenticated on-disk format.
+Wrong credentials fail before page data is returned. New encrypted files are v3 from their first durable header. Compaction preserves the source engine format; it does not silently upgrade a legacy source. Backup preserves encryption byte-for-byte. Migration and rotation write through the destination format from their first page.

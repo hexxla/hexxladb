@@ -16,7 +16,22 @@ import (
 // at [Open] time, it is auto-detected from the first vector and persisted in the file header.
 // All subsequent vectors must match that dimension.
 // Only allowed inside [DB.Update].
-func (tx *Tx) PutEmbedding(coord lattice.PackedCoord, vec []float32) error {
+func (tx *Tx) PutEmbedding(coord PackedCoord, vec []float32) error {
+	return tx.PutEmbeddingWithOptions(coord, vec, EmbeddingWriteOptions{})
+}
+
+// EmbeddingWriteOptions configures [Tx.PutEmbeddingWithOptions].
+type EmbeddingWriteOptions struct {
+	// DeferIndexMaintenance stores the authoritative embedding without updating
+	// HNSW. Searches use the exact flat path until [DB.RebuildEmbeddingIndex]
+	// publishes a complete graph.
+	DeferIndexMaintenance bool
+}
+
+// PutEmbeddingWithOptions stores a vector embedding and optionally defers HNSW
+// maintenance for bounded bulk ingestion. Deferred writes remain searchable
+// through the exact flat path. Only allowed inside [DB.Update].
+func (tx *Tx) PutEmbeddingWithOptions(coord PackedCoord, vec []float32, opts EmbeddingWriteOptions) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}
@@ -44,6 +59,13 @@ func (tx *Tx) PutEmbedding(coord lattice.PackedCoord, vec []float32) error {
 	if err := tx.putDirect(key, val); err != nil {
 		return err
 	}
+	maintainGraph, err := tx.recordEmbeddingMutation(opts.DeferIndexMaintenance)
+	if err != nil {
+		return err
+	}
+	if !maintainGraph {
+		return nil
+	}
 	// Update HNSW graph.
 	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.DistanceMetric(tx.db.eng.EmbeddingMetric()))
 	return g.Insert(coord, vec)
@@ -63,7 +85,7 @@ func validateEmbeddingVector(vec []float32) error {
 
 // GetEmbedding returns the vector embedding for the cell at coord, or (nil, false, nil) if none stored.
 // Returns (nil, false, nil) if no embeddings have been stored yet (dimension not configured).
-func (tx *Tx) GetEmbedding(coord lattice.PackedCoord) (vec []float32, ok bool, err error) {
+func (tx *Tx) GetEmbedding(coord PackedCoord) (vec []float32, ok bool, err error) {
 	if tx == nil || tx.db == nil {
 		return nil, false, ErrClosed
 	}
@@ -89,7 +111,7 @@ func (tx *Tx) GetEmbedding(coord lattice.PackedCoord) (vec []float32, ok bool, e
 // DeleteEmbedding removes the vector embedding for the cell at coord. Idempotent.
 // No-op if no embeddings have been stored yet (dimension not configured).
 // Only allowed inside [DB.Update].
-func (tx *Tx) DeleteEmbedding(coord lattice.PackedCoord) error {
+func (tx *Tx) DeleteEmbedding(coord PackedCoord) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}
@@ -100,6 +122,13 @@ func (tx *Tx) DeleteEmbedding(coord lattice.PackedCoord) error {
 	key := index.EmbedKey(coord)
 	if err := tx.deleteDirect(key); err != nil {
 		return err
+	}
+	maintainGraph, err := tx.recordEmbeddingMutation(false)
+	if err != nil {
+		return err
+	}
+	if !maintainGraph {
+		return nil
 	}
 	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.DistanceMetric(tx.db.eng.EmbeddingMetric()))
 	return g.Delete(coord)
@@ -114,6 +143,13 @@ func (tx *Tx) deleteEmbeddingIfEnabled(coord lattice.PackedCoord) error {
 	key := index.EmbedKey(coord)
 	if err := tx.deleteDirect(key); err != nil {
 		return err
+	}
+	maintainGraph, err := tx.recordEmbeddingMutation(false)
+	if err != nil {
+		return err
+	}
+	if !maintainGraph {
+		return nil
 	}
 	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.DistanceMetric(tx.db.eng.EmbeddingMetric()))
 	return g.Delete(coord)

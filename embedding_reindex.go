@@ -7,12 +7,11 @@ import (
 
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
-	"github.com/hexxla/hexxladb/internal/record"
 )
 
 // EmbeddingFunc computes a vector embedding for a cell record. Implementations
 // typically call an external model or service. Return nil to skip the cell.
-type EmbeddingFunc func(ctx context.Context, rec record.CellRecord) ([]float32, error)
+type EmbeddingFunc func(ctx context.Context, rec CellRecord) ([]float32, error)
 
 // ReindexEmbeddings recomputes embeddings for all cells by calling fn for each
 // cell visible in the transaction. Existing embeddings are replaced; cells for

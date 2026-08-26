@@ -17,6 +17,12 @@ type MVCCRetention struct {
 
 // Options configures opening a database (see [Open]).
 type Options struct {
+	// newIncompleteCompaction is set only for an exclusively created internal
+	// compaction destination so its first durable header is fail-closed.
+	newIncompleteCompaction bool
+	// newLegacyEncryption is used only by source-preserving maintenance that
+	// must retain an existing format-v1/v2 AES-XTS destination layout.
+	newLegacyEncryption bool
 	// EnableMVCC, when true, creates new databases at engine format v2 with MVCC versioned keys
 	// (see [docs/hexxladb/TX.md] for snapshot semantics and [docs/hexxladb/OPERATIONS.md] for retention/pruning).
 	// Existing v1 files are never auto-upgraded; they keep single-version behavior until migrated.
@@ -39,7 +45,9 @@ type Options struct {
 	// AfterReadPage optional transform after reading a data page from disk.
 	AfterReadPage func(pageID uint64, data []byte) (out []byte, err error)
 
-	// EncryptionKey optional secret for AES-XTS at-rest encryption of data pages (see [docs/hexxladb/ENCRYPTION.md]).
+	// EncryptionKey is an optional secret for authenticated at-rest encryption
+	// of new databases. Existing legacy AES-XTS databases remain readable with
+	// the same credential; see [docs/hexxladb/ENCRYPTION.md].
 	// Stretched with HKDF-SHA256; use a key with at least 128 bits of entropy.
 	// Mutually exclusive with [Passphrase] and with custom page hooks.
 	EncryptionKey []byte

@@ -14,6 +14,8 @@ type GroupWAL struct {
 
 // Options configures the embedded storage engine.
 type Options struct {
+	// disablePageReuse is a test-only control for allocator evidence baselines.
+	disablePageReuse bool
 	// CreateExclusive requires path not to exist. It is used by maintenance operations
 	// that must never merge into or overwrite an existing database.
 	CreateExclusive bool
@@ -21,12 +23,21 @@ type Options struct {
 	Hooks *PageHooks
 	// NewEncryptedDB sets FeatureEncryptedDataPages on newly created database files.
 	NewEncryptedDB bool
+	// NewAuthenticatedDB creates format v3 with authenticated data pages. It
+	// requires NewEncryptedDB, authenticated page hooks, WAL MAC, and header MAC.
+	NewAuthenticatedDB bool
+	// NewIncompleteCompaction marks the first durable header as an unpublished
+	// compaction destination. The public database boundary owns this lifecycle.
+	NewIncompleteCompaction bool
 	// EncryptionSalt is stored in the header for passphrase KDF (16 bytes). Ignored unless NewEncryptedDB.
 	// If NewEncryptedDB and EncryptionSalt is zero, [Open] fills it with crypto/rand.
 	EncryptionSalt [16]byte
 	// UseFormatV2, when true on a new empty database file, writes format_version 2 with CommitSeq support (MVCC).
 	// Ignored when opening an existing non-empty file (format is taken from the header).
 	UseFormatV2 bool
+	// UseFormatV3 creates the authenticated MVCC engine format. It is set by the
+	// public encryption boundary, not by callers of the private engine directly.
+	UseFormatV3 bool
 	// EncryptionKeyCheck is persisted for new encrypted DBs and used to verify provided keys.
 	EncryptionKeyCheck [HeaderEncryptionKeyCheckLen]byte
 	// ExpectEncryptionKeyCheck requests deterministic wrong-key detection on open.
@@ -35,6 +46,10 @@ type Options struct {
 	WALMACKey [32]byte
 	// EnableWALMAC enables keyed MAC verification for WAL records.
 	EnableWALMAC bool
+	// HeaderMACKey authenticates format-v3 header metadata.
+	HeaderMACKey [32]byte
+	// EnableHeaderMAC enables format-v3 header authentication.
+	EnableHeaderMAC bool
 	// GroupWAL enables batched redo apply; see package writetxn and group_wal.go.
 	GroupWAL GroupWAL
 	// UsePrimaryFdatasync, when true, uses a data-only flush (e.g. fdatasync on Linux) on the

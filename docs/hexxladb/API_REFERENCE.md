@@ -51,13 +51,16 @@ The root package re-exports the stable geometry and wire types applications need
 | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
 | [`Coord`, `PackedCoord`, `Cube`, `Pack`, `Unpack`, `Ring`, `WalkRings`](../../export.go)                     | Hex coordinates, packing, and deterministic ring enumeration. |
 | [`CellRecord`, `SeamRecord`, `ProvenanceWire`, `ValidityWire`](../../export.go)                              | Persistent cell/seam wire representations and metadata.       |
+| [`CellPlacement`, `MaxCellPlacementRadius`](../../primitives.go)                                             | Bounded deterministic free-coordinate selection result/limit. |
 | [`FacetWalkRecord`, `EdgeWalkRecord`](../../export.go)                                                       | Callback record types for facet and edge walks.               |
 | [`NewProvenanceWire`, `NewFacetDerived`](../../templates.go)                                                 | Helpers for constructing common records.                      |
 | [`NewUserMessageCell`, `NewAssistantResponseCell`, `NewSystemPromptCell`, `NewFactCell`](../../templates.go) | Optional conversational-memory templates.                     |
 
 Coordinate bounds and packing details are documented in [`internal/lattice/PACKED_COORD.md`](../../internal/lattice/PACKED_COORD.md).
 
-HexxlaDB does not choose coordinates or enforce semantic clustering. For deterministic placement, applications can probe a fixed anchor in `Ring`/`WalkRings` order, use `Tx.GetCell` to select the first free coordinate, and perform the occupancy check plus `PutCell` in one update. Do not silently overwrite a collision when the operation means insert. Preserve existing coordinates during incremental insertion; represent an intentional move by creating a successor and calling `MarkSupersedes` rather than deleting or rewriting history. `ClusterHint` is stored metadata only.
+HexxlaDB does not infer semantic anchors or enforce clustering. [`Tx.FindFreeCellPlacement`](../../primitives.go) searches from a caller-supplied anchor in deterministic ring order and returns the first coordinate without a visible cell, its packed key, and the number of occupied positions probed. Call it inside the same `DB.Update` as `PutCell`; the writable transaction prevents another writer from claiming the result, while `PutCell` remains the explicit canonical write. The helper does not reserve a result from repeated calls in the same transaction, so write the returned key before searching again. It accepts radii from zero through `MaxCellPlacementRadius`, requires the complete search disk to fit within the packable coordinate range, and returns `ErrNoFreeCellPlacement` on bounded exhaustion. A current MVCC tombstone is free for placement; writing there creates a new version while retained snapshots continue to expose the earlier cell.
+
+Preserve existing coordinates during incremental insertion; represent an intentional move by creating a successor and calling `MarkSupersedes` rather than deleting or rewriting history. `ClusterHint` is stored metadata only. Applications continue to own anchor selection, semantic grouping, relocation policy, and placement-quality thresholds.
 
 The [`lattice_placement_evidence`](../../examples/lattice_placement_evidence) example implements that workflow entirely through the public API and compares semantic and spatial neighborhood quality.
 
@@ -67,6 +70,7 @@ Use these methods inside `View` or `Update` callbacks:
 
 | Task                                    | API                                                                                                           |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Select a bounded free cell placement    | [`Tx.FindFreeCellPlacement`](../../primitives.go)                                                            |
 | Store and retrieve a cell               | [`Tx.PutCell`, `Tx.GetCell`](../../primitives.go)                                                             |
 | Delete a cell                           | [`Tx.DeleteCell`, `Tx.DeleteCellWithOutcome`](../../delete_cell.go)                                           |
 | Stream a ring or validity-filtered ring | [`Tx.WalkRing`, `Tx.WalkRingAt`, `Tx.WalkRingFacets`](../../primitives.go)                                    |
@@ -134,11 +138,25 @@ Embeddings are optional. Configure a dimension and distance metric with [`Option
 | API                                                                                 | Use                                                                                       |
 | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | [`Tx.PutEmbedding`, `Tx.GetEmbedding`, `Tx.DeleteEmbedding`](../../tx_embedding.go) | Manage one vector per cell.                                                               |
+| [`Tx.PutEmbeddingWithOptions`](../../tx_embedding.go)                              | Store an authoritative vector while optionally deferring HNSW maintenance.                |
 | [`Tx.SearchByEmbedding`](../../embedding_search.go)                                 | HNSW-assisted nearest-neighbor search with flat-scan fallback.                            |
 | [`Tx.SearchByEmbeddingWithStats`](../../embedding_search.go)                        | The same search plus the selected HNSW/flat path and effective HNSW query breadth.        |
+| [`DB.RebuildEmbeddingIndex`](../../embedding_index_rebuild.go)                      | Build a bounded replacement HNSW graph and publish it atomically if embeddings are unchanged. |
 | [`Tx.ReindexEmbeddings`](../../embedding_reindex.go)                                | Recompute vectors transactionally; the first vector can establish an unset dimension.    |
 
 `EmbeddingSearchConfig.EfSearch` trades HNSW latency and allocation for recall. Zero uses a bounded dimension-aware default; explicit values from 1 through 10,000 are accepted and are raised to at least `MaxResults`. `EmbeddingSearchStats` exposes the effective value. `CellQuery.Embedding` and `CellSearchConfig.Embedding` integrate vector similarity into the query and search paths. HexxlaDB remains usable without embeddings through explicit coordinates and indexed metadata.
+
+For bulk ingestion, pass `EmbeddingWriteOptions{DeferIndexMaintenance: true}`
+to each write, then call `RebuildEmbeddingIndex`. The persisted index revision
+makes every query use exact flat search while the graph is stale. Rebuild first
+checks the vector count, conservative memory budget, and available filesystem
+space; it builds outside the write transaction, structurally validates the
+candidate, and publishes all graph records in one commit only if no embedding
+changed after the snapshot. Cancellation, an intervening mutation, or publish
+failure leaves flat search active and preserves the previously published graph.
+The default rebuild limit is 10,000 vectors and the validated hard limit is
+20,000; raise neither service expectations nor resource budgets without
+representative evidence.
 
 Embedding reads validate the persisted vector length, configured dimension, and
 component finiteness. Malformed persisted embedding keys or values return
@@ -168,6 +186,12 @@ Pruning does not shrink the primary file. Use compaction after pruning when disk
 and mutations outside the cell/seam families are absent; use the optional
 logical changelog with durable consumer cursors for CDC and audit processing.
 
+The exported root API is classified as a v1 candidate but the module remains on
+the `v0.y.z` line until the external graduation gates in
+[`VERSIONING.md`](../../VERSIONING.md) pass. CI runs `task api-check` against the
+committed v0.6 surface so additions, signature changes, and public documentation
+changes require deliberate compatibility review.
+
 ## Changefeed, health, and maintenance
 
 | API                                                                          | Use                                                    |
@@ -179,9 +203,14 @@ logical changelog with durable consumer cursors for CDC and audit processing.
 | [`DB.WriteStats`](../../write_stats.go)                                      | Observe cumulative write contention and phase timing.         |
 | [`DB.BackupTo`](../../backup.go)                                             | Capture a consistent primary/WAL/changelog recovery set.       |
 | [`DB.StorageStats`](../../storage_stats.go)                                  | Measure physical, reachable, and reclaimable storage.         |
+| [`DB.ReclaimTail`](../../reclaim.go)                                         | Truncate a contiguous authenticated-freelist suffix safely.   |
+| [`PreflightCompactTo`](../../maintenance_preflight.go)                       | Check source storage, path collisions, and copy capacity without creating a candidate. |
 | [`DB.Compact`, `CompactTo`](../../compact.go)                                | Rewrite live keys into a new compact file.                     |
-| [`DB.CompactWithOptions`, `CompactToWithOptions`](../../compact.go)          | Bound copy batches and receive durable progress checkpoints.  |
+| [`DB.CompactWithOptions`, `CompactToWithOptions`](../../compact.go)          | Bound copy batches, receive durable progress, and optionally verify the candidate. |
+| [`PreflightMigrateV1ToV2`](../../maintenance_preflight.go)                   | Check v1 format, credentials, changelog/resume state, paths, and capacity without copying a new batch. |
 | [`MigrateV1ToV2`](../../migration.go)                                       | Offline, resumable logical migration into an MVCC database.    |
+| [`PreflightMigrateToAuthenticated`](../../maintenance_preflight.go)          | Check a v1/v2 source, destination credentials, changelog policy, paths, and capacity without creating a v3 candidate. |
+| [`MigrateToAuthenticated`](../../migration.go)                              | Offline, source-preserving migration into authenticated encrypted format v3. |
 | [`DeriveKeyFromPassphrase`](../../encryption.go)                             | Derive an encryption key using the database KDF.               |
 | [`RotateEncryption`, `RotateEncryptionWithOptions`](../../rotation.go)       | Perform offline key rotation or encryption migration.          |
 
@@ -189,6 +218,18 @@ logical changelog with durable consumer cursors for CDC and audit processing.
 source recovery set intact. Its destination is unavailable to ordinary `Open`
 until post-copy verification succeeds. See the
 [`OPERATIONS.md` migration runbook](./OPERATIONS.md#format-v1-to-v2-migration).
+
+`MigrateToAuthenticated` requires destination encryption credentials and a
+closed format-v1 or format-v2 source. It never replaces the source. V1 copying
+is resumable; an interrupted v2-to-v3 candidate is removed and retried from the
+preserved source. See the
+[`OPERATIONS.md` authenticated migration runbook](./OPERATIONS.md#authenticated-format-v3-migration).
+
+Maintenance preflights return `MaintenanceSpaceRequirement` values grouped by
+filesystem so a source snapshot and destination on the same volume are checked
+as one conservative capacity requirement. `AvailableKnown` is false on
+platforms without a supported free-space query; callers must then supply their
+own operator check. `ErrInsufficientSpace` identifies a known capacity refusal.
 
 See [`CHANGEFEED.md`](./CHANGEFEED.md), [`OPERATIONS.md`](./OPERATIONS.md), [`DURABILITY.md`](./DURABILITY.md), and [`ENCRYPTION.md`](./ENCRYPTION.md) before enabling these deployment features.
 
@@ -206,6 +247,8 @@ Public sentinel errors are defined in [`errors.go`](../../errors.go). Handle sta
 - argument and transaction errors such as `ErrInvalidArgument` and `ErrTxReadOnly`;
 - MVCC errors such as `ErrReadSeqFuture` and `ErrMVCCRequired`;
 - format and migration errors such as `ErrUnsupportedFormatVersion`, `ErrMigrationIncomplete`, and `ErrMigrationChangelogState`;
+- interrupted candidate refusal through `ErrCompactionIncomplete`;
+- maintenance-capacity refusal through `ErrInsufficientSpace`;
 - encryption and changelog errors documented in their focused references;
 - `ErrCommitFinalization`, which requires recovery before another write, and `ErrCommitDurable`, which specifically means the authoritative commit is known durable and must not be retried.
 
@@ -215,8 +258,10 @@ Do not compare error strings.
 
 - [`examples/conversational_memory`](../../examples/conversational_memory) — cell lifecycle, MVCC, context assembly, hooks, health, diff, compaction, FOV, and graph traversal.
 - [`examples/spatial_algorithms`](../../examples/spatial_algorithms) — FOV, LOD, Voronoi, Dijkstra, BFS, and graph-aware context.
+- [`examples/remote_access`](../../examples/remote_access) — a loopback-only, authenticated owner-service boundary that keeps database files single-process.
 - [`examples/llm_context_engine`](../../examples/llm_context_engine) — embedding-backed retrieval and prompt assembly; requires Ollama with `all-minilm`.
 - [`examples/performance_evidence`](../../examples/performance_evidence) — controlled evidence collection for spatial algorithms and super-hex occupancy.
+- [`examples/write_path_evidence`](../../examples/write_path_evidence) — bounded aggregate evidence for write latency, throughput, allocation, and physical growth.
 - [`examples/vector_scale_evidence`](../../examples/vector_scale_evidence) — bounded HNSW build, recall, reopen, churn, memory, and disk evidence.
 - [`examples/lattice_placement_evidence`](../../examples/lattice_placement_evidence) — deterministic placement, collision, incremental-stability, supersession, and semantic/lattice divergence evidence.
 - [`examples/pilot_soak`](../../examples/pilot_soak) — bounded sustained mixed-load qualification with encrypted backup/restore, durable-consumer, health, latency, throughput, memory, and storage gates.

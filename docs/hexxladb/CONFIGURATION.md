@@ -28,7 +28,7 @@ All fields on `hexxladb.Options`. Fields marked **immutable** are persisted in t
 
 | Field           | Type            | Default | Immutable | Description                                                                                                                                           |
 | --------------- | --------------- | ------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `EnableMVCC`    | `bool`          | `false` | yes       | Format v2 with snapshot isolation, time-travel (`ViewAt`), and version history. Required for `SnapshotDiff`, `PruneCellVersions`, `ViewAtTime`.       |
+| `EnableMVCC`    | `bool`          | `false` | yes       | Plaintext creation uses format v2 with snapshot isolation, time-travel, and version history. Official encryption creates authenticated MVCC format v3 regardless of this flag. |
 | `MVCCRetention` | `MVCCRetention` | zero    | no        | Policy for `SuggestedPruneBeforeSeq`. `RetainCommitsBehindHead` keeps N commits of history.                                                           |
 | `PageSize`      | `uint32`        | `4096`  | yes       | B+ tree page size. Accepted: `4096`, `8192`, `16384`, `65536`. Larger pages = fewer I/O ops for big values; smaller = less waste for small DBs.       |
 | `MaxValueBytes` | `uint32`        | `8192`  | no        | Max encoded value size per B+ tree entry. Accepted: 512 to 1048576 (powers of 2). A non-zero value on reopen updates the persisted limit for subsequent writes; existing values are unchanged. |
@@ -43,6 +43,16 @@ All fields on `hexxladb.Options`. Fields marked **immutable** are persisted in t
 
 Embeddings are always available — there is no "disabled" state. A database with no stored embeddings simply has `EmbeddingDimension() == 0` until the first vector is written.
 
+Ordinary `PutEmbedding` maintains HNSW synchronously. For bounded bulk loads,
+`PutEmbeddingWithOptions` can store authoritative vectors with
+`DeferIndexMaintenance`; exact flat search remains available until
+`RebuildEmbeddingIndex` publishes a complete graph. Rebuild defaults to 10,000
+vectors and a conservative 2 GiB memory/transient-WAL budget, refuses more than
+20,000 vectors, and checks available filesystem capacity before invalidating
+the current graph. Override `EmbeddingIndexRebuildOptions.MaxVectors` and
+`MaxMemoryBytes` only within the documented hard bound and after representative
+evidence.
+
 **Distance metrics:**
 
 | Constant             | Behaviour                                                                                       |
@@ -55,8 +65,13 @@ Embeddings are always available — there is no "disabled" state. A database wit
 
 | Field           | Type     | Default | Description                                                                                                                                                  |
 | --------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `EncryptionKey` | `[]byte` | `nil`   | AES-256-XTS at-rest encryption. Stretched with HKDF-SHA256. Use a key with ≥128 bits of entropy. Mutually exclusive with `Passphrase` and custom page hooks. |
-| `Passphrase`    | `string` | `""`    | User passphrase. Combined with Argon2id + per-database salt from the file header. Mutually exclusive with `EncryptionKey` and custom page hooks.             |
+| `EncryptionKey` | `[]byte` | `nil`   | Creates new databases with authenticated XChaCha20-Poly1305 format v3; opens legacy AES-XTS files through their frozen derivation. Use ≥128 bits of entropy. Mutually exclusive with `Passphrase` and custom page hooks. |
+| `Passphrase`    | `string` | `""`    | Argon2id plus the per-database salt feeds the same authenticated v3 key hierarchy. Existing legacy passphrase files remain readable. Mutually exclusive with `EncryptionKey` and custom page hooks. |
+
+Authenticated v3 adds 48 physical bytes per logical data page. `PageSize`
+remains the logical B+ tree capacity; inspect `StorageStats.PhysicalPageSize`
+for the on-disk stride. Opening an encrypted v1/v2 file does not auto-upgrade
+it; use `MigrateToAuthenticated` or offline key rotation.
 
 ### Changelog
 
@@ -114,7 +129,7 @@ db, _ := hexxladb.Open("memory.db", &hexxladb.Options{
 })
 ```
 
-MVCC for time-travel and snapshot diffing. For the measured 10,000-vector HNSW envelope, 4 KiB pages avoid random graph-maintenance amplification and a 64 MiB cache keeps hot B+ tree pages resident. Benchmark representative data before changing either value; larger pages can still help workloads dominated by large sequential values rather than embeddings.
+MVCC for time-travel and snapshot diffing. For the measured deferred HNSW envelope (20,000×32d and 10,000×384d), 4 KiB pages avoid random graph-maintenance amplification and a 64 MiB cache keeps hot B+ tree pages resident. Benchmark representative data before changing either value; larger pages can still help workloads dominated by large sequential values rather than embeddings.
 
 ### Production with full features
 
@@ -159,10 +174,10 @@ db, _ := hexxladb.Open("encrypted.db", &hexxladb.Options{
 
 ## Persisted and per-open fields
 
-- **Engine format and page size** are fixed when the database is created. `EnableMVCC` and `PageSize` do not convert an existing file; use the documented migration or compaction workflow when a new physical format is required.
+- **Engine format and page size** are fixed when the database is created. `EnableMVCC`, encryption credentials, and `PageSize` do not convert an existing file; use the documented migration workflow when a new format is required. Compaction preserves the source format.
 - **Embedding dimension and metric** become fixed together when configured at creation or detected on the first `PutEmbedding`. A conflicting non-zero embedding configuration on reopen returns `ErrInvalidArgument`.
 - **`MaxValueBytes` is persisted but mutable.** Passing a supported non-zero value on reopen updates the stored limit for subsequent writes. Existing values are not rewritten, and lowering the limit does not remove them.
-- **Encryption mode and credentials** cannot be changed through ordinary `Open`; use `RotateEncryption` for an offline source-preserving replacement.
+- **Encryption mode and credentials** cannot be changed through ordinary `Open`; use `MigrateToAuthenticated` when the legacy source must be preserved or `RotateEncryption` for an offline replacement.
 - **Per-open fields** such as hooks, changelog selection, MVCC retention, page-cache budget, and durability tuning take effect for that handle and can change between opens subject to their documented compatibility checks.
 
 ---

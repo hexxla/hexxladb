@@ -7,6 +7,8 @@
 //	info     Print header info (page size, format, commit seq, file size)
 //	check    Run a full integrity check and print the health report
 //	compact  Copy-compact a database to a new file
+//	migrate-v1-to-v2       Upgrade a closed v1 database into a distinct v2 file
+//	migrate-to-authenticated  Upgrade a closed v1/v2 database into an encrypted v3 file
 //	stats    Print MVCC statistics (versioned rows, logical cells, wasted bytes)
 //	keys     Dump raw B+ tree keys (optional prefix filter)
 //	cells    List visible cells (coord, source, tags, confidence)
@@ -35,6 +37,10 @@ func run(args []string) int {
 		return cmdCheck(rest)
 	case "compact":
 		return cmdCompact(rest)
+	case "migrate-v1-to-v2":
+		return cmdMigrateV1ToV2(rest)
+	case "migrate-to-authenticated":
+		return cmdMigrateToAuthenticated(rest)
 	case "stats":
 		return cmdStats(rest)
 	case "keys":
@@ -62,6 +68,10 @@ Commands:
   info      Print header info: page size, format version, commit seq, file size
   check     Run full integrity check; exits non-zero if errors are found
   compact   Copy-compact src to dest: hexxladb compact -o <dest> <src>
+  migrate-v1-to-v2
+            Migrate v1 src to a distinct v2 dest: hexxladb migrate-v1-to-v2 -o <dest> <src>
+  migrate-to-authenticated
+            Migrate v1/v2 src to encrypted v3: hexxladb migrate-to-authenticated -o <dest> <src>
   stats     Print MVCC statistics: versioned rows, logical cells, wasted bytes
   keys      Dump raw B+ tree keys (optional -prefix filter)
   cells     List visible cells: coord, source, tags, confidence
