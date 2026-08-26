@@ -320,8 +320,7 @@ func (db *DB) MaxValueBytes() uint32 {
 
 // GroupWALStats returns group-WAL flusher counters when group commit is enabled: total
 // applyGroupBatch invocations, batches that combined two or more user commits, and WAL sync
-// operations. It is a thin forwarder over [engine.Engine.GroupWALStats] for operators who should
-// not import [internal/engine].
+// operations. It provides engine counters without requiring callers to import a private package.
 func (db *DB) GroupWALStats() (applyBatches, batchesWith2PlusJobs, walSynces uint64) {
 	if db == nil {
 		return 0, 0, 0

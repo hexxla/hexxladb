@@ -98,7 +98,7 @@ func (db *DB) BatchPutCells(ctx context.Context, cells []CellRecord, opts *Batch
 // ── Bulk JSON import / export ─────────────────────────────────────────────────
 
 // ExportCellsJSON writes all visible cells as a JSON array to w.
-// Each element is a record.CellRecord encoded as JSON.
+// Each element is a [CellRecord] encoded as JSON.
 func (tx *Tx) ExportCellsJSON(ctx context.Context, center Coord, maxR int, w io.Writer) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -141,7 +141,7 @@ func (tx *Tx) ExportCellsJSON(ctx context.Context, center Coord, maxR int, w io.
 	return n, nil
 }
 
-// ImportCellsJSON reads a JSON array of record.CellRecord from r and writes them via PutCell.
+// ImportCellsJSON reads a JSON array of [CellRecord] values from r and writes them via [Tx.PutCell].
 // Returns the number of cells successfully imported.
 func (db *DB) ImportCellsJSON(ctx context.Context, r io.Reader) (int, error) {
 	if db == nil {

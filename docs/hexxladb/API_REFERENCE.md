@@ -87,6 +87,15 @@ Use these methods inside `View` or `Update` callbacks:
 
 [`DB.BatchPutCells`](../../batch.go) writes large cell collections in bounded transactions with progress and optional per-cell error collection.
 
+[`Tx.ExportCellsJSON`](../../batch.go) streams visible cells in a bounded spatial
+disk as a JSON array. [`DB.ImportCellsJSON`](../../batch.go) consumes that shape
+and commits cells in bounded batches. JSON transfer is an application-data
+interchange mechanism, not a physical backup: it excludes non-cell key families,
+WAL state, changelog history, and retained cell versions. Import is not atomic
+across the complete stream; an error or cancellation can leave earlier batches
+committed, and the returned count reports that progress. Use [`DB.BackupTo`](../../backup.go)
+for a recoverable database copy.
+
 Secondary-index scans avoid full cell or seam scans:
 
 - [`Tx.AscendCellsBySource`, `Tx.AscendCellsInTimeBucket`, `Tx.AscendCellsByTag`](../../cell_secondary.go)
@@ -106,6 +115,7 @@ The canonical record families and key encodings are in [`HEXXLA_DB.md`](./HEXXLA
 | [`Tx.LoadContextVoronoi`](../../voronoi_context.go) | Partition cells among multiple seeds.                                                |
 | [`Tx.FindEdgePath`](../../pathfind_api.go)          | Dijkstra shortest path over stored weighted edges.                                   |
 | [`Tx.WalkEdges`](../../pathfind_api.go)             | Bounded breadth-first traversal over stored edges.                                   |
+| [`Tx.ScanContextRaw`, `Tx.ScanContextAtRaw`](../../primitives.go) | Compatibility primitives for bounded nearest-first raw cell scans. Prefer `LoadContext` for new retrieval code. |
 
 [`LoadContextConfig`](../../context_load.go) controls seeds, ring bounds, validity time, edge expansion, the `MaxCells` result limit, and assembly; validity, supersession, explanations, and requested seams apply across dispatch strategies. A single-seed ring load is nearest-first; multi-seed loads merge candidates round-robin in caller-supplied seed order and deduplicate coordinates and seams. Public constants bound radius, seeds, results, hops, and combined coordinate probes. HexxlaDB does not rank by confidence or count LLM tokens during context assembly. Applications own product ranking, complete-request rendering, provider/model token accounting, and output-token reservation. `ViewAt` snapshot time and record validity time are independent; see [`TX.md`](./TX.md).
 
@@ -150,6 +160,24 @@ limits.
 
 Use [`RenderHexGrid`](../../hex_render.go) for bounded diagnostic rendering. It is a presentation helper, not a query primitive.
 
+## Inspection and analytics
+
+These APIs inspect visible state without introducing a metrics subsystem:
+
+| API                                                             | Use                                                            |
+| --------------------------------------------------------------- | -------------------------------------------------------------- |
+| [`Tx.RingDensityMap`, `TotalDensity`](../../ring_density.go)     | Measure per-ring and aggregate cell occupancy.                  |
+| [`RenderHexGrid`, `Tx.RenderHexGridFromDB`](../../hex_render.go) | Render a caller-labelled or database-occupancy diagnostic grid. |
+| [`Tx.TagCounts`](../../tag_analytics.go)                         | Count visible cells for every distinct tag.                     |
+| [`Tx.TagCooccurrences`](../../tag_analytics.go)                  | Count visible tag pairs above a caller-supplied minimum.        |
+| [`Tx.UntaggedCells`](../../tag_analytics.go)                     | Find visible untagged cells in a bounded spatial disk.          |
+
+Grid rendering is capped at `MaxRenderRadius`. Density and untagged-cell scans
+use the public spatial radius bound. Tag counts and co-occurrence analysis can
+visit the complete visible tag index and are cancellable but do not expose a
+row budget; treat them as operator or offline analytics on larger databases,
+not as unbounded request-path operations.
+
 ## Embeddings
 
 Embeddings are optional. Configure a dimension and distance metric with [`Options`](../../options.go), or allow the first write to establish the dimension.
@@ -162,6 +190,7 @@ Embeddings are optional. Configure a dimension and distance metric with [`Option
 | [`Tx.SearchByEmbeddingWithStats`](../../embedding_search.go)                        | The same search plus the selected HNSW/flat path and effective HNSW query breadth.        |
 | [`DB.RebuildEmbeddingIndex`](../../embedding_index_rebuild.go)                      | Build a bounded replacement HNSW graph and publish it atomically if embeddings are unchanged. |
 | [`Tx.ReindexEmbeddings`](../../embedding_reindex.go)                                | Recompute vectors transactionally; the first vector can establish an unset dimension.    |
+| [`DB.EmbeddingDimension`, `DB.EmbeddingMetric`](../../embedding.go)                  | Inspect persisted vector configuration; dimension is zero before the first auto-detected write. |
 
 `EmbeddingSearchConfig.EfSearch` trades HNSW latency and allocation for recall. Zero uses a bounded dimension-aware default; explicit values from 1 through 10,000 are accepted and are raised to at least `MaxResults`. `EmbeddingSearchStats` exposes the effective value. `CellQuery.Embedding` and `CellSearchConfig.Embedding` integrate vector similarity into the query and search paths. HexxlaDB remains usable without embeddings through explicit coordinates and indexed metadata.
 
@@ -196,10 +225,10 @@ format; ordinary `Open` never converts them.
 
 | API                                                                                | Use                                                   |
 | ---------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| [`DB.StatsMVCC`, `DB.SuggestedPruneBeforeSeq`](../../mvcc_lifecycle.go)            | Inspect history and derive a retention watermark.     |
+| [`DB.StatsMVCC`, `DB.SuggestedPruneBeforeSeq`, `DB.MVCCPrunePlan`](../../mvcc_lifecycle.go) | Inspect history and derive a retention watermark and bounded pass size. |
 | [`DB.PruneCellVersions`, `DB.PruneCellVersionsByProfile`](../../mvcc_lifecycle.go) | Remove eligible old versions in bounded passes.       |
 | [`PruneScheduler`](../../mvcc_lifecycle.go)                                        | Drive pruning from an application-owned timer.        |
-| [`DB.TagSnapshot`, `DB.ViewAtTag`, `DB.DeleteSnapshotTag`](../../snapshot_tags.go) | Name and revisit commit snapshots.                    |
+| [`DB.TagSnapshot`, `DB.ListSnapshotTags`, `DB.ViewAtTag`, `DB.DeleteSnapshotTag`](../../snapshot_tags.go) | Name, enumerate, revisit, and delete commit snapshots. |
 | [`DB.SnapshotDiff`](../../snapshot_diff.go)                                        | Inspect retained cell and seam versions across commit sequences. |
 
 Pruning does not shrink the primary file. Use compaction after pruning when disk reclamation is required.
@@ -219,7 +248,8 @@ changes require deliberate compatibility review.
 | API                                                                          | Use                                                    |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------ |
 | [`DB.ReadChangelogSince`, `DB.ReadChangelogFiltered`](../../db_changelog.go) | Read the optional at-least-once logical changefeed.             |
-| [Durable consumer cursor methods](../../changelog_consumers.go)              | Register, compare-and-advance, inspect, and delete named cursors. |
+| [`DB.AdvanceChangelogConsumer`, `DB.GetChangelogConsumerCursor`](../../changelog_consumers.go) | Register and compare-and-advance a named durable cursor. |
+| [`DB.ListChangelogConsumers`, `DB.DeleteChangelogConsumer`, `DB.ChangelogRetentionFloor`](../../changelog_consumers.go) | Inspect/delete consumers and compute the advisory minimum acknowledged sequence. |
 | [`DB.HealthCheck`](../../health.go)                                          | Fail closed on malformed visible records and optionally validate orphans and secondary indexes. |
 | [`DB.GroupWALStats`](../../db.go)                                            | Observe group-WAL batching.                                    |
 | [`DB.WriteStats`](../../write_stats.go)                                      | Observe cumulative write contention and phase timing.         |
@@ -235,6 +265,7 @@ changes require deliberate compatibility review.
 | [`MigrateToAuthenticated`](../../migration.go)                              | Offline, source-preserving migration into authenticated encrypted format v3. |
 | [`DeriveKeyFromPassphrase`](../../encryption.go)                             | Derive an encryption key using the database KDF.               |
 | [`RotateEncryption`, `RotateEncryptionWithOptions`](../../rotation.go)       | Perform offline key rotation or encryption migration.          |
+| [`RecoverInterruptedRotation`](../../rotation.go)                            | Roll back an interrupted encryption-file swap using matching changelog configuration. |
 
 `MigrateV1ToV2` requires distinct source and destination paths and keeps the
 source recovery set intact. Its destination is unavailable to ordinary `Open`

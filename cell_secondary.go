@@ -376,7 +376,7 @@ func (tx *Tx) AscendDistinctTags(ctx context.Context, fn func(tag string) bool) 
 }
 
 // ListExistingTopics returns distinct tag strings from visible cells (sorted).
-// Topics are stored as [record.CellRecord.Tags]; implementation uses the tag/ index plus
+// Topics are stored in [CellRecord.Tags]; implementation uses the tag secondary index plus
 // [Tx.GetCell] to respect MVCC snapshots and stale secondaries.
 func (tx *Tx) ListExistingTopics(ctx context.Context) ([]string, error) {
 	var out []string

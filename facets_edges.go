@@ -186,7 +186,7 @@ func (tx *Tx) GetEdge(from, to PackedCoord, relationType string) (EdgeWalkRecord
 }
 
 // AscendEdgesFrom visits every edge whose from-cell matches from (prefix scan in key order).
-// Stops when fn returns false or when keys leave the from-prefix (see internal/index.EdgeFromPrefix).
+// It stops when fn returns false or when keys leave the matching from-cell prefix.
 func (tx *Tx) AscendEdgesFrom(from PackedCoord, fn func(EdgeWalkRecord) bool) error {
 	if tx == nil || tx.db == nil {
 		return ErrClosed

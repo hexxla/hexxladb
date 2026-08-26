@@ -36,6 +36,8 @@
 //   - [DB.StorageStats] — physical, live, reusable, and reclaimable storage accounting;
 //     [DB.ReclaimTail] safely truncates a contiguous authenticated-freelist suffix.
 //   - [DB.BackupTo] — consistent online physical backup of the primary, WAL, and optional changelog.
+//   - [DB.BatchPutCells], [DB.ImportCellsJSON], [Tx.ExportCellsJSON] — bounded-transaction
+//     cell ingestion and application-level JSON transfer; JSON transfer is not a physical backup.
 //   - [DB.Compact], [DB.CompactWithOptions], [CompactTo], [CompactToWithOptions] — bounded copy-compaction to reclaim dead pages
 //     with optional durable progress and destination verification; [PreflightCompactTo]
 //     checks paths, source storage, and capacity (see docs/hexxladb/OPERATIONS.md).
@@ -57,6 +59,9 @@
 //     [CellViewPredicate], [FilterCellViews];
 //     spatial context: [Tx.LoadContextFOV] (shadowcasting FOV), [Tx.LoadContextVoronoi] (Voronoi regions),
 //     [Tx.FindEdgePath] (Dijkstra over weighted edges), [Tx.WalkEdges] (BFS over edges);
+//     raw compatibility scans: [Tx.ScanContextRaw], [Tx.ScanContextAtRaw];
+//     diagnostics: [Tx.RingDensityMap], [TotalDensity], [Tx.TagCounts],
+//     [Tx.TagCooccurrences], [Tx.UntaggedCells], [RenderHexGrid], [Tx.RenderHexGridFromDB];
 //     derived hierarchy: [NewSuperHexSummaryIndex], [SuperHexSummaryIndex], and
 //     [SuperHexSummary] (rebuildable aperture-7 occupancy summaries).
 //   - Embedding / vector search: dimension auto-detected from first [Tx.PutEmbedding]
@@ -64,6 +69,7 @@
 //     [Tx.PutEmbedding], [Tx.PutEmbeddingWithOptions], [Tx.GetEmbedding], [Tx.DeleteEmbedding];
 //     [Tx.SearchByEmbedding] (HNSW-accelerated ANN, flat-scan fallback),
 //     [Tx.SearchByEmbeddingWithStats] (execution path and effective breadth), [EmbeddingSearchConfig];
+//     runtime configuration introspection through [DB.EmbeddingDimension] and [DB.EmbeddingMetric];
 //     bounded derived-index publication through [DB.RebuildEmbeddingIndex];
 //     [Tx.ReindexEmbeddings]; [CellQuery.Embedding] / [CellSearchConfig.Embedding] integrate
 //     vector search into [Tx.QueryCells] / [Tx.SearchCells] (see docs/hexxladb/API_REFERENCE.md).
@@ -76,6 +82,10 @@
 //     placement ([ErrNoFreeCellPlacement]), embedding rebuild
 //     ([ErrEmbeddingIndexChanged], [ErrEmbeddingIndexTooLarge]), maintenance capacity ([ErrInsufficientSpace]),
 //     and MVCC snapshot errors ([ErrReadSeqFuture], [ErrMVCCRequired]).
+//   - Named snapshots: [DB.TagSnapshot], [DB.ListSnapshotTags], [DB.ViewAtTag],
+//     [DB.DeleteSnapshotTag]; retained-history comparison through [DB.SnapshotDiff].
+//   - Interrupted offline encryption swaps fail closed through [ErrRotationIncomplete]
+//     and are rolled back explicitly with [RecoverInterruptedRotation].
 //
 // Lattice types ([Coord], [PackedCoord], [Pack], [Unpack], [Ring], [WalkRings]) are
 // re-exported from internal/lattice; see docs/hexxladb/HEXXLA.md and

@@ -72,8 +72,8 @@ func (tx *Tx) WalkEdges(ctx context.Context, start Coord, filter string, maxHops
 }
 
 // WalkEdgeCoords performs BFS from start following edges matching filter,
-// up to maxHops depth and maxCoords total. It satisfies [views.TxEdgeWalker]
-// so *Tx can be passed to [views.LoadContext] when EdgeFilter is set.
+// up to maxHops depth and maxCoords total. It is the context-assembly-compatible
+// spelling of [Tx.WalkEdges].
 func (tx *Tx) WalkEdgeCoords(ctx context.Context, start Coord, filter string, maxHops, maxCoords int) ([]Coord, error) {
 	return tx.WalkEdges(ctx, start, filter, maxHops, maxCoords)
 }

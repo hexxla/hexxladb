@@ -210,7 +210,7 @@ func (tx *Tx) WalkRing(ctx context.Context, center Coord, ring int, fn func(Coor
 }
 
 // WalkRingAt visits the same coordinates as [Tx.WalkRing], but decodes each cell and calls fn
-// only when a cell exists and [record.ValidAt] holds for rec.Validity at asOf (interpreted in UTC).
+// only when a cell exists and its validity window contains asOf (interpreted in UTC).
 // Coordinates with no cell or a cell that fails the validity filter are omitted (fn is not called).
 func (tx *Tx) WalkRingAt(ctx context.Context, center Coord, ring int, asOf time.Time, fn func(Coord, CellRecord) bool) error {
 	if err := ctx.Err(); err != nil {
@@ -371,7 +371,7 @@ const (
 )
 
 // MarkConflict creates a manual seam between two cells (spec: mark_conflict): new ULID,
-// canonical endpoints via [record.CanonicalCellPair], SeamType "mark_conflict", and DetectedAt set to now.
+// canonically ordered packed endpoints, SeamType "mark_conflict", and DetectedAt set to now.
 // Only allowed inside [DB.Update].
 func (tx *Tx) MarkConflict(cellA, cellB Coord, reason string) error {
 	if err := tx.requireWritable(); err != nil {

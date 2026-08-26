@@ -55,6 +55,9 @@ Exported entrypoints:
     authenticated-freelist suffix.
   - DB.BackupTo — consistent online physical backup of the primary, WAL,
     and optional changelog.
+  - DB.BatchPutCells, DB.ImportCellsJSON, Tx.ExportCellsJSON —
+    bounded-transaction cell ingestion and application-level JSON transfer;
+    JSON transfer is not a physical backup.
   - DB.Compact, DB.CompactWithOptions, CompactTo, CompactToWithOptions — bounded
     copy-compaction to reclaim dead pages with optional durable progress and
     destination verification; PreflightCompactTo checks paths, source storage,
@@ -78,7 +81,10 @@ Exported entrypoints:
     Tx.AssembleCellView, CellViewPredicate, FilterCellViews; spatial
     context: Tx.LoadContextFOV (shadowcasting FOV), Tx.LoadContextVoronoi
     (Voronoi regions), Tx.FindEdgePath (Dijkstra over weighted edges),
-    Tx.WalkEdges (BFS over edges); derived hierarchy: NewSuperHexSummaryIndex,
+    Tx.WalkEdges (BFS over edges); raw compatibility scans: Tx.ScanContextRaw,
+    Tx.ScanContextAtRaw; diagnostics: Tx.RingDensityMap, TotalDensity,
+    Tx.TagCounts, Tx.TagCooccurrences, Tx.UntaggedCells, RenderHexGrid,
+    Tx.RenderHexGridFromDB; derived hierarchy: NewSuperHexSummaryIndex,
     SuperHexSummaryIndex, and SuperHexSummary (rebuildable aperture-7 occupancy
     summaries).
   - Embedding / vector search: dimension auto-detected from first
@@ -87,10 +93,11 @@ Exported entrypoints:
     Tx.PutEmbeddingWithOptions, Tx.GetEmbedding, Tx.DeleteEmbedding;
     Tx.SearchByEmbedding (HNSW-accelerated ANN, flat-scan fallback),
     Tx.SearchByEmbeddingWithStats (execution path and effective breadth),
-    EmbeddingSearchConfig; bounded derived-index publication through
-    DB.RebuildEmbeddingIndex; Tx.ReindexEmbeddings; CellQuery.Embedding /
-    CellSearchConfig.Embedding integrate vector search into Tx.QueryCells /
-    Tx.SearchCells (see docs/hexxladb/API_REFERENCE.md).
+    EmbeddingSearchConfig; runtime configuration introspection through
+    DB.EmbeddingDimension and DB.EmbeddingMetric; bounded derived-index
+    publication through DB.RebuildEmbeddingIndex; Tx.ReindexEmbeddings;
+    CellQuery.Embedding / CellSearchConfig.Embedding integrate vector search
+    into Tx.QueryCells / Tx.SearchCells (see docs/hexxladb/API_REFERENCE.md).
   - Sentinel errors are defined in errors.go and support errors.Is.
     Recovery-sensitive categories include lifecycle (ErrDatabaseClosed,
     ErrDatabaseLocked), persisted integrity (ErrCorruptDatabase),
@@ -103,6 +110,11 @@ Exported entrypoints:
     embedding rebuild (ErrEmbeddingIndexChanged, ErrEmbeddingIndexTooLarge),
     maintenance capacity (ErrInsufficientSpace), and MVCC snapshot errors
     (ErrReadSeqFuture, ErrMVCCRequired).
+  - Named snapshots: DB.TagSnapshot, DB.ListSnapshotTags, DB.ViewAtTag,
+    DB.DeleteSnapshotTag; retained-history comparison through DB.SnapshotDiff.
+  - Interrupted offline encryption swaps fail closed through
+    ErrRotationIncomplete and are rolled back explicitly with
+    RecoverInterruptedRotation.
 
 Lattice types (Coord, PackedCoord, Pack, Unpack, Ring, WalkRings) are
 re-exported from internal/lattice; see docs/hexxladb/HEXXLA.md and
@@ -907,10 +919,9 @@ func (db *DB) GetChangelogConsumerCursor(consumerID string) (uint64, bool, error
 
 func (db *DB) GroupWALStats() (applyBatches, batchesWith2PlusJobs, walSynces uint64)
     GroupWALStats returns group-WAL flusher counters when group commit is
-    enabled: total applyGroupBatch invocations, batches that combined two
-    or more user commits, and WAL sync operations. It is a thin forwarder
-    over engine.Engine.GroupWALStats for operators who should not import
-    internal/engine.
+    enabled: total applyGroupBatch invocations, batches that combined two or
+    more user commits, and WAL sync operations. It provides engine counters
+    without requiring callers to import a private package.
 
 func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthReport, error)
     HealthCheck performs an integrity scan of the database and returns a
@@ -919,8 +930,8 @@ func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthRep
     ctx cancellation is respected between records.
 
 func (db *DB) ImportCellsJSON(ctx context.Context, r io.Reader) (int, error)
-    ImportCellsJSON reads a JSON array of record.CellRecord from r and writes
-    them via PutCell. Returns the number of cells successfully imported.
+    ImportCellsJSON reads a JSON array of CellRecord values from r and writes
+    them via Tx.PutCell. Returns the number of cells successfully imported.
 
 func (db *DB) ListChangelogConsumers() ([]ChangelogConsumerCursor, error)
     ListChangelogConsumers returns every durable cursor ordered by consumer ID.
@@ -1706,8 +1717,8 @@ func (tx *Tx) AscendDistinctTags(ctx context.Context, fn func(tag string) bool) 
 
 func (tx *Tx) AscendEdgesFrom(from PackedCoord, fn func(EdgeWalkRecord) bool) error
     AscendEdgesFrom visits every edge whose from-cell matches from (prefix
-    scan in key order). Stops when fn returns false or when keys leave the
-    from-prefix (see internal/index.EdgeFromPrefix).
+    scan in key order). It stops when fn returns false or when keys leave the
+    matching from-cell prefix.
 
 func (tx *Tx) AscendFacetsForCell(key PackedCoord, fn func(FacetWalkRecord) bool) error
     AscendFacetsForCell visits every facet for the given cell (facet_id 0..5) in
@@ -1763,7 +1774,7 @@ func (tx *Tx) DeleteEmbedding(coord PackedCoord) error
 
 func (tx *Tx) ExportCellsJSON(ctx context.Context, center Coord, maxR int, w io.Writer) (int, error)
     ExportCellsJSON writes all visible cells as a JSON array to w. Each element
-    is a record.CellRecord encoded as JSON.
+    is a CellRecord encoded as JSON.
 
 func (tx *Tx) FindEdgePath(ctx context.Context, start, goal Coord, cfg FindEdgePathConfig) ([]Coord, error)
     FindEdgePath returns the shortest path from start to goal, following edges.
@@ -1824,8 +1835,9 @@ func (tx *Tx) LinkCells(from, to Coord, relationType string, weight float64, pro
 
 func (tx *Tx) ListExistingTopics(ctx context.Context) ([]string, error)
     ListExistingTopics returns distinct tag strings from visible cells (sorted).
-    Topics are stored as record.CellRecord.Tags; implementation uses the tag/
-    index plus Tx.GetCell to respect MVCC snapshots and stale secondaries.
+    Topics are stored in [CellRecord.Tags]; implementation uses the tag
+    secondary index plus Tx.GetCell to respect MVCC snapshots and stale
+    secondaries.
 
 func (tx *Tx) LoadContext(ctx context.Context, cfg LoadContextConfig) (ContextPack, error)
     LoadContext is the unified context loading entry point.
@@ -1869,8 +1881,8 @@ func (tx *Tx) LoadContextVoronoi(ctx context.Context, seeds []Coord, cfg Voronoi
 
 func (tx *Tx) MarkConflict(cellA, cellB Coord, reason string) error
     MarkConflict creates a manual seam between two cells (spec: mark_conflict):
-    new ULID, canonical endpoints via record.CanonicalCellPair, SeamType
-    "mark_conflict", and DetectedAt set to now. Only allowed inside DB.Update.
+    new ULID, canonically ordered packed endpoints, SeamType "mark_conflict",
+    and DetectedAt set to now. Only allowed inside DB.Update.
 
 func (tx *Tx) MarkSupersedes(superseder, superseded Coord, reason string) error
     MarkSupersedes records that superseder is the current truth and superseded
@@ -2028,9 +2040,9 @@ func (tx *Tx) UpdateFacet(rec FacetWalkRecord) error
     Use Tx.PutFacet to write without this check. Only allowed inside DB.Update.
 
 func (tx *Tx) WalkEdgeCoords(ctx context.Context, start Coord, filter string, maxHops, maxCoords int) ([]Coord, error)
-    WalkEdgeCoords performs BFS from start following edges matching filter,
-    up to maxHops depth and maxCoords total. It satisfies views.TxEdgeWalker so
-    *Tx can be passed to views.LoadContext when EdgeFilter is set.
+    WalkEdgeCoords performs BFS from start following edges matching filter, up
+    to maxHops depth and maxCoords total. It is the context-assembly-compatible
+    spelling of Tx.WalkEdges.
 
 func (tx *Tx) WalkEdges(ctx context.Context, start Coord, filter string, maxHops, maxNodes int) ([]Coord, error)
     WalkEdges performs a breadth-first traversal from start following edges,
@@ -2045,9 +2057,9 @@ func (tx *Tx) WalkRing(ctx context.Context, center Coord, ring int, fn func(Coor
 
 func (tx *Tx) WalkRingAt(ctx context.Context, center Coord, ring int, asOf time.Time, fn func(Coord, CellRecord) bool) error
     WalkRingAt visits the same coordinates as Tx.WalkRing, but decodes each
-    cell and calls fn only when a cell exists and record.ValidAt holds for
-    rec.Validity at asOf (interpreted in UTC). Coordinates with no cell or a
-    cell that fails the validity filter are omitted (fn is not called).
+    cell and calls fn only when a cell exists and its validity window contains
+    asOf (interpreted in UTC). Coordinates with no cell or a cell that fails the
+    validity filter are omitted (fn is not called).
 
 func (tx *Tx) WalkRingFacets(ctx context.Context, center Coord, ring int, facetMask uint8, asOf *time.Time, fn func(Coord, CellRecord, []FacetWalkRecord) bool) error
     WalkRingFacets visits the same ring coordinates as Tx.WalkRing. For each
