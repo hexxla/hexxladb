@@ -175,7 +175,7 @@ replacement.
 The core primitives — spatial locality, provenance, contradiction tracking, result-bounded retrieval, MVCC snapshots, hybrid search — compose into patterns that are awkward to build on top of general-purpose stores.
 
 - **Agent and LLM memory** — store conversation turns, facts, and preferences at hex coordinates; retrieve bounded candidates, rank and fit complete prompts in the application, and include stored contradictions when requested
-- **Game world state** — hex-native tile storage with FOV for visibility queries, Dijkstra pathfinding over weighted cell edges, LOD for distant regions, MVCC snapshots for save/rollback and replay
+- **Game world state** — hex-native tile storage with FOV for visibility queries, bounded radial context, Dijkstra pathfinding over weighted cell edges, and MVCC snapshots for save/rollback and replay
 - **Knowledge graphs with temporal validity** — facts that expire or get superseded; belief revision via seams; time-travel to any past snapshot with `ViewAt`
 - **Spatial annotation layers** — sensor readings, events, or annotations at coordinates; proximity queries via ring walks; confidence-weighted retrieval for noisy data
 - **Audit trails and event sourcing** — optional recoverable at-least-once changelog with durable named consumer cursors; MVCC typed writes support point-in-time views and retained-history `SnapshotDiff` diagnostics
@@ -230,7 +230,7 @@ Public API guide: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE
 | `BackupTo` / `StorageStats` / `ReclaimTail` / `CompactWithOptions` | Back up an open database and manage physical storage          |
 | `PreflightCompactTo` / migration preflights             | Validate maintenance paths, source state, credentials, and conservative capacity |
 | `MigrateV1ToV2` / `MigrateToAuthenticated`              | Source-preserving offline migration into MVCC v2 or authenticated encrypted v3 |
-| `HealthCheck`                                           | Validate visible records and secondary indexes                          |
+| `HealthCheck`                                           | Fail closed on malformed visible records and optionally validate secondary indexes |
 
 ---
 
@@ -240,72 +240,37 @@ Public API guide: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE
 task bench-api
 ```
 
-_Intel Core i9-14900HX · 16 GB · Linux. API benchmark rows: Go 1.26–1.27, `-benchtime=3s -count=1`; vector-scale rows: Go 1.27.0, seeded aggregate workload._
+The current release-candidate snapshot below was measured after the bounded-work,
+query-planner, integrity, and HNSW remediation on 2026-08-26. Values are medians
+of five independent samples; ranges show the observed minimum and maximum.
 
-### Reads and ring traversal
+| Operation | Median | Five-sample range | Workload |
+| --------- | ------ | ----------------- | -------- |
+| `GetCell`, plaintext v1 | 2.08 µs | 1.48–4.79 µs | 2,000 cells |
+| `GetCell`, plaintext MVCC v2 | 17.9 µs | 15.4–22.2 µs | 2,000 cells |
+| `GetCell`, authenticated MVCC v3 | 16.4 µs | 10.3–18.8 µs | 2,000 cells |
+| `PutCell`, MVCC | 122 µs | 93.1–139 µs | one indexed cell and durable commit |
+| `BatchPutCells`, MVCC | 51.1 µs/cell | 48.9–55.1 µs/cell | 100 cells per durable commit |
+| `WalkRing` | 17.7 µs | 14.9–27.9 µs | radius 2, 2,000-cell database |
+| `QueryCells`, combined filters | 128 µs | 126–201 µs | radius 5 + source + confidence, 2,000 cells |
+| `LoadContext` | 470 µs | 406–496 µs | radius 5, 64-cell result limit, 2,000 cells |
+| `LoadContextFOV` | 132 µs | 125–142 µs | open radius 5, 2,000 cells |
+| `LoadContextVoronoi` | 604 µs | 505–729 µs | four seeds, radius 4, 2,000 cells |
+| `FindSeams` | 610 µs | 585–616 µs | 100 seams, radius 3 |
+| `SearchCells`, lexical | 4.84 ms | 4.41–5.34 ms | one term, 2,000 cells |
+| `QueryCells`, embedding | 837 µs | 667 µs–1.04 ms | 500 identical 32d vectors, unfiltered top 10 |
+| `HealthCheck` | 1.26 ms | 1.18–1.36 ms | 2,000 cells, all optional checks enabled |
+| MVCC latest resolution | 4.74 µs | 4.49–7.76 µs | one key with 6,000 retained versions |
+| `SnapshotDiff` | 430 µs | 383–589 µs | 500 retained writes |
 
-| Operation                             | Latency | Notes                                                                     |
-| ------------------------------------- | ------- | ------------------------------------------------------------------------- |
-| `GetCell` plaintext v1 (2k cells)     | ~1.8 µs | O(log n) B+ tree                                                          |
-| `GetCell` plaintext MVCC v2 (2k cells)| ~16.4 µs| Bounded MVCC version seek                                                 |
-| `GetCell` authenticated v3 (2k cells) | ~16.3 µs| MVCC + XChaCha20-Poly1305; within run variation of plaintext MVCC          |
-| `WalkRing` r=2 (19 cells/walk, 2k DB) | ~162 µs | Scales with ring area, not DB size                                        |
-| `QueryCells` tag-only (2k cells)      | ~15 µs  | Index-only; no page reads                                                 |
-| `QueryCells` spatial r=5 (2k DB)      | ~634 µs | 91-cell ring area walk + filter (3r²+3r+1)                                |
-| `QueryCells` combined (2k cells)      | ~62 ms  | source + spatial + confidence + sort; use narrower predicates in practice |
-| `FindSeams` zero-seam fast-path       | ~1.3 µs | Pre-flight check; effectively free                                        |
-| `FindSeams` 100 seams                 | ~995 µs | Seam index scan                                                           |
-
-### Context assembly
-
-| Operation                                    | Latency  | Notes                                               |
-| -------------------------------------------- | -------- | --------------------------------------------------- |
-| `LoadContext` r=3 (37 cells/walk, 2k DB)     | ~185 µs  | Nearest-first; 64-cell result limit                 |
-| `LoadContext` r=5 (91 cells/walk, 2k DB)     | ~419 µs  | Stops at 64 cells; ring area = 3r²+3r+1             |
-| `LoadContextFOV` r=3 (≤37 cells/walk, 2k DB) | ~526 µs  | FOV prunes occluded cells; faster than plain r=3    |
-| `LoadContextFOV` r=5 (≤91 cells/walk, 2k DB) | ~1.30 ms | Open-field (no occlusion) — worst case for FOV      |
-| `LoadContextVoronoi` 2 seeds (2k DB)         | ~2.1 ms  | Each seed gets up to r=4, 61 cells; non-overlapping |
-| `LoadContextVoronoi` 4 seeds (2k DB)         | ~4.4 ms  | Scales linearly with seed count                     |
-
-### Writes
-
-| Operation                           | Latency        | Notes                                                |
-| ----------------------------------- | -------------- | ---------------------------------------------------- |
-| `PutCell` single write              | ~0.57 ms/op    | Single-writer B+ tree; durable commit, no wait window |
-| `PutCell` MVCC                      | ~0.53 ms/op    | Version and secondary-index rows                     |
-| `BatchPutCells` batch=100           | ~0.063 ms/cell | About 8× lower per-cell latency than single MVCC writes |
-| `PutEmbedding` dim=32 (HNSW insert) | ~53 ms/op      | Full HNSW graph maintenance per write                |
-| `PutEmbedding` dim=384              | ~74 ms/op      | Encode + graph insert scales with dimension          |
-| Deferred HNSW build 10k×32d         | ~9.28 s total  | ~1,078 vectors/s; bounded build plus atomic publish  |
-| Deferred HNSW build 10k×384d        | ~36.0 s total  | ~278 vectors/s; dimension-aware recall profile       |
-
-### Semantic and lexical search
-
-| Operation                         | Latency   | Notes                                                  |
-| --------------------------------- | --------- | ------------------------------------------------------ |
-| `QueryCells` embedding (500×32d)  | ~13 ms    | Full HNSW ANN + post-filter pipeline                   |
-| `QueryCells` embedding (500×128d) | ~11 ms    | Higher dim; fewer graph candidates needed              |
-| HNSW search (10k×32d, recall@10=.992)  | ~5.4 ms p50  | 4 KiB pages, 64 MiB cache, `ef_search=100`          |
-| HNSW search (10k×384d, recall@10=.956) | ~30.6 ms p50 | 4 KiB pages, 64 MiB cache, `ef_search=384`          |
-| `SearchCells` lexical (2k cells)  | ~28–41 ms | Full-scan scorer; pre-filter with tags or source first |
-
-### MVCC and maintenance
-
-| Operation                                         | Latency  | Notes                                                   |
-| ------------------------------------------------- | -------- | ------------------------------------------------------- |
-| MVCC latest resolution (100 versions)             | ~6 µs    | Reverse B+ tree seek; does not scan older versions      |
-| MVCC latest resolution (6,000 versions)           | ~12–14 µs | Growth follows tree depth/page occupancy, not chain scan |
-| MVCC historical resolution (6,000 versions)       | ~10–15 µs | Seeks directly to the greatest version at `read_seq`    |
-| `SnapshotDiff` (10 retained writes)               | ~159 µs  | Retained MVCC diagnostic; scales with scanned history    |
-| `SnapshotDiff` (500 retained writes)              | ~6.9 ms  | Use narrow sequence windows for large histories          |
-| `Compact` (512 cells)                             | ~67 ms   | Copy-compaction; run after heavy delete/prune            |
-| `Compact` (2k cells)                              | ~236 ms  | One-time cost; DB is read-only during copy               |
-
-### Performance context
-
-HexxlaDB's "write" and "read" are not equivalent to raw KV operations. `PutCell` writes a structured primary record and every applicable source, tag, and validity index row. When the changelog is enabled, the same authoritative commit also stores recoverable outbox intent before projecting it to the sidecar. `GetCell` deserialises provenance, tags, and validity data on top of the B+ tree lookup. On the reference run above, individual cell writes measured about 0.53–0.57 ms and `BatchPutCells` amortised the commit barrier to about 0.063 ms per cell.
-
-The context assembly operations (`LoadContext`, `LoadContextFOV`, `LoadContextVoronoi`) have no direct equivalent in general KV stores — they replace what would otherwise be multiple sequential scans and spatial assembly passes. Product ranking, prompt rendering, and model-specific token accounting remain application responsibilities.
+These are synthetic, warm-cache measurements on an Intel Core i9-14900HX,
+Linux/amd64, Go 1.27.0, and the local filesystem—not service-level objectives.
+Writes include the durable commit barrier. The embedding row intentionally does
+not claim filtered recall or large-scale behavior. Exact commands, allocation
+counts, dated vector-scale recall evidence, and interpretation are in
+[`PERFORMANCE_EVIDENCE.md`](docs/hexxladb/PERFORMANCE_EVIDENCE.md). Benchmark
+representative application data before setting latency, throughput, or capacity
+expectations.
 
 ---
 
@@ -315,7 +280,7 @@ The context assembly operations (`LoadContext`, `LoadContextFOV`, `LoadContextVo
 | -------------------------------------------------------------------------- | --------------------------------- | --------------------------------------------------------------------- |
 | [Conversational Memory](examples/conversational_memory/)                   | `task demo`                       | Cells, seams, tags, MVCC, queries, context, FOV, pathfinding          |
 | [LLM Context Engine](examples/llm_context_engine/)                         | `task demo-llm`                   | Ollama embeddings, semantic search, supersession, FOV                 |
-| [Spatial Algorithms](examples/spatial_algorithms/)                         | `task demo-spatial`               | FOV, LOD, Voronoi, Dijkstra, BFS — side-by-side                       |
+| [Spatial Algorithms](examples/spatial_algorithms/)                         | `task demo-spatial`               | FOV, radial context, Voronoi, Dijkstra, BFS — side-by-side            |
 | [Remote Access Owner Service](examples/remote_access/)                     | `task demo-remote`                | Loopback service, authentication, admission, and single file owner   |
 | [Performance Evidence](examples/performance_evidence/)                     | `task evidence-observe`           | Dijkstra, FOV, super-hex sync, allocation, and storage observations   |
 | [Write-path Evidence](examples/write_path_evidence/)                       | `task evidence-write-path`        | Bounded write latency, throughput, allocation, and file growth       |
@@ -336,6 +301,7 @@ The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm 
   and TLS. The bounded [remote-access example](examples/remote_access/)
   validates that boundary but is not a production service product.
 - **Measured HNSW envelope** — the deferred lifecycle passes 20,000 vectors at 32 dimensions and 10,000 at 384 dimensions with 4 KiB pages and a 64 MiB page-cache budget. Deferred writes use exact flat search until a bounded `RebuildEmbeddingIndex` validates and atomically publishes HNSW; the default/hard rebuild bounds are 10,000/20,000 vectors and preflight also enforces a memory estimate and available filesystem space. This is evidence for those tested tiers, not an unbounded capacity claim; run `task evidence-vector-scale` with representative vectors before relying on other sizes, dimensions, or distributions. `SearchByEmbeddingWithStats` reports the selected path.
+- **Filtered ANN is approximate and bounded** — structured filters are applied to progressively widened semantic candidates, up to `CellQuery.EmbeddingCandidateLimit` or its adaptive default. A deliberately low limit can underfill results even when qualifying vectors exist outside the window; raise it within `MaxEmbeddingFilterCandidates` and measure filter-selective recall when that matters.
 - **Coordinates are sparse** — hex grid is a logical namespace, not a dense array. No compaction of coordinate space happens automatically.
 - **Semantic placement is caller-owned** — the database does not infer anchors from content, tags, embeddings, or model providers. `FindFreeCellPlacement` resolves the bounded geometric collision search around an anchor; preserve existing coordinates during incremental insertion and measure semantic/lattice divergence with representative records.
 - **Storage reclaim is format-dependent** — authenticated v3 transactions reuse whole freed B+ tree and overflow pages before extending the primary; `ReclaimTail` safely truncates a contiguous reusable suffix. Plaintext and legacy formats remain extend-only, and every format still needs explicit compaction to repack low-fill pages or fragmented historical layouts. Inspect `StorageStats` before maintenance.

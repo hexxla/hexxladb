@@ -67,7 +67,7 @@ func TestMVCC_ViewAt_visibility(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	p := lattice.PackedCoord{1, 2}
+	p := mustPackTest(t, lattice.Coord{Q: 1, R: 2})
 	rec := record.CellRecord{Key: p, RawContent: "a"}
 	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func TestMVCC_reopen_seesHistory(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		p := lattice.PackedCoord{3, 4}
+		p := mustPackTest(t, lattice.Coord{Q: 3, R: 4})
 		if err := db.Update(func(tx *hexxladb.Tx) error {
 			return tx.PutCell(context.Background(), record.CellRecord{Key: p, RawContent: "x"})
 		}); err != nil {
@@ -150,7 +150,7 @@ func TestMVCC_reopen_seesHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	p := lattice.PackedCoord{3, 4}
+	p := mustPackTest(t, lattice.Coord{Q: 3, R: 4})
 	err = db.ViewAt(1, func(tx *hexxladb.Tx) error {
 		got, ok, err := tx.GetCell(p)
 		if err != nil {
@@ -175,7 +175,7 @@ func TestMVCC_StatsAndPruneCellVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	p := lattice.PackedCoord{9, 9}
+	p := mustPackTest(t, lattice.Coord{Q: 9, R: 9})
 	for _, raw := range []string{"v1", "v2", "v3"} {
 		r := record.CellRecord{Key: p, RawContent: raw}
 		if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), r) }); err != nil {
@@ -230,7 +230,7 @@ func TestMVCC_SuggestedPruneBeforeSeq_andPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	p := lattice.PackedCoord{1, 2}
+	p := mustPackTest(t, lattice.Coord{Q: 1, R: 2})
 	for i := range 60 {
 		raw := fmt.Sprintf("v%d", i)
 		if err := db.Update(func(tx *hexxladb.Tx) error {
@@ -275,7 +275,7 @@ func TestMVCC_PruneCellVersionsByProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	p := lattice.PackedCoord{7, 7}
+	p := mustPackTest(t, lattice.Coord{Q: 7, R: 7})
 	for _, raw := range []string{"v1", "v2", "v3"} {
 		r := record.CellRecord{Key: p, RawContent: raw}
 		if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), r) }); err != nil {
@@ -304,7 +304,7 @@ func TestMVCC_ViewAtTime_visibility(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	p := lattice.PackedCoord{4, 4}
+	p := mustPackTest(t, lattice.Coord{Q: 4, R: 4})
 	beforeFirst := time.Now().UTC()
 	time.Sleep(2 * time.Millisecond)
 	if err := db.Update(func(tx *hexxladb.Tx) error {

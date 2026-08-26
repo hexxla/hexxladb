@@ -3,6 +3,7 @@ package hexxladb
 import (
 	"bytes"
 	"container/heap"
+	"errors"
 	"fmt"
 	"runtime"
 	"slices"
@@ -242,6 +243,9 @@ func (tx *Tx) searchHNSW(vec []float32, maxResults int, minScore float64, efSear
 	g := hnsw.NewGraph(stor, metric)
 	hnswResults, err := g.Search(vec, maxResults, efSearch)
 	if err != nil {
+		if errors.Is(err, hnsw.ErrCorruptGraph) {
+			return nil, false, fmt.Errorf("%w: %w", ErrCorruptDatabase, err)
+		}
 		return nil, false, err
 	}
 	if hnswResults == nil {

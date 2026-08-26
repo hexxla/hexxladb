@@ -365,23 +365,33 @@ func BenchmarkAPI_ViewUpdateContention(b *testing.B) {
 	db, key := benchAPIPreloadCells(b, 2000)
 	b.Cleanup(func() { _ = db.Close() })
 	var ops atomic.Uint64
+	var firstErr error
+	var errOnce sync.Once
+	recordErr := func(err error) {
+		if err != nil {
+			errOnce.Do(func() { firstErr = err })
+		}
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			n := ops.Add(1)
 			if n%20 == 0 {
-				_ = db.Update(func(tx *hexxladb.Tx) error {
+				recordErr(db.Update(func(tx *hexxladb.Tx) error {
 					return tx.Put([]byte("contended"), []byte("v"))
-				})
+				}))
 				continue
 			}
-			_ = db.View(func(tx *hexxladb.Tx) error {
+			recordErr(db.View(func(tx *hexxladb.Tx) error {
 				_, _, err := tx.GetCell(key)
 				return err
-			})
+			}))
 		}
 	})
+	if firstErr != nil {
+		b.Fatal(firstErr)
+	}
 }
 
 // BenchmarkAPI_AscendCellsBySource scans the source/ index after preload (sub-benchmark per n).
@@ -1016,7 +1026,7 @@ func BenchmarkAPI_PutEmbedding(b *testing.B) {
 			db, err := hexxladb.Open(path, &hexxladb.Options{
 				EmbeddingDimension: uint16(dim),
 				DistanceMetric:     hexxladb.DistanceCosine,
-				PageSize:           65536,
+				PageSize:           4096,
 				MaxValueBytes:      65536,
 			})
 			if err != nil {
@@ -1074,7 +1084,7 @@ func BenchmarkAPI_QueryCells_Embedding(b *testing.B) {
 			db, err := hexxladb.Open(path, &hexxladb.Options{
 				EmbeddingDimension: uint16(tc.dim),
 				DistanceMetric:     hexxladb.DistanceCosine,
-				PageSize:           65536,
+				PageSize:           4096,
 				MaxValueBytes:      65536,
 			})
 			if err != nil {
@@ -1089,11 +1099,18 @@ func BenchmarkAPI_QueryCells_Embedding(b *testing.B) {
 			for i := range tc.n {
 				q := i / 1000
 				r := i % 1000
-				p, _ := lattice.Pack(lattice.Coord{Q: q, R: r})
-				_ = db.Update(func(tx *hexxladb.Tx) error {
-					_ = tx.PutCell(ctx, record.CellRecord{Key: p, RawContent: "bench", Provenance: record.ProvenanceWire{SourceID: "bench", Confidence: 1}})
+				p, err := lattice.Pack(lattice.Coord{Q: q, R: r})
+				if err != nil {
+					b.Fatal(err)
+				}
+				if err := db.Update(func(tx *hexxladb.Tx) error {
+					if err := tx.PutCell(ctx, record.CellRecord{Key: p, RawContent: "bench", Provenance: record.ProvenanceWire{SourceID: "bench", Confidence: 1}}); err != nil {
+						return err
+					}
 					return tx.PutEmbedding(p, vec)
-				})
+				}); err != nil {
+					b.Fatal(err)
+				}
 			}
 
 			b.ReportMetric(float64(tc.n), "cells")
@@ -1136,15 +1153,20 @@ func BenchmarkAPI_SnapshotDiff(b *testing.B) {
 			}
 			fromSeq := s0.CommitSeq
 			for i := range nWrites {
-				p, _ := lattice.Pack(lattice.Coord{Q: i % 200, R: i / 200})
-				_ = db.Update(func(tx *hexxladb.Tx) error {
+				p, err := lattice.Pack(lattice.Coord{Q: i % 200, R: i / 200})
+				if err != nil {
+					b.Fatal(err)
+				}
+				if err := db.Update(func(tx *hexxladb.Tx) error {
 					return tx.PutCell(ctx, record.CellRecord{
 						Key:        p,
 						RawContent: fmt.Sprintf("diff-%d", i),
 						Provenance: record.ProvenanceWire{SourceID: "bench", Confidence: 1, CreatedAt: int64(i), UpdatedAt: int64(i)},
 						Validity:   record.ValidityWire{ValidFrom: &vf},
 					})
-				})
+				}); err != nil {
+					b.Fatal(err)
+				}
 			}
 			s1, err := db.StatsMVCC()
 			if err != nil {

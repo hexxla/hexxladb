@@ -555,7 +555,7 @@ func run(dbPath string) error {
 	printHeader("Phase 7: Query Patterns")
 
 	printNote("QueryCells is the unified query entry point. All predicate fields are AND-combined.")
-	printNote("The planner picks cheapest index; remaining predicates applied in-memory.")
+	printNote("The planner prefers a small known-cost spatial probe, then available secondary indexes; remaining predicates apply in-memory.")
 	fmt.Println()
 
 	printSubHeader("Query A — 'opinion' cells, sorted by recency")

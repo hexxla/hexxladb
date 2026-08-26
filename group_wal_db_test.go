@@ -137,7 +137,14 @@ func TestGroupWAL_concurrentUpdatesNoRace(t *testing.T) {
 	for g := range 4 {
 		wg.Go(func() {
 			for i := range 8 {
-				p := lattice.PackedCoord{uint64(g), uint64(i)}
+				p, err := lattice.Pack(lattice.Coord{Q: g, R: i})
+				if err != nil {
+					select {
+					case errOnce <- err:
+					default:
+					}
+					return
+				}
 				rec := record.CellRecord{Key: p, RawContent: "x"}
 				if err := db.Update(func(tx *hexxladb.Tx) error {
 					return tx.PutCell(ctx, rec)

@@ -93,6 +93,9 @@ func (tx *Tx) PutCell(ctx context.Context, rec CellRecord) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}
+	if err := invalidTypedRecord(validateCellInvariants(rec)); err != nil {
+		return err
+	}
 	if v := tx.db.cellValidator; v != nil {
 		if err := v.ValidateCell(rec); err != nil {
 			return err
@@ -178,13 +181,16 @@ func (tx *Tx) WalkRing(ctx context.Context, center Coord, ring int, fn func(Coor
 	if tx == nil || tx.db == nil {
 		return ErrClosed
 	}
-	if ring < 0 {
-		return ErrInvalidArgument
+	if ring < 0 || ring > MaxSpatialScanRadius || fn == nil {
+		return fmt.Errorf("%w: ring must be between 0 and %d and callback must be non-nil", ErrInvalidArgument, MaxSpatialScanRadius)
 	}
 	if tx.db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
-	for _, c := range lattice.Ring(center, ring) {
+	if err := validatePackedRadius(center, ring); err != nil {
+		return err
+	}
+	for c := range lattice.RingSeq(center, ring) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -213,14 +219,17 @@ func (tx *Tx) WalkRingAt(ctx context.Context, center Coord, ring int, asOf time.
 	if tx == nil || tx.db == nil {
 		return ErrClosed
 	}
-	if ring < 0 {
-		return ErrInvalidArgument
+	if ring < 0 || ring > MaxSpatialScanRadius || fn == nil {
+		return fmt.Errorf("%w: ring must be between 0 and %d and callback must be non-nil", ErrInvalidArgument, MaxSpatialScanRadius)
 	}
 	if tx.db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
+	if err := validatePackedRadius(center, ring); err != nil {
+		return err
+	}
 	asOfNano := asOf.UTC().UnixNano()
-	for _, c := range lattice.Ring(center, ring) {
+	for c := range lattice.RingSeq(center, ring) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -259,6 +268,9 @@ func (tx *Tx) putSeamWithOp(ctx context.Context, rec record.SeamRecord, clogOp b
 		return err
 	}
 	if err := tx.requireWritable(); err != nil {
+		return err
+	}
+	if err := invalidTypedRecord(validateSeamInvariants(rec)); err != nil {
 		return err
 	}
 	pk, err := index.SeamKey(rec.ID)
@@ -451,11 +463,14 @@ func (tx *Tx) findSeams(ctx context.Context, center lattice.Coord, radius int, u
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
 	}
-	if radius < 0 {
-		return nil, ErrInvalidArgument
+	if radius < 0 || radius > MaxSeamSearchRadius {
+		return nil, fmt.Errorf("%w: seam radius must be between 0 and %d", ErrInvalidArgument, MaxSeamSearchRadius)
 	}
 	if tx.db.activeEng() == nil {
 		return nil, ErrDatabaseClosed
+	}
+	if err := validatePackedRadius(center, radius); err != nil {
+		return nil, err
 	}
 	// Pre-flight: if the seam-by-cells index is entirely empty, return immediately.
 	// This saves 2×(3r²+3r+1) AscendRange calls (74 at r=3, 182 at r=5) when no
@@ -468,14 +483,13 @@ func (tx *Tx) findSeams(ctx context.Context, center lattice.Coord, radius int, u
 
 	var out []record.SeamRecord
 	seen := make(map[string]struct{})
-	for ring := range radius + 1 {
-		for _, c := range lattice.Ring(center, ring) {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			if err := tx.scanSeamsForCoord(ctx, c, center, radius, unresolvedOnly, asOf, &out, seen); err != nil {
-				return nil, err
-			}
+	budget := seamSearchBudget{}
+	for c := range lattice.WalkRingsSeq(center, radius) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := tx.scanSeamsForCoord(ctx, c, center, radius, unresolvedOnly, asOf, &out, seen, &budget); err != nil {
+			return nil, err
 		}
 	}
 	return out, nil
@@ -495,29 +509,33 @@ func (tx *Tx) seamIndexEmpty() (bool, error) {
 
 // scanSeamsForCoord scans both index ranges (Lo-fixed and Hi-fixed-Lo-less) for a single
 // coordinate and collects matching seams into out.
-func (tx *Tx) scanSeamsForCoord(ctx context.Context, c, center lattice.Coord, radius int, unresolvedOnly bool, asOf *time.Time, out *[]record.SeamRecord, seen map[string]struct{}) error {
+func (tx *Tx) scanSeamsForCoord(ctx context.Context, c, center lattice.Coord, radius int, unresolvedOnly bool, asOf *time.Time, out *[]record.SeamRecord, seen map[string]struct{}, budget *seamSearchBudget) error {
 	p, err := lattice.Pack(c)
 	if err != nil {
 		return err
 	}
 	from, to := index.SeamByCellsRangeLoFixed(p)
-	if err := tx.scanSeamRange(ctx, from, to, center, radius, unresolvedOnly, asOf, out, seen); err != nil {
+	if err := tx.scanSeamRange(ctx, from, to, center, radius, unresolvedOnly, asOf, out, seen, budget); err != nil {
 		return err
 	}
 	from2, to2, ok := index.SeamByCellsRangeHiFixedLoLess(p)
 	if !ok {
 		return nil
 	}
-	return tx.scanSeamRange(ctx, from2, to2, center, radius, unresolvedOnly, asOf, out, seen)
+	return tx.scanSeamRange(ctx, from2, to2, center, radius, unresolvedOnly, asOf, out, seen, budget)
 }
 
 // scanSeamRange performs a single AscendRange over a seam-by-cells key range,
 // collecting matching seams into out.
-func (tx *Tx) scanSeamRange(ctx context.Context, from, to []byte, center lattice.Coord, radius int, unresolvedOnly bool, asOf *time.Time, out *[]record.SeamRecord, seen map[string]struct{}) error {
+func (tx *Tx) scanSeamRange(ctx context.Context, from, to []byte, center lattice.Coord, radius int, unresolvedOnly bool, asOf *time.Time, out *[]record.SeamRecord, seen map[string]struct{}, budget *seamSearchBudget) error {
 	var scanErr error
 	if err := tx.db.btree.AscendRange(from, to, func(k, _ []byte) bool {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			scanErr = ctxErr
+			return false
+		}
+		if err := budget.addIndexRow(); err != nil {
+			scanErr = err
 			return false
 		}
 		_, _, id, parseErr := index.ParseSeamByCellsKey(k)
@@ -525,7 +543,7 @@ func (tx *Tx) scanSeamRange(ctx context.Context, from, to []byte, center lattice
 			scanErr = parseErr
 			return false
 		}
-		if collectErr := tx.collectSeamFind(out, seen, id, center, radius, unresolvedOnly, asOf); collectErr != nil {
+		if collectErr := tx.collectSeamFind(out, seen, id, center, radius, unresolvedOnly, asOf, budget); collectErr != nil {
 			scanErr = collectErr
 			return false
 		}
@@ -536,7 +554,7 @@ func (tx *Tx) scanSeamRange(ctx context.Context, from, to []byte, center lattice
 	return scanErr
 }
 
-func (tx *Tx) collectSeamFind(out *[]record.SeamRecord, seen map[string]struct{}, id string, center lattice.Coord, radius int, unresolvedOnly bool, asOf *time.Time) error {
+func (tx *Tx) collectSeamFind(out *[]record.SeamRecord, seen map[string]struct{}, id string, center lattice.Coord, radius int, unresolvedOnly bool, asOf *time.Time, budget *seamSearchBudget) error {
 	if _, dup := seen[id]; dup {
 		return nil
 	}
@@ -577,7 +595,31 @@ func (tx *Tx) collectSeamFind(out *[]record.SeamRecord, seen map[string]struct{}
 		return nil
 	}
 	seen[id] = struct{}{}
+	if err := budget.addResult(); err != nil {
+		return err
+	}
 	*out = append(*out, rec)
+	return nil
+}
+
+type seamSearchBudget struct {
+	indexRows int
+	results   int
+}
+
+func (b *seamSearchBudget) addIndexRow() error {
+	b.indexRows++
+	if b.indexRows > MaxSeamIndexRows {
+		return fmt.Errorf("%w: seam index rows exceed %d", ErrSpatialScanLimit, MaxSeamIndexRows)
+	}
+	return nil
+}
+
+func (b *seamSearchBudget) addResult() error {
+	b.results++
+	if b.results > MaxSeamSearchResults {
+		return fmt.Errorf("%w: seam results exceed %d", ErrSpatialScanLimit, MaxSeamSearchResults)
+	}
 	return nil
 }
 
@@ -590,27 +632,24 @@ func (tx *Tx) ScanContextRaw(ctx context.Context, center Coord, maxR, maxCells i
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
 	}
-	if maxCells <= 0 || maxR < 0 {
+	if maxCells <= 0 || maxR < 0 || maxR > MaxSpatialScanRadius {
 		return nil, ErrInvalidArgument
 	}
 	if tx.db.activeEng() == nil {
 		return nil, ErrDatabaseClosed
 	}
-	var coords []lattice.Coord
-	coords = lattice.WalkRings(coords, center, maxR)
-	var out []record.CellRecord
-	for _, c := range coords {
+	if err := validatePackedRadius(center, maxR); err != nil {
+		return nil, err
+	}
+	out := make([]record.CellRecord, 0, min(maxCells, hexDiskCellCount(maxR)))
+	for cp := range lattice.WalkRingsPackedSeq(center, maxR) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		if len(out) >= maxCells {
 			break
 		}
-		p, err := lattice.Pack(c)
-		if err != nil {
-			return nil, err
-		}
-		rec, ok, err := tx.GetCell(p)
+		rec, ok, err := tx.GetCell(cp.Packed)
 		if err != nil {
 			return nil, err
 		}
@@ -631,28 +670,25 @@ func (tx *Tx) ScanContextAtRaw(ctx context.Context, center Coord, maxR, maxCells
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
 	}
-	if maxCells <= 0 || maxR < 0 {
+	if maxCells <= 0 || maxR < 0 || maxR > MaxSpatialScanRadius {
 		return nil, ErrInvalidArgument
 	}
 	if tx.db.activeEng() == nil {
 		return nil, ErrDatabaseClosed
 	}
+	if err := validatePackedRadius(center, maxR); err != nil {
+		return nil, err
+	}
 	asOfNano := asOf.UTC().UnixNano()
-	var coords []lattice.Coord
-	coords = lattice.WalkRings(coords, center, maxR)
-	var out []record.CellRecord
-	for _, c := range coords {
+	out := make([]record.CellRecord, 0, min(maxCells, hexDiskCellCount(maxR)))
+	for cp := range lattice.WalkRingsPackedSeq(center, maxR) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		if len(out) >= maxCells {
 			break
 		}
-		p, err := lattice.Pack(c)
-		if err != nil {
-			return nil, err
-		}
-		rec, ok, err := tx.GetCell(p)
+		rec, ok, err := tx.GetCell(cp.Packed)
 		if err != nil {
 			return nil, err
 		}
@@ -677,8 +713,8 @@ func (tx *Tx) WalkRingFacets(ctx context.Context, center Coord, ring int, facetM
 	if tx == nil || tx.db == nil {
 		return ErrClosed
 	}
-	if ring < 0 {
-		return ErrInvalidArgument
+	if ring < 0 || ring > MaxSpatialScanRadius || fn == nil {
+		return fmt.Errorf("%w: ring must be between 0 and %d and callback must be non-nil", ErrInvalidArgument, MaxSpatialScanRadius)
 	}
 	if facetMask&^0x3f != 0 {
 		return ErrInvalidArgument
@@ -686,8 +722,11 @@ func (tx *Tx) WalkRingFacets(ctx context.Context, center Coord, ring int, facetM
 	if tx.db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
+	if err := validatePackedRadius(center, ring); err != nil {
+		return err
+	}
 	mask := facetMask & 0x3f
-	for _, c := range lattice.Ring(center, ring) {
+	for c := range lattice.RingSeq(center, ring) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}

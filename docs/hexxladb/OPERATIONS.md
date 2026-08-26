@@ -60,6 +60,14 @@ Without **prune + compact**, expect similar **file** size; [`StatsMVCC`](../../m
 
 **Visible** cells (non-tombstone latest value) are what [`DB.HealthCheck`](../../health.go) **CellCount** reflects, or what you get from [`GetCell`](../../primitives.go) / query APIs. Do not equate **`logical_cells`** with “rows the user can see.”
 
+`HealthCheck` always decodes and validates every visible cell and seam primary
+record and returns `ErrCorruptDatabase` for malformed keys, encodings, or
+key/record mismatches. `HealthCheckConfig{}` disables only the optional orphan
+and secondary-index consistency checks; use `DefaultHealthCheckConfig()` for a
+full check. The scan holds a stable read snapshot, so other readers may proceed
+but writers wait until it finishes. Run it during a maintenance or low-traffic
+window and use a cancellable context for large databases.
+
 ### Ten delete calls but visible count dropped by eight
 
 [`DeleteCell`](../../delete_cell.go) is **idempotent**: deleting a coord with **no visible cell** returns **nil** and writes nothing. So **N** delete tools calls can yield **fewer than N** visible-cell drops if:

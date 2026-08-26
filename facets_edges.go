@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"math"
 
 	"github.com/hexxla/hexxladb/internal/changelog"
 	"github.com/hexxla/hexxladb/internal/index"
@@ -15,6 +14,9 @@ import (
 // PutFacet writes a facet record at facet/<packed>/<facet_id>. Only allowed inside [DB.Update].
 func (tx *Tx) PutFacet(rec FacetWalkRecord) error {
 	if err := tx.requireWritable(); err != nil {
+		return err
+	}
+	if err := invalidTypedRecord(validateFacetInvariants(rec)); err != nil {
 		return err
 	}
 	data, err := record.EncodeFacet(rec)
@@ -133,8 +135,8 @@ func (tx *Tx) PutEdge(rec EdgeWalkRecord) error {
 	if rec.RelationType == "" {
 		return ErrInvalidArgument
 	}
-	if math.IsNaN(rec.Weight) || math.IsInf(rec.Weight, 0) {
-		return fmt.Errorf("%w: edge weight must be finite", ErrInvalidArgument)
+	if err := invalidTypedRecord(validateEdgeInvariants(rec)); err != nil {
+		return err
 	}
 	data, err := record.EncodeEdge(rec)
 	if err != nil {

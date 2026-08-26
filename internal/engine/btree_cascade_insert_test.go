@@ -93,11 +93,11 @@ func TestInsertIntoLeafCascade_TwoPages(t *testing.T) {
 	}
 
 	// Should produce exactly 2 pages for uniform entries
-	if result.pageCount() != 2 {
-		t.Fatalf("expected 2 pages, got %d", result.pageCount())
+	if len(result.pages) != 2 {
+		t.Fatalf("expected 2 pages, got %d", len(result.pages))
 	}
-	if result.newPageCount() != 1 {
-		t.Fatalf("expected 1 new page, got %d", result.newPageCount())
+	if len(result.pages)-1 != 1 {
+		t.Fatalf("expected 1 new page, got %d", len(result.pages)-1)
 	}
 }
 
@@ -144,8 +144,8 @@ func TestInsertIntoLeafCascade_CascadeSplit(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected non-nil result after split")
 	}
-	if result.pageCount() < 2 {
-		t.Fatalf("expected 2+ pages, got %d", result.pageCount())
+	if len(result.pages) < 2 {
+		t.Fatalf("expected 2+ pages, got %d", len(result.pages))
 	}
 
 	// Every produced page must serialize within pageSize (no ErrCorruptTree).

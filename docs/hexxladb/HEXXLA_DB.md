@@ -79,6 +79,12 @@ Source identifiers and tags are length-prefixed UTF-8 byte strings. Time indexes
 
 Cell and seam source/time/tag secondaries are maintained by their typed write methods. Raw `Tx.Put` does not maintain them.
 
+Typed record writes validate the physical identity before encoding: packed cell,
+facet, edge, seam, embedding, and cluster-hint coordinates must be valid packing
+outputs, and stored floating-point metadata must be finite. This prevents keys
+that cannot be enumerated spatially and values that would make ranking or graph
+ordering non-total. Raw application key/value rows remain application-owned.
+
 ## MVCC physical keys
 
 Format v1 stores one physical value for each logical key and overwrites it in place.
@@ -115,7 +121,7 @@ Named snapshot metadata is stored under private `__meta/` keys. Snapshot and val
 
 Embeddings are optional. `Options.EmbeddingDimension` and `Options.DistanceMetric` become immutable database settings once established. Each cell may have one float32 vector.
 
-`PutEmbedding` maintains the persisted HNSW graph. Node levels are derived deterministically from the packed coordinate, so the same vectors and insertion order produce the same graph layout without persisted random state. `SearchByEmbedding` uses HNSW when available and falls back to a flat scan when required; `SearchByEmbeddingWithStats` exposes the selected path and effective query breadth. `DeleteCell` also removes the cell's embedding and HNSW node.
+`PutEmbedding` maintains the persisted HNSW graph. Node levels are derived deterministically from the packed coordinate, so the same vectors and insertion order produce the same graph layout without persisted random state. `SearchByEmbedding` uses HNSW when a complete current graph is available and falls back to a flat scan when the graph is absent or deliberately marked stale; malformed metadata, entry, node, neighbor, or vector state fails closed with `ErrCorruptDatabase` rather than returning a partial result. `SearchByEmbeddingWithStats` exposes the selected path and effective query breadth. `DeleteCell` also removes the cell's embedding and HNSW node.
 
 `PutEmbeddingWithOptions` can defer graph maintenance during bounded bulk
 ingestion. The vector under `embed/` remains authoritative and the lifecycle

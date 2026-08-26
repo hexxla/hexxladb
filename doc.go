@@ -20,7 +20,8 @@
 //     Configurable page size via [Options.PageSize] (4096/8192/16384/65536; default 4096); readable at runtime via [DB.PageSize].
 //     Per-database value size limit via [Options.MaxValueBytes] (512–1048576 bytes; default 8192); readable at runtime via [DB.MaxValueBytes].
 //     Transparent per-value DEFLATE compression is always-on (compress/flate, Go stdlib; values ≥ 64 bytes).
-//     MVCC on new databases via [Options.EnableMVCC] / [Options.MVCCRetention];
+//     MVCC on new plaintext databases via [Options.EnableMVCC] / [Options.MVCCRetention];
+//     new encrypted databases always use authenticated MVCC format v3;
 //     lifecycle: [DB.StatsMVCC], [DB.PruneCellVersions], [DB.SuggestedPruneBeforeSeq], [PruneScheduler]
 //     (see docs/hexxladb/OPERATIONS.md). Encryption operations include [RotateEncryption].
 //     [PreflightMigrateV1ToV2] and [MigrateV1ToV2] provide an offline,
@@ -41,6 +42,8 @@
 //   - [Tx.Get], [Tx.Put], [Tx.AscendRange] — byte-key ordered store.
 //     Lattice primitives: [Tx.FindFreeCellPlacement], [Tx.PutCell], [Tx.GetCell], [Tx.DeleteCell], [Tx.DeleteCellWithOutcome], [Tx.WalkRing], [Tx.PutSeam],
 //     [Tx.FindSeams], [Tx.FindSeamsAt], [Tx.LoadContext], [Tx.ResolveSeam] (see [primitives.go]);
+//     public context, raw-spatial, seam, and candidate constants bound enumeration
+//     work and return [ErrSpatialScanLimit] when a seam scan exhausts its budget;
 //     facets/edges: [Tx.PutFacet], [Tx.GetFacet], [Tx.AscendFacetsForCell],
 //     [Tx.PutEdge], [Tx.GetEdge], [Tx.AscendEdgesFrom] ([facets_edges.go]);
 //     stable record aliases: [CellRecord], [SeamRecord], [FacetWalkRecord], [EdgeWalkRecord] ([export.go]);
@@ -65,7 +68,8 @@
 //     [Tx.ReindexEmbeddings]; [CellQuery.Embedding] / [CellSearchConfig.Embedding] integrate
 //     vector search into [Tx.QueryCells] / [Tx.SearchCells] (see docs/hexxladb/API_REFERENCE.md).
 //   - Sentinel errors are defined in errors.go and support [errors.Is]. Recovery-sensitive
-//     categories include lifecycle ([ErrDatabaseClosed], [ErrDatabaseLocked]), format and migration
+//     categories include lifecycle ([ErrDatabaseClosed], [ErrDatabaseLocked]), persisted integrity
+//     ([ErrCorruptDatabase]), bounded scans ([ErrQueryScanLimit], [ErrSpatialScanLimit]), format and migration
 //     refusal ([ErrUnsupportedFormatVersion], [ErrMigrationIncomplete], [ErrMigrationChangelogState], [ErrCompactionIncomplete]),
 //     commit finalization ([ErrCommitFinalization], [ErrCommitDurable]), encryption and changelog
 //     integrity ([ErrEncryptionKeyMismatch], [ErrChangelogCorrupt], [ErrChangelogConsumerInvalidated]),

@@ -6,6 +6,21 @@ import (
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
+const (
+	// MaxSpatialScanRadius bounds public raw ring and radial scan helpers.
+	MaxSpatialScanRadius = 128
+	// MaxSeamSearchRadius bounds the coordinate probes used by seam lookup.
+	MaxSeamSearchRadius = 64
+	// MaxSeamIndexRows bounds secondary rows examined by one seam lookup.
+	MaxSeamIndexRows = 200_000
+	// MaxSeamSearchResults bounds materialized seams returned by one lookup.
+	MaxSeamSearchResults = 10_000
+)
+
+func hexDiskCellCount(radius int) int {
+	return 1 + 3*radius*(radius+1)
+}
+
 func validatePackedRadius(center Coord, radius int) error {
 	if radius < 0 {
 		return fmt.Errorf("%w: radius must be non-negative", ErrInvalidArgument)

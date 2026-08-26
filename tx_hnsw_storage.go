@@ -2,6 +2,7 @@ package hexxladb
 
 import (
 	"encoding/binary"
+	"fmt"
 
 	"github.com/hexxla/hexxladb/internal/hnsw"
 	"github.com/hexxla/hexxladb/internal/index"
@@ -42,7 +43,7 @@ func (s *txHNSWStorage) GetHNSWMeta() (*hnsw.Meta, bool, error) {
 	}
 	m, err := hnsw.DecodeMeta(val)
 	if err != nil {
-		return nil, false, err
+		return nil, false, fmt.Errorf("%w: HNSW metadata: %w", ErrCorruptDatabase, err)
 	}
 	s.meta = m
 	s.metaLoaded = true
@@ -68,13 +69,15 @@ func (s *txHNSWStorage) GetHNSWEntry() (lattice.PackedCoord, bool, error) {
 	if err != nil || !ok {
 		return lattice.PackedCoord{}, false, err
 	}
-	if len(val) < 16 {
-		s.entryLoaded = true
-		return lattice.PackedCoord{}, false, nil
+	if len(val) != 16 {
+		return lattice.PackedCoord{}, false, fmt.Errorf("%w: HNSW entry must be exactly 16 bytes", ErrCorruptDatabase)
 	}
 	var p lattice.PackedCoord
 	p[1] = binary.BigEndian.Uint64(val[0:8])
 	p[0] = binary.BigEndian.Uint64(val[8:16])
+	if _, err := lattice.Unpack(p); err != nil {
+		return lattice.PackedCoord{}, false, fmt.Errorf("%w: invalid HNSW entry coordinate: %w", ErrCorruptDatabase, err)
+	}
 	s.entry = p
 	s.entryLoaded = true
 	s.entryFound = true
@@ -115,7 +118,7 @@ func (s *txHNSWStorage) GetHNSWNode(p lattice.PackedCoord) (*hnsw.Node, bool, er
 	}
 	n, err := hnsw.DecodeNode(p, val)
 	if err != nil {
-		return nil, false, err
+		return nil, false, fmt.Errorf("%w: HNSW node: %w", ErrCorruptDatabase, err)
 	}
 	if s.nodes == nil {
 		s.nodes = make(map[lattice.PackedCoord]cachedHNSWNode)

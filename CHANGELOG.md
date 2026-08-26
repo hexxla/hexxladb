@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Bounded retrieval controls** — added public context, spatial, seam-scan, and filtered-embedding candidate limits. `CellQuery.EmbeddingCandidateLimit` supports progressive filtered-ANN widening within `MaxEmbeddingFilterCandidates`, and `ErrSpatialScanLimit` reports seam secondary/result exhaustion without returning a misleading partial result.
+
+### Changed
+
+- **Strict typed-write invariants** ⚠️ **breaking pre-v1** — cell, facet, edge, seam, embedding, delete, endpoint, and cluster-hint coordinates must now be valid `Pack` outputs; provenance confidence, edge weights, and seam confidence deltas must be finite. Invalid typed writes return `ErrInvalidArgument` before changing storage. Raw application key/value rows remain unchanged.
+- **Explicitly bounded spatial work** ⚠️ **breaking pre-v1** — context loads now cap radius, seeds, results, hops, and combined coordinate probes; raw/ring/seam queries preflight the complete packable region and enforce documented radius, secondary-row, and result limits. Eager coordinate disks and per-ring allocations were replaced with lazy iterators.
+- **Exact large-radius context** ⚠️ **breaking pre-v1** — removed automatic LOD coordinate substitution from `LoadContext`. Large radial loads now retain exact stored coordinates in deterministic nearest-first order; the independent coordinate-coarsening math utility remains available internally for future explicit multiresolution experiments.
+
+### Fixed
+
+- **Fail-closed health and HNSW integrity** — `HealthCheck` now decodes visible cell and seam primaries, verifies key/record identities, rejects malformed secondary keys, and documents that its stable snapshot blocks writers. HNSW metadata, entry, node, neighbor, vector, and missing-component errors now propagate as `ErrCorruptDatabase` rather than returning partial or empty successful searches.
+- **Cost-aware query planning and filtered recall** — small spatial disks now take precedence over unknown-cardinality source/tag scans, reducing the 2,000-cell combined benchmark from the prior approximately 62 ms plan to a 128 µs median (126–201 µs range) in five focused samples. Filtered embedding queries widen progressively so qualifying candidates beyond the former fixed `2×MaxResults` window can be found.
+- **Lean storage and geometry paths** — removed a dead test-only leaf split implementation and its stale cascading-split TODO, removed test-only cascade result helpers, reused the canonical coordinate-distance method, and made `WalkRings` reuse `RingInto` rather than allocating each ring separately.
+- **Current benchmark profile** — embedding API benchmarks and the LLM context example now use the validated 4 KiB HNSW page profile instead of retaining the obsolete 64 KiB setting, and benchmark fixtures fail on setup or query errors rather than emitting invalid measurements.
+
 ## [0.6.0] - 2026-08-26
 
 ### Added

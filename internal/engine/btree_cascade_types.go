@@ -25,25 +25,3 @@ type cascadePage struct {
 	isNew  bool     // true if this page needs a new ID allocated
 	pageID uint64   // pageID is set if !isNew (original page)
 }
-
-// newPages returns only the new pages that need IDs allocated.
-// Complexity: O(n) where n = number of pages.
-func (r *cascadeSplitResult) newPages() []cascadePage {
-	var result []cascadePage
-	for _, p := range r.pages {
-		if p.isNew {
-			result = append(result, p)
-		}
-	}
-	return result
-}
-
-// pageCount returns the total number of pages (original + new).
-func (r *cascadeSplitResult) pageCount() int {
-	return len(r.pages)
-}
-
-// newPageCount returns the number of new pages created.
-func (r *cascadeSplitResult) newPageCount() int {
-	return len(r.newPages())
-}

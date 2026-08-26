@@ -27,20 +27,21 @@ Implementation packages under internal/ are private to this module.
 
 Exported entrypoints:
   - Open, Options, DB, DB.Close — exclusively locked engine shell with
-    durable WAL (see docs/hexxladb/DURABILITY.md). Optional logical
-    changefeed (Options.ChangelogEnabled, DB.ReadChangelogSince)
-    with durable named cursors (DB.AdvanceChangelogConsumer,
-    DB.GetChangelogConsumerCursor; see docs/hexxladb/CHANGEFEED.md).
-    Configurable page size via Options.PageSize (4096/8192/16384/65536;
-    default 4096); readable at runtime via DB.PageSize. Per-database value
-    size limit via Options.MaxValueBytes (512–1048576 bytes; default 8192);
-    readable at runtime via DB.MaxValueBytes. Transparent per-value DEFLATE
-    compression is always-on (compress/flate, Go stdlib; values ≥ 64 bytes).
-    MVCC on new databases via Options.EnableMVCC / Options.MVCCRetention;
-    lifecycle: DB.StatsMVCC, DB.PruneCellVersions, DB.SuggestedPruneBeforeSeq,
-    PruneScheduler (see docs/hexxladb/OPERATIONS.md). Encryption operations
-    include RotateEncryption. PreflightMigrateV1ToV2 and MigrateV1ToV2 provide
-    an offline, capacity-checked, resumable, verified upgrade from a format-v1
+    durable WAL (see docs/hexxladb/DURABILITY.md). Optional logical changefeed
+    (Options.ChangelogEnabled, DB.ReadChangelogSince) with durable named
+    cursors (DB.AdvanceChangelogConsumer, DB.GetChangelogConsumerCursor; see
+    docs/hexxladb/CHANGEFEED.md). Configurable page size via Options.PageSize
+    (4096/8192/16384/65536; default 4096); readable at runtime via DB.PageSize.
+    Per-database value size limit via Options.MaxValueBytes (512–1048576
+    bytes; default 8192); readable at runtime via DB.MaxValueBytes.
+    Transparent per-value DEFLATE compression is always-on (compress/flate,
+    Go stdlib; values ≥ 64 bytes). MVCC on new plaintext databases via
+    Options.EnableMVCC / Options.MVCCRetention; new encrypted databases
+    always use authenticated MVCC format v3; lifecycle: DB.StatsMVCC,
+    DB.PruneCellVersions, DB.SuggestedPruneBeforeSeq, PruneScheduler
+    (see docs/hexxladb/OPERATIONS.md). Encryption operations include
+    RotateEncryption. PreflightMigrateV1ToV2 and MigrateV1ToV2 provide an
+    offline, capacity-checked, resumable, verified upgrade from a format-v1
     source. PreflightMigrateToAuthenticated and MigrateToAuthenticated create a
     verified authenticated encrypted v3 candidate from a closed v1 or v2 source.
   - DB.SnapshotDiff — retained MVCC cell/seam history between two commit
@@ -62,6 +63,8 @@ Exported entrypoints:
     Tx.FindFreeCellPlacement, Tx.PutCell, Tx.GetCell, Tx.DeleteCell,
     Tx.DeleteCellWithOutcome, Tx.WalkRing, Tx.PutSeam, Tx.FindSeams,
     Tx.FindSeamsAt, Tx.LoadContext, Tx.ResolveSeam (see [primitives.go]);
+    public context, raw-spatial, seam, and candidate constants bound enumeration
+    work and return ErrSpatialScanLimit when a seam scan exhausts its budget;
     facets/edges: Tx.PutFacet, Tx.GetFacet, Tx.AscendFacetsForCell, Tx.PutEdge,
     Tx.GetEdge, Tx.AscendEdgesFrom ([facets_edges.go]); stable record aliases:
     CellRecord, SeamRecord, FacetWalkRecord, EdgeWalkRecord ([export.go]);
@@ -88,10 +91,11 @@ Exported entrypoints:
     DB.RebuildEmbeddingIndex; Tx.ReindexEmbeddings; CellQuery.Embedding /
     CellSearchConfig.Embedding integrate vector search into Tx.QueryCells /
     Tx.SearchCells (see docs/hexxladb/API_REFERENCE.md).
-  - Sentinel errors are defined in errors.go and support
-    errors.Is. Recovery-sensitive categories include lifecycle
-    (ErrDatabaseClosed, ErrDatabaseLocked), format and migration
-    refusal (ErrUnsupportedFormatVersion, ErrMigrationIncomplete,
+  - Sentinel errors are defined in errors.go and support errors.Is.
+    Recovery-sensitive categories include lifecycle (ErrDatabaseClosed,
+    ErrDatabaseLocked), persisted integrity (ErrCorruptDatabase),
+    bounded scans (ErrQueryScanLimit, ErrSpatialScanLimit), format and
+    migration refusal (ErrUnsupportedFormatVersion, ErrMigrationIncomplete,
     ErrMigrationChangelogState, ErrCompactionIncomplete), commit
     finalization (ErrCommitFinalization, ErrCommitDurable), encryption and
     changelog integrity (ErrEncryptionKeyMismatch, ErrChangelogCorrupt,
@@ -119,6 +123,29 @@ hexxladb, not internal/engine (see docs/architecture/HEXAGONAL_ARCHITECTURE.md).
 
 CONSTANTS
 
+const (
+	// MaxContextRadius bounds radial candidate enumeration for [Tx.LoadContext].
+	MaxContextRadius = 128
+	// MaxContextSeeds bounds multi-seed fan-out for [Tx.LoadContext].
+	MaxContextSeeds = 32
+	// MaxContextResults bounds one assembled context result.
+	MaxContextResults = 10_000
+	// MaxContextHops bounds graph traversal depth for [Tx.LoadContext].
+	MaxContextHops = 128
+	// MaxContextCandidateProbes bounds the combined radial and seam coordinate
+	// work accepted by one [Tx.LoadContext] call.
+	MaxContextCandidateProbes = 200_000
+)
+const (
+	// MaxSpatialScanRadius bounds public raw ring and radial scan helpers.
+	MaxSpatialScanRadius = 128
+	// MaxSeamSearchRadius bounds the coordinate probes used by seam lookup.
+	MaxSeamSearchRadius = 64
+	// MaxSeamIndexRows bounds secondary rows examined by one seam lookup.
+	MaxSeamIndexRows = 200_000
+	// MaxSeamSearchResults bounds materialized seams returned by one lookup.
+	MaxSeamSearchResults = 10_000
+)
 const (
 	ChangelogOpPutCell = changelog.OpPutCell
 	ChangelogOpPutSeam = changelog.OpPutSeam
@@ -157,6 +184,10 @@ const MaxAxialAbs = lattice.MaxAxialAbs
 const MaxCellPlacementRadius = 128
     MaxCellPlacementRadius is the largest radius accepted by
     Tx.FindFreeCellPlacement. A full search inspects at most 49,537 coordinates.
+
+const MaxEmbeddingFilterCandidates = 10_000
+    MaxEmbeddingFilterCandidates is the hard candidate ceiling for filtered
+    embedding queries. Lower per-query limits trade filtered recall for work.
 
 const MaxRenderRadius = 10
     MaxRenderRadius is the largest maxR accepted by RenderHexGrid and
@@ -297,6 +328,10 @@ var (
 	// ErrQueryScanLimit means [Tx.QueryCells] exhausted CellQuery.MaxScanRows.
 	// The returned result slice is partial but sorted and capped as requested.
 	ErrQueryScanLimit = errors.New("hexxladb: query scan limit reached")
+
+	// ErrSpatialScanLimit means a seam lookup exhausted its bounded secondary-row
+	// or materialized-result budget. No partial result is returned.
+	ErrSpatialScanLimit = errors.New("hexxladb: spatial scan limit reached")
 
 	// ErrRotationIncomplete means an interrupted encryption rotation must be
 	// rolled back with [RecoverInterruptedRotation] before the database is opened.
@@ -556,8 +591,16 @@ type CellQuery struct {
 	// [DB.EmbeddingDimension] (auto-detected on first [Tx.PutEmbedding]).
 	// Returns empty results if no embeddings have been stored yet.
 	// All other predicate fields (tags, temporal, spatial, etc.) are applied as
-	// post-filters on the embedding results.
+	// post-filters on the embedding results. Candidate retrieval widens
+	// progressively until MaxResults matches are found, the ANN result is
+	// exhausted, or EmbeddingCandidateLimit is reached.
 	Embedding []float32
+
+	// EmbeddingCandidateLimit bounds ANN candidates considered before structured
+	// post-filtering. Zero chooses a bounded adaptive default. Values above
+	// [MaxEmbeddingFilterCandidates] are rejected. A low value can return fewer
+	// than MaxResults even when qualifying embeddings exist beyond the window.
+	EmbeddingCandidateLimit int
 }
     CellQuery is a composable predicate specification for Tx.QueryCells.
 
@@ -871,8 +914,9 @@ func (db *DB) GroupWALStats() (applyBatches, batchesWith2PlusJobs, walSynces uin
 
 func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthReport, error)
     HealthCheck performs an integrity scan of the database and returns a
-    HealthReport. It runs inside a read-only snapshot so it does not block
-    concurrent writes. ctx cancellation is respected between cells.
+    HealthReport. It runs inside a stable read-only snapshot. Other readers
+    may proceed, but the snapshot blocks writers until the scan completes.
+    ctx cancellation is respected between records.
 
 func (db *DB) ImportCellsJSON(ctx context.Context, r io.Reader) (int, error)
     ImportCellsJSON reads a JSON array of record.CellRecord from r and writes
@@ -1151,8 +1195,10 @@ type HealthCheckConfig struct {
 	// MaxErrors stops counting secondary-index errors after this many (0 = unlimited).
 	MaxErrors int
 }
-    HealthCheckConfig controls which checks DB.HealthCheck performs. All boolean
-    fields default to true; set explicitly to false to skip a check.
+    HealthCheckConfig controls optional cross-record checks performed by
+    DB.HealthCheck. Its zero value disables the optional checks; primary cell
+    and seam decoding is always performed. Use DefaultHealthCheckConfig to
+    enable every optional check.
 
 func DefaultHealthCheckConfig() HealthCheckConfig
     DefaultHealthCheckConfig returns a HealthCheckConfig with all checks enabled
@@ -1199,12 +1245,12 @@ type LoadContextConfig struct {
 	// Multiple seeds are expanded concurrently and merged round-robin in seed order.
 	Seeds []Coord
 
-	// MaxRing is the maximum ring radius to expand around each seed (default 5).
-	// The DB automatically switches to Level-of-Detail coarsening when MaxRing >= 10
-	// and a single seed is provided, reducing lookups for large radii.
+	// MaxRing is the maximum ring radius to expand around each seed (default 5,
+	// maximum [MaxContextRadius]).
 	MaxRing int
 
-	// MaxCells is the maximum number of cells returned across all seeds (default 256).
+	// MaxCells is the maximum number of cells returned across all seeds (default 256,
+	// maximum [MaxContextResults]).
 	// This is an operational result bound, not an LLM token budget. Applications
 	// own prompt rendering and model-specific token accounting.
 	MaxCells int
@@ -1214,7 +1260,8 @@ type LoadContextConfig struct {
 	// Leave empty for ring-based loading.
 	EdgeFilter string
 
-	// MaxHops limits BFS depth when EdgeFilter is set (default 5).
+	// MaxHops limits BFS depth when EdgeFilter is set (default 5, maximum
+	// [MaxContextHops]).
 	MaxHops int
 
 	// AsOf applies a validity-window filter to the assembled CellViews.
@@ -1227,7 +1274,7 @@ type LoadContextConfig struct {
     LoadContextConfig is the unified configuration for all context loading
     strategies. Pass it to Tx.LoadContext; the DB selects the optimal internal
     algorithm automatically based on the provided fields — callers do not need
-    to know about LOD, multi-seed deduplication, or graph BFS internals.
+    to know about multi-seed deduplication or graph BFS internals.
 
 type MVCCPruneProfile string
     MVCCPruneProfile defines operational defaults for stale-version pruning
@@ -1786,8 +1833,6 @@ func (tx *Tx) LoadContext(ctx context.Context, cfg LoadContextConfig) (ContextPa
     The DB selects the optimal algorithm automatically:
       - EdgeFilter non-empty → graph BFS traversal (naturally excludes cells
         with no edge connections)
-      - MaxRing >= 10 and single seed → Level-of-Detail coarsening (efficient
-        for large radii)
       - Multiple seeds → concurrent deduped ring walks merged round-robin
       - Otherwise → deterministic nearest-first ring walk
 
@@ -1882,9 +1927,11 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
     QueryCells executes a CellQuery against the transaction's snapshot and
     returns matching cells ordered according to CellQuery.SortBy.
 
-    The planner picks the cheapest available index:
+    The planner uses a bounded cost heuristic:
       - Embedding set → ANN via Tx.SearchByEmbedding (HNSW or flat scan)
-      - RequireTags set → tag secondary index (most selective tag first)
+      - Small radius → ring walk when its exact probe count is cheaper than the
+        configured scan budget or the conservative spatial threshold
+      - RequireTags set → first caller-provided tag secondary index
       - SourceID set → source secondary index
       - After/Before set → complete primary scan (correct across signed time
         buckets)
@@ -2448,7 +2495,6 @@ func LoadContext(ctx context.Context, tx TxReader, p LoadContextParams) (Context
     LoadContext is the unified context loading entry point. It selects the
     optimal algorithm automatically:
       - EdgeFilter non-empty → graph BFS traversal (requires TxEdgeWalker)
-      - MaxRing >= lodAutoThreshold AND single seed → LOD coarsened ring walk
       - Multiple seeds → concurrent deduped multi-seed ring walk
       - Otherwise → deterministic nearest-first ring walk
 

@@ -1,6 +1,7 @@
 package hexxladb
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"slices"
@@ -41,8 +42,9 @@ type HealthReport struct {
 	Warnings []string
 }
 
-// HealthCheckConfig controls which checks [DB.HealthCheck] performs.
-// All boolean fields default to true; set explicitly to false to skip a check.
+// HealthCheckConfig controls optional cross-record checks performed by [DB.HealthCheck].
+// Its zero value disables the optional checks; primary cell and seam decoding is
+// always performed. Use [DefaultHealthCheckConfig] to enable every optional check.
 type HealthCheckConfig struct {
 	// CheckOrphans verifies that every seam's endpoints exist as visible cells.
 	CheckOrphans bool
@@ -66,11 +68,15 @@ func DefaultHealthCheckConfig() HealthCheckConfig {
 }
 
 // HealthCheck performs an integrity scan of the database and returns a [HealthReport].
-// It runs inside a read-only snapshot so it does not block concurrent writes.
-// ctx cancellation is respected between cells.
+// It runs inside a stable read-only snapshot. Other readers may proceed, but the
+// snapshot blocks writers until the scan completes. ctx cancellation is respected
+// between records.
 func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthReport, error) {
 	if db == nil {
 		return HealthReport{}, ErrClosed
+	}
+	if cfg.MaxErrors < 0 {
+		return HealthReport{}, ErrInvalidArgument
 	}
 	var report HealthReport
 
@@ -100,7 +106,9 @@ func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthRep
 		}
 
 		if cfg.CheckOrphans {
-			healthCheckOrphans(ctx, seams, liveCells, &report)
+			if err := healthCheckOrphans(ctx, seams, liveCells, &report); err != nil {
+				return err
+			}
 		}
 
 		if cfg.CheckTagIndex {
@@ -138,8 +146,23 @@ func healthScanCells(ctx context.Context, tx *Tx, db *DB) (liveCells map[lattice
 	var scanErr error
 
 	var lastCoord lattice.PackedCoord
-	var lastCoordLive bool
+	var lastValue []byte
 	var hasPrevCoord bool
+	flushMVCCCell := func() error {
+		if !hasPrevCoord {
+			return nil
+		}
+		stats.LogicalCells++
+		if len(lastValue) == 0 {
+			return nil
+		}
+		if err := validateHealthCell(lastCoord, lastValue); err != nil {
+			return err
+		}
+		liveCells[lastCoord] = struct{}{}
+		cellCount++
+		return nil
+	}
 
 	if rangeErr := tx.AscendRange(cellFrom, cellTo, func(k, v []byte) bool {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -149,29 +172,43 @@ func healthScanCells(ctx context.Context, tx *Tx, db *DB) (liveCells map[lattice
 		keyLen := len(k)
 		v1Len := len(index.CellPrefix) + index.PackedCoordKeyLen
 		mvccLen := v1Len + index.VersionSuffixLen
-		if keyLen != v1Len && keyLen != mvccLen {
-			return true
+		wantLen := v1Len
+		if isMVCC {
+			wantLen = mvccLen
+		}
+		if keyLen != wantLen {
+			scanErr = fmt.Errorf("%w: malformed cell primary key", ErrCorruptDatabase)
+			return false
 		}
 		p, pErr := index.ParseCellKey(k[:v1Len])
 		if pErr != nil {
-			return true
+			scanErr = fmt.Errorf("%w: parse cell primary key: %w", ErrCorruptDatabase, pErr)
+			return false
+		}
+		if _, unpackErr := lattice.Unpack(p); unpackErr != nil {
+			scanErr = fmt.Errorf("%w: unpack cell primary coordinate: %w", ErrCorruptDatabase, unpackErr)
+			return false
 		}
 		if isMVCC {
 			stats.VersionedRows++
 			if !hasPrevCoord || p != lastCoord {
-				if hasPrevCoord {
-					if lastCoordLive {
-						liveCells[lastCoord] = struct{}{}
-						cellCount++
-					}
-					stats.LogicalCells++
+				if err := flushMVCCCell(); err != nil {
+					scanErr = err
+					return false
 				}
 				lastCoord = p
-				lastCoordLive = false
 				hasPrevCoord = true
 			}
-			lastCoordLive = len(v) > 0
+			lastValue = slices.Clone(v)
 		} else {
+			if len(v) == 0 {
+				scanErr = fmt.Errorf("%w: empty non-MVCC cell record", ErrCorruptDatabase)
+				return false
+			}
+			if err := validateHealthCell(p, v); err != nil {
+				scanErr = err
+				return false
+			}
 			liveCells[p] = struct{}{}
 			cellCount++
 		}
@@ -179,17 +216,29 @@ func healthScanCells(ctx context.Context, tx *Tx, db *DB) (liveCells map[lattice
 	}); rangeErr != nil {
 		return nil, 0, MVCCStats{}, fmt.Errorf("hexxladb: health cell scan: %w", rangeErr)
 	}
-	if isMVCC && hasPrevCoord {
-		if lastCoordLive {
-			liveCells[lastCoord] = struct{}{}
-			cellCount++
-		}
-		stats.LogicalCells++ // flush final coord group
-	}
 	if scanErr != nil {
 		return nil, 0, MVCCStats{}, scanErr
 	}
+	if isMVCC {
+		if err := flushMVCCCell(); err != nil {
+			return nil, 0, MVCCStats{}, err
+		}
+	}
 	return liveCells, cellCount, stats, nil
+}
+
+func validateHealthCell(key lattice.PackedCoord, value []byte) error {
+	rec, err := record.DecodeCell(value)
+	if err != nil {
+		return fmt.Errorf("%w: decode visible cell: %w", ErrCorruptDatabase, err)
+	}
+	if rec.Key != key {
+		return fmt.Errorf("%w: cell primary key does not match encoded record key", ErrCorruptDatabase)
+	}
+	if err := validateCellInvariants(rec); err != nil {
+		return fmt.Errorf("%w: invalid visible cell: %w", ErrCorruptDatabase, err)
+	}
+	return nil
 }
 
 // healthScanSeams scans seam/ primary keys and returns decoded visible seams.
@@ -212,20 +261,27 @@ func healthScanSeamsMVCC(ctx context.Context, tx *Tx) ([]record.SeamRecord, erro
 	var curULID string
 	var scanErr error
 
-	flushGrouped := func() {
+	flushGrouped := func() error {
 		if len(grouped) == 0 {
-			return
+			return nil
 		}
 		val, _, ok := mvcc.SelectVisible(grouped, tx.readSeq)
 		grouped = grouped[:0]
 		if !ok || len(val) == 0 {
-			return
+			return nil
 		}
 		s, err := record.DecodeSeam(val)
 		if err != nil {
-			return
+			return fmt.Errorf("%w: decode visible seam %q: %w", ErrCorruptDatabase, curULID, err)
+		}
+		if s.ID != curULID {
+			return fmt.Errorf("%w: seam primary key does not match encoded record ID", ErrCorruptDatabase)
+		}
+		if err := validateSeamInvariants(s); err != nil {
+			return fmt.Errorf("%w: invalid visible seam: %w", ErrCorruptDatabase, err)
 		}
 		seams = append(seams, s)
+		return nil
 	}
 
 	if err := tx.AscendRange(
@@ -238,10 +294,14 @@ func healthScanSeamsMVCC(ctx context.Context, tx *Tx) ([]record.SeamRecord, erro
 			}
 			ulidStr, seq, err := index.ParseSeamVersionKey(k)
 			if err != nil {
-				return true
+				scanErr = fmt.Errorf("%w: parse seam primary key: %w", ErrCorruptDatabase, err)
+				return false
 			}
 			if ulidStr != curULID {
-				flushGrouped()
+				if err := flushGrouped(); err != nil {
+					scanErr = err
+					return false
+				}
 				curULID = ulidStr
 			}
 			grouped = append(grouped, mvcc.VersionKV{
@@ -256,7 +316,9 @@ func healthScanSeamsMVCC(ctx context.Context, tx *Tx) ([]record.SeamRecord, erro
 	if scanErr != nil {
 		return nil, scanErr
 	}
-	flushGrouped()
+	if err := flushGrouped(); err != nil {
+		return nil, err
+	}
 	return seams, nil
 }
 
@@ -268,14 +330,24 @@ func healthScanSeamsV1(ctx context.Context, tx *Tx) ([]record.SeamRecord, error)
 	if err := tx.AscendRange(
 		[]byte(index.SeamPrefix),
 		index.SeamScanUpperBound(),
-		func(_, v []byte) bool {
+		func(k, v []byte) bool {
 			if err := ctx.Err(); err != nil {
 				scanErr = err
 				return false
 			}
 			s, err := record.DecodeSeam(v)
 			if err != nil {
-				return true
+				scanErr = fmt.Errorf("%w: decode visible seam: %w", ErrCorruptDatabase, err)
+				return false
+			}
+			expectedKey, err := index.SeamKey(s.ID)
+			if err != nil || !bytes.Equal(k, expectedKey) {
+				scanErr = fmt.Errorf("%w: seam primary key does not match encoded record ID", ErrCorruptDatabase)
+				return false
+			}
+			if err := validateSeamInvariants(s); err != nil {
+				scanErr = fmt.Errorf("%w: invalid visible seam: %w", ErrCorruptDatabase, err)
+				return false
 			}
 			seams = append(seams, s)
 			return true
@@ -290,10 +362,10 @@ func healthScanSeamsV1(ctx context.Context, tx *Tx) ([]record.SeamRecord, error)
 }
 
 // healthCheckOrphans detects seams whose CellA or CellB are not in liveCells.
-func healthCheckOrphans(ctx context.Context, seams []record.SeamRecord, liveCells map[lattice.PackedCoord]struct{}, report *HealthReport) {
+func healthCheckOrphans(ctx context.Context, seams []record.SeamRecord, liveCells map[lattice.PackedCoord]struct{}, report *HealthReport) error {
 	for _, s := range seams {
 		if err := ctx.Err(); err != nil {
-			return
+			return err
 		}
 		aCoord, errA := lattice.Unpack(s.CellA)
 		bCoord, errB := lattice.Unpack(s.CellB)
@@ -313,6 +385,7 @@ func healthCheckOrphans(ctx context.Context, seams []record.SeamRecord, liveCell
 			))
 		}
 	}
+	return nil
 }
 
 // healthCheckTagIndex verifies every tag/ secondary index entry has a live primary cell.
@@ -393,12 +466,12 @@ func healthCheckSourceIndex(ctx context.Context, tx *Tx, isMVCC bool, liveCells 
 }
 
 // secondaryTagIndexConsistent verifies a physical tag/ key against primary storage.
-// Malformed keys are ignored (caller should not increment errors). MVCC suffixed keys
-// are validated against cell/<packed><seq>; v1 keys and unsuffixed tag keys check live head cells only.
+// MVCC suffixed keys are validated against cell/<packed><seq>; v1 keys and
+// unsuffixed tag keys check live head cells only. Malformed storage fails closed.
 func secondaryTagIndexConsistent(tx *Tx, dbMVCC bool, k []byte, live map[lattice.PackedCoord]struct{}) (bool, error) {
 	tag, p, seq, hasSeq, err := index.ParseTagKeyWithSeq(k)
 	if err != nil {
-		return true, nil // skip malformed keys
+		return false, fmt.Errorf("%w: parse tag secondary key: %w", ErrCorruptDatabase, err)
 	}
 	if dbMVCC && hasSeq {
 		ck := index.CellKeyWithVersion(p, seq)
@@ -411,7 +484,10 @@ func secondaryTagIndexConsistent(tx *Tx, dbMVCC bool, k []byte, live map[lattice
 		}
 		rec, err := record.DecodeCell(val)
 		if err != nil {
-			return false, nil
+			return false, fmt.Errorf("%w: decode tag-indexed cell: %w", ErrCorruptDatabase, err)
+		}
+		if rec.Key != p {
+			return false, fmt.Errorf("%w: tag-indexed cell key mismatch", ErrCorruptDatabase)
 		}
 		return slices.Contains(rec.Tags, tag), nil
 	}
@@ -422,7 +498,7 @@ func secondaryTagIndexConsistent(tx *Tx, dbMVCC bool, k []byte, live map[lattice
 func secondarySourceIndexConsistent(tx *Tx, dbMVCC bool, k []byte, live map[lattice.PackedCoord]struct{}) (bool, error) {
 	sid, p, seq, hasSeq, err := index.ParseSourceKeyWithSeq(k)
 	if err != nil {
-		return true, nil // skip malformed keys
+		return false, fmt.Errorf("%w: parse source secondary key: %w", ErrCorruptDatabase, err)
 	}
 	if dbMVCC && hasSeq {
 		ck := index.CellKeyWithVersion(p, seq)
@@ -435,7 +511,10 @@ func secondarySourceIndexConsistent(tx *Tx, dbMVCC bool, k []byte, live map[latt
 		}
 		rec, err := record.DecodeCell(val)
 		if err != nil {
-			return false, nil
+			return false, fmt.Errorf("%w: decode source-indexed cell: %w", ErrCorruptDatabase, err)
+		}
+		if rec.Key != p {
+			return false, fmt.Errorf("%w: source-indexed cell key mismatch", ErrCorruptDatabase)
 		}
 		return rec.Provenance.SourceID == sid, nil
 	}

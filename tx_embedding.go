@@ -35,6 +35,9 @@ func (tx *Tx) PutEmbeddingWithOptions(coord PackedCoord, vec []float32, opts Emb
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}
+	if err := invalidTypedRecord(validatePackedCoordInvariant("embedding coordinate", coord)); err != nil {
+		return err
+	}
 	if err := validateEmbeddingVector(vec); err != nil {
 		return err
 	}
@@ -113,6 +116,9 @@ func (tx *Tx) GetEmbedding(coord PackedCoord) (vec []float32, ok bool, err error
 // Only allowed inside [DB.Update].
 func (tx *Tx) DeleteEmbedding(coord PackedCoord) error {
 	if err := tx.requireWritable(); err != nil {
+		return err
+	}
+	if err := invalidTypedRecord(validatePackedCoordInvariant("embedding coordinate", coord)); err != nil {
 		return err
 	}
 	dim := tx.db.eng.EmbeddingDim()

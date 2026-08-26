@@ -10,6 +10,104 @@ import (
 	"github.com/hexxla/hexxladb"
 )
 
+func TestQueryCells_PlannerPrefersBoundedSpatialProbe(t *testing.T) {
+	t.Parallel()
+	db := openQueryDB(t)
+	for q := -2; q <= 2; q++ {
+		for r := -2; r <= 2; r++ {
+			putQueryCell(t, db, hexxladb.Coord{Q: q, R: r}, "cell", "shared", nil, 1, time.Time{})
+		}
+	}
+
+	var results []hexxladb.CellQueryResult
+	err := db.View(func(tx *hexxladb.Tx) error {
+		var err error
+		results, err = tx.QueryCells(t.Context(), hexxladb.CellQuery{
+			SourceID:    "shared",
+			Center:      hexxladb.Coord{},
+			Radius:      1,
+			MaxScanRows: 7,
+		})
+		return err
+	})
+	if err != nil {
+		t.Fatalf("QueryCells error = %v, want complete bounded spatial plan", err)
+	}
+	if len(results) != 7 {
+		t.Fatalf("results = %d, want 7", len(results))
+	}
+}
+
+func TestQueryCells_FilteredEmbeddingWidensCandidates(t *testing.T) {
+	t.Parallel()
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "filtered-ann.db"), &hexxladb.Options{
+		EmbeddingDimension: 2,
+		DistanceMetric:     hexxladb.DistanceDotProduct,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	err = db.Update(func(tx *hexxladb.Tx) error {
+		for i := range 60 {
+			coord := hexxladb.Coord{Q: i, R: 0}
+			key, err := hexxladb.Pack(coord)
+			if err != nil {
+				return err
+			}
+			tags := []string{"skip"}
+			if i == 50 {
+				tags = []string{"keep"}
+			}
+			if err := tx.PutCell(t.Context(), hexxladb.CellRecord{Key: key, RawContent: "candidate", Tags: tags}); err != nil {
+				return err
+			}
+			if err := tx.PutEmbeddingWithOptions(key, []float32{float32(100 - i), 0}, hexxladb.EmbeddingWriteOptions{DeferIndexMaintenance: true}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	query := hexxladb.CellQuery{
+		Embedding:   []float32{1, 0},
+		RequireTags: []string{"keep"},
+		MaxResults:  1,
+	}
+	err = db.View(func(tx *hexxladb.Tx) error {
+		results, err := tx.QueryCells(t.Context(), query)
+		if err != nil {
+			return err
+		}
+		if len(results) != 1 || results[0].Cell.Coord != (hexxladb.Coord{Q: 50, R: 0}) {
+			t.Fatalf("results = %+v, want filtered candidate at (50,0)", results)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	query.EmbeddingCandidateLimit = 40
+	err = db.View(func(tx *hexxladb.Tx) error {
+		results, err := tx.QueryCells(t.Context(), query)
+		if err != nil {
+			return err
+		}
+		if len(results) != 0 {
+			t.Fatalf("limited results = %+v, want no match within first 40 candidates", results)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func openQueryDB(t *testing.T) *hexxladb.DB {
 	t.Helper()
 	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "query.db"), nil)

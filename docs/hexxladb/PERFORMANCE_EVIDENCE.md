@@ -202,7 +202,7 @@ this CPU, so the latency gate passed without a storage-specific optimization.
 The authenticated envelope adds 48 bytes per allocated data page: 1.171875% at
 4 KiB and 0.0732421875% at 64 KiB, passing the space gate.
 
-The public point-read comparison controls for v3's mandatory MVCC behavior by
+The earlier controlled public point-read comparison controls for v3's mandatory MVCC behavior by
 comparing plaintext MVCC v2 with authenticated MVCC v3, not with unversioned
 v1. The five-sample medians at 2,000 cells were 15,733 ns/op for v2 and 15,819
 ns/op for v3 (+0.55%); both reported 451 allocations and approximately 34.7 KiB
@@ -216,6 +216,60 @@ These are in-process CPU and synthetic point-read measurements, not a durability
 or storage-device throughput claim. Crash-marker recovery, tamper faults,
 migration, compaction, backup/restore, and rotation are correctness gates and
 remain covered by their dedicated tests.
+
+### Current public-API snapshot
+
+The 2026-08-26 README refresh ran after the bounded-work, query-planner,
+integrity, and HNSW remediation. Each benchmark below ran sequentially in five
+independent samples against a fresh temporary database. Fixed iteration counts
+keep the suite bounded while giving short operations enough repetitions:
+
+```bash
+go test -run '^$' -bench '^BenchmarkAPI_GetCell(_MVCC|_MVCC_Encrypted)?/cells_2000$' -benchmem -benchtime=10000x -count=5 .
+go test -run '^$' -bench '^BenchmarkAPI_(WalkRing|QueryCells|LoadContext|FindSeams)$' -benchmem -benchtime=100x -count=5 .
+go test -run '^$' -bench '^BenchmarkAPI_(SearchCells|LoadContextFOV|LoadContextVoronoi|MVCCVersionResolution|SnapshotDiff)$' -benchmem -benchtime=20x -count=5 .
+go test -run '^$' -bench '^BenchmarkAPI_(PutCell|PutCell_MVCC|BatchPutCells)$' -benchmem -benchtime=20x -count=5 .
+go test -run '^$' -bench '^BenchmarkSearchByEmbedding_HNSW/500_32d$' -benchmem -benchtime=1x -count=5 .
+go test -run '^$' -bench '^BenchmarkAPI_QueryCells_Embedding/n500_dim32$' -benchmem -benchtime=1x -count=5 .
+go test -run '^$' -bench '^BenchmarkAPI_HealthCheck/cells_2000$' -benchmem -benchtime=10x -count=5 .
+```
+
+The host was an Intel Core i9-14900HX running Linux/amd64 and Go 1.27.0. The
+filesystem cache and CPU frequency were not reset between samples, so the
+minimum-to-maximum range is reported rather than hiding host variation behind
+one number. Setup is outside the timed region.
+
+| Operation | Median | Five-sample range | Allocations/op | Workload |
+| --- | ---: | ---: | ---: | --- |
+| `GetCell`, plaintext v1 | 2.08 µs | 1.48–4.79 µs | 16 | 2,000 cells |
+| `GetCell`, plaintext MVCC v2 | 17.9 µs | 15.4–22.2 µs | 451 | 2,000 cells |
+| `GetCell`, authenticated MVCC v3 | 16.4 µs | 10.3–18.8 µs | 451 | 2,000 cells |
+| `PutCell`, plaintext v1 | 66.5 µs | 48.9–79.9 µs | 189 | one indexed cell and durable commit |
+| `PutCell`, MVCC v2 | 122 µs | 93.1–139 µs | 395 | one indexed cell and durable commit |
+| `BatchPutCells`, MVCC v2 | 51.1 µs/cell | 48.9–55.1 µs/cell | 35,981/batch | 100 cells per durable commit |
+| `WalkRing` | 17.7 µs | 14.9–27.9 µs | 64 | radius 2, 2,000-cell database |
+| `QueryCells`, spatial | 51.4 µs | 50.7–61.6 µs | 291 | radius 3, 2,000 cells |
+| `QueryCells`, combined | 128 µs | 126–201 µs | 672 | radius 5 + source + confidence, 2,000 cells |
+| `LoadContext` | 470 µs | 406–496 µs | 7,779 | radius 5, 64-cell result limit, 2,000 cells |
+| `LoadContextFOV` | 132 µs | 125–142 µs | 671 | open radius 5, 2,000 cells |
+| `LoadContextVoronoi` | 604 µs | 505–729 µs | 2,733 | four seeds, radius 4, 2,000 cells |
+| `FindSeams` | 610 µs | 585–616 µs | 7,685 | 100 seams, radius 3 |
+| `SearchCells`, lexical | 4.84 ms | 4.41–5.34 ms | 18,981 | one term, 2,000 cells |
+| `SearchByEmbedding` | 2.05 ms | 1.83–2.38 ms | 3,719 | 500 random 32d vectors, top 10, 4 KiB pages |
+| `QueryCells`, embedding | 837 µs | 667 µs–1.04 ms | 975 | 500 identical 32d vectors, unfiltered top 10, 4 KiB pages |
+| `HealthCheck` | 1.26 ms | 1.18–1.36 ms | 30,463 | 2,000 cells, all optional checks enabled |
+| MVCC latest resolution | 4.74 µs | 4.49–7.76 µs | 197 | one key with 6,000 retained versions |
+| MVCC historical resolution | 11.0 µs | 6.77–11.9 µs | 290 | one key with 6,000 retained versions |
+| `SnapshotDiff` | 430 µs | 383–589 µs | 6,687 | 500 retained writes |
+
+The planner remediation replaced fixed source-before-radius precedence with an
+exact small-disk cost heuristic. The current combined-query median is 128 µs,
+versus the prior documented approximately 62 ms source-range plan. This removes
+avoidable candidate reads without persistent cardinality statistics or changed
+predicate semantics. The identical-vector embedding query is a deterministic
+pipeline-cost fixture; it is not evidence for filtered recall or a realistic
+embedding distribution. Allocation counts identify remaining optimization
+opportunities but are not release gates.
 
 ### Vector-search evidence
 
@@ -283,19 +337,24 @@ primary. Two 10k×384d 64 KiB attempts were terminated by the reference host
 before completion as transaction dirty pages amplified memory. The 4 KiB
 10k×384d run completed without page-split or corruption errors.
 
-The point-read fixes were also isolated with the existing final benchmark:
+The point-read fixes were originally isolated with this benchmark:
 
 ```bash
 go test -run '^$' -bench '^BenchmarkSearchByEmbedding_HNSW/500_32d$' \
-  -benchmem -benchtime=1x -count=1 .
+  -benchmem -benchtime=1x -count=5 .
 ```
 
-The recorded baseline was 72.1 ms/op, 133.0 MB/op, and 514,980 allocations/op.
-The finished implementation measured 14.8 ms/op, 16.4 MB/op, and 3,966
-allocations/op on the reference host. Direct copies into pooled cache buffers,
-allocation-free B+ tree page selection, and transaction-local HNSW decode
-caches account for the reduction; the persisted B+ tree and HNSW encodings did
-not change.
+The historical 64 KiB-page baseline was 72.1 ms/op, 133.0 MB/op, and 514,980
+allocations/op; the first optimized 64 KiB run measured 14.8 ms/op, 16.4 MB/op,
+and 3,966 allocations/op. Those values remain useful only as a like-for-like
+record of the point-read changes. After the benchmark harness moved to the
+supported 4 KiB HNSW profile, the final five-sample median is 2.05 ms/op
+(1.83–2.38 ms), 5.02 MB/op, and 3,719 allocations/op. Page size materially
+changes the workload, so the 4 KiB result must not be presented as another
+direct speedup over the historical 64 KiB baseline. Direct copies into pooled
+cache buffers, allocation-free B+ tree page selection, and transaction-local
+HNSW decode caches account for the original like-for-like reduction; the
+persisted B+ tree and HNSW encodings did not change.
 
 These measurements support deferred rebuilds through 20,000 vectors at 32
 dimensions and 10,000 at 384 dimensions with the tested settings. They are not

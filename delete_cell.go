@@ -43,6 +43,9 @@ func (tx *Tx) DeleteCellWithOutcome(ctx context.Context, key PackedCoord) (remov
 	if err := tx.requireWritable(); err != nil {
 		return false, err
 	}
+	if err := invalidTypedRecord(validatePackedCoordInvariant("cell key", key)); err != nil {
+		return false, err
+	}
 
 	if !tx.db.useMVCC {
 		return tx.deleteCellV1(key)

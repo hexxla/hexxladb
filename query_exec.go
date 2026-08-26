@@ -17,13 +17,16 @@ import (
 
 const defaultQueryMaxResults = 20
 const defaultQueryScanRadius = 32
+const preferredSpatialPlanProbeLimit = 4096
 
 // QueryCells executes a [CellQuery] against the transaction's snapshot and
 // returns matching cells ordered according to [CellQuery.SortBy].
 //
-// The planner picks the cheapest available index:
+// The planner uses a bounded cost heuristic:
 //   - Embedding set    →  ANN via [Tx.SearchByEmbedding] (HNSW or flat scan)
-//   - RequireTags set  →  tag secondary index (most selective tag first)
+//   - Small radius     →  ring walk when its exact probe count is cheaper than
+//     the configured scan budget or the conservative spatial threshold
+//   - RequireTags set  →  first caller-provided tag secondary index
 //   - SourceID set     →  source secondary index
 //   - After/Before set →  complete primary scan (correct across signed time buckets)
 //   - Center+Radius    →  ring walk around Center
@@ -46,23 +49,13 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
 	// All other paths use a fused yield callback: filter+score happen inside the
 	// scan callback itself, so no intermediate []CellRecord slice is allocated.
 	var results []CellQueryResult
-	var embScores map[lattice.PackedCoord]float64
 	var scanLimitErr error
 
 	if len(q.Embedding) > 0 {
-		// Embedding: bounded ANN fetch, then fused filter+score below.
-		candidates, scores, err := tx.scanByEmbedding(q.Embedding, maxResults)
+		var err error
+		results, err = tx.queryCellsByEmbedding(ctx, q, queryLow, maxResults)
 		if err != nil {
 			return nil, err
-		}
-		embScores = scores
-		for _, rec := range candidates {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			if r, ok := tx.scoreRecord(q, rec, queryLow, embScores); ok {
-				results = append(results, r)
-			}
 		}
 	} else {
 		results, scanLimitErr = tx.queryCellsByIndex(ctx, q, queryLow)
@@ -91,14 +84,20 @@ func (tx *Tx) validateCellQuery(ctx context.Context, q CellQuery) error {
 	if tx == nil || tx.db == nil {
 		return ErrClosed
 	}
-	if q.Radius < 0 {
-		return fmt.Errorf("%w: radius must be non-negative", ErrInvalidArgument)
+	if q.Radius < 0 || q.Radius > MaxSpatialScanRadius {
+		return fmt.Errorf("%w: radius must be between 0 and %d", ErrInvalidArgument, MaxSpatialScanRadius)
 	}
 	if q.MaxScanRows < 0 {
 		return fmt.Errorf("%w: MaxScanRows must not be negative", ErrInvalidArgument)
 	}
 	if len(q.Embedding) > 0 && q.MaxScanRows > 0 {
 		return fmt.Errorf("%w: MaxScanRows cannot bound embedding graph reads", ErrInvalidArgument)
+	}
+	if q.EmbeddingCandidateLimit < 0 || q.EmbeddingCandidateLimit > MaxEmbeddingFilterCandidates {
+		return fmt.Errorf("%w: EmbeddingCandidateLimit must be between 0 and %d", ErrInvalidArgument, MaxEmbeddingFilterCandidates)
+	}
+	if len(q.Embedding) == 0 && q.EmbeddingCandidateLimit != 0 {
+		return fmt.Errorf("%w: EmbeddingCandidateLimit requires Embedding", ErrInvalidArgument)
 	}
 	if q.Radius > 0 {
 		if err := validatePackedRadius(q.Center, q.Radius); err != nil {
@@ -122,6 +121,8 @@ func (tx *Tx) queryCellsByIndex(ctx context.Context, q CellQuery, queryLow strin
 
 	var err error
 	switch {
+	case preferSpatialPlan(q):
+		err = tx.scanByRadiusFused(ctx, q.Center, q.Radius, q.MaxScanRows, yield)
 	case len(q.RequireTags) > 0:
 		err = tx.scanByTagFused(ctx, q.RequireTags[0], q.MaxScanRows, yield)
 	case q.SourceID != "":
@@ -137,6 +138,17 @@ func (tx *Tx) queryCellsByIndex(ctx context.Context, q CellQuery, queryLow strin
 		err = tx.scanAllCellsFused(ctx, q.MaxScanRows, yield)
 	}
 	return results, err
+}
+
+func preferSpatialPlan(q CellQuery) bool {
+	if q.Radius <= 0 {
+		return false
+	}
+	probes := hexDiskCellCount(q.Radius)
+	if q.MaxScanRows > 0 {
+		return probes <= q.MaxScanRows
+	}
+	return probes <= preferredSpatialPlanProbeLimit
 }
 
 // scanAllCellsFused walks the complete cell/ primary keyspace and yields each
@@ -303,29 +315,67 @@ func (tx *Tx) scanByRadiusFused(ctx context.Context, center Coord, radius, maxSc
 	return nil
 }
 
-// scanByEmbedding fetches ANN candidates (bounded by MaxResults×2).
-// The embedding path is inherently bounded and needs the scores map,
-// so it keeps the small intermediate slice.
-func (tx *Tx) scanByEmbedding(vec []float32, maxResults int) ([]record.CellRecord, map[lattice.PackedCoord]float64, error) {
+func (tx *Tx) queryCellsByEmbedding(ctx context.Context, q CellQuery, queryLow string, maxResults int) ([]CellQueryResult, error) {
 	if maxResults <= 0 {
-		return tx.scanAllEmbeddings(vec)
-	}
-	fetchK := max(maxResults*2, 20)
-	hits, err := tx.SearchByEmbedding(vec, EmbeddingSearchConfig{MaxResults: fetchK})
-	if err != nil {
-		return nil, nil, err
-	}
-	recs := make([]record.CellRecord, 0, len(hits))
-	scores := make(map[lattice.PackedCoord]float64, len(hits))
-	for _, h := range hits {
-		rec, ok, getErr := tx.GetCell(h.Coord)
-		if getErr != nil || !ok {
-			continue
+		candidates, scores, err := tx.scanAllEmbeddings(q.Embedding)
+		if err != nil {
+			return nil, err
 		}
-		recs = append(recs, rec)
-		scores[rec.Key] = h.Score
+		results := make([]CellQueryResult, 0, len(candidates))
+		for _, rec := range candidates {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if result, ok := tx.scoreRecord(q, rec, queryLow, scores); ok {
+				results = append(results, result)
+			}
+		}
+		return results, nil
 	}
-	return recs, scores, nil
+
+	candidateLimit := q.EmbeddingCandidateLimit
+	if candidateLimit == 0 {
+		candidateLimit = min(MaxEmbeddingFilterCandidates, max(100, multiplyCapped(maxResults, 16, MaxEmbeddingFilterCandidates)))
+	}
+	fetchK := min(candidateLimit, max(20, multiplyCapped(maxResults, 2, candidateLimit)))
+	seen := make(map[lattice.PackedCoord]struct{}, fetchK)
+	results := make([]CellQueryResult, 0, min(maxResults, fetchK))
+	embeddingScore := make(map[lattice.PackedCoord]float64, 1)
+	for {
+		hits, err := tx.SearchByEmbedding(q.Embedding, EmbeddingSearchConfig{MaxResults: fetchK})
+		if err != nil {
+			return nil, err
+		}
+		for _, hit := range hits {
+			if _, duplicate := seen[hit.Coord]; duplicate {
+				continue
+			}
+			seen[hit.Coord] = struct{}{}
+			rec, ok, err := tx.GetCell(hit.Coord)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+			clear(embeddingScore)
+			embeddingScore[hit.Coord] = hit.Score
+			if result, matched := tx.scoreRecord(q, rec, queryLow, embeddingScore); matched {
+				results = append(results, result)
+			}
+		}
+		if len(results) >= maxResults || len(hits) < fetchK || fetchK == candidateLimit {
+			return results, nil
+		}
+		fetchK = min(candidateLimit, fetchK*2)
+	}
+}
+
+func multiplyCapped(value, factor, limit int) int {
+	if value >= limit/factor {
+		return limit
+	}
+	return value * factor
 }
 
 func (tx *Tx) scanAllEmbeddings(vec []float32) ([]record.CellRecord, map[lattice.PackedCoord]float64, error) {
@@ -406,37 +456,11 @@ func applyPredicates(q CellQuery, rec record.CellRecord, c Coord, _ string) bool
 	}
 	// Spatial (re-checked for non-radius scan paths)
 	if q.Radius > 0 {
-		if hexDistance(c, q.Center) > q.Radius {
+		if c.Distance(q.Center) > q.Radius {
 			return false
 		}
 	}
 	return true
-}
-
-// hexDistance returns the hex grid distance between two axial coordinates.
-func hexDistance(a, b Coord) int {
-	dq := a.Q - b.Q
-	dr := a.R - b.R
-	ds := (-a.Q - a.R) - (-b.Q - b.R)
-	d := dq
-	if dq < 0 {
-		d = -dq
-	}
-	dr2 := dr
-	if dr < 0 {
-		dr2 = -dr
-	}
-	ds2 := ds
-	if ds < 0 {
-		ds2 = -ds
-	}
-	if dr2 > d {
-		d = dr2
-	}
-	if ds2 > d {
-		d = ds2
-	}
-	return d
 }
 
 // ── sorting ───────────────────────────────────────────────────────────────────

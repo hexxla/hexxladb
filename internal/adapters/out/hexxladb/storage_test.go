@@ -21,9 +21,10 @@ func TestStorage_PutGetRoundTrip(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	s := NewStorage(db)
-	var key lattice.PackedCoord
-	key[0] = 0x10
-	key[1] = 0x20
+	key, err := lattice.Pack(lattice.Coord{Q: 16, R: 32})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	want := record.CellRecord{Key: key, RawContent: "storage-smoke"}
 	if err := s.PutCell(ctx, want); err != nil {

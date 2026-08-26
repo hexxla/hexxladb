@@ -102,7 +102,7 @@ func WalkRings(dst []Coord, center Coord, maxR int) []Coord {
 	}
 	dst = append(dst, center)
 	for k := 1; k <= maxR; k++ {
-		dst = append(dst, Ring(center, k)...)
+		dst = RingInto(dst, center, k)
 	}
 	return dst
 }

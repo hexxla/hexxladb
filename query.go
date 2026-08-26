@@ -2,6 +2,10 @@ package hexxladb
 
 import "time"
 
+// MaxEmbeddingFilterCandidates is the hard candidate ceiling for filtered
+// embedding queries. Lower per-query limits trade filtered recall for work.
+const MaxEmbeddingFilterCandidates = 10_000
+
 // SortOrder controls how [Tx.QueryCells] orders its results.
 type SortOrder int
 
@@ -109,8 +113,16 @@ type CellQuery struct {
 	// [DB.EmbeddingDimension] (auto-detected on first [Tx.PutEmbedding]).
 	// Returns empty results if no embeddings have been stored yet.
 	// All other predicate fields (tags, temporal, spatial, etc.) are applied as
-	// post-filters on the embedding results.
+	// post-filters on the embedding results. Candidate retrieval widens
+	// progressively until MaxResults matches are found, the ANN result is
+	// exhausted, or EmbeddingCandidateLimit is reached.
 	Embedding []float32
+
+	// EmbeddingCandidateLimit bounds ANN candidates considered before structured
+	// post-filtering. Zero chooses a bounded adaptive default. Values above
+	// [MaxEmbeddingFilterCandidates] are rejected. A low value can return fewer
+	// than MaxResults even when qualifying embeddings exist beyond the window.
+	EmbeddingCandidateLimit int
 }
 
 // CellQueryResult is one result from [Tx.QueryCells].

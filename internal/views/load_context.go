@@ -9,17 +9,6 @@ import (
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
-// lodAutoThreshold is the MaxRing value at or above which LoadContextDispatch
-// automatically uses Level-of-Detail coarsening for single-seed loads.
-// At ring 10+, coarsening reduces outer-ring lookups from O(6k) to O(6k/CoarseFactor²).
-const lodAutoThreshold = 10
-
-// lodDefaultFineRadius is the inner radius loaded at full resolution when LOD is auto-selected.
-const lodDefaultFineRadius = 3
-
-// lodDefaultCoarseFactor is the subdivision factor applied beyond the fine radius.
-const lodDefaultCoarseFactor = 2
-
 // LoadContextParams is the unified parameter set for all context loading strategies.
 // The implementation selects the best internal algorithm based on the provided fields.
 type LoadContextParams struct {
@@ -28,8 +17,6 @@ type LoadContextParams struct {
 	Seeds []lattice.Coord
 
 	// MaxRing is the maximum ring radius to expand (default 5).
-	// Automatically switches to LOD coarsening when MaxRing >= lodAutoThreshold (10)
-	// and len(Seeds) == 1.
 	MaxRing int
 
 	// MaxCells is the maximum number of cells returned (default 256).
@@ -63,7 +50,6 @@ type TxEdgeWalker interface {
 // LoadContext is the unified context loading entry point. It selects the optimal
 // algorithm automatically:
 //   - EdgeFilter non-empty  → graph BFS traversal (requires TxEdgeWalker)
-//   - MaxRing >= lodAutoThreshold AND single seed → LOD coarsened ring walk
 //   - Multiple seeds → concurrent deduped multi-seed ring walk
 //   - Otherwise → deterministic nearest-first ring walk
 //
@@ -84,9 +70,6 @@ func LoadContext(ctx context.Context, tx TxReader, p LoadContextParams) (Context
 			return ContextPack{}, ErrEdgeWalkerRequired
 		}
 		return loadContextByEdges(ctx, walker, p)
-
-	case len(p.Seeds) == 1 && p.MaxRing >= lodAutoThreshold:
-		return loadContextLOD(ctx, tx, p)
 
 	case len(p.Seeds) > 1:
 		return loadContextMultiSeedConcurrent(ctx, tx, p)
@@ -140,86 +123,6 @@ func loadContextByEdges(ctx context.Context, tx TxEdgeWalker, p LoadContextParam
 	}
 
 	return assembleCoordsIntoContextPack(ctx, tx, allCoords, p.Seeds, p.MaxCells, p.MaxRing, p.AsOf, p.Assembly)
-}
-
-// loadContextLOD loads cells using level-of-detail coarsening: inner rings at full
-// resolution, outer rings at CoarseFactor² reduced resolution.
-func loadContextLOD(ctx context.Context, tx TxReader, p LoadContextParams) (ContextPack, error) {
-	center := p.Seeds[0]
-	maxCoords := p.MaxCells
-
-	fineR := min(lodDefaultFineRadius, p.MaxRing)
-	coords, err := collectLODCoords(ctx, tx, center, fineR, p.MaxRing, lodDefaultCoarseFactor, maxCoords)
-	if err != nil {
-		return ContextPack{}, err
-	}
-	return assembleCoordsIntoContextPack(ctx, tx, coords, p.Seeds, p.MaxCells, p.MaxRing, p.AsOf, p.Assembly)
-}
-
-// collectLODCoords gathers coordinates using LOD strategy: full resolution for
-// inner rings, coarsened for outer rings.
-// Both walks are lazy (iter.Seq): no ring slice is allocated; iteration stops as
-// soon as maxCoords is reached, mirroring Badger's iterator early-exit pattern.
-func collectLODCoords(ctx context.Context, tx TxReader, center lattice.Coord, fineR, maxR, coarseFactor, maxCoords int) ([]lattice.Coord, error) {
-	out := make([]lattice.Coord, 0, min(maxCoords, 64))
-
-	// Inner rings: full resolution, lazy packed iterator.
-	seenInner := make(map[lattice.PackedCoord]struct{})
-	for cp := range lattice.WalkRingsPackedSeq(center, fineR) {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if len(out) >= maxCoords {
-			return out, nil
-		}
-		seenInner[cp.Packed] = struct{}{}
-		_, ok, err := tx.GetCell(cp.Packed)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			out = append(out, cp.Coord)
-		}
-	}
-
-	if fineR >= maxR || len(out) >= maxCoords {
-		return out, nil
-	}
-
-	// Outer rings: coarsened resolution, lazy packed iterator.
-	seen := make(map[lattice.PackedCoord]struct{}, len(seenInner))
-	for p := range seenInner {
-		seen[p] = struct{}{}
-	}
-
-	for cp := range lattice.SpiralRangePackedSeq(center, fineR+1, maxR) {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if len(out) >= maxCoords {
-			return out, nil
-		}
-		coarse, err := lattice.CoarsenCoord(cp.Coord, coarseFactor)
-		if err != nil {
-			continue
-		}
-		cp2, err := lattice.Pack(coarse)
-		if err != nil {
-			continue
-		}
-		if _, dup := seen[cp2]; dup {
-			continue
-		}
-		seen[cp2] = struct{}{}
-		_, ok, err := tx.GetCell(cp2)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			out = append(out, coarse)
-		}
-	}
-	return out, nil
 }
 
 // seedResult holds the per-seed ContextPack or an error from concurrent assembly.

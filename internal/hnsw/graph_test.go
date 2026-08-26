@@ -1,6 +1,7 @@
 package hnsw
 
 import (
+	"errors"
 	"math"
 	"testing"
 
@@ -334,5 +335,30 @@ func TestGraph_SearchEmpty(t *testing.T) {
 	}
 	if results != nil {
 		t.Fatalf("expected nil results, got %d", len(results))
+	}
+}
+
+func TestGraph_SearchRejectsIncompleteGraph(t *testing.T) {
+	t.Parallel()
+	entry := coord(1)
+	for name, removePart := range map[string]func(*memStorage){
+		"entry":  func(s *memStorage) { s.entry = nil },
+		"vector": func(s *memStorage) { delete(s.vecs, entry) },
+		"node":   func(s *memStorage) { delete(s.nodes, entry) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := newMemStorage()
+			s.meta = &Meta{M: DefaultM, EfC: DefaultEfConstruction, Count: 1}
+			s.entry = new(entry)
+			s.vecs[entry] = []float32{1, 0}
+			s.nodes[entry] = &Node{Coord: entry, Neighbors: [][]lattice.PackedCoord{{}}}
+			removePart(s)
+
+			_, err := NewGraph(s, engine.DistanceCosine).Search([]float32{1, 0}, 1, 10)
+			if !errors.Is(err, ErrCorruptGraph) {
+				t.Fatalf("Search error = %v, want ErrCorruptGraph", err)
+			}
+		})
 	}
 }

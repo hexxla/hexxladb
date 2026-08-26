@@ -58,6 +58,12 @@ The root package re-exports the stable geometry and wire types applications need
 
 Coordinate bounds and packing details are documented in [`internal/lattice/PACKED_COORD.md`](../../internal/lattice/PACKED_COORD.md).
 
+Typed writes require every `PackedCoord` key, endpoint, and cluster hint to
+round-trip through `Unpack`; construct them with `Pack`. Provenance confidence,
+edge weight, and seam confidence delta must be finite. Confidence remains an
+application-defined signal and is not restricted to a database-defined range.
+Violations return `ErrInvalidArgument` before serialization or index updates.
+
 HexxlaDB does not infer semantic anchors or enforce clustering. [`Tx.FindFreeCellPlacement`](../../primitives.go) searches from a caller-supplied anchor in deterministic ring order and returns the first coordinate without a visible cell, its packed key, and the number of occupied positions probed. Call it inside the same `DB.Update` as `PutCell`; the writable transaction prevents another writer from claiming the result, while `PutCell` remains the explicit canonical write. The helper does not reserve a result from repeated calls in the same transaction, so write the returned key before searching again. It accepts radii from zero through `MaxCellPlacementRadius`, requires the complete search disk to fit within the packable coordinate range, and returns `ErrNoFreeCellPlacement` on bounded exhaustion. A current MVCC tombstone is free for placement; writing there creates a new version while retained snapshots continue to expose the earlier cell.
 
 Preserve existing coordinates during incremental insertion; represent an intentional move by creating a successor and calling `MarkSupersedes` rather than deleting or rewriting history. `ClusterHint` is stored metadata only. Applications continue to own anchor selection, semantic grouping, relocation policy, and placement-quality thresholds.
@@ -101,16 +107,26 @@ The canonical record families and key encodings are in [`HEXXLA_DB.md`](./HEXXLA
 | [`Tx.FindEdgePath`](../../pathfind_api.go)          | Dijkstra shortest path over stored weighted edges.                                   |
 | [`Tx.WalkEdges`](../../pathfind_api.go)             | Bounded breadth-first traversal over stored edges.                                   |
 
-[`LoadContextConfig`](../../context_load.go) controls seeds, ring bounds, validity time, edge expansion, the `MaxCells` result limit, and assembly; validity, supersession, explanations, and requested seams apply across dispatch strategies. A single-seed ring load is nearest-first; multi-seed loads merge candidates round-robin in caller-supplied seed order and deduplicate coordinates and seams. HexxlaDB does not rank by confidence or count LLM tokens during context assembly. Applications own product ranking, complete-request rendering, provider/model token accounting, and output-token reservation. `ViewAt` snapshot time and record validity time are independent; see [`TX.md`](./TX.md).
+[`LoadContextConfig`](../../context_load.go) controls seeds, ring bounds, validity time, edge expansion, the `MaxCells` result limit, and assembly; validity, supersession, explanations, and requested seams apply across dispatch strategies. A single-seed ring load is nearest-first; multi-seed loads merge candidates round-robin in caller-supplied seed order and deduplicate coordinates and seams. Public constants bound radius, seeds, results, hops, and combined coordinate probes. HexxlaDB does not rank by confidence or count LLM tokens during context assembly. Applications own product ranking, complete-request rendering, provider/model token accounting, and output-token reservation. `ViewAt` snapshot time and record validity time are independent; see [`TX.md`](./TX.md).
 
 ## Query and content search
 
 [`Tx.QueryCells`](../../query_exec.go) executes structured [`CellQuery`](../../query.go) filters and uses an applicable secondary index when possible. [`Tx.SearchCells`](../../search.go) provides ranked lexical, substring, tag, source, temporal, and optional embedding-assisted retrieval.
 
+The query planner uses the exact coordinate-probe count to prefer a small
+spatial disk over an unknown-cardinality tag or source range; otherwise it uses
+the first required tag supplied by the caller, then source, temporal, spatial,
+or complete primary scanning. It does not maintain persistent cardinality
+statistics.
+
 `CellQuery.MaxScanRows` bounds physical cell/tag/source rows or spatial
 coordinate probes. If additional work exists beyond the budget, the query
 returns sorted partial results together with `ErrQueryScanLimit`; it is rejected
 for embedding queries because candidate counts cannot bound HNSW graph reads.
+Filtered embedding queries instead widen the ANN window progressively.
+`CellQuery.EmbeddingCandidateLimit` bounds post-filter candidates through
+`MaxEmbeddingFilterCandidates`; reaching that window may underfill results, so
+measure recall with representative filter selectivity.
 
 Typical retrieval flow:
 
@@ -125,9 +141,12 @@ Weighted Voronoi output contains each coordinate exactly once under its final
 lowest-cost owner. Weight callbacks must return finite, non-negative costs;
 invalid costs return `ErrInvalidArgument`.
 
-Spatial work is bounded before lattice expansion: FOV accepts radii through 256;
-Voronoi accepts radii through 64 and at most 32 seeds. Result limits remain
-separate (`MaxCells` and `MaxCellsPerSeed`).
+Spatial work is bounded before lattice expansion: raw/ring scans accept radii
+through `MaxSpatialScanRadius`; seam lookup additionally bounds radius, index
+rows, and returned seams; context loading bounds radius, seeds, results, hops,
+and combined coordinate probes; FOV accepts radii through 256; Voronoi accepts
+radii through 64 and at most 32 seeds. Result limits remain separate from work
+limits.
 
 Use [`RenderHexGrid`](../../hex_render.go) for bounded diagnostic rendering. It is a presentation helper, not a query primitive.
 
@@ -170,7 +189,10 @@ Operational setup and evidence gates are documented in [`OPERATIONS.md`](./OPERA
 
 ## MVCC lifecycle and snapshots
 
-MVCC is enabled only when creating a new database with `Options.EnableMVCC`.
+Plaintext databases enable MVCC when they are created with
+`Options.EnableMVCC`. Newly created encrypted databases always use authenticated
+MVCC format v3 regardless of that flag. Existing files retain their persisted
+format; ordinary `Open` never converts them.
 
 | API                                                                                | Use                                                   |
 | ---------------------------------------------------------------------------------- | ----------------------------------------------------- |
@@ -198,7 +220,7 @@ changes require deliberate compatibility review.
 | ---------------------------------------------------------------------------- | ------------------------------------------------------ |
 | [`DB.ReadChangelogSince`, `DB.ReadChangelogFiltered`](../../db_changelog.go) | Read the optional at-least-once logical changefeed.             |
 | [Durable consumer cursor methods](../../changelog_consumers.go)              | Register, compare-and-advance, inspect, and delete named cursors. |
-| [`DB.HealthCheck`](../../health.go)                                          | Validate database structure and report counts.                 |
+| [`DB.HealthCheck`](../../health.go)                                          | Fail closed on malformed visible records and optionally validate orphans and secondary indexes. |
 | [`DB.GroupWALStats`](../../db.go)                                            | Observe group-WAL batching.                                    |
 | [`DB.WriteStats`](../../write_stats.go)                                      | Observe cumulative write contention and phase timing.         |
 | [`DB.BackupTo`](../../backup.go)                                             | Capture a consistent primary/WAL/changelog recovery set.       |
@@ -257,7 +279,7 @@ Do not compare error strings.
 ## Examples
 
 - [`examples/conversational_memory`](../../examples/conversational_memory) — cell lifecycle, MVCC, context assembly, hooks, health, diff, compaction, FOV, and graph traversal.
-- [`examples/spatial_algorithms`](../../examples/spatial_algorithms) — FOV, LOD, Voronoi, Dijkstra, BFS, and graph-aware context.
+- [`examples/spatial_algorithms`](../../examples/spatial_algorithms) — FOV, radial context, Voronoi, Dijkstra, BFS, and graph-aware context.
 - [`examples/remote_access`](../../examples/remote_access) — a loopback-only, authenticated owner-service boundary that keeps database files single-process.
 - [`examples/llm_context_engine`](../../examples/llm_context_engine) — embedding-backed retrieval and prompt assembly; requires Ollama with `all-minilm`.
 - [`examples/performance_evidence`](../../examples/performance_evidence) — controlled evidence collection for spatial algorithms and super-hex occupancy.

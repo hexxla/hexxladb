@@ -138,6 +138,10 @@ var (
 	// The returned result slice is partial but sorted and capped as requested.
 	ErrQueryScanLimit = errors.New("hexxladb: query scan limit reached")
 
+	// ErrSpatialScanLimit means a seam lookup exhausted its bounded secondary-row
+	// or materialized-result budget. No partial result is returned.
+	ErrSpatialScanLimit = errors.New("hexxladb: spatial scan limit reached")
+
 	// ErrRotationIncomplete means an interrupted encryption rotation must be
 	// rolled back with [RecoverInterruptedRotation] before the database is opened.
 	ErrRotationIncomplete = errors.New("hexxladb: encryption rotation is incomplete")

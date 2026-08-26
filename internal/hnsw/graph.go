@@ -1,6 +1,7 @@
 package hnsw
 
 import (
+	"fmt"
 	"math"
 	"slices"
 	"sort"
@@ -79,12 +80,7 @@ func (g *Graph) Insert(coord lattice.PackedCoord, vec []float32) error {
 		return err
 	}
 	if !ok {
-		// Entry point embedding missing — corrupted state; just store node.
-		if err := g.s.PutHNSWNode(newNode); err != nil {
-			return err
-		}
-		meta.Count++
-		return g.s.PutHNSWMeta(meta)
+		return fmt.Errorf("%w: entry embedding is missing", ErrCorruptGraph)
 	}
 
 	// Phase 1: Greedy descent from top layer to nodeLayer+1.
@@ -181,8 +177,11 @@ func (g *Graph) greedyDescend(vec []float32, ep lattice.PackedCoord, epVec []flo
 			if epErr != nil {
 				return ep, epDist, epErr
 			}
-			if !epOk || lc >= len(epNode.Neighbors) {
-				break
+			if !epOk {
+				return ep, epDist, fmt.Errorf("%w: descent node is missing", ErrCorruptGraph)
+			}
+			if lc >= len(epNode.Neighbors) {
+				return ep, epDist, fmt.Errorf("%w: descent node is missing layer %d", ErrCorruptGraph, lc)
 			}
 			for _, nbr := range epNode.Neighbors[lc] {
 				nbrVec, nOk, nErr := g.s.GetEmbeddingVec(nbr)
@@ -190,7 +189,7 @@ func (g *Graph) greedyDescend(vec []float32, ep lattice.PackedCoord, epVec []flo
 					return ep, epDist, nErr
 				}
 				if !nOk {
-					continue
+					return ep, epDist, fmt.Errorf("%w: descent neighbor embedding is missing", ErrCorruptGraph)
 				}
 				d := engine.Similarity(vec, nbrVec, g.metric)
 				if d > epDist {
@@ -211,7 +210,10 @@ func (g *Graph) insertConnectLayers(coord lattice.PackedCoord, vec []float32, ep
 	mMax := meta.M
 
 	for lc := min(int(newNode.MaxLayer), int(meta.MaxLayer)); lc >= 0; lc-- {
-		candidates := g.searchLayer(vec, ep, int(meta.EfC), lc)
+		candidates, err := g.searchLayer(vec, ep, int(meta.EfC), lc)
+		if err != nil {
+			return err
+		}
 
 		limit := mMax
 		if lc == 0 {
@@ -284,7 +286,7 @@ func (g *Graph) Search(vec []float32, k, efSearch int) ([]SearchResult, error) {
 		return nil, err
 	}
 	if !hasEntry {
-		return nil, nil
+		return nil, fmt.Errorf("%w: non-empty graph has no entry point", ErrCorruptGraph)
 	}
 
 	entryVec, ok, err := g.s.GetEmbeddingVec(entryCoord)
@@ -292,7 +294,7 @@ func (g *Graph) Search(vec []float32, k, efSearch int) ([]SearchResult, error) {
 		return nil, err
 	}
 	if !ok {
-		return nil, nil
+		return nil, fmt.Errorf("%w: entry embedding is missing", ErrCorruptGraph)
 	}
 
 	// Greedy descent from top layer to layer 1.
@@ -302,7 +304,10 @@ func (g *Graph) Search(vec []float32, k, efSearch int) ([]SearchResult, error) {
 	}
 
 	// Layer 0: beam search.
-	candidates := g.searchLayer(vec, ep, efSearch, 0)
+	candidates, err := g.searchLayer(vec, ep, efSearch, 0)
+	if err != nil {
+		return nil, err
+	}
 
 	if len(candidates) > k {
 		candidates = candidates[:k]
@@ -453,10 +458,13 @@ func (g *Graph) findBestNeighborForEntry(node *Node) (lattice.PackedCoord, bool)
 
 // searchLayer runs ef-bounded greedy search at the given layer starting from ep.
 // Returns candidates sorted by descending similarity.
-func (g *Graph) searchLayer(vec []float32, ep lattice.PackedCoord, ef, layer int) []scored {
+func (g *Graph) searchLayer(vec []float32, ep lattice.PackedCoord, ef, layer int) ([]scored, error) {
 	epVec, ok, err := g.s.GetEmbeddingVec(ep)
-	if err != nil || !ok {
-		return nil
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: candidate embedding is missing", ErrCorruptGraph)
 	}
 	epDist := engine.Similarity(vec, epVec, g.metric)
 
@@ -475,47 +483,72 @@ func (g *Graph) searchLayer(vec []float32, ep lattice.PackedCoord, ef, layer int
 			break
 		}
 
-		bestNode, bOk, bErr := g.s.GetHNSWNode(best.coord)
-		if bErr != nil || !bOk {
-			continue
+		neighbors, err := g.neighborsAtLayer(best.coord, layer)
+		if err != nil {
+			return nil, err
 		}
-		if layer >= len(bestNode.Neighbors) {
-			continue
-		}
-		for _, nbr := range bestNode.Neighbors[layer] {
-			if visited[nbr] {
-				continue
-			}
-			visited[nbr] = true
-
-			nbrVec, nOk, nErr := g.s.GetEmbeddingVec(nbr)
-			if nErr != nil || !nOk {
-				continue
-			}
-			d := engine.Similarity(vec, nbrVec, g.metric)
-
-			if len(results) < ef || d > results[len(results)-1].dist {
-				// Insert into results maintaining descending order.
-				results = insertSorted(results, scored{coord: nbr, dist: d})
-				if len(results) > ef {
-					results = results[:ef]
-				}
-				// Also add to candidates.
-				candidates = insertSorted(candidates, scored{coord: nbr, dist: d})
-			}
+		candidates, results, err = g.expandSearchNeighbors(vec, neighbors, ef, visited, candidates, results)
+		if err != nil {
+			return nil, err
 		}
 	}
-	return results
+	return results, nil
 }
 
-// selectNeighbors implements the diversity heuristic: prefer neighbors that
-// are not too close to each other.
+func (g *Graph) neighborsAtLayer(coord lattice.PackedCoord, layer int) ([]lattice.PackedCoord, error) {
+	node, ok, err := g.s.GetHNSWNode(coord)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: candidate node is missing", ErrCorruptGraph)
+	}
+	if layer >= len(node.Neighbors) {
+		return nil, fmt.Errorf("%w: candidate node is missing layer %d", ErrCorruptGraph, layer)
+	}
+	return node.Neighbors[layer], nil
+}
+
+func (g *Graph) expandSearchNeighbors(
+	vec []float32,
+	neighbors []lattice.PackedCoord,
+	ef int,
+	visited map[lattice.PackedCoord]bool,
+	candidates, results []scored,
+) ([]scored, []scored, error) {
+	for _, nbr := range neighbors {
+		if visited[nbr] {
+			continue
+		}
+		visited[nbr] = true
+
+		nbrVec, ok, err := g.s.GetEmbeddingVec(nbr)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !ok {
+			return nil, nil, fmt.Errorf("%w: neighbor embedding is missing", ErrCorruptGraph)
+		}
+		distance := engine.Similarity(vec, nbrVec, g.metric)
+
+		if len(results) < ef || distance > results[len(results)-1].dist {
+			result := scored{coord: nbr, dist: distance}
+			results = insertSorted(results, result)
+			if len(results) > ef {
+				results = results[:ef]
+			}
+			candidates = insertSorted(candidates, result)
+		}
+	}
+	return candidates, results, nil
+}
+
+// selectNeighbors keeps the highest-scoring candidates. The measured graph
+// profile does not currently justify the more expensive diversity heuristic.
 func (g *Graph) selectNeighbors(candidates []scored, limit int) []scored {
 	if len(candidates) <= limit {
 		return candidates
 	}
-	// Simple approach: return top-limit by score.
-	// TODO(future): implement full diversity heuristic from Malkov & Yashunin.
 	return candidates[:limit]
 }
 

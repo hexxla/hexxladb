@@ -6,16 +6,28 @@ import (
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
+func mustPackNodeTest(t *testing.T, q, r int) lattice.PackedCoord {
+	t.Helper()
+	coord, err := lattice.Pack(lattice.Coord{Q: q, R: r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return coord
+}
+
 func TestNode_EncodeDecodeRoundTrip(t *testing.T) {
 	t.Parallel()
-	coord := lattice.PackedCoord{42, 99}
+	coord, err := lattice.Pack(lattice.Coord{Q: 42, R: 99})
+	if err != nil {
+		t.Fatal(err)
+	}
 	n := &Node{
 		Coord:    coord,
 		MaxLayer: 2,
 		Neighbors: [][]lattice.PackedCoord{
-			{{1, 0}, {2, 0}, {3, 0}}, // layer 0
-			{{10, 0}, {20, 0}},       // layer 1
-			{{100, 0}},               // layer 2
+			{mustPackNodeTest(t, 1, 0), mustPackNodeTest(t, 2, 0), mustPackNodeTest(t, 3, 0)},
+			{mustPackNodeTest(t, 10, 0), mustPackNodeTest(t, 20, 0)},
+			{mustPackNodeTest(t, 100, 0)},
 		},
 	}
 	data := EncodeNode(n)
@@ -46,7 +58,10 @@ func TestNode_EncodeDecodeRoundTrip(t *testing.T) {
 
 func TestNode_EncodeDecodeEmpty(t *testing.T) {
 	t.Parallel()
-	coord := lattice.PackedCoord{1, 2}
+	coord, err := lattice.Pack(lattice.Coord{Q: 1, R: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
 	n := &Node{
 		Coord:     coord,
 		MaxLayer:  0,
@@ -81,7 +96,10 @@ func TestNode_DecodeTruncated(t *testing.T) {
 
 func TestNode_DecodeTrailingBytes(t *testing.T) {
 	t.Parallel()
-	coord := lattice.PackedCoord{1, 2}
+	coord, err := lattice.Pack(lattice.Coord{Q: 1, R: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
 	n := &Node{Coord: coord, MaxLayer: 0, Neighbors: [][]lattice.PackedCoord{{}}}
 	data := EncodeNode(n)
 	data = append(data, 0xFF) // trailing junk
@@ -110,6 +128,23 @@ func TestMeta_DecodeTooShort(t *testing.T) {
 	}
 }
 
+func TestMeta_DecodeRejectsTrailingBytesAndInvalidSearchParameters(t *testing.T) {
+	t.Parallel()
+	valid := EncodeMeta(&Meta{M: 16, EfC: 200, Count: 1})
+	for name, data := range map[string][]byte{
+		"trailing":             append(valid, 0),
+		"m-too-small":          EncodeMeta(&Meta{M: 1, EfC: 200, Count: 1}),
+		"zero-ef-construction": EncodeMeta(&Meta{M: 16, EfC: 0, Count: 1}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := DecodeMeta(data); err == nil {
+				t.Fatal("DecodeMeta accepted corrupt metadata")
+			}
+		})
+	}
+}
+
 func BenchmarkEncodeNode_M16_L2(b *testing.B) {
 	// Typical node: M=16 neighbors at layer 0, 8 at layer 1, 4 at layer 2.
 	n := &Node{
@@ -127,8 +162,12 @@ func BenchmarkEncodeNode_M16_L2(b *testing.B) {
 }
 
 func BenchmarkDecodeNode_M16_L2(b *testing.B) {
+	coord, err := lattice.Pack(lattice.Coord{Q: 42, R: 99})
+	if err != nil {
+		b.Fatal(err)
+	}
 	n := &Node{
-		Coord:    lattice.PackedCoord{42, 99},
+		Coord:    coord,
 		MaxLayer: 2,
 		Neighbors: [][]lattice.PackedCoord{
 			make([]lattice.PackedCoord, 32),
@@ -137,7 +176,7 @@ func BenchmarkDecodeNode_M16_L2(b *testing.B) {
 		},
 	}
 	data := EncodeNode(n)
-	coord := n.Coord
+	coord = n.Coord
 	for b.Loop() {
 		_, _ = DecodeNode(coord, data)
 	}

@@ -81,7 +81,6 @@ func run(dbPath string) error {
 
 	db, err := hexxladb.Open(dbPath, &hexxladb.Options{
 		EnableMVCC: true,
-		PageSize:   65536,
 	})
 	if err != nil {
 		return fmt.Errorf("open: %w", err)

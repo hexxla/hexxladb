@@ -5,10 +5,15 @@ package hnsw
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
+
+// ErrCorruptGraph identifies malformed or internally inconsistent persisted
+// HNSW state. The root storage adapter maps it to the public corruption error.
+var ErrCorruptGraph = errors.New("hnsw: corrupt graph")
 
 // Node is the in-memory representation of an HNSW graph node.
 // Each node stores neighbor lists for layers 0..MaxLayer.
@@ -56,32 +61,38 @@ func EncodeNode(n *Node) []byte {
 // DecodeNode deserializes a Node from bytes produced by [EncodeNode].
 func DecodeNode(coord lattice.PackedCoord, data []byte) (*Node, error) {
 	if len(data) < 1 {
-		return nil, fmt.Errorf("hnsw: node data too short")
+		return nil, fmt.Errorf("%w: node data too short", ErrCorruptGraph)
+	}
+	if _, err := lattice.Unpack(coord); err != nil {
+		return nil, fmt.Errorf("%w: invalid node coordinate: %w", ErrCorruptGraph, err)
 	}
 	maxLayer := data[0]
 	data = data[1:]
 	layers := make([][]lattice.PackedCoord, int(maxLayer)+1)
 	for i := range layers {
 		if len(data) < 2 {
-			return nil, fmt.Errorf("hnsw: truncated layer %d count", i)
+			return nil, fmt.Errorf("%w: truncated layer %d count", ErrCorruptGraph, i)
 		}
 		count := int(binary.BigEndian.Uint16(data[:2]))
 		data = data[2:]
 		need := count * packedCoordSize
 		if len(data) < need {
-			return nil, fmt.Errorf("hnsw: truncated layer %d neighbors", i)
+			return nil, fmt.Errorf("%w: truncated layer %d neighbors", ErrCorruptGraph, i)
 		}
 		neighbors := make([]lattice.PackedCoord, count)
 		for j := range count {
 			off := j * packedCoordSize
 			neighbors[j][1] = binary.BigEndian.Uint64(data[off : off+8])
 			neighbors[j][0] = binary.BigEndian.Uint64(data[off+8 : off+16])
+			if _, err := lattice.Unpack(neighbors[j]); err != nil {
+				return nil, fmt.Errorf("%w: invalid layer %d neighbor: %w", ErrCorruptGraph, i, err)
+			}
 		}
 		data = data[need:]
 		layers[i] = neighbors
 	}
 	if len(data) != 0 {
-		return nil, fmt.Errorf("hnsw: %d trailing bytes", len(data))
+		return nil, fmt.Errorf("%w: node has %d trailing bytes", ErrCorruptGraph, len(data))
 	}
 	return &Node{
 		Coord:     coord,
@@ -112,13 +123,20 @@ func EncodeMeta(m *Meta) []byte {
 
 // DecodeMeta deserializes Meta from bytes produced by [EncodeMeta].
 func DecodeMeta(data []byte) (*Meta, error) {
-	if len(data) < 13 {
-		return nil, fmt.Errorf("hnsw: meta data too short (%d bytes)", len(data))
+	if len(data) != 13 {
+		return nil, fmt.Errorf("%w: meta must be exactly 13 bytes, got %d", ErrCorruptGraph, len(data))
 	}
-	return &Meta{
+	m := &Meta{
 		M:        binary.BigEndian.Uint16(data[0:2]),
 		EfC:      binary.BigEndian.Uint16(data[2:4]),
 		MaxLayer: data[4],
 		Count:    binary.BigEndian.Uint64(data[5:13]),
-	}, nil
+	}
+	if m.M < 2 {
+		return nil, fmt.Errorf("%w: M must be at least 2", ErrCorruptGraph)
+	}
+	if m.EfC == 0 {
+		return nil, fmt.Errorf("%w: EfConstruction must be positive", ErrCorruptGraph)
+	}
+	return m, nil
 }

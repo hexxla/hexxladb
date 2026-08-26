@@ -34,7 +34,7 @@ func setupBenchDB(b *testing.B, n, dim int) (*hexxladb.DB, []lattice.PackedCoord
 	db, err := hexxladb.Open(path, &hexxladb.Options{
 		EmbeddingDimension: uint16(dim),
 		DistanceMetric:     hexxladb.DistanceCosine,
-		PageSize:           65536,
+		PageSize:           4096,
 		MaxValueBytes:      65536,
 	})
 	if err != nil {
@@ -91,10 +91,12 @@ func BenchmarkSearchByEmbedding_HNSW(b *testing.B) {
 			query := vecs[0]
 			b.ResetTimer()
 			for b.Loop() {
-				_ = db.View(func(tx *hexxladb.Tx) error {
+				if err := db.View(func(tx *hexxladb.Tx) error {
 					_, err := tx.SearchByEmbedding(query, hexxladb.EmbeddingSearchConfig{MaxResults: 10})
 					return err
-				})
+				}); err != nil {
+					b.Fatal(err)
+				}
 			}
 		})
 	}
@@ -106,12 +108,14 @@ func BenchmarkQueryCells_Embedding(b *testing.B) {
 	ctx := context.Background()
 	b.ResetTimer()
 	for b.Loop() {
-		_ = db.View(func(tx *hexxladb.Tx) error {
+		if err := db.View(func(tx *hexxladb.Tx) error {
 			_, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 				Embedding:  query,
 				MaxResults: 10,
 			})
 			return err
-		})
+		}); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

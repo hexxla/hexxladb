@@ -37,7 +37,10 @@ func TestIntegration_MVCC_sustainedPutCellSameKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	p := lattice.PackedCoord{3, 9}
+	p, err := lattice.Pack(lattice.Coord{Q: 3, R: 9})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	vFrom := int64(1e12)
 	vTo := int64(2e12)

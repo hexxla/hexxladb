@@ -27,7 +27,10 @@ func TestMVCC_whiteboxBtreeKeyShapeAfterRepeatedPutCell(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	p := lattice.PackedCoord{3, 9}
+	p, err := lattice.Pack(lattice.Coord{Q: 3, R: 9})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	for i := range iterations {
 		raw := fmt.Sprintf("payload-%08d", i)
