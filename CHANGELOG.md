@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Quick-start insertion and retrieval guidance** — demonstrate atomic bounded free-cell placement around a caller-owned semantic anchor, return the selected coordinate, keep embeddings optional, add provider-neutral lexical retrieval, and explain intentional exact-coordinate replacement behavior.
+
 ## [0.6.0] - 2026-08-26
 
 ### Added

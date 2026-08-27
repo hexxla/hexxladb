@@ -40,7 +40,7 @@ Cells sit at `(q, r)` hex coordinates. Related records sit nearby when the appli
 ## Quick start
 
 ```bash
-go get github.com/hexxla/hexxladb
+go get github.com/hexxla/hexxladb@v0.6.0
 ```
 
 Nine runnable examples cover conversational memory, LLM context assembly,
@@ -59,32 +59,76 @@ if err != nil {
 defer db.Close()
 ```
 
-### Store a record and its embedding
+### Store a record without choosing an exact destination
 
 ```go
+var storedAt hexxladb.Coord
+
 if err := db.Update(func(tx *hexxladb.Tx) error {
-    coord := hexxladb.Coord{Q: 3, R: 1}
-    pk, err := hexxladb.Pack(coord)
+    // The application owns the semantic anchor. HexxlaDB atomically selects
+    // the first free coordinate within eight rings of it.
+    anchor := hexxladb.Coord{Q: 0, R: 0}
+    placement, err := tx.FindFreeCellPlacement(ctx, anchor, 8)
     if err != nil {
         return err
     }
 
-    err = tx.PutCell(ctx, hexxladb.CellRecord{
-        Key:        pk,
-        RawContent: "Use testcontainers-go for integration tests with real Postgres.",
-        Tags:       []string{"fact", "testing", "database"},
-        Provenance: hexxladb.ProvenanceWire{SourceID: "session-2", Confidence: 0.95},
-    })
-    if err != nil {
+    cell := hexxladb.NewFactCell(
+        placement.Key,
+        "Use testcontainers-go for integration tests with real Postgres.",
+        "session-2",
+        "testing",
+        0.95,
+    )
+    if err := tx.PutCell(ctx, cell); err != nil {
         return err
     }
-    return tx.PutEmbedding(pk, vectorFromYourModel) // HNSW index maintained automatically
+
+    // Optional: vectors come from the application. Omit this call when using
+    // lexical, tag, provenance, temporal, or spatial retrieval only.
+    if vectorFromYourModel != nil {
+        if err := tx.PutEmbedding(placement.Key, vectorFromYourModel); err != nil {
+            return err
+        }
+    }
+
+    storedAt = placement.Coord
+    return nil
+}); err != nil {
+    log.Fatal(err)
+}
+log.Printf("stored at (%d,%d)", storedAt.Q, storedAt.R)
+```
+
+`FindFreeCellPlacement` and `PutCell` must remain in the same `Update`: the
+writable transaction prevents another writer from claiming the selected
+coordinate. HexxlaDB chooses geometric space around the anchor; it does not
+infer the anchor from content, tags, embeddings, or an LLM. When the exact
+domain coordinate is already known, call `Pack` and `PutCell` directly. A direct
+write to an occupied coordinate intentionally replaces the currently visible
+cell.
+
+### Search without embeddings
+
+```go
+var lexicalResults []hexxladb.CellQueryResult
+if err := db.View(func(tx *hexxladb.Tx) error {
+    var err error
+    lexicalResults, err = tx.QueryCells(ctx, hexxladb.CellQuery{
+        Query:         "testcontainers postgres",
+        RequireTags:   []string{"fact"},
+        MinConfidence: 0.5,
+        MaxResults:    8,
+        MaxScanRows:   1_000,
+        SortBy:        hexxladb.SortByScore,
+    })
+    return err
 }); err != nil {
     log.Fatal(err)
 }
 ```
 
-### Search by meaning
+### Search by meaning with an application-provided vector
 
 ```go
 var results []hexxladb.CellQueryResult
@@ -102,6 +146,10 @@ if err := db.View(func(tx *hexxladb.Tx) error {
     log.Fatal(err)
 }
 ```
+
+The query vector must use the same dimension as stored embeddings. HexxlaDB
+maintains and searches the HNSW index locally but does not call an embedding
+provider or track provider-specific tokenizers.
 
 ### Assemble bounded context candidates
 
