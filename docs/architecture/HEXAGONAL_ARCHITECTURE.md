@@ -12,6 +12,8 @@ HexxlaDB is an embedded Go library. Consumers import `github.com/hexxla/hexxladb
 | `internal/lattice`, `internal/views`, `internal/hnsw`, `internal/pathfind` | Private geometry, view assembly and retrieval algorithms |
 | `internal/inspect` | Typed operator diagnostics over the public transaction API and private diagnostic encodings |
 | `cmd/hexxladb`, `cmd/tui` | Operator commands, process lifecycle and presentation |
+| `internal/cmdconfig` | Credential handling shared by operator commands |
+| `tools/evidence`, `tools/seed_tui` | Opt-in workload runners and synthetic explorer fixture generation |
 | `examples/ports_adapters` | Runnable contradiction workflow with application-owned values, a two-operation port and a public-API-backed adapter |
 
 ## Dependency direction

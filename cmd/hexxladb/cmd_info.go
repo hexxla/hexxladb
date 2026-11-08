@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hexxla/hexxladb"
+	"github.com/hexxla/hexxladb/internal/cmdconfig"
 )
 
 func cmdInfo(args []string) int {
@@ -23,13 +23,7 @@ func cmdInfo(args []string) int {
 	}
 	dbPath := fs.Arg(0)
 
-	fi, err := os.Stat(dbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "hexxladb info: %v\n", err)
-		return 1
-	}
-
-	db, err := hexxladb.Open(dbPath, nil)
+	db, err := cmdconfig.OpenExisting(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hexxladb info: open: %v\n", err)
 		return 1
@@ -48,7 +42,7 @@ func cmdInfo(args []string) int {
 	}
 
 	fmt.Printf("Path:           %s\n", dbPath)
-	fmt.Printf("Size:           %s (%d bytes)\n", humanBytes(fi.Size()), fi.Size())
+	fmt.Printf("Size:           %s (%d bytes)\n", humanBytesUint(storage.PrimaryBytes), storage.PrimaryBytes)
 	fmt.Printf("Page size:      %d bytes\n", db.PageSize())
 	fmt.Printf("Max value:      %d bytes\n", db.MaxValueBytes())
 	fmt.Printf("Commit seq:     %d\n", stats.CommitSeq)
@@ -60,19 +54,6 @@ func cmdInfo(args []string) int {
 		fmt.Printf("Reclaimable:    %s (compact recommended)\n", humanBytesUint(storage.ReclaimableBytes))
 	}
 	return 0
-}
-
-func humanBytes(n int64) string {
-	switch {
-	case n >= 1<<30:
-		return fmt.Sprintf("%.2f GiB", float64(n)/(1<<30))
-	case n >= 1<<20:
-		return fmt.Sprintf("%.2f MiB", float64(n)/(1<<20))
-	case n >= 1<<10:
-		return fmt.Sprintf("%.2f KiB", float64(n)/(1<<10))
-	default:
-		return fmt.Sprintf("%d B", n)
-	}
 }
 
 func humanBytesUint(n uint64) string {

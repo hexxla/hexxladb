@@ -7,7 +7,7 @@
 //
 // Usage:
 //
-//	go run ./examples/performance_evidence -cells 2000 -samples 100 -seed 1
+//	go run ./tools/evidence/performance_evidence -cells 2000 -samples 100 -seed 1
 package main
 
 import (

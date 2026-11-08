@@ -22,7 +22,8 @@ workflows belong in the owning application.
   principal, not per-user authorization or tenant isolation.
 - The encrypted database requires a standard-base64 32-byte key. Keys, tokens,
   cell content, and request bodies are not logged.
-- Request bodies are limited to 64 KiB and decoded strictly. A global
+- Request bodies are limited to 64 KiB and decoded strictly. Requests over
+  that limit return HTTP 413. Invalid cell records return HTTP 400. A global
   120-request/minute fixed window and 16-request admission bound limit one
   instance. These are conservative demonstration defaults, not workload-tuned
   production policy.

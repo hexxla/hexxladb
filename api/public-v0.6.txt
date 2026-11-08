@@ -26,22 +26,22 @@ Documentation map:
 Implementation packages under internal/ are private to this module.
 
 Exported entrypoints:
-  - Open, Options, DB, DB.Close — exclusively locked engine shell with
-    durable WAL (see docs/hexxladb/DURABILITY.md). Optional logical changefeed
-    (Options.ChangelogEnabled, DB.ReadChangelogSince) with durable named
-    cursors (DB.AdvanceChangelogConsumer, DB.GetChangelogConsumerCursor; see
-    docs/hexxladb/CHANGEFEED.md). Configurable page size via Options.PageSize
-    (4096/8192/16384/65536; default 4096); readable at runtime via DB.PageSize.
-    Per-database value size limit via Options.MaxValueBytes (512–1048576
-    bytes; default 8192); readable at runtime via DB.MaxValueBytes.
-    Transparent per-value DEFLATE compression is always-on (compress/flate,
-    Go stdlib; values ≥ 64 bytes). MVCC on new plaintext databases via
-    Options.EnableMVCC / Options.MVCCRetention; new encrypted databases
-    always use authenticated MVCC format v3; lifecycle: DB.StatsMVCC,
-    DB.PruneCellVersions, DB.SuggestedPruneBeforeSeq, PruneScheduler
-    (see docs/hexxladb/OPERATIONS.md). Encryption operations include
-    RotateEncryption. PreflightMigrateV1ToV2 and MigrateV1ToV2 provide an
-    offline, capacity-checked, resumable, verified upgrade from a format-v1
+  - Open, OpenExisting, Options, DB, DB.Close — exclusively locked engine
+    shell with durable WAL (see docs/hexxladb/DURABILITY.md). Optional
+    logical changefeed (Options.ChangelogEnabled, DB.ReadChangelogSince)
+    with durable named cursors (DB.AdvanceChangelogConsumer,
+    DB.GetChangelogConsumerCursor; see docs/hexxladb/CHANGEFEED.md).
+    Configurable page size via Options.PageSize (4096/8192/16384/65536;
+    default 4096); readable at runtime via DB.PageSize. Per-database value size
+    limit via Options.MaxValueBytes (512–1048576 bytes; default 8192); readable
+    at runtime via DB.MaxValueBytes. Transparent per-value DEFLATE compression
+    is always-on (compress/flate, Go stdlib; values ≥ 64 bytes). MVCC on
+    new plaintext databases via Options.EnableMVCC / Options.MVCCRetention;
+    new encrypted databases always use authenticated MVCC format v3;
+    lifecycle: DB.StatsMVCC, DB.PruneCellVersions, DB.SuggestedPruneBeforeSeq,
+    PruneScheduler (see docs/hexxladb/OPERATIONS.md). Encryption operations
+    include RotateEncryption. PreflightMigrateV1ToV2 and MigrateV1ToV2 provide
+    an offline, capacity-checked, resumable, verified upgrade from a format-v1
     source. PreflightMigrateToAuthenticated and MigrateToAuthenticated create a
     verified authenticated encrypted v3 candidate from a closed v1 or v2 source.
   - DB.SnapshotDiff — retained MVCC cell/seam history between two commit
@@ -845,7 +845,7 @@ type Cube = lattice.Cube
 type DB struct {
 	// Has unexported fields.
 }
-    DB is a handle to an embedded HexxlaDB database. Construction is via Open.
+    DB is a handle to an embedded HexxlaDB database. Use Open or OpenExisting.
     Concurrent [View] calls may run together. [Update] and [Batch] hold the
     exclusive DB lock through their callback, engine commit, and DB-level
     finalization; see docs/hexxladb/TX.md.
@@ -855,6 +855,11 @@ func Open(path string, opts *Options) (*DB, error)
     before returning a handle. It returns ErrCorruptDatabase for a WAL that
     fails validation, including pending v2 redo without a recoverable commit
     header.
+
+func OpenExisting(path string, opts *Options) (*DB, error)
+    OpenExisting opens an existing database and recovers pending WAL commits. It
+    never creates the primary file. Like Open, it takes the exclusive database
+    lock and may write recovery changes or create sidecars.
 
 func (db *DB) AdvanceChangelogConsumer(consumerID string, expectedSeq, nextSeq uint64) error
     AdvanceChangelogConsumer atomically compares the durable cursor with
@@ -1796,7 +1801,8 @@ func (tx *Tx) DeleteCellWithOutcome(ctx context.Context, key PackedCoord) (remov
 func (tx *Tx) DeleteEmbedding(coord PackedCoord) error
     DeleteEmbedding removes the vector embedding for the cell at coord.
     Idempotent. No-op if no embeddings have been stored yet (dimension not
-    configured). Only allowed inside DB.Update.
+    configured). Index maintenance errors abort the update even if the callback
+    ignores them. Only allowed inside DB.Update.
 
 func (tx *Tx) ExportCellsJSON(ctx context.Context, center Coord, maxR int, w io.Writer) (int, error)
     ExportCellsJSON writes all visible cells as a JSON array to w. Each element
@@ -1962,7 +1968,8 @@ func (tx *Tx) PutEmbedding(coord PackedCoord, vec []float32) error
 func (tx *Tx) PutEmbeddingWithOptions(coord PackedCoord, vec []float32, opts EmbeddingWriteOptions) error
     PutEmbeddingWithOptions stores a vector embedding and optionally defers HNSW
     maintenance for bounded bulk ingestion. Deferred writes remain searchable
-    through the exact flat path. Only allowed inside DB.Update.
+    through the exact flat path. Index maintenance errors abort the update even
+    if the callback ignores them. Only allowed inside DB.Update.
 
 func (tx *Tx) PutFacet(rec FacetWalkRecord) error
     PutFacet writes a facet record at facet/<packed>/<facet_id>. Only allowed

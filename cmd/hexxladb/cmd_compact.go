@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/hexxla/hexxladb"
+	"github.com/hexxla/hexxladb/internal/cmdconfig"
 )
 
 func cmdCompact(args []string) int {
@@ -46,12 +47,12 @@ func cmdCompact(args []string) int {
 	srcPath := fs.Arg(0)
 	dstPath := *output
 
-	sourceOptions, err := optionsFromCredentialEnvironment(*passphraseEnvironment, *keyEnvironment)
+	sourceOptions, err := cmdconfig.CredentialOptions(*passphraseEnvironment, *keyEnvironment)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hexxladb compact: credentials: %v\n", err)
 		return 1
 	}
-	defer clearCredentialOptions(sourceOptions)
+	defer cmdconfig.ClearCredentials(sourceOptions)
 	ctx, cancel := maintenanceContext()
 	defer cancel()
 	preflight, err := hexxladb.PreflightCompactTo(ctx, srcPath, dstPath, sourceOptions)

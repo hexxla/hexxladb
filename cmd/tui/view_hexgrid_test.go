@@ -27,6 +27,7 @@ func TestHexGridFOVRendersOccludedCell(t *testing.T) {
 	}
 
 	view := &hexGridView{db: db, radius: 2}
+	view.Update(view.loadCmd()())
 	ansi := regexp.MustCompile(`\x1b\[[0-9;]*m`)
 	if got := ansi.ReplaceAllString(view.View(), ""); !strings.Contains(got, "[●]") {
 		t.Fatalf("regular grid does not show the occupied marker: %q", got)

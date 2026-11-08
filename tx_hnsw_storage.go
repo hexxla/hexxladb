@@ -127,6 +127,28 @@ func (s *txHNSWStorage) GetHNSWNode(p lattice.PackedCoord) (*hnsw.Node, bool, er
 	return n, true, nil
 }
 
+func (s *txHNSWStorage) WalkHNSWNodes(visit func(*hnsw.Node)) error {
+	var decodeErr error
+	err := s.tx.AscendRange([]byte(index.HNSWNodePrefix), index.HNSWNodeKeyEnd(), func(key, value []byte) bool {
+		coord, err := index.ParseHNSWNodeKey(key)
+		if err != nil {
+			decodeErr = err
+			return false
+		}
+		node, err := hnsw.DecodeNode(coord, value)
+		if err != nil {
+			decodeErr = err
+			return false
+		}
+		visit(node)
+		return true
+	})
+	if decodeErr != nil {
+		return fmt.Errorf("%w: HNSW scan: %w", ErrCorruptDatabase, decodeErr)
+	}
+	return err
+}
+
 func (s *txHNSWStorage) PutHNSWNode(n *hnsw.Node) error {
 	key := index.HNSWNodeKey(n.Coord)
 	if err := s.tx.putDirect(key, hnsw.EncodeNode(n)); err != nil {

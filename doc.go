@@ -14,7 +14,7 @@
 // Implementation packages under internal/ are private to this module.
 //
 // Exported entrypoints:
-//   - [Open], [Options], [DB], [DB.Close] — exclusively locked engine shell with durable WAL (see docs/hexxladb/DURABILITY.md).
+//   - [Open], [OpenExisting], [Options], [DB], [DB.Close] — exclusively locked engine shell with durable WAL (see docs/hexxladb/DURABILITY.md).
 //     Optional logical changefeed ([Options.ChangelogEnabled], [DB.ReadChangelogSince]) with durable named cursors
 //     ([DB.AdvanceChangelogConsumer], [DB.GetChangelogConsumerCursor]; see docs/hexxladb/CHANGEFEED.md).
 //     Configurable page size via [Options.PageSize] (4096/8192/16384/65536; default 4096); readable at runtime via [DB.PageSize].

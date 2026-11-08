@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -14,13 +14,14 @@ import (
 
 type diffView struct {
 	noConsume
-	db     *hexxladb.DB
-	diff   *hexxladb.SnapshotDiff
-	err    error
-	loaded bool
-	cursor int
-	width  int
-	height int
+	db      *hexxladb.DB
+	diff    *hexxladb.SnapshotDiff
+	err     error
+	loaded  bool
+	loading bool
+	cursor  int
+	width   int
+	height  int
 }
 
 func newDiffView(db *hexxladb.DB) view {
@@ -35,10 +36,11 @@ func (v *diffView) Update(msg tea.Msg) (view, tea.Cmd) {
 		v.diff = msg.diff
 		v.err = msg.err
 		v.loaded = true
+		v.loading = false
 		v.cursor = 0
 		return v, nil
 	case tabActivatedMsg:
-		if !v.loaded {
+		if !v.loaded && !v.loading {
 			cmd := v.loadCmd()
 			return v, cmd
 		}
@@ -54,6 +56,9 @@ func (v *diffView) Update(msg tea.Msg) (view, tea.Cmd) {
 				v.cursor++
 			}
 		case "r":
+			if v.loading {
+				return v, nil
+			}
 			v.loaded = false
 			v.diff = nil
 			v.err = nil
@@ -65,16 +70,14 @@ func (v *diffView) Update(msg tea.Msg) (view, tea.Cmd) {
 }
 
 func (v *diffView) loadCmd() tea.Cmd {
+	v.loading = true
 	db := v.db
 	return func() tea.Msg {
-		stats, _ := db.StatsMVCC()
-		if stats.CommitSeq < 2 {
-			return snapshotDiffMsg{diff: &hexxladb.SnapshotDiff{}, err: nil}
+		stats, err := db.StatsMVCC()
+		if err != nil {
+			return snapshotDiffMsg{err: err}
 		}
-		fromSeq := uint64(0)
-		if stats.CommitSeq > 10 {
-			fromSeq = stats.CommitSeq - 10
-		}
+		fromSeq := stats.CommitSeq - min(stats.CommitSeq, 10)
 		diff, err := db.SnapshotDiff(context.Background(), fromSeq, stats.CommitSeq, hexxladb.SnapshotDiffConfig{})
 		return snapshotDiffMsg{diff: &diff, err: err}
 	}
@@ -88,7 +91,7 @@ func (v *diffView) View() string {
 	w := max(40, v.width-6)
 
 	if v.err != nil {
-		if strings.Contains(v.err.Error(), "MVCC") || strings.Contains(v.err.Error(), "mvcc") {
+		if errors.Is(v.err, hexxladb.ErrMVCCRequired) {
 			return lipgloss.JoinVertical(lipgloss.Left,
 				viewTitle("◈ Snapshot Diff", v.width),
 				"",
@@ -109,11 +112,6 @@ func (v *diffView) View() string {
 			"",
 			styleHelp.Render("  "+helpItem("r", "refresh")),
 		)
-	}
-
-	// ── summary cards ────────────────────────────────────────────────────────
-	opColor := func(_ hexxladb.DiffOp) lipgloss.Color {
-		return colorGreen
 	}
 
 	colW := max(14, (w-6)/2)
@@ -157,9 +155,8 @@ func (v *diffView) View() string {
 			if actualIdx == v.cursor {
 				base = base.Background(colorBg3).Bold(true)
 			}
-			if actualIdx < len(d.Cells) {
-				clr := opColor(d.Cells[actualIdx].Op)
-				return base.Foreground(clr)
+			if actualIdx < len(d.Cells) && d.Cells[actualIdx].Op == hexxladb.DiffOpDelete {
+				return base.Foreground(colorOrange)
 			}
 			return base
 		})
@@ -180,7 +177,7 @@ func (v *diffView) View() string {
 	if len(d.Cells) > 0 {
 		pct = (v.cursor + 1) * 100 / len(d.Cells)
 	}
-	scrollInfo := styleDim.Render(fmt.Sprintf("  %d/%d  (%d%%)", v.cursor+1, len(d.Cells), pct))
+	scrollInfo := styleDim.Render(fmt.Sprintf("  %d/%d  (%d%%)", min(v.cursor+1, len(d.Cells)), len(d.Cells), pct))
 
 	help := helpItem("↑↓/jk", "navigate") + "  " + helpItem("r", "refresh")
 

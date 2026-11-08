@@ -35,8 +35,8 @@ type Tx struct {
 	cellOverlay map[lattice.PackedCoord][]byte
 	// cellDeleted tracks coordinates deleted via [Tx.DeleteCell] in the current Update.
 	// Checked before cellOverlay and btree scan so same-tx delete is visible.
-	cellDeleted  map[lattice.PackedCoord]bool
-	cellWriteErr error // storage or hook failure requires abort even if the callback ignores it
+	cellDeleted    map[lattice.PackedCoord]bool
+	stagedWriteErr error // storage or hook failure requires abort even if the callback ignores it
 }
 
 // View runs fn inside a read-only transaction. Many concurrent View calls are allowed;
@@ -172,7 +172,7 @@ func (db *DB) Update(fn func(*Tx) error) error { //nolint:gocyclo // durability 
 	callbackStarted := time.Now()
 	fnErr := fn(tx)
 	db.writeStats.callback.Add(int64(time.Since(callbackStarted)))
-	if err := cmp.Or(fnErr, tx.cellWriteErr); err != nil {
+	if err := cmp.Or(fnErr, tx.stagedWriteErr); err != nil {
 		return err
 	}
 	if db.useMVCC {

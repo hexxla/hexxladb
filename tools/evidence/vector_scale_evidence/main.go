@@ -4,7 +4,7 @@
 //
 // Usage:
 //
-//	go run ./examples/vector_scale_evidence -cells 10000 -dimension 32
+//	go run ./tools/evidence/vector_scale_evidence -cells 10000 -dimension 32
 package main
 
 import (

@@ -13,13 +13,14 @@ import (
 
 type seamsView struct {
 	noConsume
-	db     *hexxladb.DB
-	seams  []seamRow
-	err    error
-	cursor int
-	loaded bool
-	width  int
-	height int
+	db      *hexxladb.DB
+	seams   []seamRow
+	err     error
+	cursor  int
+	loaded  bool
+	loading bool
+	width   int
+	height  int
 }
 
 func newSeamsView(db *hexxladb.DB) view {
@@ -36,9 +37,10 @@ func (v *seamsView) Update(msg tea.Msg) (view, tea.Cmd) {
 			v.seams = msg.seams
 		}
 		v.loaded = true
+		v.loading = false
 		return v, nil
 	case tabActivatedMsg:
-		if !v.loaded {
+		if !v.loaded && !v.loading {
 			cmd := v.loadCmd()
 			return v, cmd
 		}
@@ -54,6 +56,9 @@ func (v *seamsView) Update(msg tea.Msg) (view, tea.Cmd) {
 				v.cursor++
 			}
 		case "r":
+			if v.loading {
+				return v, nil
+			}
 			v.loaded = false
 			v.seams = nil
 			v.cursor = 0
@@ -65,6 +70,7 @@ func (v *seamsView) Update(msg tea.Msg) (view, tea.Cmd) {
 }
 
 func (v *seamsView) loadCmd() tea.Cmd {
+	v.loading = true
 	db := v.db
 	return func() tea.Msg {
 		var rows []seamRow
@@ -80,7 +86,6 @@ func (v *seamsView) loadCmd() tea.Cmd {
 					status = "unresolved"
 				}
 				rows = append(rows, seamRow{
-					id:     r.ID,
 					coordA: aCoord,
 					coordB: bCoord,
 					stype:  r.SeamType,
@@ -181,8 +186,8 @@ func (v *seamsView) View() string {
 			marker,
 			fmt.Sprintf("(%d,%d)", s.coordA.Q, s.coordA.R),
 			fmt.Sprintf("(%d,%d)", s.coordB.Q, s.coordB.R),
-			s.stype,
-			s.status,
+			terminalText(s.stype),
+			terminalText(s.status),
 			truncStr(s.reason, 30),
 		)
 	}

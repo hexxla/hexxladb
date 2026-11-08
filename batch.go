@@ -83,7 +83,7 @@ func (db *DB) BatchPutCells(ctx context.Context, cells []CellRecord, opts *Batch
 				batchWritten++
 				progressIndices = append(progressIndices, start+i)
 			}
-			if err := cmp.Or(ctx.Err(), tx.cellWriteErr); err != nil {
+			if err := cmp.Or(ctx.Err(), tx.stagedWriteErr); err != nil {
 				return err
 			}
 			readyToCommit = true

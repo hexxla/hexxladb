@@ -26,9 +26,7 @@ testdata/fuzz/**/*
 __debug_bin
 __debug_bin_*
 
-# go run output binaries (e.g. from examples/) dropped at repo root
-/conversational_memory
-/llm_context_engine
+# Locally built binaries
 /tui
 /bin
 

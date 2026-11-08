@@ -27,3 +27,20 @@ func TestStartHeapSamplerStops(t *testing.T) {
 		t.Fatal("expected non-zero heap sample")
 	}
 }
+
+func TestVectorEvidenceChurnAfterReopen(t *testing.T) {
+	for _, mode := range []string{"synchronous", "deferred-rebuild"} {
+		t.Run(mode, func(t *testing.T) {
+			report, err := run(config{
+				cells: 100, dimension: 32, samples: 3, topK: 5, churn: 1,
+				seed: 1, batchSize: 100, pageSize: 4096, cacheBytes: -1, buildMode: mode,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if report.Churn.Updates != 1 || report.Churn.Deletes != 1 {
+				t.Fatalf("churn = %+v", report.Churn)
+			}
+		})
+	}
+}

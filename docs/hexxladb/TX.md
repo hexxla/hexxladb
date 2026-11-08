@@ -35,6 +35,8 @@ when a writer is waiting.
 4. Project those intents to the external changelog. Once its frames are durable, remove the acknowledged outbox keys in an internal cleanup transaction that does not advance `CommitSeq` or emit events.
 
 If the callback or a pre-commit stage fails, the engine transaction aborts.
+An embedding index maintenance error after staging a vector also aborts the
+transaction, even when the callback ignores the returned error.
 A transaction that exceeds the WAL size limit returns `ErrInvalidArgument`
 before writing the WAL. When `ErrCommitFinalization` reports an uncertain
 storage outcome, close and reopen before inspecting authoritative state

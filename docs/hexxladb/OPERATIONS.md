@@ -78,6 +78,42 @@ window and use a cancellable context for large databases.
 
 Confirm with **HealthCheck `cell_count`**, or enumerate coords before/after.
 
+## Terminal explorer
+
+Run `task seed` once to create the synthetic `.tmp/tui-sample/fixture.db`,
+then use `task tui`. To create another fixture, set `TUI_FIXTURE_DIR` to a
+new directory under an existing parent. The generator refuses an existing
+target directory.
+
+Use `task tui TUI_DB=/path/to/existing.db`, or pass `-path` to the
+`hexxladb-tui` binary. The binary also accepts `HEXXLA_DB_PATH` as a
+fallback. The explorer requires an existing primary and takes the exclusive
+database lock. Opening can replay WAL changes and create sidecars, so close
+the owning application before opening its database in the explorer.
+
+For encrypted databases, supply either `HEXXLA_PASSPHRASE` or a
+standard-base64 `HEXXLA_ENCRYPTION_KEY`, matching the credential used to open
+the database in the application. The CLI commands `info`, `check`, and
+`stats` use the same credential variables.
+
+- **Cells** lists up to 200 visible cells. Use `/` for lexical search and
+  Enter to inspect a row. Browsing and lexical search report partial results
+  when they reach the 20,000-row scan limit. Press `e` to cycle search modes.
+- **Hex Grid** shows occupancy and per-ring density. Use the arrow keys to
+  move, `+` or `-` to zoom, `v` to toggle the visibility overlay, and
+  Enter to inspect the center.
+- **Inspector** shows typed cell details, including facets and cluster hints.
+  Use `c` for a radial context pack or `f` for visibility-filtered context.
+- **Seams** lists visible seams. **Diff** shows retained MVCC cell and seam
+  history over the last ten commit sequences. The diff lists cell changes and
+  summarizes the number of seam changes.
+
+Semantic and hybrid search send the query text to local Ollama at
+`localhost:11434` using `all-minilm`. These modes require embeddings from a
+compatible model and inspect up to 2,000 embedding candidates. Use
+`hexxladb check` for the visible cell total and integrity checks,
+`hexxladb stats` for retained MVCC rows, and `hexxladb info` for file metadata.
+
 ## Backup and copy
 
 HexxlaDB permits exactly one open handle per primary database file, across handles and processes. A competing [`Open`](../../db.go) fails immediately with [`ErrDatabaseLocked`](../../errors.go); do not bypass this lock or independently manipulate the WAL. Close the owning handle before using offline tools such as [`CompactTo`](../../compact.go) or encryption rotation.
@@ -610,11 +646,9 @@ goreleaser release --snapshot --clean
 After the candidate evidence is reviewed, create and push an annotated tag.
 Do not move or reuse a published tag. Download the resulting archives on a
 clean Linux/amd64 staging host, verify the checksum signature and archive
-checksum and extract both binaries. For a plaintext restored backup, run
-`hexxladb check`; the inspection command does not accept encryption credentials.
-For the recommended encrypted profile, use a small credential-aware verification
-program that opens the restored copy with the production `Options`, calls
-`HealthCheck`, and closes it cleanly. Record the workflow run, signing-key fingerprint, installation result,
+checksum and extract both binaries. Run `hexxladb check` against the restored
+copy. For an encrypted backup, supply the matching environment credential.
+Record the workflow run, signing-key fingerprint, installation result,
 backup/restore result, and upgrade/refusal drill with the release evidence.
 
 Rollback means deploying the previously verified application build against a

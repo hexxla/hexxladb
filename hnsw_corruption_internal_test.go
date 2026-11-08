@@ -65,3 +65,54 @@ func TestSearchByEmbeddingRejectsCorruptHNSWStorage(t *testing.T) {
 		})
 	}
 }
+
+func TestEmbeddingChurnFailureAbortsStagedVector(t *testing.T) {
+	t.Parallel()
+	db, err := Open(filepath.Join(t.TempDir(), "churn.db"), &Options{EmbeddingDimension: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	target, _ := Pack(Coord{Q: 1})
+	other, _ := Pack(Coord{Q: 2})
+	if err := db.Update(func(tx *Tx) error {
+		if err := tx.PutEmbedding(target, []float32{1, 0}); err != nil {
+			return err
+		}
+		return tx.PutEmbedding(other, []float32{0, 1})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"replace", "delete"} {
+		t.Run(name, func(t *testing.T) {
+			err := db.Update(func(tx *Tx) error {
+				if err := tx.putDirect(index.HNSWNodeKey(other), []byte{0, 0}); err != nil {
+					return err
+				}
+				var writeErr error
+				if name == "replace" {
+					writeErr = tx.PutEmbedding(target, []float32{0.5, 0.5})
+				} else {
+					writeErr = tx.DeleteEmbedding(target)
+				}
+				if !errors.Is(writeErr, ErrCorruptDatabase) {
+					t.Errorf("write error = %v, want ErrCorruptDatabase", writeErr)
+				}
+				return nil
+			})
+			if !errors.Is(err, ErrCorruptDatabase) {
+				t.Fatalf("Update = %v, want ErrCorruptDatabase", err)
+			}
+			if err := db.View(func(tx *Tx) error {
+				vec, found, err := tx.GetEmbedding(target)
+				if err != nil || !found || len(vec) != 2 || vec[0] != 1 || vec[1] != 0 {
+					t.Errorf("target embedding = %v, %t, %v", vec, found, err)
+				}
+				_, err = tx.SearchByEmbedding([]float32{1, 0}, EmbeddingSearchConfig{MaxResults: 1})
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

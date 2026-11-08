@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/hexxla/hexxladb"
+	"github.com/hexxla/hexxladb/internal/cmdconfig"
 )
 
 func TestCmdMigrateV1ToV2DryRunThenVerifiedCopy(t *testing.T) {
@@ -206,11 +207,11 @@ func TestOptionsFromCredentialEnvironment(t *testing.T) {
 		keyName        = "HEXXLADB_TEST_KEY"
 	)
 	t.Setenv(passphraseName, "secret-passphrase")
-	opts, err := optionsFromCredentialEnvironment(passphraseName, keyName)
+	opts, err := cmdconfig.CredentialOptions(passphraseName, keyName)
 	if err != nil || opts == nil || opts.Passphrase != "secret-passphrase" {
 		t.Fatalf("passphrase options=%#v err=%v", opts, err)
 	}
-	clearCredentialOptions(opts)
+	cmdconfig.ClearCredentials(opts)
 	if opts.Passphrase != "" {
 		t.Fatal("passphrase was not cleared")
 	}
@@ -218,17 +219,17 @@ func TestOptionsFromCredentialEnvironment(t *testing.T) {
 	t.Setenv(passphraseName, "")
 	wantKey := bytes.Repeat([]byte{0x5a}, 32)
 	t.Setenv(keyName, base64.StdEncoding.EncodeToString(wantKey))
-	opts, err = optionsFromCredentialEnvironment("HEXXLADB_TEST_UNSET", keyName)
+	opts, err = cmdconfig.CredentialOptions("HEXXLADB_TEST_UNSET", keyName)
 	if err != nil || opts == nil || !bytes.Equal(opts.EncryptionKey, wantKey) {
 		t.Fatalf("key options=%#v err=%v", opts, err)
 	}
-	clearCredentialOptions(opts)
+	cmdconfig.ClearCredentials(opts)
 	if opts.EncryptionKey != nil {
 		t.Fatal("encryption key was not cleared")
 	}
 
 	t.Setenv(passphraseName, "do-not-print-passphrase")
-	_, err = optionsFromCredentialEnvironment(passphraseName, keyName)
+	_, err = cmdconfig.CredentialOptions(passphraseName, keyName)
 	if err == nil || strings.Contains(err.Error(), "do-not-print-passphrase") || strings.Contains(err.Error(), base64.StdEncoding.EncodeToString(wantKey)) {
 		t.Fatalf("mutual credential error=%q", err)
 	}

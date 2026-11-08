@@ -4,7 +4,7 @@
 //
 // Usage:
 //
-//	go run ./examples/pilot_soak -work-dir /controlled/empty/directory
+//	go run ./tools/evidence/pilot_soak -work-dir /controlled/empty/directory
 package main
 
 import (

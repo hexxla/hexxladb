@@ -224,11 +224,11 @@ func (a *cellAPI) putCell(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBody))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		writeRequestDecodeError(w, err)
 		return
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		writeRequestDecodeError(w, err)
 		return
 	}
 	if request.Content == "" || math.IsNaN(request.Confidence) || math.IsInf(request.Confidence, 0) || request.Confidence < 0 || request.Confidence > 1 {
@@ -250,6 +250,10 @@ func (a *cellAPI) putCell(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 	})
+	if errors.Is(err, hexxladb.ErrInvalidArgument) {
+		writeError(w, http.StatusBadRequest, "invalid cell")
+		return
+	}
 	if err != nil {
 		a.logger.Error("put cell failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "database operation failed")
@@ -257,6 +261,14 @@ func (a *cellAPI) putCell(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Del("Content-Type")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeRequestDecodeError(w http.ResponseWriter, err error) {
+	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return
+	}
+	writeError(w, http.StatusBadRequest, "invalid JSON body")
 }
 
 type cellResponse struct {

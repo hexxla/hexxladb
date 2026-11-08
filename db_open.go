@@ -25,11 +25,7 @@ func engineOptsWithMVCC(base *engine.Options, opts *Options) *engine.Options {
 
 func buildEngineOptions(path string, opts *Options) (*engine.Options, []byte, error) {
 	if opts == nil {
-		hdr, err := engine.ReadHeaderFile(path)
-		if err == nil && hdr.Features&engine.FeatureEncryptedDataPages != 0 {
-			return nil, nil, ErrEncryptionKeyRequired
-		}
-		return nil, nil, nil
+		opts = &Options{}
 	}
 	customHooks := opts.BeforeWritePage != nil || opts.AfterReadPage != nil
 	hasEnc := len(opts.EncryptionKey) > 0 || opts.Passphrase != ""
@@ -48,6 +44,10 @@ func buildEngineOptions(path string, opts *Options) (*engine.Options, []byte, er
 		}, opts), nil, nil
 	}
 	if !hasEnc {
+		hdr, err := engine.ReadHeaderFile(path)
+		if err == nil && hdr.Features&engine.FeatureEncryptedDataPages != 0 {
+			return nil, nil, ErrEncryptionKeyRequired
+		}
 		return engineOptsWithMVCC(nil, opts), nil, nil
 	}
 

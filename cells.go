@@ -119,8 +119,8 @@ func (tx *Tx) putCell(ctx context.Context, rec CellRecord) (rejected bool, err e
 	if err := tx.requireWritable(); err != nil {
 		return false, err
 	}
-	if tx.cellWriteErr != nil {
-		return false, tx.cellWriteErr
+	if tx.stagedWriteErr != nil {
+		return false, tx.stagedWriteErr
 	}
 	if err := invalidTypedRecord(validateCellInvariants(rec)); err != nil {
 		return true, err
@@ -135,7 +135,7 @@ func (tx *Tx) putCell(ctx context.Context, rec CellRecord) (rejected bool, err e
 		return true, err
 	}
 	if uint64(len(data)) > uint64(tx.db.eng.MaxValueBytes()) {
-		return true, engine.ErrValueTooLarge
+		return true, invalidTypedRecord(engine.ErrValueTooLarge)
 	}
 	var secondary [][]byte
 	if err := tx.visitCellSecondaryKeys(rec, tx.writeSeq, func(key []byte) error {
@@ -147,7 +147,7 @@ func (tx *Tx) putCell(ctx context.Context, rec CellRecord) (rejected bool, err e
 
 	err = tx.stageCell(ctx, rec, data, secondary)
 	if err != nil {
-		tx.cellWriteErr = err
+		tx.stagedWriteErr = err
 	}
 	return false, err
 }

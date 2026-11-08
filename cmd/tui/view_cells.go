@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -14,37 +15,38 @@ import (
 type cellsView struct {
 	db         *hexxladb.DB
 	cells      []hexxladb.CellView
-	searchHits []searchResult // non-nil means we are in search-results mode
+	searchHits []searchResult
 	cursor     int
 	loading    bool
-	searching  bool   // search bar is open (typing)
-	query      string // last executed query (shown when results are displayed)
-	searchMode string // "lexical", "embedding", or "hybrid"
-	loadErr    error
-	searchErr  error // error from last search
+	searching  bool
+	searched   bool
+	input      string
+	query      string
+	searchMode string
+	resultMode string
+	started    bool
+	request    uint64
+	err        error
 	width      int
 	height     int
 }
 
 func newCellsView(db *hexxladb.DB) view {
-	return &cellsView{db: db, loading: true}
+	return &cellsView{db: db, searchMode: "lexical"}
 }
 
 func (v *cellsView) SetSize(w, h int) { v.width = w; v.height = h }
 func (v *cellsView) Consuming() bool  { return v.searching }
 
-// searchHitsLoadedMsg carries the results of a lexical search.
-type searchHitsLoadedMsg struct{ hits []searchResult }
-
 func (v *cellsView) totalRows() int {
-	if v.searchHits != nil {
+	if v.searched {
 		return len(v.searchHits)
 	}
 	return len(v.cells)
 }
 
 func (v *cellsView) rowCell(i int) (cell hexxladb.CellView, score float64) {
-	if v.searchHits != nil {
+	if v.searched {
 		return v.searchHits[i].cell, v.searchHits[i].score
 	}
 	return v.cells[i], -1
@@ -53,31 +55,19 @@ func (v *cellsView) rowCell(i int) (cell hexxladb.CellView, score float64) {
 func (v *cellsView) Update(msg tea.Msg) (view, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tabActivatedMsg:
-		if v.loading && v.totalRows() == 0 {
-			db := v.db
-			return v, func() tea.Msg { return loadCells(db, 200) }
+		if !v.started {
+			cmd := v.browse()
+			return v, cmd
 		}
-		return v, nil
 	case cellsLoadedMsg:
-		v.loadErr = msg.err
-		v.cells = msg.cells
-		v.searchHits = nil
-		v.loading = false
-		v.cursor = 0
-		return v, nil
-	case searchHitsLoadedMsg:
+		if msg.request != v.request {
+			return v, nil
+		}
+		v.err = msg.err
+		v.cells = msg.browse
 		v.searchHits = msg.hits
 		v.loading = false
 		v.cursor = 0
-		return v, nil
-	case embeddingSearchHitsLoadedMsg:
-		v.searchErr = msg.err
-		if msg.err == nil {
-			v.searchHits = msg.hits
-		}
-		v.loading = false
-		v.cursor = 0
-		return v, nil
 	case tea.KeyMsg:
 		if v.searching {
 			return v.handleSearchKeyMsg(msg)
@@ -92,44 +82,35 @@ func (v *cellsView) handleSearchKeyMsg(msg tea.KeyMsg) (view, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
 		v.searching = false
-		v.query = ""
-		v.searchHits = nil
-		v.searchErr = nil
-		v.loading = true
-		v.cells = nil
-		db := v.db
-		return v, func() tea.Msg { return loadCells(db, 200) }
 	case tea.KeyEnter:
-		return v.executeSearch()
+		cmd := v.executeSearch()
+		return v, cmd
 	case tea.KeyBackspace, tea.KeyDelete:
-		if v.query != "" {
-			v.query = v.query[:len(v.query)-1]
-		}
+		_, size := utf8.DecodeLastRuneInString(v.input)
+		v.input = v.input[:len(v.input)-size]
 	default:
 		if msg.Type == tea.KeyRunes {
-			v.query += string(msg.Runes)
-		} else if s := msg.String(); len(s) == 1 && s[0] >= 32 {
-			v.query += s
+			v.input += string(msg.Runes)
+		} else if key := msg.String(); len(key) == 1 && key[0] >= 32 {
+			v.input += key
 		}
 	}
 	return v, nil
 }
 
-// executeSearch submits the current query for lexical, embedding, or hybrid search.
-func (v *cellsView) executeSearch() (view, tea.Cmd) {
+func (v *cellsView) executeSearch() tea.Cmd {
 	v.searching = false
-	v.loading = true
-	v.searchHits = nil
-	v.searchErr = nil
-	q := v.query
-	db := v.db
-	switch v.searchMode {
-	case "embedding":
-		return v, func() tea.Msg { return searchByEmbedding(db, q, 200) }
-	case "hybrid":
-		return v, func() tea.Msg { return hybridSearch(db, q, 200) }
-	default:
-		return v, func() tea.Msg { return searchHitsLoadedMsg{hits: searchCells(db, q, 200)} }
+	v.query = strings.TrimSpace(v.input)
+	if v.query == "" {
+		return v.browse()
+	}
+	v.searched = true
+	v.resultMode = v.searchMode
+	v.beginLoad()
+	db, query, mode, request := v.db, v.query, v.resultMode, v.request
+	return func() tea.Msg {
+		hits, err := searchCells(db, query, mode)
+		return cellsLoadedMsg{request: request, hits: hits, err: err}
 	}
 }
 
@@ -157,7 +138,7 @@ func (v *cellsView) handleNavKeyMsg(msg tea.KeyMsg) (view, tea.Cmd) {
 		}
 	case "/":
 		v.searching = true
-		v.query = ""
+		v.input = ""
 		return v, nil
 	case "e":
 		switch v.searchMode {
@@ -170,64 +151,61 @@ func (v *cellsView) handleNavKeyMsg(msg tea.KeyMsg) (view, tea.Cmd) {
 		}
 		return v, nil
 	case "r":
-		return v.resetToBrowse()
+		cmd := v.browse()
+		return v, cmd
 	}
 	return v, nil
 }
 
-// resetToBrowse clears search state and reloads all cells.
-func (v *cellsView) resetToBrowse() (view, tea.Cmd) {
+func (v *cellsView) beginLoad() {
+	v.started = true
 	v.loading = true
+	v.request++
+	v.cursor = 0
 	v.cells = nil
 	v.searchHits = nil
-	v.searchErr = nil
+	v.err = nil
+}
+
+func (v *cellsView) browse() tea.Cmd {
+	v.searched = false
 	v.query = ""
-	v.searching = false
-	db := v.db
-	return v, func() tea.Msg { return loadCells(db, 200) }
+	v.beginLoad()
+	db, request := v.db, v.request
+	return func() tea.Msg { return loadCells(db, request) }
 }
 
 func (v *cellsView) View() string {
-	if v.loading {
-		return styleLoading.Render("  ⟳  Loading cells…")
+	switch {
+	case v.loading:
+		return lipgloss.JoinVertical(lipgloss.Left, v.renderSearchBar(), styleLoading.Render("  ⟳  Loading cells…"))
+	case v.totalRows() == 0:
+		return v.renderEmptyState()
+	default:
+		return v.renderCellTable(v.totalRows(), v.searched)
 	}
-
-	if v.loadErr != nil && v.query == "" {
-		return styleBad.Render(fmt.Sprintf("  ✗  Cells error: %v", v.loadErr))
-	}
-
-	total := v.totalRows()
-	isSearch := v.searchHits != nil
-
-	if total == 0 {
-		return v.renderEmptyState(isSearch)
-	}
-
-	return v.renderCellTable(total, isSearch)
 }
 
-// renderEmptyState returns the view when no rows are available.
-func (v *cellsView) renderEmptyState(isSearch bool) string {
-	if !isSearch {
-		return styleDim.Render("  No cells found in database.")
+func (v *cellsView) renderEmptyState() string {
+	text := "  No cells found in database."
+	if v.searched {
+		text = fmt.Sprintf("  No results for %q.", v.query)
 	}
-	searchHelp := styleHelp.Render("  " + helpItem("/", "new search") + "  " + helpItem("r", "browse all"))
-	if v.searchErr != nil {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			v.renderSearchBar(),
-			"",
-			styleBad.Render("  ✗  Search error: "+v.searchErr.Error()),
-			"",
-			searchHelp,
-		)
+	state := styleDim.Render(text)
+	if v.err != nil {
+		state = v.renderError()
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		v.renderSearchBar(),
-		"",
-		styleDim.Render("  No results for "+styleBad.Render(v.query)+"."),
-		"",
-		searchHelp,
+		v.renderSearchBar(), state,
+		styleHelp.Render("  "+helpItem("/", "new search")+"  "+helpItem("r", "browse cells")),
 	)
+}
+
+func (v *cellsView) renderError() string {
+	if v.searched {
+		return styleBad.Render("  Search: " + terminalText(v.err.Error()))
+	}
+	return styleBad.Render("  Cells: " + terminalText(v.err.Error()))
 }
 
 // renderCellTable renders the main cell table with headers, rows, and footer.
@@ -236,8 +214,11 @@ func (v *cellsView) renderCellTable(total int, isSearch bool) string {
 
 	// ── visible window: reserve title(1)+scrollInfo(1)+searchbar(1-2)+help(1) = 4-5 lines
 	extraLines := 4
-	if v.searching || v.query != "" {
-		extraLines = 5
+	if v.searching {
+		extraLines++
+	}
+	if v.err != nil {
+		extraLines++
 	}
 	visH := max(3, v.height-extraLines)
 
@@ -292,7 +273,7 @@ func (v *cellsView) renderCellTable(total int, isSearch bool) string {
 	}
 	title := "◈ Cells"
 	if isSearch {
-		modeStr := searchModeLabel(v.searchMode)
+		modeStr := searchModeLabel(v.resultMode)
 		title = fmt.Sprintf("◈ Cells  ⌕ %q [%s] — %d results", v.query, modeStr, total)
 	}
 	scrollInfo := styleDim.Render(fmt.Sprintf("  %d/%d  (%d%%)", v.cursor+1, total, pct))
@@ -302,9 +283,12 @@ func (v *cellsView) renderCellTable(total int, isSearch bool) string {
 		helpItem("Enter", "inspect") + "  " +
 		helpItem("/", "search") + "  " +
 		helpItem("e", "cycle: lex→sem→hybrid") + "  " +
-		helpItem("r", "browse all")
+		helpItem("r", "browse cells")
 
 	parts := []string{viewTitle(title, v.width), scrollInfo}
+	if v.err != nil {
+		parts = append(parts, v.renderError())
+	}
 	if bar := v.renderSearchBar(); bar != "" {
 		parts = append(parts, bar)
 	}
@@ -376,17 +360,9 @@ func (v *cellsView) renderSearchBar() string {
 		modeClr := searchModeColor(v.searchMode)
 		return lipgloss.NewStyle().Foreground(colorCyan).Background(colorBg1).Render("  ⌕  ") +
 			lipgloss.NewStyle().Foreground(modeClr).Background(colorBg1).Render("["+modeStr+"] ") +
-			lipgloss.NewStyle().Foreground(colorText0).Background(colorBg1).Bold(true).Render(v.query) +
+			lipgloss.NewStyle().Foreground(colorText0).Background(colorBg1).Bold(true).Render(terminalText(v.input)) +
 			lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Render("█") +
 			styleDim.Render("  Enter=search  Esc=clear")
-	}
-	if v.query != "" && v.searchHits != nil {
-		modeStr := searchModeLabel(v.searchMode)
-		modeClr := searchModeColor(v.searchMode)
-		return styleDim.Render("  ⎔  ") +
-			lipgloss.NewStyle().Foreground(modeClr).Background(colorBg1).Render("["+modeStr+"] ") +
-			lipgloss.NewStyle().Foreground(colorYellow).Background(colorBg1).Render(v.query) +
-			styleDim.Render("  /=new search  r=browse all")
 	}
 	return ""
 }

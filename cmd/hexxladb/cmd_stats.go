@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hexxla/hexxladb"
+	"github.com/hexxla/hexxladb/internal/cmdconfig"
 )
 
 func cmdStats(args []string) int {
@@ -23,7 +23,7 @@ func cmdStats(args []string) int {
 	}
 	dbPath := fs.Arg(0)
 
-	db, err := hexxladb.Open(dbPath, nil)
+	db, err := cmdconfig.OpenExisting(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hexxladb stats: open: %v\n", err)
 		return 1

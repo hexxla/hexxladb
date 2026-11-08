@@ -15,17 +15,27 @@ import (
 // ─── message types ──────────────────────────────────────────────────────────
 
 type cellsLoadedMsg struct {
-	cells []hexxladb.CellView
-	err   error
+	request uint64
+	browse  []hexxladb.CellView
+	hits    []searchResult
+	err     error
 }
 
 type inspectCellMsg struct {
 	coord hexxladb.Coord
 }
 
-type contextPackLoadedMsg struct {
-	pack hexxladb.ContextPack
-	err  error
+type cellDetailMsg struct {
+	request uint64
+	cell    hexxladb.CellView
+	err     error
+}
+
+type contextLoadedMsg struct {
+	request uint64
+	pack    *hexxladb.ContextPack
+	visible []hexxladb.CellRecord
+	err     error
 }
 
 type seamsLoadedMsg struct {
@@ -34,7 +44,6 @@ type seamsLoadedMsg struct {
 }
 
 type seamRow struct {
-	id     string
 	coordA hexxladb.Coord
 	coordB hexxladb.Coord
 	stype  string
@@ -42,167 +51,80 @@ type seamRow struct {
 	status string
 }
 
-type healthLoadedMsg struct {
-	report *hexxladb.HealthReport
-	err    error
-}
-
 type snapshotDiffMsg struct {
 	diff *hexxladb.SnapshotDiff
 	err  error
 }
 
-type analyticsLoadedMsg struct {
-	err         error
-	tagCounts   []hexxladb.TagCount
-	tagPairs    []hexxladb.TagPair
-	ringDensity []hexxladb.RingDensity
-	mvccStats   hexxladb.MVCCStats
-	cellCount   int
-	seamCount   int
-}
-
-type embeddingsLoadedMsg struct {
-	embedCount  int
-	dimension   uint16
-	metric      hexxladb.DistanceMetric
-	hnswEnabled bool
-	err         error
-}
-
-type fovContextLoadedMsg struct {
-	cells []hexxladb.CellRecord
-	err   error
-}
-
-type embeddingSearchHitsLoadedMsg struct {
-	hits []searchResult
-	err  error
-}
-
-// ─── cell loading helper (shared by cells view and main.go tab switch) ───────
-
-// searchResult pairs a CellView with its relevance score from SearchCells.
 type searchResult struct {
 	cell  hexxladb.CellView
 	score float64
 }
 
-// searchCells uses QueryCells (unified entry point) for lexical search.
-// Results are ordered by relevance score descending.
-func searchCells(db *hexxladb.DB, query string, limit int) []searchResult {
-	var out []searchResult
-	_ = db.View(func(tx *hexxladb.Tx) error {
-		results, err := tx.QueryCells(context.Background(), hexxladb.CellQuery{
-			Query:      query,
-			MaxResults: limit,
-			SortBy:     hexxladb.SortByScore,
-		})
+const (
+	cellListLimit       = 200
+	lexicalScanRows     = 20_000
+	embeddingCandidates = 2_000
+)
+
+func searchCells(db *hexxladb.DB, query, mode string) ([]searchResult, error) {
+	cfg := hexxladb.CellQuery{Query: query, MaxResults: cellListLimit, MaxScanRows: lexicalScanRows}
+	if mode == "embedding" || mode == "hybrid" {
+		vector, err := embed(query)
 		if err != nil {
-			return err
+			return nil, fmt.Errorf("embed query: %w", err)
 		}
-		for _, r := range results {
-			out = append(out, searchResult{cell: r.Cell, score: r.Score})
+		cfg.Embedding = vector
+		cfg.MaxScanRows = 0
+		cfg.EmbeddingCandidateLimit = embeddingCandidates
+		if mode == "embedding" {
+			cfg.Query = ""
 		}
-		return nil
+	}
+	var hits []searchResult
+	err := db.View(func(tx *hexxladb.Tx) error {
+		results, err := tx.QueryCells(context.Background(), cfg)
+		hits = make([]searchResult, 0, len(results))
+		for _, result := range results {
+			hits = append(hits, searchResult{cell: result.Cell, score: result.Score})
+		}
+		return err
 	})
-	return out
+	return hits, err
 }
 
-// hybridSearch combines embedding ANN with tag filtering for maximum accuracy.
-// It embeds the query text, then runs QueryCells with the embedding vector and
-// any tags extracted from the query (words prefixed with #).
-func hybridSearch(db *hexxladb.DB, query string, limit int) embeddingSearchHitsLoadedMsg {
-	if !ollamaReachable() {
-		return embeddingSearchHitsLoadedMsg{err: fmt.Errorf("ollama not reachable at localhost:11434")}
-	}
-	vec, err := embed(query)
-	if err != nil {
-		return embeddingSearchHitsLoadedMsg{err: fmt.Errorf("embed: %w", err)}
-	}
-	var out []searchResult
-	err = db.View(func(tx *hexxladb.Tx) error {
-		results, err := tx.QueryCells(context.Background(), hexxladb.CellQuery{
-			Query:      query,
-			Embedding:  vec,
-			MaxResults: limit,
-			SortBy:     hexxladb.SortByScore,
-		})
-		if err != nil {
-			return err
-		}
-		for _, r := range results {
-			out = append(out, searchResult{cell: r.Cell, score: r.Score})
-		}
-		return nil
-	})
-	if err != nil {
-		return embeddingSearchHitsLoadedMsg{err: err}
-	}
-	return embeddingSearchHitsLoadedMsg{hits: out}
-}
-
-// searchByEmbedding calls Ollama to embed the query text, then SearchByEmbedding.
-// Returns embeddingSearchHitsLoadedMsg which is handled by the cells view.
-func searchByEmbedding(db *hexxladb.DB, query string, limit int) embeddingSearchHitsLoadedMsg {
-	if !ollamaReachable() {
-		return embeddingSearchHitsLoadedMsg{err: fmt.Errorf("ollama not reachable at localhost:11434")}
-	}
-	vec, err := embed(query)
-	if err != nil {
-		return embeddingSearchHitsLoadedMsg{err: fmt.Errorf("embed: %w", err)}
-	}
-	var out []searchResult
-	err = db.View(func(tx *hexxladb.Tx) error {
-		results, err := tx.SearchByEmbedding(vec, hexxladb.EmbeddingSearchConfig{
-			MaxResults: limit,
-		})
-		if err != nil {
-			return err
-		}
-		for _, r := range results {
-			// Convert EmbeddingSearchResult to CellView
-			coord, _ := hexxladb.Unpack(r.Coord)
-			cv, err := tx.AssembleCellView(context.Background(), coord, nil, hexxladb.DefaultAssembleCellViewOpts())
-			if err == nil {
-				out = append(out, searchResult{cell: cv, score: r.Score})
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return embeddingSearchHitsLoadedMsg{err: err}
-	}
-	return embeddingSearchHitsLoadedMsg{hits: out}
-}
-
-// loadContextFOV uses FOV-filtered context loading from a center coordinate.
-// Empty cells act as opaque barriers — only cells visible through populated
-// neighborhoods are returned.
-func loadContextFOV(db *hexxladb.DB, center hexxladb.Coord) fovContextLoadedMsg {
+// loadContextFOV treats empty cells as opaque barriers.
+func loadContextFOV(db *hexxladb.DB, center hexxladb.Coord) ([]hexxladb.CellRecord, error) {
 	var cells []hexxladb.CellRecord
 	err := db.View(func(tx *hexxladb.Tx) error {
-		// Build an opaque function: a cell is opaque if it doesn't exist.
+		var opacityErr error
 		opaque := func(c hexxladb.Coord) bool {
+			if opacityErr != nil {
+				return true
+			}
 			p, err := hexxladb.Pack(c)
 			if err != nil {
 				return true
 			}
-			_, ok, _ := tx.GetCell(p)
+			_, ok, err := tx.GetCell(p)
+			opacityErr = err
 			return !ok
 		}
-		var e error
-		cells, e = tx.LoadContextFOV(context.Background(), center, 3, opaque, hexxladb.FOVContextConfig{
+		var err error
+		cells, err = tx.LoadContextFOV(context.Background(), center, 3, opaque, hexxladb.FOVContextConfig{
 			MaxCells: 128,
 		})
-		return e
+		if opacityErr != nil {
+			return opacityErr
+		}
+		return err
 	})
-	return fovContextLoadedMsg{cells: cells, err: err}
+	return cells, err
 }
 
-func loadCells(db *hexxladb.DB, limit int) cellsLoadedMsg {
-	cells, err := inspect.Cells(context.Background(), db, limit)
-	return cellsLoadedMsg{cells: cells, err: err}
+func loadCells(db *hexxladb.DB, request uint64) cellsLoadedMsg {
+	cells, err := inspect.Cells(context.Background(), db, cellListLimit, lexicalScanRows)
+	return cellsLoadedMsg{request: request, browse: cells, err: err}
 }
 
 // ── Ollama embedding helpers ────────────────────────────────────────────────
@@ -213,23 +135,6 @@ const (
 )
 
 var ollamaHTTPClient = &http.Client{Timeout: ollamaRequestTimeout}
-
-func ollamaReachable() bool {
-	return ollamaReachableWithClient(ollamaHTTPClient, ollamaBase)
-}
-
-func ollamaReachableWithClient(client *http.Client, baseURL string) bool {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, baseURL, http.NoBody)
-	if err != nil {
-		return false
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false
-	}
-	_ = resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
-}
 
 func embed(text string) ([]float32, error) {
 	return embedWithClient(ollamaHTTPClient, ollamaBase, text)
@@ -251,14 +156,13 @@ func embedWithClient(client *http.Client, baseURL, text string) ([]float32, erro
 		return nil, fmt.Errorf("ollama status %d", resp.StatusCode)
 	}
 	var result struct {
-		Embedding []float64 `json:"embedding"`
+		Embedding []float32 `json:"embedding"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+		return nil, fmt.Errorf("decode embedding: %w", err)
 	}
-	out := make([]float32, len(result.Embedding))
-	for i, v := range result.Embedding {
-		out[i] = float32(v)
+	if len(result.Embedding) == 0 {
+		return nil, fmt.Errorf("empty embedding in Ollama response")
 	}
-	return out, nil
+	return result.Embedding, nil
 }

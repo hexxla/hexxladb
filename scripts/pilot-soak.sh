@@ -37,4 +37,4 @@ modified=false
 if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
   modified=true
 fi
-go run ./examples/pilot_soak -work-dir "${run_dir}" "$@" -vcs-revision "${revision}" -vcs-modified "${modified}" | tee "${report_path}"
+go run ./tools/evidence/pilot_soak -work-dir "${run_dir}" "$@" -vcs-revision "${revision}" -vcs-modified "${modified}" | tee "${report_path}"

@@ -43,9 +43,7 @@ Cells sit at `(q, r)` hex coordinates. Related records sit nearby when the appli
 go get github.com/hexxla/hexxladb@v0.6.0
 ```
 
-Nine runnable examples cover conversational memory, LLM context assembly,
-spatial algorithms, a remote-access ownership boundary, and reproducible
-evidence workloads: [`examples/`](examples/).
+Run `task demo` for a self-contained write, search, and context-loading workflow.
 
 ### Open a database
 
@@ -324,20 +322,29 @@ expectations.
 
 ## Examples
 
-| Example                                                                    | Run                               | What it covers                                                        |
-| -------------------------------------------------------------------------- | --------------------------------- | --------------------------------------------------------------------- |
-| [Conversational Memory](examples/conversational_memory/)                   | `task demo`                       | Cells, seams, tags, MVCC, queries, context, FOV, pathfinding          |
-| [LLM Context Engine](examples/llm_context_engine/)                         | `task demo-llm`                   | Ollama embeddings, semantic search, supersession, FOV                 |
-| [Spatial Algorithms](examples/spatial_algorithms/)                         | `task demo-spatial`               | FOV, radial context, Voronoi, Dijkstra, BFS — side-by-side            |
-| [Remote Access Owner Service](examples/remote_access/)                     | `task demo-remote`                | Loopback service, authentication, admission, and single file owner   |
-| [Ports and Adapters](examples/ports_adapters/)                            | `go run ./examples/ports_adapters` | Record and resolve a contradiction through an application-owned port  |
-| [Performance Evidence](examples/performance_evidence/)                     | `task evidence-observe`           | Dijkstra, FOV, super-hex sync, allocation, and storage observations   |
-| [Write-path Evidence](examples/write_path_evidence/)                       | `task evidence-write-path`        | Bounded write latency, throughput, allocation, and file growth       |
-| [Vector Scale Evidence](examples/vector_scale_evidence/)                   | `task evidence-vector-scale`      | Synchronous/deferred HNSW build, recall, reopen, churn, memory, and disk |
-| [Lattice Placement Evidence](examples/lattice_placement_evidence/)         | `task evidence-lattice-placement` | Placement stability and semantic/spatial divergence                   |
-| [Conservative Pilot Soak](examples/pilot_soak/)                            | `task soak-pilot`                 | Sustained mixed load, SLO gates, encrypted backup/restore, resources  |
+| Example | Run | What it covers |
+| --- | --- | --- |
+| [Quickstart](examples/quickstart/) | `task demo` | Placement, bounded lexical search, graph context, and application-owned prompt fitting |
+| [Ports and adapters](examples/ports_adapters/) | `go run ./examples/ports_adapters` | Store an atomic contradiction through an application-owned port |
+| [Remote access](examples/remote_access/) | `task demo-remote` | A loopback HTTP service that exclusively owns the database |
 
-The LLM example requires [Ollama](https://ollama.com/): `ollama pull all-minilm && task demo-llm`
+The [public API guide](docs/hexxladb/API_REFERENCE.md#specialized-retrieval)
+includes spatial retrieval examples. The opt-in workloads under
+[`tools/evidence`](tools/evidence/) are described in the
+[performance evidence guide](docs/hexxladb/PERFORMANCE_EVIDENCE.md).
+`task build` builds the CLI and TUI. `task build-examples` compiles the three examples.
+
+## Terminal explorer
+
+```sh
+task seed
+task tui
+```
+
+`task seed` creates a synthetic database under `.tmp/tui-sample/` and
+refuses an existing fixture directory. Use `task tui TUI_DB=/path/to/existing.db`
+to explore another database. See the [operator guide](docs/hexxladb/OPERATIONS.md#terminal-explorer)
+for controls, encryption credentials, and diagnostics.
 
 ---
 

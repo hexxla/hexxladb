@@ -2,32 +2,16 @@ package main
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
-// Terminal palette based on ollamon reference - uses standard terminal colors
-// for better compatibility and semantic naming.
 var (
-	// Semantic style names following ollamon pattern
-	AppBg       = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("252"))
-	Header      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("25")).Padding(0, 1)
-	Subtle      = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-	Title       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229"))
-	Section     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("117"))
-	Box         = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("61")).Padding(0, 1)
-	Highlight   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("221"))
-	Accent      = lipgloss.NewStyle().Foreground(lipgloss.Color("81"))
-	OK          = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	Warn        = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	Err         = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	Dim         = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	Filter      = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("166")).Padding(0, 1)
-	LogLine     = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	Help        = lipgloss.NewStyle().Foreground(lipgloss.Color("251")).Background(lipgloss.Color("237")).Padding(0, 1)
-	MetricLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("110"))
+	appBg  = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("252"))
+	subtle = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
 
-	// Legacy color names for backward compatibility (will phase out)
 	colorPurple = lipgloss.Color("61")  // primary accent
 	colorCyan   = lipgloss.Color("81")  // secondary accent / data
 	colorGreen  = lipgloss.Color("42")  // success / included
@@ -181,15 +165,23 @@ func viewTitle(title string, w int) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, t, " ", rule)
 }
 
-// truncStr truncates a string to maxLen with ellipsis.
-func truncStr(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen <= 3 {
-		return s[:maxLen]
-	}
-	return s[:maxLen-1] + "…"
+// terminalText discards terminal escape sequences and normalizes control
+// characters from database and user text before applying trusted styles.
+func terminalText(s string) string {
+	return strings.ReplaceAll(terminalBody(s), "\n", " ")
+}
+
+func terminalBody(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r != '\n' && unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, ansi.Strip(s))
+}
+
+func truncStr(s string, width int) string {
+	return ansi.Truncate(terminalText(s), max(0, width), "…")
 }
 
 // barGraph renders a colored bar of proportional width against colorBg1.
@@ -206,18 +198,7 @@ func barGraphBg(value, maxVal, maxWidth int, clr, bg lipgloss.Color) string {
 	if w < 1 && value > 0 {
 		w = 1
 	}
-	return lipgloss.NewStyle().Foreground(clr).Background(bg).Render(repeatStr("█", w))
-}
-
-func repeatStr(s string, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	out := make([]byte, 0, len(s)*n)
-	for range n {
-		out = append(out, s...)
-	}
-	return string(out)
+	return lipgloss.NewStyle().Foreground(clr).Background(bg).Render(strings.Repeat("█", max(0, w)))
 }
 
 // contentWidth returns a safe width for content, with fallback to 80.
@@ -227,16 +208,4 @@ func contentWidth(w int) int {
 		return w
 	}
 	return 80
-}
-
-// twoColumnWidths splits total width into two columns.
-// For < 100 chars: simple 50/50 split.
-// For >= 100 chars: left = total/2 - 1, right = total - left (1-char gap).
-func twoColumnWidths(total int) (left, right int) {
-	if total < 100 {
-		return total / 2, total - total/2
-	}
-	left = total/2 - 1
-	right = total - left
-	return left, right
 }

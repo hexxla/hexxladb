@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"os/signal"
@@ -12,40 +11,6 @@ import (
 
 func maintenanceContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt)
-}
-
-func optionsFromCredentialEnvironment(passphraseName, keyName string) (*hexxladb.Options, error) {
-	passphrase, passphrasePresent := os.LookupEnv(passphraseName)
-	encodedKey, keyPresent := os.LookupEnv(keyName)
-	if passphrasePresent && keyPresent {
-		return nil, fmt.Errorf("%q and %q are both set; choose one credential source", passphraseName, keyName)
-	}
-	if !passphrasePresent && !keyPresent {
-		return nil, nil
-	}
-	if passphrasePresent {
-		if passphrase == "" {
-			return nil, fmt.Errorf("environment variable %q is set but empty", passphraseName)
-		}
-		return &hexxladb.Options{Passphrase: passphrase}, nil
-	}
-	if encodedKey == "" {
-		return nil, fmt.Errorf("environment variable %q is set but empty", keyName)
-	}
-	key, err := base64.StdEncoding.DecodeString(encodedKey)
-	if err != nil {
-		return nil, fmt.Errorf("environment variable %q is not standard base64: %w", keyName, err)
-	}
-	return &hexxladb.Options{EncryptionKey: key}, nil
-}
-
-func clearCredentialOptions(opts *hexxladb.Options) {
-	if opts == nil {
-		return
-	}
-	clear(opts.EncryptionKey)
-	opts.EncryptionKey = nil
-	opts.Passphrase = ""
 }
 
 func printMaintenanceSpace(space []hexxladb.MaintenanceSpaceRequirement) {

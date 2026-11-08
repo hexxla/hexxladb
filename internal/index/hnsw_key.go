@@ -1,6 +1,11 @@
 package index
 
-import "github.com/hexxla/hexxladb/internal/lattice"
+import (
+	"bytes"
+	"fmt"
+
+	"github.com/hexxla/hexxladb/internal/lattice"
+)
 
 // HNSW keyspace prefixes.
 const (
@@ -16,6 +21,15 @@ func HNSWNodeKey(p lattice.PackedCoord) []byte {
 	buf = append(buf, HNSWNodePrefix...)
 	buf = appendPackedCoordBE(buf, p)
 	return buf
+}
+
+// ParseHNSWNodeKey returns the coordinate encoded by [HNSWNodeKey].
+func ParseHNSWNodeKey(key []byte) (lattice.PackedCoord, error) {
+	suffix, ok := bytes.CutPrefix(key, []byte(HNSWNodePrefix))
+	if !ok || len(suffix) != PackedCoordKeyLen {
+		return lattice.PackedCoord{}, fmt.Errorf("index: invalid HNSW node key")
+	}
+	return parsePackedCoordSegment(suffix)
 }
 
 // HNSWNodeKeyEnd returns the inclusive upper bound of the HNSW node keyspace.

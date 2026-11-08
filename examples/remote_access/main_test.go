@@ -154,3 +154,29 @@ func authorizedRequest(method, target string, body io.Reader) *http.Request {
 	request.Header.Set("Authorization", "Bearer "+string(testToken))
 	return request
 }
+
+func TestRemoteAccessRejectsInvalidCellRecord(t *testing.T) {
+	t.Parallel()
+	_, _, handler := openTestAPI(t, 10)
+	for _, tc := range []struct {
+		body string
+		want int
+	}{
+		{`{"q":0,"r":0,"content":"x","confidence":1,"tags":["` + strings.Repeat("x", 221) + `"]}`, http.StatusBadRequest},
+		{`{"q":0,"r":0,"confidence":1,"content":"` + strings.Repeat("x", 10_000) + `"}`, http.StatusBadRequest},
+		{`{"q":0,"r":0,"confidence":1,"content":"` + strings.Repeat("x", maxRequestBody) + `"}`, http.StatusRequestEntityTooLarge},
+	} {
+		request := authorizedRequest(http.MethodPut, "/v1/cells", strings.NewReader(tc.body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != tc.want {
+			t.Errorf("put (%d bytes) = %d, want %d: %s", len(tc.body), response.Code, tc.want, response.Body.String())
+		}
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, authorizedRequest(http.MethodGet, "/v1/cells?q=0&r=0", http.NoBody))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("get after rejected write = %d: %s", response.Code, response.Body.String())
+	}
+}

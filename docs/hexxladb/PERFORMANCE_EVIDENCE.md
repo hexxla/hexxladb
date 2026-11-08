@@ -50,6 +50,8 @@ task evidence-lattice-placement
 task soak-pilot
 ```
 
+The standalone runners live under [`tools/evidence`](../../tools/evidence/).
+
 The default observation workload uses 2,000 cells, 100 samples, seed `1`, FOV
 radius `10`, and super-hex level `2`. Override it without changing source:
 
@@ -76,11 +78,14 @@ task evidence-vector-scale \
 Use `-build-mode synchronous` for a same-host comparison with per-write graph
 maintenance. Deferred runs reject more than 20,000 vectors, and the rebuild API
 also applies its vector, estimated-memory/transient-WAL, and filesystem-capacity
-preflight before marking the current graph stale.
+preflight before marking the current graph stale. Replacing or deleting an
+indexed vector scans the graph for incoming links because HNSW pruning can leave
+one-way links. Churn results depend on graph size and should be measured
+separately from insertion and query latency.
 
 The placement runner defaults to six synthetic topics with 20 documents each,
 places 12 per topic before an incremental append, and compares a stable
-topic-clustered first-free policy with intentionally interleaved placement. It
+topic-clustered first-unused MVCC placement policy with intentionally interleaved placement. It
 uses only public APIs and writes `.tmp/evidence/lattice-placement.json`:
 
 ```bash

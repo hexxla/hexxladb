@@ -27,11 +27,4 @@ func TestOllamaHTTPRequestsAreBounded(t *testing.T) {
 		t.Fatalf("embedWithClient timeout took %s", elapsed)
 	}
 
-	start = time.Now()
-	if ollamaReachableWithClient(client, "http://ollama.invalid") {
-		t.Fatal("ollamaReachableWithClient reported a timed-out request as reachable")
-	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Fatalf("ollamaReachableWithClient timeout took %s", elapsed)
-	}
 }

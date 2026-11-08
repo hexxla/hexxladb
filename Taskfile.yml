@@ -96,19 +96,19 @@ tasks:
     desc: Run the seeded aggregate-only evidence workload
     cmds:
       - mkdir -p .tmp/evidence .tmp/go-build
-      - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go run ./examples/performance_evidence {{.EVIDENCE_ARGS | default ""}} | tee .tmp/evidence/workload.json"
+      - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go run ./tools/evidence/performance_evidence {{.EVIDENCE_ARGS | default ""}} | tee .tmp/evidence/workload.json"
 
   evidence-write-path:
     desc: Run the bounded aggregate-only write-path workload
     cmds:
       - mkdir -p .tmp/evidence
-      - bash -o pipefail -c "go run ./examples/write_path_evidence {{.WRITE_EVIDENCE_ARGS | default ""}} | tee .tmp/evidence/write-path.json"
+      - bash -o pipefail -c "go run ./tools/evidence/write_path_evidence {{.WRITE_EVIDENCE_ARGS | default ""}} | tee .tmp/evidence/write-path.json"
 
   evidence-vector-scale:
     desc: Run the bounded vector/HNSW scale, recall, reopen, and churn workload
     cmds:
       - mkdir -p .tmp/evidence .tmp/go-build
-      - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go run ./examples/vector_scale_evidence {{.VECTOR_EVIDENCE_ARGS}} | tee {{.VECTOR_EVIDENCE_OUTPUT}}"
+      - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go run ./tools/evidence/vector_scale_evidence {{.VECTOR_EVIDENCE_ARGS}} | tee {{.VECTOR_EVIDENCE_OUTPUT}}"
     vars:
       VECTOR_EVIDENCE_ARGS: '{{.VECTOR_EVIDENCE_ARGS | default ""}}'
       VECTOR_EVIDENCE_OUTPUT: '{{.VECTOR_EVIDENCE_OUTPUT | default ".tmp/evidence/vector-scale.json"}}'
@@ -117,7 +117,7 @@ tasks:
     desc: Compare deterministic clustered and interleaved lattice placement quality
     cmds:
       - mkdir -p .tmp/evidence .tmp/go-build
-      - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go run ./examples/lattice_placement_evidence {{.PLACEMENT_EVIDENCE_ARGS}} | tee {{.PLACEMENT_EVIDENCE_OUTPUT}}"
+      - bash -o pipefail -c "GOCACHE={{.ROOT_DIR}}/.tmp/go-build TMPDIR={{.ROOT_DIR}}/.tmp go run ./tools/evidence/lattice_placement_evidence {{.PLACEMENT_EVIDENCE_ARGS}} | tee {{.PLACEMENT_EVIDENCE_OUTPUT}}"
     vars:
       PLACEMENT_EVIDENCE_ARGS: '{{.PLACEMENT_EVIDENCE_ARGS | default ""}}'
       PLACEMENT_EVIDENCE_OUTPUT: '{{.PLACEMENT_EVIDENCE_OUTPUT | default ".tmp/evidence/lattice-placement.json"}}'
@@ -148,99 +148,17 @@ tasks:
       - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-tui{{.EXE}}" ./cmd/tui
       - 'echo "  → {{.BINDIR}}/hexxladb-tui{{.EXE}}"'
 
-  build-demo:
-    desc: Build the conversational-memory example
-    cmds:
-      - mkdir -p "{{.BINDIR}}"
-      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-demo{{.EXE}}" ./examples/conversational_memory
-      - 'echo "  → {{.BINDIR}}/hexxladb-demo{{.EXE}}"'
-
-  build-demo-llm:
-    desc: Build the LLM context-engine example
-    cmds:
-      - mkdir -p "{{.BINDIR}}"
-      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-demo-llm{{.EXE}}" ./examples/llm_context_engine
-      - 'echo "  → {{.BINDIR}}/hexxladb-demo-llm{{.EXE}}"'
-
-  build-demo-spatial:
-    desc: Build the spatial-algorithms example
-    cmds:
-      - mkdir -p "{{.BINDIR}}"
-      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-demo-spatial{{.EXE}}" ./examples/spatial_algorithms
-      - 'echo "  → {{.BINDIR}}/hexxladb-demo-spatial{{.EXE}}"'
-
-  build-demo-remote:
-    desc: Build the remote-access owner-service example
-    cmds:
-      - mkdir -p "{{.BINDIR}}"
-      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-demo-remote{{.EXE}}" ./examples/remote_access
-      - 'echo "  → {{.BINDIR}}/hexxladb-demo-remote{{.EXE}}"'
-
-  build-evidence-performance:
-    desc: Build the aggregate performance-evidence runner
-    cmds:
-      - mkdir -p "{{.BINDIR}}"
-      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-evidence-performance{{.EXE}}" ./examples/performance_evidence
-      - 'echo "  → {{.BINDIR}}/hexxladb-evidence-performance{{.EXE}}"'
-
-  build-evidence-write-path:
-    desc: Build the bounded write-path evidence runner
-    cmds:
-      - mkdir -p "{{.BINDIR}}"
-      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-evidence-write-path{{.EXE}}" ./examples/write_path_evidence
-      - 'echo "  → {{.BINDIR}}/hexxladb-evidence-write-path{{.EXE}}"'
-
-  build-evidence-vector-scale:
-    desc: Build the vector-scale evidence runner
-    cmds:
-      - mkdir -p "{{.BINDIR}}"
-      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-evidence-vector-scale{{.EXE}}" ./examples/vector_scale_evidence
-      - 'echo "  → {{.BINDIR}}/hexxladb-evidence-vector-scale{{.EXE}}"'
-
-  build-evidence-lattice-placement:
-    desc: Build the lattice-placement evidence runner
-    cmds:
-      - mkdir -p "{{.BINDIR}}"
-      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-evidence-lattice-placement{{.EXE}}" ./examples/lattice_placement_evidence
-      - 'echo "  → {{.BINDIR}}/hexxladb-evidence-lattice-placement{{.EXE}}"'
-
-  build-pilot-soak:
-    desc: Build the conservative pilot soak runner
-    cmds:
-      - mkdir -p "{{.BINDIR}}"
-      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o "{{.BINDIR}}/hexxladb-pilot-soak{{.EXE}}" ./examples/pilot_soak
-      - 'echo "  → {{.BINDIR}}/hexxladb-pilot-soak{{.EXE}}"'
-
   build-examples:
-    desc: Build all examples
+    desc: Compile the three examples
     cmds:
-      - task: build-demo
-        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
-      - task: build-demo-llm
-        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
-      - task: build-demo-spatial
-        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
-      - task: build-demo-remote
-        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
-      - task: build-evidence-performance
-        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
-      - task: build-evidence-write-path
-        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
-      - task: build-evidence-vector-scale
-        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
-      - task: build-evidence-lattice-placement
-        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
-      - task: build-pilot-soak
-        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
+      - go build ./examples/...
 
   build:
-    desc: Build the CLI, TUI, and examples for the selected OS and architecture
+    desc: Build the CLI and TUI for the selected OS and architecture
     cmds:
       - task: build-cli
         vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
       - task: build-tui
-        vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
-      - task: build-examples
         vars: { GOOS: "{{.GOOS}}", GOARCH: "{{.GOARCH}}", BINDIR: "{{.BINDIR}}", EXE: "{{.EXE}}" }
       - 'echo "==> Built all targets for {{.GOOS}}/{{.GOARCH}}"'
 
@@ -276,77 +194,28 @@ tasks:
       - rm -rf bin/
 
   demo:
-    desc: Run a fresh conversational-memory demonstration
-    env:
-      DEMO_DB: '{{.DEMO_DB | default ""}}'
+    desc: Run the embedded quickstart in a temporary database
     cmds:
-      - mkdir -p .tmp
-      - rm -f .tmp/conversational-memory.db .tmp/conversational-memory.db-wal .tmp/conversational-memory.db-changelog
-      - |
-        if [ -n "$DEMO_DB" ]; then
-          go run ./examples/conversational_memory -db "$DEMO_DB"
-        else
-          go run ./examples/conversational_memory
-        fi
-
-  demo-llm:
-    desc: Run a fresh LLM context-engine demonstration; requires Ollama
-    env:
-      LLM_DB: '{{.LLM_DB | default ""}}'
-    cmds:
-      - mkdir -p .tmp
-      - rm -f .tmp/llm-context-engine.db .tmp/llm-context-engine.db-wal
-      - |
-        if [ -n "$LLM_DB" ]; then
-          go run ./examples/llm_context_engine -db "$LLM_DB"
-        else
-          go run ./examples/llm_context_engine
-        fi
-
-  demo-spatial:
-    desc: Run a fresh spatial-algorithms demonstration
-    env:
-      SPATIAL_DB: '{{.SPATIAL_DB | default ""}}'
-    cmds:
-      - mkdir -p .tmp
-      - rm -f .tmp/spatial-algorithms.db .tmp/spatial-algorithms.db-wal
-      - |
-        if [ -n "$SPATIAL_DB" ]; then
-          go run ./examples/spatial_algorithms -db "$SPATIAL_DB"
-        else
-          go run ./examples/spatial_algorithms
-        fi
+      - go run ./examples/quickstart
 
   demo-remote:
     desc: Run the loopback-only remote-access owner-service example
     cmds:
       - go run ./examples/remote_access
 
-  demo-all:
-    desc: Run every demonstration in sequence
-    cmds:
-      - task: demo
-      - task: demo-llm
-      - task: demo-spatial
-
   seed:
-    desc: Seed the conversational-memory database when absent
+    desc: Create a synthetic TUI fixture in a new directory
+    env:
+      TUI_FIXTURE_DIR: '{{.TUI_FIXTURE_DIR | default ".tmp/tui-sample"}}'
     cmds:
       - mkdir -p .tmp
-      - |
-        if [ ! -f .tmp/conversational-memory.db ]; then
-          echo "==> Seeding demo database (.tmp/conversational-memory.db)..."
-          go run ./examples/conversational_memory
-        else
-          echo "==> Demo database already exists (.tmp/conversational-memory.db) — skipping seed."
-        fi
+      - go run ./tools/seed_tui -dir "$TUI_FIXTURE_DIR"
 
   tui:
-    desc: Seed and launch the TUI database explorer
+    desc: Explore an existing database
     env:
-      TUI_DB: '{{.TUI_DB | default ".tmp/conversational-memory.db"}}'
+      TUI_DB: '{{.TUI_DB | default ".tmp/tui-sample/fixture.db"}}'
     cmds:
-      - task: seed
       - go run ./cmd/tui -path "$TUI_DB"
 
   govulncheck:

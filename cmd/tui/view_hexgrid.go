@@ -19,57 +19,96 @@ type hexGridView struct {
 	radius  int
 	showFOV bool // toggle FOV overlay
 	width   int
-	height  int
+	request uint64
+	loading bool
+	data    gridLoadedMsg
 }
 
 func newHexGridView(db *hexxladb.DB) view {
 	return &hexGridView{db: db, center: hexxladb.Coord{}, radius: 3}
 }
 
-func (v *hexGridView) SetSize(w, h int) { v.width = w; v.height = h }
+func (v *hexGridView) SetSize(w, _ int) { v.width = w }
+
+type gridLoadedMsg struct {
+	request  uint64
+	occupied map[hexxladb.Coord]bool
+	density  []hexxladb.RingDensity
+	err      error
+}
 
 func (v *hexGridView) Update(msg tea.Msg) (view, tea.Cmd) {
-	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		switch keyMsg.String() {
-		case "up", "k":
-			v.center.R--
-		case "down", "j":
-			v.center.R++
-		case "left", "h":
-			v.center.Q--
-		case "right", "l":
-			v.center.Q++
-		case "+", "=":
-			if v.radius < 8 {
-				v.radius++
-			}
-		case "-":
-			if v.radius > 1 {
-				v.radius--
-			}
-		case "0":
-			v.center = hexxladb.Coord{}
-		case "v":
-			v.showFOV = !v.showFOV
-		case "enter":
-			coord := v.center
-			return v, func() tea.Msg { return inspectCellMsg{coord: coord} }
+	switch msg := msg.(type) {
+	case tabActivatedMsg:
+		if v.request == 0 {
+			cmd := v.loadCmd()
+			return v, cmd
 		}
+	case gridLoadedMsg:
+		if msg.request == v.request {
+			v.loading = false
+			v.data = msg
+		}
+	case tea.KeyMsg:
+		cmd := v.move(msg.String())
+		return v, cmd
 	}
 	return v, nil
 }
 
-func (v *hexGridView) View() string {
-	w := max(40, v.width-6)
+func (v *hexGridView) move(key string) tea.Cmd {
+	center, radius := v.center, v.radius
+	switch key {
+	case "up", "k":
+		center.R--
+	case "down", "j":
+		center.R++
+	case "left", "h":
+		center.Q--
+	case "right", "l":
+		center.Q++
+	case "+", "=":
+		radius = min(8, radius+1)
+	case "-":
+		radius = max(1, radius-1)
+	case "0":
+		center = hexxladb.Coord{}
+	case "v":
+		v.showFOV = !v.showFOV
+	case "r":
+		return v.loadCmd()
+	case "enter":
+		return func() tea.Msg { return inspectCellMsg{coord: center} }
+	}
+	if center == v.center && radius == v.radius {
+		return nil
+	}
+	if _, err := hexxladb.Pack(center); err != nil {
+		return nil
+	}
+	v.center, v.radius = center, radius
+	return v.loadCmd()
+}
 
-	ctx := context.Background()
+func (v *hexGridView) loadCmd() tea.Cmd {
+	v.request++
+	v.loading = true
+	db, center, radius, request := v.db, v.center, v.radius, v.request
+	return func() tea.Msg {
+		result := loadGrid(db, center, radius)
+		result.request = request
+		return result
+	}
+}
+
+func loadGrid(db *hexxladb.DB, center hexxladb.Coord, radius int) gridLoadedMsg {
 	occupied := make(map[hexxladb.Coord]bool)
-	ringDensity := make([]hexxladb.RingDensity, v.radius+1)
-	if err := v.db.View(func(tx *hexxladb.Tx) error {
+	ringDensity := make([]hexxladb.RingDensity, radius+1)
+	err := db.View(func(tx *hexxladb.Tx) error {
 		for ring := range ringDensity {
 			density := &ringDensity[ring]
 			density.Ring = ring
-			coords := hexxladb.Ring(v.center, ring)
+			coords := hexxladb.Ring(center, ring)
 			density.Total = len(coords)
 			for _, c := range coords {
 				key, err := hexxladb.Pack(c)
@@ -87,15 +126,25 @@ func (v *hexGridView) View() string {
 			}
 		}
 		return nil
-	}); err != nil {
-		return styleBad.Render(fmt.Sprintf("  ✗  Hex grid error: %v", err))
+	})
+	return gridLoadedMsg{occupied: occupied, density: ringDensity, err: err}
+}
+
+func (v *hexGridView) View() string {
+	if v.loading || v.request == 0 {
+		return styleLoading.Render("  ⟳  Loading hex grid…")
 	}
+	if v.data.err != nil {
+		return styleBad.Render(fmt.Sprintf("  ✗  Hex grid error: %v", v.data.err))
+	}
+	w := max(40, v.width-6)
+	occupied := v.data.occupied
 
 	var visible map[hexxladb.Coord]bool
 	if v.showFOV {
 		visible = inspect.VisibleHexes(v.center, v.radius, occupied)
 	}
-	grid := hexxladb.RenderHexGrid(ctx, v.center, v.radius, func(c hexxladb.Coord) string {
+	grid := hexxladb.RenderHexGrid(context.Background(), v.center, v.radius, func(c hexxladb.Coord) string {
 		return hexGridMarker(occupied[c], v.showFOV && !visible[c])
 	})
 	coloredGrid := strings.NewReplacer(
@@ -119,7 +168,7 @@ func (v *hexGridView) View() string {
 
 	// ── ring stats ────────────────────────────────────────────────────────────
 	var ringLines strings.Builder
-	for _, rd := range ringDensity {
+	for _, rd := range v.data.density {
 		pct := 0
 		if rd.Total > 0 {
 			pct = rd.Occupied * 100 / rd.Total
@@ -141,6 +190,7 @@ func (v *hexGridView) View() string {
 		helpItem("+/-", "zoom"),
 		helpItem("v", "toggle FOV (○ hidden cell, × hidden space)"),
 		helpItem("0", "origin"),
+		helpItem("r", "refresh"),
 		helpItem("Enter", "inspect center"),
 	}, "  ")
 

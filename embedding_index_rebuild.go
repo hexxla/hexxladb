@@ -379,6 +379,13 @@ func (s *memoryHNSWStorage) DeleteHNSWNode(coord lattice.PackedCoord) error {
 	return nil
 }
 
+func (s *memoryHNSWStorage) WalkHNSWNodes(visit func(*hnsw.Node)) error {
+	for _, node := range s.nodes {
+		visit(node)
+	}
+	return nil
+}
+
 func (s *memoryHNSWStorage) GetEmbeddingVec(coord lattice.PackedCoord) ([]float32, bool, error) {
 	vector, found := s.embeddings[coord]
 	return vector, found, nil

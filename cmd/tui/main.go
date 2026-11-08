@@ -1,7 +1,5 @@
 // TUI for HexxlaDB — interactive database explorer.
 //
-// Tabs: Dashboard | Cells | Hex Grid | Inspector | Analytics | Seams
-//
 // Run: go run ./cmd/tui -path /path/to/database.db
 package main
 
@@ -16,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/hexxla/hexxladb"
+	"github.com/hexxla/hexxladb/internal/cmdconfig"
 )
 
 func main() {
@@ -35,7 +34,7 @@ func run() int {
 		return 1
 	}
 
-	db, err := hexxladb.Open(dbPath, nil)
+	db, err := cmdconfig.OpenExisting(dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error opening database: %v\n", err)
 		return 1
@@ -53,35 +52,29 @@ func run() int {
 	return 0
 }
 
-// ── tab definitions ──────────────────────────────────────────────────────────
+var tabNames = [...]string{"Cells", "Hex Grid", "Inspector", "Seams", "Diff"}
 
-var tabNames = []string{"Dashboard", "Cells", "Hex Grid", "Inspector", "Analytics", "Seams", "Health", "Diff", "Embeddings"}
-
-// ── model ────────────────────────────────────────────────────────────────────
+const inspectorTab = 2
 
 type model struct {
-	db      *hexxladb.DB
-	dbPath  string
-	tabs    []view
-	current int
-	width   int
-	height  int
+	dbPath   string
+	metadata string
+	tabs     [len(tabNames)]view
+	current  int
+	width    int
+	height   int
 }
 
 func newModel(db *hexxladb.DB, dbPath string) model {
 	return model{
-		db:     db,
-		dbPath: dbPath,
-		tabs: []view{
-			newDashboardView(db),
+		dbPath:   dbPath,
+		metadata: fmt.Sprintf("%d-byte pages · vector dim %d", db.PageSize(), db.EmbeddingDimension()),
+		tabs: [len(tabNames)]view{
 			newCellsView(db),
 			newHexGridView(db),
 			newInspectorView(db),
-			newAnalyticsView(db),
 			newSeamsView(db),
-			newHealthView(db),
 			newDiffView(db),
-			newEmbeddingsView(db),
 		},
 	}
 }
@@ -121,11 +114,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "q":
 				return m, tea.Quit
-			case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-				idx := int(msg.String()[0] - '1')
-				if idx >= 0 && idx < len(m.tabs) {
-					return m.switchTab(idx)
-				}
+			case "1", "2", "3", "4", "5":
+				return m.switchTab(int(msg.String()[0] - '1'))
 			case "tab":
 				return m.switchTab((m.current + 1) % len(m.tabs))
 			case "shift+tab":
@@ -133,27 +123,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	case inspectCellMsg:
-		// Switch to Inspector tab and deliver the message to it.
-		const inspectorIdx = 3
-		m.current = inspectorIdx
-		newV, cmd := m.tabs[inspectorIdx].Update(msg)
-		m.tabs[inspectorIdx] = newV
-		return m, cmd
+	case tabReply:
+		if selection, ok := msg.message.(inspectCellMsg); ok {
+			if m.current != msg.index {
+				return m, nil
+			}
+			m.current = inspectorTab
+			return m.updateTab(inspectorTab, selection)
+		}
+		return m.updateTab(msg.index, msg.message)
 	}
-
-	// Delegate all other messages to the current tab.
-	newV, cmd := m.tabs[m.current].Update(msg)
-	m.tabs[m.current] = newV
-	return m, cmd
+	return m.updateTab(m.current, msg)
 }
 
 func (m model) switchTab(idx int) (tea.Model, tea.Cmd) {
 	m.current = idx
-	// Trigger lazy load on the target tab by sending a tick with no-op message.
-	newV, cmd := m.tabs[idx].Update(tabActivatedMsg{})
-	m.tabs[idx] = newV
-	return m, cmd
+	return m.updateTab(idx, tabActivatedMsg{})
+}
+
+// tabReply delivers asynchronous work to the view that started it.
+type tabReply struct {
+	index   int
+	message tea.Msg
+}
+
+func (m model) updateTab(index int, msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.tabs[index].Update(msg)
+	m.tabs[index] = next
+	if cmd == nil {
+		return m, nil
+	}
+	return m, func() tea.Msg { return tabReply{index: index, message: cmd()} }
 }
 
 // tabActivatedMsg is sent when a tab becomes active (for lazy loading).
@@ -185,8 +185,8 @@ func (m model) renderTabBar() string {
 	gapW := max(0, m.width-lipgloss.Width(row))
 	// Gap fills horizontally; height must match the tab row so bottom-edge aligns.
 	gap := lipgloss.NewStyle().
-		Background(AppBg.GetBackground()).
-		Foreground(Subtle.GetForeground()).
+		Background(appBg.GetBackground()).
+		Foreground(subtle.GetForeground()).
 		Width(gapW).
 		Height(rowH).
 		AlignVertical(lipgloss.Bottom).
@@ -219,18 +219,15 @@ func (m model) renderContent() string {
 }
 
 func (m model) renderStatusBar() string {
-	stats, _ := m.db.StatsMVCC()
-	mvcc := OK.Render("MVCC on")
-	if stats.CommitSeq == 0 {
-		mvcc = Dim.Render("MVCC off")
-	}
-
 	left := styleStatusLeft.Render(" ◈ HexxlaDB ")
-	mid := styleStatusMid.Render(fmt.Sprintf(" %s  seq:%d  %s ", truncStr(m.dbPath, 40), stats.CommitSeq, mvcc))
-	keys := styleStatusRight.Render(" 1-9 tabs · Tab cycle · q quit ")
+	mid := fmt.Sprintf(" %s · %s ", m.dbPath, m.metadata)
+	keys := styleStatusRight.Render(" 1-5 tabs · Tab cycle · q quit ")
 
 	midW := max(0, m.width-lipgloss.Width(left)-lipgloss.Width(keys))
-	mid = styleStatusMid.Width(midW).Render(mid)
+	if midW == 0 {
+		return lipgloss.JoinHorizontal(lipgloss.Top, left, keys)
+	}
+	mid = styleStatusMid.Width(midW).Render(truncStr(mid, midW-2))
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, mid, keys)
 }

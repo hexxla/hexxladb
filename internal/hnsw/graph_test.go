@@ -83,6 +83,13 @@ func (m *memStorage) DeleteHNSWNode(p lattice.PackedCoord) error {
 	return nil
 }
 
+func (m *memStorage) WalkHNSWNodes(visit func(*Node)) error {
+	for _, node := range m.nodes {
+		visit(node)
+	}
+	return nil
+}
+
 func (m *memStorage) GetEmbeddingVec(p lattice.PackedCoord) (vec []float32, found bool, _ error) {
 	vec, found = m.vecs[p]
 	return vec, found, nil
@@ -370,4 +377,44 @@ func testSimilarity(a, b []float32) float64 {
 		score -= delta * delta
 	}
 	return score
+}
+
+func TestGraphRepairsOneWayLinks(t *testing.T) {
+	t.Parallel()
+	for _, replace := range []bool{false, true} {
+		name := "delete"
+		if replace {
+			name = "replace"
+		}
+		t.Run(name, func(t *testing.T) {
+			s := newMemStorage()
+			removed, survivor := coord(1), coord(2)
+			s.meta = &Meta{M: DefaultM, EfC: DefaultEfConstruction, Count: 2}
+			s.entry = &removed
+			s.nodes[removed] = &Node{Coord: removed, Neighbors: [][]lattice.PackedCoord{nil}}
+			s.nodes[survivor] = &Node{Coord: survivor, Neighbors: [][]lattice.PackedCoord{{removed}}}
+			s.SetVec(removed, []float32{1, 0})
+			s.SetVec(survivor, []float32{0, 1})
+			graph := NewGraph(s, testSimilarity)
+			if replace {
+				if err := graph.Insert(removed, []float32{1, 1}); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := graph.Delete(removed); err != nil {
+					t.Fatal(err)
+				}
+				if s.entry == nil || *s.entry != survivor {
+					t.Fatalf("entry = %v, want %v", s.entry, survivor)
+				}
+				if links := s.nodes[survivor].Neighbors[0]; len(links) != 0 {
+					t.Fatalf("survivor still points to removed node: %v", links)
+				}
+			}
+			hits, err := graph.Search([]float32{0, 1}, 1, 10)
+			if err != nil || len(hits) != 1 || hits[0].Coord != survivor {
+				t.Fatalf("search = %v, %v, want %v", hits, err, survivor)
+			}
+		})
+	}
 }

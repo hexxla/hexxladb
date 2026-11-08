@@ -17,7 +17,9 @@ Packages below `internal/` are private implementation details.
 [`Open`](../../db.go) creates or opens one database handle. HexxlaDB permits one open handle per database path across processes; competing opens return [`ErrDatabaseLocked`](../../errors.go).
 Open validates pending WAL records and recovers the commit before handing
 control to callers. An invalid WAL, including older pending v2 redo without a
-commit header, returns `ErrCorruptDatabase`. See [recovery compatibility](./DURABILITY.md#recovery-and-version-compatibility).
+commit header, returns `ErrCorruptDatabase`. Use [`OpenExisting`](../../db.go)
+when a missing or empty primary must be rejected. It still takes the exclusive
+lock and can replay the WAL and create sidecars. See [recovery compatibility](./DURABILITY.md#recovery-and-version-compatibility).
 
 ```go
 db, err := hexxladb.Open("memory.db", &hexxladb.Options{
@@ -85,7 +87,7 @@ references to coordinates that never contained a cell.
 
 Preserve existing coordinates during incremental insertion; represent an intentional move by creating a successor and calling `MarkSupersedes` rather than deleting or rewriting history. `ClusterHint` is stored metadata only. Applications continue to own anchor selection, semantic grouping, relocation policy, and placement-quality thresholds.
 
-The [`lattice_placement_evidence`](../../examples/lattice_placement_evidence) example implements that workflow entirely through the public API and compares semantic and spatial neighborhood quality.
+The [`lattice_placement_evidence`](../../tools/evidence/lattice_placement_evidence) runner implements that workflow entirely through the public API and compares semantic and spatial neighborhood quality.
 
 ## Cells, facets, edges, and seams
 
@@ -195,6 +197,51 @@ symmetric center-to-center visibility, with an opaque hex boundary blocking
 sight through it. Graph context accepts a comma-separated set of relation names
 in a single breadth-first traversal. `FindEdgePath` returns `ErrInvalidArgument`
 when a reachable goal has only paths whose costs overflow `float64`.
+
+For a current view with `requires` edges, this pack follows up to two hops
+from `start`, even when a target lies outside its geometric neighborhood.
+The path call uses the stored edge costs to reach `goal`.
+
+```go
+pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{
+    Seeds: []hexxladb.Coord{start}, EdgeFilter: "requires",
+    MaxHops: 2, MaxCells: 12,
+})
+if err != nil {
+    return err
+}
+path, err := tx.FindEdgePath(ctx, start, goal, hexxladb.FindEdgePathConfig{
+    Filter: "requires", MaxExpand: 100,
+})
+if err != nil {
+    return err
+}
+fmt.Println(len(pack.Cells), path)
+```
+
+With an empty `EdgeFilter`, `LoadContext` expands in rings. Historical
+views can use radial context with historical cell data. Requests for graph
+expansion or edge enrichment on those views return
+`ErrHistoricalDataUnavailable`.
+
+To treat known obstacle coordinates as opaque, pass a stable lookup to FOV.
+For two independent seeds, Voronoi gives each coordinate to one region and
+returns cells keyed by the original seed index.
+
+```go
+visible, err := tx.LoadContextFOV(ctx, start, 3, func(c hexxladb.Coord) bool {
+    return obstacles[c]
+}, hexxladb.FOVContextConfig{MaxCells: 12})
+if err != nil {
+    return err
+}
+regions, err := tx.LoadContextVoronoi(ctx, []hexxladb.Coord{start, goal},
+    hexxladb.VoronoiContextConfig{MaxRadius: 4, MaxCellsPerSeed: 12})
+if err != nil {
+    return err
+}
+fmt.Println(len(visible), len(regions[0]), len(regions[1]))
+```
 
 Spatial work is bounded before lattice expansion: raw/ring scans accept radii
 through `MaxSpatialScanRadius`; seam lookup additionally bounds radius, index
@@ -352,7 +399,7 @@ effects after commit confirmation. See [commit finalization](./TX.md#commit-fina
 Public sentinel errors are defined in [`errors.go`](../../errors.go). Handle stable error semantics with `errors.Is` and `errors.As`, including:
 
 - lifecycle and locking errors such as `ErrDatabaseClosed` and `ErrDatabaseLocked`;
-- argument and transaction errors such as `ErrInvalidArgument` and `ErrTxReadOnly`;
+- argument and transaction errors such as `ErrInvalidArgument` and `ErrTxReadOnly`. An encoded cell larger than the configured value limit returns `ErrInvalidArgument`;
 - snapshot errors such as `ErrReadSeqFuture`, `ErrMVCCRequired`, and `ErrHistoricalDataUnavailable`;
 - format and migration errors such as `ErrUnsupportedFormatVersion`, `ErrMigrationIncomplete`, and `ErrMigrationChangelogState`;
 - interrupted candidate refusal through `ErrCompactionIncomplete`;
@@ -364,24 +411,8 @@ Do not compare error strings.
 
 ## Examples
 
-- [`examples/conversational_memory`](../../examples/conversational_memory) — cell lifecycle, MVCC, context assembly, hooks, health, diff, compaction, FOV, and graph traversal.
-- [`examples/spatial_algorithms`](../../examples/spatial_algorithms) — FOV, radial context, Voronoi, Dijkstra, BFS, and graph-aware context.
-- [`examples/remote_access`](../../examples/remote_access) — a loopback-only, authenticated owner-service boundary that keeps database files single-process.
-- [`examples/llm_context_engine`](../../examples/llm_context_engine) — embedding-backed retrieval and prompt assembly; requires Ollama with `all-minilm`.
-- [`examples/performance_evidence`](../../examples/performance_evidence) — controlled evidence collection for spatial algorithms and super-hex occupancy.
-- [`examples/write_path_evidence`](../../examples/write_path_evidence) — bounded aggregate evidence for write latency, throughput, allocation, and physical growth.
-- [`examples/vector_scale_evidence`](../../examples/vector_scale_evidence) — bounded HNSW build, recall, reopen, churn, memory, and disk evidence.
-- [`examples/lattice_placement_evidence`](../../examples/lattice_placement_evidence) — deterministic placement, collision, incremental-stability, supersession, and semantic/lattice divergence evidence.
-- [`examples/pilot_soak`](../../examples/pilot_soak) — bounded sustained mixed-load qualification with encrypted backup/restore, durable-consumer, health, latency, throughput, memory, and storage gates.
+- [Quickstart](../../examples/quickstart) writes cells, searches them, loads graph context, and fits the rendered prompt.
+- [Ports and adapters](../../examples/ports_adapters) writes an atomic contradiction through an application-owned port.
+- [Remote access](../../examples/remote_access) demonstrates a loopback HTTP service with a single database owner.
 
-Examples demonstrate workflows; they are not expected to call every exported symbol.
-
-## Related documents
-
-| Document                                 | Owns                                          |
-| ---------------------------------------- | --------------------------------------------- |
-| [`CONFIGURATION.md`](./CONFIGURATION.md) | Options and common configurations             |
-| [`TX.md`](./TX.md)                       | Transaction, snapshot, and validity semantics |
-| [`HEXXLA_DB.md`](./HEXXLA_DB.md)         | Storage layout and key families               |
-| [`HEXXLA.md`](./HEXXLA.md)               | Product memory concepts                       |
-| [`OPERATIONS.md`](./OPERATIONS.md)       | Backup, retention, compaction, and recovery   |
+See the [performance evidence guide](./PERFORMANCE_EVIDENCE.md) for the opt-in workload tools.

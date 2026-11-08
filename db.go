@@ -18,7 +18,7 @@ type dbCachedHeader struct {
 	btreeRoot uint64
 }
 
-// DB is a handle to an embedded HexxlaDB database. Construction is via [Open].
+// DB is a handle to an embedded HexxlaDB database. Use [Open] or [OpenExisting].
 // Concurrent [View] calls may run together. [Update] and [Batch] hold the exclusive DB lock through
 // their callback, engine commit, and DB-level finalization; see [docs/hexxladb/TX.md].
 type DB struct {
@@ -66,6 +66,18 @@ var ErrCorruptDatabase = errors.New("hexxladb: corrupt database")
 // fails validation, including pending v2 redo without a recoverable commit header.
 func Open(path string, opts *Options) (*DB, error) {
 	return openDB(path, opts, false)
+}
+
+// OpenExisting opens an existing database and recovers pending WAL commits.
+// It never creates the primary file. Like [Open], it takes the exclusive
+// database lock and may write recovery changes or create sidecars.
+func OpenExisting(path string, opts *Options) (*DB, error) {
+	var existing Options
+	if opts != nil {
+		existing = *opts
+	}
+	existing.requireExistingPrimary = true
+	return openDB(path, &existing, false)
 }
 
 func openDB(path string, opts *Options, createExclusive bool) (*DB, error) {

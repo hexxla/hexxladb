@@ -19,77 +19,99 @@ type inspectorView struct {
 	pack        *hexxladb.ContextPack
 	fovCells    []hexxladb.CellRecord // FOV-filtered context results
 	packLoading bool
-	packMode    string // "radial" or "fov"
+	selected    bool
+	cellLoading bool
+	cellErr     error
+	packErr     error
+	request     uint64
 	width       int
-	height      int
 }
 
 func newInspectorView(db *hexxladb.DB) view {
 	return &inspectorView{db: db}
 }
 
-func (v *inspectorView) SetSize(w, h int) { v.width = w; v.height = h }
+func (v *inspectorView) SetSize(w, _ int) { v.width = w }
 
 func (v *inspectorView) Update(msg tea.Msg) (view, tea.Cmd) {
 	switch msg := msg.(type) {
 	case inspectCellMsg:
-		v.cell = msg.coord
-		v.data = nil
-		v.pack = nil
-		v.packLoading = false
-		return v, nil
-
-	case contextPackLoadedMsg:
-		v.packLoading = false
-		if msg.err != nil {
-			return v, nil
+		cmd := v.selectCell(msg.coord)
+		return v, cmd
+	case cellDetailMsg:
+		if msg.request == v.request {
+			v.cellLoading = false
+			v.cellErr = msg.err
+			if msg.err == nil {
+				v.data = &msg.cell
+			}
 		}
-		v.pack = &msg.pack
-		return v, nil
-
-	case fovContextLoadedMsg:
-		v.packLoading = false
-		if msg.err != nil {
-			return v, nil
+	case contextLoadedMsg:
+		if msg.request == v.request {
+			v.packLoading = false
+			v.packErr = msg.err
+			v.pack = msg.pack
+			v.fovCells = msg.visible
 		}
-		v.fovCells = msg.cells
-		v.pack = nil
-		v.packMode = "fov"
-		return v, nil
-
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "c":
-			if v.data != nil && !v.packLoading {
-				v.packLoading = true
-				v.packMode = "radial"
-				coord := v.cell
-				db := v.db
-				return v, func() tea.Msg {
-					pack, err := loadContextPack(db, coord)
-					return contextPackLoadedMsg{pack: pack, err: err}
-				}
-			}
-		case "f":
-			if v.data != nil && !v.packLoading {
-				v.packLoading = true
-				v.packMode = "fov"
-				coord := v.cell
-				db := v.db
-				return v, func() tea.Msg {
-					return loadContextFOV(db, coord)
-				}
+		case "c", "f":
+			if v.data != nil {
+				cmd := v.loadContext(msg.String() == "f")
+				return v, cmd
 			}
 		case "r":
-			v.data = nil
-			v.pack = nil
-			v.fovCells = nil
-			v.packLoading = false
-			v.packMode = ""
-			return v, nil
+			if v.selected {
+				cmd := v.selectCell(v.cell)
+				return v, cmd
+			}
 		}
 	}
 	return v, nil
+}
+
+func (v *inspectorView) selectCell(coord hexxladb.Coord) tea.Cmd {
+	v.cell = coord
+	v.selected = true
+	v.cellLoading = true
+	v.cellErr = nil
+	v.data = nil
+	v.clearContext()
+	db, request := v.db, v.request
+	return func() tea.Msg {
+		var cell hexxladb.CellView
+		err := db.View(func(tx *hexxladb.Tx) error {
+			var err error
+			cell, err = tx.AssembleCellView(context.Background(), coord, nil, hexxladb.DefaultAssembleCellViewOpts())
+			return err
+		})
+		return cellDetailMsg{request: request, cell: cell, err: err}
+	}
+}
+
+func (v *inspectorView) clearContext() {
+	v.request++
+	v.pack = nil
+	v.fovCells = nil
+	v.packErr = nil
+	v.packLoading = false
+}
+
+func (v *inspectorView) loadContext(fov bool) tea.Cmd {
+	v.clearContext()
+	v.packLoading = true
+	db, coord, request := v.db, v.cell, v.request
+	return func() tea.Msg {
+		if fov {
+			cells, err := loadContextFOV(db, coord)
+			if cells == nil && err == nil {
+				cells = []hexxladb.CellRecord{}
+			}
+			return contextLoadedMsg{request: request, visible: cells, err: err}
+		}
+		pack, err := loadContextPack(db, coord)
+		return contextLoadedMsg{request: request, pack: &pack, err: err}
+	}
 }
 
 func loadContextPack(db *hexxladb.DB, coord hexxladb.Coord) (hexxladb.ContextPack, error) {
@@ -120,36 +142,15 @@ func (v *inspectorView) View() string {
 	w := max(40, v.width-6)
 	halfW := w/2 - 2
 
-	// ── load cell data lazily ────────────────────────────────────────────────
 	if v.data == nil {
-		pk, err := hexxladb.Pack(v.cell)
-		if err == nil {
-			_ = v.db.View(func(tx *hexxladb.Tx) error {
-				rec, ok, _ := tx.GetCell(pk)
-				if ok {
-					cv := hexxladb.CellView{
-						Coord:      v.cell,
-						RawContent: rec.RawContent,
-						Tags:       rec.Tags,
-						Provenance: rec.Provenance,
-						Validity:   rec.Validity,
-					}
-					v.data = &cv
-				}
-				return nil
-			})
+		prompt := styleDim.Render("  Press Enter on a cell in Cells or Hex Grid to inspect it.")
+		switch {
+		case v.cellLoading:
+			prompt = styleLoading.Render("  ⟳  Loading cell…")
+		case v.cellErr != nil:
+			prompt = styleBad.Render(fmt.Sprintf("  Cell (%d,%d): %v", v.cell.Q, v.cell.R, v.cellErr))
 		}
-	}
-
-	if v.data == nil {
-		prompt := styleDim.Render("  Navigate to a cell in the Cells tab and press Enter to inspect it.")
-		hint := styleDim.Render(fmt.Sprintf("  (currently looking at (%d,%d) — not found)", v.cell.Q, v.cell.R))
-		return lipgloss.JoinVertical(lipgloss.Left,
-			viewTitle("◈ Cell Inspector", v.width),
-			"",
-			prompt,
-			hint,
-		)
+		return lipgloss.JoinVertical(lipgloss.Left, viewTitle("◈ Cell Inspector", v.width), "", prompt)
 	}
 
 	// ── cell detail card ─────────────────────────────────────────────────────
@@ -166,7 +167,7 @@ func (v *inspectorView) View() string {
 	} else {
 		var parts []string
 		for _, t := range v.data.Tags {
-			parts = append(parts, styleTag.Render(t))
+			parts = append(parts, styleTag.Render(terminalText(t)))
 		}
 		tagsStr = strings.Join(parts, " ")
 	}
@@ -186,7 +187,7 @@ func (v *inspectorView) View() string {
 				styleCardDim.Render("Tags") + "\n" +
 				tagsStr + "\n\n" +
 				styleCardDim.Render("Content") + "\n" +
-				styleCardValue.Render(v.data.RawContent),
+				styleCardValue.Render(terminalBody(v.data.RawContent)) + v.renderEnrichment(),
 		)
 
 	// ── context pack ─────────────────────────────────────────────────────────────
@@ -196,6 +197,8 @@ func (v *inspectorView) View() string {
 		packPanel = styleBorderSubtle.Background(colorBg2).Width(halfW).Padding(0, 2).Render(
 			lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg2).Bold(true).Italic(true).Render("⟳  Loading context…"),
 		)
+	case v.packErr != nil:
+		packPanel = styleBad.Render(fmt.Sprintf("  Context error: %v", v.packErr))
 	case v.pack == nil && v.fovCells == nil:
 		packPanel = styleBorderSubtle.Background(colorBg2).Width(halfW).Padding(0, 2).Render(
 			styleCardHeader.Render("Context Loading") + "\n" +
@@ -213,7 +216,7 @@ func (v *inspectorView) View() string {
 
 	// ── explain panel ─────────────────────────────────────────────────────────
 	var explainPanel string
-	if v.pack != nil && len(v.pack.Explanations) > 0 {
+	if v.packErr == nil && v.pack != nil && len(v.pack.Explanations) > 0 {
 		explainPanel = v.renderExplain(w)
 	}
 
@@ -229,6 +232,17 @@ func (v *inspectorView) View() string {
 	}
 	parts = append(parts, "", styleHelp.Render("  "+help))
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+func (v *inspectorView) renderEnrichment() string {
+	var details strings.Builder
+	if v.data.ClusterHint != nil {
+		fmt.Fprintf(&details, "\n\nCluster hint (%d,%d)", v.data.ClusterHint.Q, v.data.ClusterHint.R)
+	}
+	for _, facet := range v.data.Facets {
+		fmt.Fprintf(&details, "\n\nFacet %d: %s", facet.ID, terminalBody(facet.DerivedContent))
+	}
+	return details.String()
 }
 
 func (v *inspectorView) renderPack(w int) string {
@@ -288,7 +302,7 @@ func (v *inspectorView) renderPack(w int) string {
 		sb.WriteString("\n" + styleCardHeader.Render("Seams in Pack") + "\n")
 		for _, s := range p.Seams {
 			sb.WriteString(
-				lipgloss.NewStyle().Foreground(colorOrange).Background(colorBg2).Render(fmt.Sprintf("  ⋈ %s", s.SeamType)) +
+				lipgloss.NewStyle().Foreground(colorOrange).Background(colorBg2).Render(fmt.Sprintf("  ⋈ %s", terminalText(s.SeamType))) +
 					styleCardDim.Render(fmt.Sprintf("  %s", truncStr(s.Reason, w-24))) + "\n")
 		}
 	}

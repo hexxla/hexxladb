@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/hexxla/hexxladb"
+	"github.com/hexxla/hexxladb/internal/cmdconfig"
 )
 
 func cmdMigrateV1ToV2(args []string) int {
@@ -70,18 +71,18 @@ func cmdMigrate(args []string, authenticated bool) int {
 		return 2
 	}
 
-	sourceOptions, err := optionsFromCredentialEnvironment(*sourcePassphraseEnvironment, *sourceKeyEnvironment)
+	sourceOptions, err := cmdconfig.CredentialOptions(*sourcePassphraseEnvironment, *sourceKeyEnvironment)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hexxladb %s: source credentials: %v\n", command, err)
 		return 1
 	}
-	defer clearCredentialOptions(sourceOptions)
-	destinationOptions, err := optionsFromCredentialEnvironment(*destinationPassphraseEnvironment, *destinationKeyEnvironment)
+	defer cmdconfig.ClearCredentials(sourceOptions)
+	destinationOptions, err := cmdconfig.CredentialOptions(*destinationPassphraseEnvironment, *destinationKeyEnvironment)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hexxladb %s: destination credentials: %v\n", command, err)
 		return 1
 	}
-	defer clearCredentialOptions(destinationOptions)
+	defer cmdconfig.ClearCredentials(destinationOptions)
 
 	srcPath := fs.Arg(0)
 	destPath := *output

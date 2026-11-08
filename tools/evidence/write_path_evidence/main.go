@@ -6,7 +6,7 @@
 //
 // Usage:
 //
-//	go run ./examples/write_path_evidence
+//	go run ./tools/evidence/write_path_evidence
 package main
 
 import (

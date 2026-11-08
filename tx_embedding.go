@@ -2,6 +2,7 @@ package hexxladb
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -31,7 +32,8 @@ type EmbeddingWriteOptions struct {
 
 // PutEmbeddingWithOptions stores a vector embedding and optionally defers HNSW
 // maintenance for bounded bulk ingestion. Deferred writes remain searchable
-// through the exact flat path. Only allowed inside [DB.Update].
+// through the exact flat path. Index maintenance errors abort the update even
+// if the callback ignores them. Only allowed inside [DB.Update].
 func (tx *Tx) PutEmbeddingWithOptions(coord PackedCoord, vec []float32, opts EmbeddingWriteOptions) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
@@ -65,14 +67,14 @@ func (tx *Tx) PutEmbeddingWithOptions(coord PackedCoord, vec []float32, opts Emb
 	}
 	maintainGraph, err := tx.recordEmbeddingMutation(opts.DeferIndexMaintenance)
 	if err != nil {
-		return err
+		return tx.failEmbeddingWrite(err)
 	}
 	if !maintainGraph {
 		return nil
 	}
 	// Update HNSW graph.
 	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.SimilarityFunc(tx.db.eng.EmbeddingMetric()))
-	return g.Insert(coord, vec)
+	return tx.failEmbeddingWrite(g.Insert(coord, vec))
 }
 
 func validateEmbeddingVector(vec []float32) error {
@@ -118,7 +120,8 @@ func (tx *Tx) GetEmbedding(coord PackedCoord) (vec []float32, ok bool, err error
 
 // DeleteEmbedding removes the vector embedding for the cell at coord. Idempotent.
 // No-op if no embeddings have been stored yet (dimension not configured).
-// Only allowed inside [DB.Update].
+// Index maintenance errors abort the update even if the callback ignores
+// them. Only allowed inside [DB.Update].
 func (tx *Tx) DeleteEmbedding(coord PackedCoord) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
@@ -126,23 +129,7 @@ func (tx *Tx) DeleteEmbedding(coord PackedCoord) error {
 	if err := invalidTypedRecord(validatePackedCoordInvariant("embedding coordinate", coord)); err != nil {
 		return err
 	}
-	dim := tx.db.eng.EmbeddingDim()
-	if dim == 0 {
-		return nil // no embeddings stored yet — nothing to delete
-	}
-	key := index.EmbedKey(coord)
-	if err := tx.deleteDirect(key); err != nil {
-		return err
-	}
-	maintainGraph, err := tx.recordEmbeddingMutation(false)
-	if err != nil {
-		return err
-	}
-	if !maintainGraph {
-		return nil
-	}
-	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.SimilarityFunc(tx.db.eng.EmbeddingMetric()))
-	return g.Delete(coord)
+	return tx.deleteEmbeddingIfEnabled(coord)
 }
 
 // deleteEmbeddingIfEnabled removes the embedding for coord if embeddings are enabled. No-op otherwise.
@@ -157,13 +144,27 @@ func (tx *Tx) deleteEmbeddingIfEnabled(coord lattice.PackedCoord) error {
 	}
 	maintainGraph, err := tx.recordEmbeddingMutation(false)
 	if err != nil {
-		return err
+		return tx.failEmbeddingWrite(err)
 	}
 	if !maintainGraph {
 		return nil
 	}
 	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.SimilarityFunc(tx.db.eng.EmbeddingMetric()))
-	return g.Delete(coord)
+	return tx.failEmbeddingWrite(g.Delete(coord))
+}
+
+// failEmbeddingWrite prevents a staged vector from committing without its index update.
+func (tx *Tx) failEmbeddingWrite(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, hnsw.ErrCorruptGraph) && !errors.Is(err, ErrCorruptDatabase) {
+		err = fmt.Errorf("%w: %w", ErrCorruptDatabase, err)
+	}
+	if tx.stagedWriteErr == nil {
+		tx.stagedWriteErr = err
+	}
+	return err
 }
 
 // encodeFloat32s encodes a float32 slice as raw little-endian bytes.

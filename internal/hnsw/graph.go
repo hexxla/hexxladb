@@ -20,6 +20,7 @@ type Storage interface {
 	GetHNSWNode(p lattice.PackedCoord) (*Node, bool, error)
 	PutHNSWNode(n *Node) error
 	DeleteHNSWNode(p lattice.PackedCoord) error
+	WalkHNSWNodes(visit func(*Node)) error
 	GetEmbeddingVec(p lattice.PackedCoord) ([]float32, bool, error)
 }
 
@@ -56,6 +57,9 @@ func (g *Graph) Insert(coord lattice.PackedCoord, vec []float32) error {
 		return err
 	}
 	if !hasEntry {
+		if meta.Count != 0 {
+			return fmt.Errorf("%w: non-empty graph has no entry point", ErrCorruptGraph)
+		}
 		meta.Count = 1
 		meta.MaxLayer = 0
 		return g.initSingleNodeGraph(coord, meta)
@@ -340,9 +344,12 @@ func (g *Graph) Delete(coord lattice.PackedCoord) error {
 	if !ok {
 		return nil
 	}
-	entryCoord, _, err := g.s.GetHNSWEntry()
+	entryCoord, hasEntry, err := g.s.GetHNSWEntry()
 	if err != nil {
 		return err
+	}
+	if !hasEntry {
+		return fmt.Errorf("%w: non-empty graph has no entry point", ErrCorruptGraph)
 	}
 	return g.removeNode(node, meta, entryCoord)
 }
@@ -352,10 +359,10 @@ func (g *Graph) Delete(coord lattice.PackedCoord) error {
 func (g *Graph) removeNode(node *Node, meta *Meta, entryCoord lattice.PackedCoord) error {
 	coord := node.Coord
 
-	if err := g.repairNeighborLinks(node, meta); err != nil {
+	replacement, err := g.repairIncomingLinks(node, meta, coord == entryCoord)
+	if err != nil {
 		return err
 	}
-
 	if err := g.s.DeleteHNSWNode(coord); err != nil {
 		return err
 	}
@@ -366,53 +373,74 @@ func (g *Graph) removeNode(node *Node, meta *Meta, entryCoord lattice.PackedCoor
 		if err := g.s.DeleteHNSWEntry(); err != nil {
 			return err
 		}
-		return g.s.PutHNSWMeta(meta)
-	}
-
-	if coord == entryCoord {
-		if err := g.promoteNewEntryPoint(node, meta); err != nil {
+	} else if coord == entryCoord {
+		if replacement == nil {
+			return fmt.Errorf("%w: no surviving entry point", ErrCorruptGraph)
+		}
+		meta.MaxLayer = replacement.MaxLayer
+		if err := g.s.PutHNSWEntry(replacement.Coord); err != nil {
 			return err
 		}
 	}
-
 	return g.s.PutHNSWMeta(meta)
 }
 
-// repairNeighborLinks removes coord from all neighbor lists and repairs connections
-// by linking former co-neighbors together where capacity allows.
-func (g *Graph) repairNeighborLinks(node *Node, meta *Meta) error {
-	coord := node.Coord
-	for lc, nbrList := range node.Neighbors {
-		limit := g.layerLimit(meta, lc)
-		for _, nbr := range nbrList {
-			nbrNode, nOk, nErr := g.s.GetHNSWNode(nbr)
-			if nErr != nil {
-				return nErr
-			}
-			if !nOk || lc >= len(nbrNode.Neighbors) {
-				continue
-			}
-			nbrNode.Neighbors[lc] = removeCoord(nbrNode.Neighbors[lc], coord)
-			g.repairWithCoNeighbors(nbrNode, lc, nbrList, coord, nbr, limit)
-			if err := g.s.PutHNSWNode(nbrNode); err != nil {
-				return err
-			}
+// Neighbor pruning can make links directional. Find actual incoming links
+// before removing a node, and stage rewrites only after finishing the scan.
+func (g *Graph) repairIncomingLinks(removed *Node, meta *Meta, replaceEntry bool) (*Node, error) {
+	var replacement *Node
+	var changed []*Node
+	err := g.s.WalkHNSWNodes(func(node *Node) {
+		if node.Coord == removed.Coord {
+			return
+		}
+		if replaceEntry && betterEntry(node, replacement) {
+			replacement = node
+		}
+		if g.removeIncomingLinks(node, removed, meta) {
+			changed = append(changed, node)
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, node := range changed {
+		if err := g.s.PutHNSWNode(node); err != nil {
+			return nil, err
 		}
 	}
-	return nil
+	return replacement, nil
+}
+
+func betterEntry(node, best *Node) bool {
+	return best == nil || node.MaxLayer > best.MaxLayer ||
+		(node.MaxLayer == best.MaxLayer && node.Coord.Less(best.Coord))
+}
+
+func (g *Graph) removeIncomingLinks(node, removed *Node, meta *Meta) bool {
+	changed := false
+	for layer, links := range node.Neighbors {
+		remaining := slices.DeleteFunc(links, func(coord lattice.PackedCoord) bool { return coord == removed.Coord })
+		if len(remaining) == len(links) {
+			continue
+		}
+		changed = true
+		node.Neighbors[layer] = remaining
+		if layer < len(removed.Neighbors) {
+			g.repairWithCoNeighbors(node, layer, removed.Neighbors[layer], removed.Coord, node.Coord, g.layerLimit(meta, layer))
+		}
+	}
+	return changed
 }
 
 // repairWithCoNeighbors adds former co-neighbors of the removed node to nbrNode
 // at layer lc, up to the capacity limit.
 func (g *Graph) repairWithCoNeighbors(nbrNode *Node, lc int, nbrList []lattice.PackedCoord, removedCoord, self lattice.PackedCoord, limit uint16) {
 	for _, coNbr := range nbrList {
-		if coNbr == self || coNbr == removedCoord {
-			continue
+		if len(nbrNode.Neighbors[lc]) >= int(limit) {
+			break
 		}
-		if containsCoord(nbrNode.Neighbors[lc], coNbr) {
-			continue
-		}
-		if uint16(len(nbrNode.Neighbors[lc])) < limit { //nolint:gosec // bounded
+		if coNbr != self && coNbr != removedCoord && !slices.Contains(nbrNode.Neighbors[lc], coNbr) {
 			nbrNode.Neighbors[lc] = append(nbrNode.Neighbors[lc], coNbr)
 		}
 	}
@@ -424,35 +452,6 @@ func (g *Graph) layerLimit(meta *Meta, lc int) uint16 {
 		return meta.M * 2
 	}
 	return meta.M
-}
-
-// promoteNewEntryPoint selects a neighbor of the removed node as the new entry point.
-func (g *Graph) promoteNewEntryPoint(node *Node, meta *Meta) error {
-	newEntry, found := g.findBestNeighborForEntry(node)
-	if !found {
-		meta.MaxLayer = 0
-		return nil
-	}
-	newEntryNode, nOk, nErr := g.s.GetHNSWNode(newEntry)
-	if nErr != nil {
-		return nErr
-	}
-	if nOk {
-		meta.MaxLayer = newEntryNode.MaxLayer
-	} else {
-		meta.MaxLayer = 0
-	}
-	return g.s.PutHNSWEntry(newEntry)
-}
-
-// findBestNeighborForEntry picks the first neighbor at the highest layer of node.
-func (g *Graph) findBestNeighborForEntry(node *Node) (lattice.PackedCoord, bool) {
-	for lc := int(node.MaxLayer); lc >= 0; lc-- {
-		if len(node.Neighbors[lc]) > 0 {
-			return node.Neighbors[lc][0], true
-		}
-	}
-	return lattice.PackedCoord{}, false
 }
 
 // searchLayer runs ef-bounded greedy search at the given layer starting from ep.
@@ -596,17 +595,4 @@ func insertSorted(a []scored, s scored) []scored {
 	copy(a[i+1:], a[i:])
 	a[i] = s
 	return a
-}
-
-func removeCoord(list []lattice.PackedCoord, c lattice.PackedCoord) []lattice.PackedCoord {
-	for i, v := range list {
-		if v == c {
-			return append(list[:i], list[i+1:]...)
-		}
-	}
-	return list
-}
-
-func containsCoord(list []lattice.PackedCoord, c lattice.PackedCoord) bool {
-	return slices.Contains(list, c)
 }

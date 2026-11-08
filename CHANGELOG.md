@@ -17,6 +17,8 @@
 
 ### Added
 
+- **Existing database access** — `OpenExisting` opens and recovers an existing primary without creating a missing one. The explorer and CLI diagnostics accept `HEXXLA_PASSPHRASE` or `HEXXLA_ENCRYPTION_KEY`.
+
 - **Identity-preserving placement** — `FindUnusedCellPlacement` skips recorded MVCC tombstones for new logical cells. `FindFreeCellPlacement` retains its documented reuse behavior.
 
 - **Snapshot seam iteration** — `Tx.AscendSeams` visits one visible seam version per ID and supports early stopping.
@@ -24,6 +26,9 @@
 - **MVCC index repair** — `RepairMVCCIndexesTo` and `hexxladb compact --rebuild-mvcc-indexes` rebuild cell and seam secondary indexes from retained versions in a verified, source-preserving copy.
 
 ### Fixed
+
+- **HNSW replacement and deletion** — repair incoming links left by directional neighbor pruning and promote a surviving entry point. Existing index encodings are preserved.
+- **Remote example validation** — return HTTP 400 for invalid typed cell writes and HTTP 413 when a request exceeds the body limit.
 
 - **Engine recovery and deletion** — restore plaintext MVCC pages and their logical commit header together. Stream WAL validation and replay with record-sized buffers. Route writes through a synchronous commit path. Delete and merge leaves through the tree path and unlink empty leaves before page reuse.
 
@@ -44,6 +49,9 @@
 - **Dependency security** — upgrade the Go crypto and text modules to versions that address the high-severity advisories reported by the dependency inventory scan.
 
 ### Changed
+
+- **Examples and builds** — `task demo` runs the new temporary-database quickstart. The ports-and-adapters and remote-access examples remain available. Spatial recipes live in the API guide, and evidence runners moved to `tools/evidence` with their Task entry points. `task build` builds the CLI and TUI.
+- **Terminal explorer** — use `task seed` and then `task tui` for a synthetic fixture. The explorer focuses on cells, the hex grid, and inspection, with seams and diff as secondary views. Use `hexxladb info`, `check`, and `stats` for diagnostics.
 
 - **Architecture and reference example** — consolidate MVCC key encoding, supply the HNSW scorer through its boundary, and organize transaction and migration files by responsibility. The ports-and-adapters example now demonstrates one atomic contradiction workflow.
 

@@ -4,7 +4,7 @@
 //
 // Usage:
 //
-//	go run ./examples/lattice_placement_evidence
+//	go run ./tools/evidence/lattice_placement_evidence
 package main
 
 import (
@@ -207,6 +207,7 @@ func runStrategy(ctx context.Context, cfg config, docs []document, policy placem
 	defer func() { _ = os.RemoveAll(tempDir) }()
 	db, err := hexxladb.Open(filepath.Join(tempDir, "placement.db"), &hexxladb.Options{
 		EmbeddingDimension: vectorDimension,
+		EnableMVCC:         true,
 		DistanceMetric:     hexxladb.DistanceCosine,
 	})
 	if err != nil {
@@ -313,7 +314,7 @@ func placeDocuments(ctx context.Context, db *hexxladb.DB, state *placementState,
 			if policy == clustered {
 				anchor = topicByID(doc.topicID).anchor
 			}
-			placement, err := tx.FindFreeCellPlacement(ctx, anchor, hexxladb.MaxCellPlacementRadius)
+			placement, err := tx.FindUnusedCellPlacement(ctx, anchor, hexxladb.MaxCellPlacementRadius)
 			if err != nil {
 				return fmt.Errorf("allocate %s: %w", doc.id, err)
 			}
@@ -523,7 +524,7 @@ func exerciseRelocation(ctx context.Context, db *hexxladb.DB, state *placementSt
 	successor.content += " This successor records an application-requested relocation."
 	var newCoord hexxladb.Coord
 	err := db.Update(func(tx *hexxladb.Tx) error {
-		placement, err := tx.FindFreeCellPlacement(
+		placement, err := tx.FindUnusedCellPlacement(
 			ctx,
 			topicByID(old.topicID).anchor,
 			hexxladb.MaxCellPlacementRadius,
