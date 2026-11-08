@@ -18,6 +18,22 @@ func openCompressDB(t *testing.T, opts *Options) *Engine {
 	return eng
 }
 
+func TestCompress_DecoderCanBeReusedAfterCorruption(t *testing.T) {
+	t.Parallel()
+	var engine Engine
+	input := bytes.Repeat([]byte("edge data"), 32)
+	encoded := compressValue(input)
+	if _, err := engine.decompressValue(encoded[:len(encoded)-1]); err == nil {
+		t.Fatal("truncated stream unexpectedly decoded")
+	}
+	for range 3 {
+		decoded, err := engine.decompressValue(encoded)
+		if err != nil || !bytes.Equal(decoded, input) {
+			t.Fatalf("decode after truncated stream: got %d bytes, err=%v", len(decoded), err)
+		}
+	}
+}
+
 func TestCompress_CompressDecompressRoundTrip(t *testing.T) {
 	t.Parallel()
 	val := []byte(strings.Repeat("hello world, this is a test of compression. ", 20))
@@ -31,7 +47,8 @@ func TestCompress_CompressDecompressRoundTrip(t *testing.T) {
 	if !isCompressedValue(compressed) {
 		t.Fatal("isCompressedValue returned false for compressed data")
 	}
-	decompressed, err := decompressValue(compressed)
+	var engine Engine
+	decompressed, err := engine.decompressValue(compressed)
 	if err != nil {
 		t.Fatalf("decompressValue: %v", err)
 	}

@@ -81,17 +81,38 @@ func compressValue(val []byte) []byte {
 	return buf.Bytes()
 }
 
-// decompressValue decompresses a compressed value envelope. Returns an error
-// if the envelope is malformed or decompression fails.
-func decompressValue(val []byte) ([]byte, error) {
+type valueInflater struct {
+	source  bytes.Reader
+	decoder io.ReadCloser
+}
+
+// decompressValue reuses decoder scratch within the owning database. The
+// reader never retains the caller's page buffer after this operation returns.
+func (e *Engine) decompressValue(val []byte) ([]byte, error) {
 	if len(val) <= compressHeaderSize {
 		return nil, fmt.Errorf("%w: compressed value too short", ErrCorruptTree)
 	}
 	uncompLen := binary.BigEndian.Uint32(val[1:5])
-	r := flate.NewReader(bytes.NewReader(val[compressHeaderSize:]))
-	defer func() { _ = r.Close() }()
+	inflater, _ := e.inflatePool.Get().(*valueInflater)
+	if inflater == nil {
+		inflater = &valueInflater{}
+	}
+	inflater.source.Reset(val[compressHeaderSize:])
+	if inflater.decoder == nil {
+		inflater.decoder = flate.NewReader(&inflater.source)
+	} else {
+		resetter := inflater.decoder.(flate.Resetter) //nolint:forcetypeassert // flate.NewReader always returns a Resetter.
+		if err := resetter.Reset(&inflater.source, nil); err != nil {
+			return nil, fmt.Errorf("reset decompressor: %w", err)
+		}
+	}
+	defer func() {
+		_ = inflater.decoder.Close()
+		inflater.source.Reset(nil)
+		e.inflatePool.Put(inflater)
+	}()
 
-	out, err := io.ReadAll(io.LimitReader(r, int64(uncompLen)+1))
+	out, err := io.ReadAll(io.LimitReader(inflater.decoder, int64(uncompLen)+1))
 	if err != nil {
 		return nil, fmt.Errorf("decompress: %w", err)
 	}

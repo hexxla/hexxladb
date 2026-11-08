@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Performance
+
+- **Read and graph paths** — traverse B+ tree separators without materializing them, copy only consumed range rows, and reuse decoder scratch per database and adjacency scratch per graph expansion. This reduces MVCC point-read and graph traversal allocations while preserving page validation and snapshot semantics.
+
 ### Added
 
 - **MVCC index repair** — `RepairMVCCIndexesTo` and `hexxladb compact --rebuild-mvcc-indexes` rebuild cell and seam secondary indexes from retained versions in a verified, source-preserving copy.

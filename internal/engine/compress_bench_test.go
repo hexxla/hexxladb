@@ -46,10 +46,11 @@ func BenchmarkDecompressValue(b *testing.B) {
 		b.Fatal("benchmark input did not compress")
 	}
 	b.ReportAllocs()
+	var engine Engine
 	var decompressed []byte
 	for b.Loop() {
 		var err error
-		decompressed, err = decompressValue(compressed)
+		decompressed, err = engine.decompressValue(compressed)
 		if err != nil {
 			b.Fatal(err)
 		}

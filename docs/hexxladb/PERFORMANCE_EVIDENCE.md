@@ -423,6 +423,43 @@ go test -run '^$' -bench '^BenchmarkAPI_MVCCVersionResolution$' -benchmem -count
 
 Use the same version matrix and machine for before/after comparisons. The acceptance gate is that lookup latency and allocations remain bounded by B+ tree traversal and page occupancy rather than increasing linearly with older irrelevant versions. Pair the benchmark with the race-enabled `TestIntegration_MVCC_sustainedPutCellSameKey`, which verifies latest and retained historical snapshots before pruning, after pruning, and after reopen.
 
+### Read-path and graph allocation evidence
+
+Five interleaved baseline and candidate runs compared commit `4325299` with
+the read-path changes on an Intel Core i9-14900HX, Linux/amd64, Go 1.27.3, and
+`GOMAXPROCS=32`. These are medians from warm, in-process benchmark fixtures.
+Database setup is outside the timed loop.
+
+| Workload | Time/op before → after | Allocated bytes/op before → after |
+| --- | ---: | ---: |
+| MVCC point read, 2,000 cells | 14.48 → 1.65 µs | 34,665 → 672 |
+| Encrypted MVCC point read, 2,000 cells | 14.55 → 1.70 µs | 34,685 → 672 |
+| Persisted graph path, out-degree 128 | 2.106 → 0.494 ms | 8,238,935 → 234,078 |
+| Embedding query, 500 × 32 dimensions | 542 → 249 µs | 1,509,366 → 127,176 |
+| Source index scan, 2,000 cells | 3.54 → 3.67 ms | 1,414,791 → 1,263,589 |
+
+The source scan latency ranges overlapped. An allocation profile of the
+baseline graph benchmark attributed about 86% of allocated bytes to
+decompression. The engine now reuses DEFLATE decoder scratch per database
+instance, validates each leaf before delivering rows, and materializes only
+the entries consumed by the range visitor. Graph traversal reuses the current
+expansion's adjacency scratch. These changes preserve the stored format,
+transaction boundaries, and independent concurrent readers.
+
+```bash
+go test -run '^$' -bench '^BenchmarkAPI_(GetCell_MVCC|GetCell_MVCC_Encrypted|FindEdgePathDegree|AscendCellsBySource|QueryCells_Embedding)$/(cells_2000|degree_128|n500_dim32)$' -benchmem -benchtime=150ms -count=5 .
+```
+
+Compare binaries or worktrees in alternating order on the same host. The table
+reports average operation time on warm fixtures. Cold-cache behavior and
+production tail latency require a representative deployment workload.
+
+Three runs of `BenchmarkAPI_ViewUpdateContention` at each of 1, 4, and 16
+logical processors used one write per 20 operations. Four processors gave
+the lowest median in both builds, with overlapping baseline and candidate
+ranges at each setting. This fixture supports retaining independent reader
+concurrency and the existing serialized writer boundary.
+
 ### Public write-path evidence
 
 `BenchmarkAPI_WritePath` compares default and explicitly delayed single commits, primary `fdatasync`, a controlled one-millisecond callback, and a 100-cell transaction. `BenchmarkAPI_WriteReaderBlocking` measures a view waiting behind that controlled callback and commit. Every case reports apply batches, multi-job batches, and WAL syncs per operation so a latency change cannot be mistaken for successful group coalescing. `BenchmarkAPI_BatchPutCells` uses fresh coordinates in one open MVCC database, keeping database lifecycle work outside the timed bulk-write path.

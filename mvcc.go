@@ -15,7 +15,7 @@ func (tx *Tx) getVisibleVersionRaw(
 		if !valid {
 			return true
 		}
-		raw = append([]byte(nil), v...)
+		raw = v
 		commitSeq = seq
 		ok = true
 		return false

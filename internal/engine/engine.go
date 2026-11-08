@@ -46,6 +46,8 @@ type Engine struct {
 	embeddingMetric DistanceMetric
 	// pageBufPool is an instance-level pool of page-sized buffers.
 	pageBufPool sync.Pool
+	// inflatePool retains decoder scratch only within this engine instance.
+	inflatePool sync.Pool
 	// walSize tracks the number of bytes written to the WAL since the last reset.
 	// Used to truncate to the last-written size (not zero) so the kernel retains
 	// the allocated inode blocks, avoiding fallocate on the next write.

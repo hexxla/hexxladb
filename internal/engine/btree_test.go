@@ -267,6 +267,46 @@ func TestBTree_descendRange(t *testing.T) {
 	}
 }
 
+func TestBTreeRangeCallbackOwnsEntryBytes(t *testing.T) {
+	t.Parallel()
+	e, err := Open(filepath.Join(t.TempDir(), "range.db"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = e.Close() })
+	tree := OpenBTree(e)
+	const entries = 300
+	for i := range entries {
+		key := fmt.Appendf(nil, "key-%03d", i)
+		if err := tree.Put(key, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, scan := range []func([]byte, []byte, func([]byte, []byte) bool) error{tree.AscendRange, tree.DescendRange} {
+		var keys, values [][]byte
+		if err := scan(nil, nil, func(k, v []byte) bool {
+			keys = append(keys, k)
+			values = append(values, v)
+			return true
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if len(keys) != entries {
+			t.Fatalf("received %d entries, want %d", len(keys), entries)
+		}
+		for i, key := range keys {
+			if !bytes.Equal(key, values[i]) {
+				t.Fatalf("retained entry %d changed: %q != %q", i, key, values[i])
+			}
+			clear(values[i])
+			stored, ok, err := tree.Get(key)
+			if err != nil || !ok || !bytes.Equal(stored, key) {
+				t.Fatalf("callback mutation affected entry %d: %q, found=%t, err=%v", i, key, ok, err)
+			}
+		}
+	}
+}
+
 func TestBTree_delete(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

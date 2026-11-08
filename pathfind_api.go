@@ -91,17 +91,17 @@ func matchExactRelation(filter string) func(string) bool {
 	return func(relation string) bool { return relation == filter }
 }
 
-// edgeTraversal resolves and caches one weighted adjacency list per expanded
-// coordinate. The shortest-path search asks for neighbors before asking for
-// their costs, so one edge-prefix scan serves the whole expansion instead of
-// rescanning once per edge.
+// edgeTraversal keeps the current expansion's weighted adjacency list.
+// The search consumes all neighbor costs before expanding the next coordinate.
 type edgeTraversal struct {
 	tx       *Tx
 	ctx      context.Context
 	matches  func(string) bool
 	override func(from, to Coord) float64
-	adj      map[lattice.Coord]map[lattice.Coord]float64
-	order    map[lattice.Coord][]lattice.Coord
+	from     lattice.Coord
+	loaded   bool
+	weights  map[lattice.Coord]float64
+	order    []lattice.Coord
 	err      error
 }
 
@@ -111,14 +111,16 @@ func newEdgeTraversal(ctx context.Context, tx *Tx, matches func(string) bool, ov
 		ctx:      ctx,
 		matches:  matches,
 		override: override,
-		adj:      make(map[lattice.Coord]map[lattice.Coord]float64),
-		order:    make(map[lattice.Coord][]lattice.Coord),
+		weights:  make(map[lattice.Coord]float64),
 	}
 }
 
 func (t *edgeTraversal) neighbors(from lattice.Coord) []lattice.Coord {
 	t.load(from)
-	return t.order[from]
+	if t.err != nil {
+		return nil
+	}
+	return t.order
 }
 
 func (t *edgeTraversal) cost(from, to lattice.Coord) float64 {
@@ -126,7 +128,8 @@ func (t *edgeTraversal) cost(from, to lattice.Coord) float64 {
 	if t.err != nil {
 		return -1
 	}
-	if _, ok := t.adj[from][to]; !ok {
+	weight, ok := t.weights[to]
+	if !ok {
 		return -1
 	}
 	if t.override != nil {
@@ -137,14 +140,14 @@ func (t *edgeTraversal) cost(from, to lattice.Coord) float64 {
 		}
 		return value
 	}
-	return t.adj[from][to]
+	return weight
 }
 
 func (t *edgeTraversal) load(from lattice.Coord) {
 	if t.err != nil {
 		return
 	}
-	if _, loaded := t.adj[from]; loaded {
+	if t.loaded && t.from == from {
 		return
 	}
 	if err := t.ctx.Err(); err != nil {
@@ -157,8 +160,8 @@ func (t *edgeTraversal) load(from lattice.Coord) {
 		return
 	}
 
-	weights := make(map[lattice.Coord]float64)
-	var neighbors []lattice.Coord
+	clear(t.weights)
+	t.order = t.order[:0]
 	err = t.tx.AscendEdgesFrom(packed, func(edge record.EdgeRecord) bool {
 		if t.matches != nil && !t.matches(edge.RelationType) {
 			return true
@@ -172,12 +175,12 @@ func (t *edgeTraversal) load(from lattice.Coord) {
 		if weight <= 0 {
 			weight = 1
 		}
-		previous, duplicate := weights[to]
+		previous, duplicate := t.weights[to]
 		if !duplicate {
-			neighbors = append(neighbors, to)
+			t.order = append(t.order, to)
 		}
 		if !duplicate || weight < previous {
-			weights[to] = weight
+			t.weights[to] = weight
 		}
 		return true
 	})
@@ -187,6 +190,5 @@ func (t *edgeTraversal) load(from lattice.Coord) {
 	if t.err != nil {
 		return
 	}
-	t.adj[from] = weights
-	t.order[from] = neighbors
+	t.from, t.loaded = from, true
 }

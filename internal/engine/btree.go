@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"encoding/binary"
+	"slices"
 )
 
 // BTree is a B+ tree stored in engine pages (see ORDERED_STORE.md).
@@ -93,7 +94,7 @@ func (t *BTree) GetUsingRoot(root uint64, key []byte) (val []byte, ok bool, err 
 					}
 				}
 				if isCompressedValue(v) {
-					v, err = decompressValue(v)
+					v, err = t.eng.decompressValue(v)
 					if err != nil {
 						return nil, false, err
 					}
@@ -337,52 +338,61 @@ func (t *BTree) AscendRangeFromRoot(root uint64, from, to []byte, fn func(k, v [
 	if root == 0 {
 		return nil
 	}
-	pid, err := t.leftmostLeaf(root, from)
+	pid, err := t.seekLeaf(root, from, false)
 	if err != nil {
 		return err
 	}
-	started := false
 	for pid != 0 {
-		page, release, err := t.eng.readPagePooled(pid)
-		if err != nil {
+		next, done, err := t.ascendLeaf(pid, from, to, fn)
+		if err != nil || done {
 			return err
 		}
-		ld, err := parseLeafPage(page)
-		release()
-		if err != nil {
-			return err
-		}
-		i := 0
-		if !started && from != nil {
-			i = leafKeyIndex(ld.keys, from)
-		}
-		started = true
-		for ; i < len(ld.keys); i++ {
-			k := ld.keys[i]
-			if to != nil && bytes.Compare(k, to) > 0 {
-				return nil
-			}
-			v := ld.vals[i]
-			if isOverflowStub(v) {
-				logLen, firstPage := decodeOverflowStub(v)
-				v, err = t.readOverflowChain(firstPage, logLen)
-				if err != nil {
-					return err
-				}
-			}
-			if isCompressedValue(v) {
-				v, err = decompressValue(v)
-				if err != nil {
-					return err
-				}
-			}
-			if !fn(k, v) {
-				return nil
-			}
-		}
-		pid = ld.next
+		pid, from = next, nil
 	}
 	return nil
+}
+
+// ascendLeaf validates the leaf before calling fn and materializes only
+// entries inside the requested range that the callback actually consumes.
+func (t *BTree) ascendLeaf(pid uint64, from, to []byte, fn func(k, v []byte) bool) (next uint64, done bool, err error) {
+	page, release, err := t.eng.readPagePooled(pid)
+	if err != nil {
+		return 0, false, err
+	}
+	defer release()
+	n, err := leafEntryCount(page)
+	if err != nil {
+		return 0, false, err
+	}
+	off, start, end := btreeHeaderSize, btreeHeaderSize, btreeHeaderSize
+	for range n {
+		key, _, err := readLeafEntry(page, &off)
+		if err != nil {
+			return 0, false, err
+		}
+		switch {
+		case from != nil && bytes.Compare(key, from) < 0:
+			start, end = off, off
+		case !done && (to == nil || bytes.Compare(key, to) <= 0):
+			end = off
+		default:
+			done = true
+		}
+	}
+	for off := start; off < end; {
+		key, value, err := readLeafEntry(page, &off)
+		if err != nil {
+			return 0, false, err
+		}
+		value, err = t.resolveLeafValue(value)
+		if err != nil {
+			return 0, false, err
+		}
+		if !fn(append([]byte(nil), key...), value) {
+			return 0, true, nil
+		}
+	}
+	return binary.BigEndian.Uint64(page[8:16]), done, nil
 }
 
 // AscendRange calls fn for every key in [from, to] inclusive (byte order). If from is nil, start at the smallest key.
@@ -391,55 +401,7 @@ func (t *BTree) AscendRange(from, to []byte, fn func(k, v []byte) bool) error {
 	if err != nil {
 		return err
 	}
-	if hdr.BTreeRoot == 0 {
-		return nil
-	}
-	pid, err := t.leftmostLeaf(hdr.BTreeRoot, from)
-	if err != nil {
-		return err
-	}
-	started := false
-	for pid != 0 {
-		page, release, err := t.eng.readPagePooled(pid)
-		if err != nil {
-			return err
-		}
-		ld, err := parseLeafPage(page)
-		release()
-		if err != nil {
-			return err
-		}
-		i := 0
-		if !started && from != nil {
-			i = leafKeyIndex(ld.keys, from)
-		}
-		started = true
-		for ; i < len(ld.keys); i++ {
-			k := ld.keys[i]
-			if to != nil && bytes.Compare(k, to) > 0 {
-				return nil
-			}
-			v := ld.vals[i]
-			if isOverflowStub(v) {
-				logLen, firstPage := decodeOverflowStub(v)
-				v, err = t.readOverflowChain(firstPage, logLen)
-				if err != nil {
-					return err
-				}
-			}
-			if isCompressedValue(v) {
-				v, err = decompressValue(v)
-				if err != nil {
-					return err
-				}
-			}
-			if !fn(k, v) {
-				return nil
-			}
-		}
-		pid = ld.next
-	}
-	return nil
+	return t.AscendRangeFromRoot(hdr.BTreeRoot, from, to, fn)
 }
 
 // DescendRangeFromRoot calls fn for every key in [from, to] inclusive in descending
@@ -452,58 +414,84 @@ func (t *BTree) DescendRangeFromRoot(root uint64, from, to []byte, fn func(k, v 
 	if root == 0 {
 		return nil
 	}
-	pid, err := t.rightmostLeaf(root, to)
+	pid, err := t.seekLeaf(root, to, true)
 	if err != nil {
 		return err
 	}
 	for pid != 0 {
-		page, release, err := t.eng.readPagePooled(pid)
+		parent, done, err := t.descendLeaf(pid, from, to, fn)
+		if err != nil || done {
+			return err
+		}
+		pid, err = t.prevLeaf(pid, parent, root)
 		if err != nil {
 			return err
 		}
-		ld, err := parseLeafPage(page)
-		release()
-		if err != nil {
-			return err
-		}
-		// Determine the start index (rightmost entry ≤ to).
-		iEnd := len(ld.keys) - 1
-		if to != nil {
-			iEnd = len(ld.keys) - 1
-			for iEnd >= 0 && bytes.Compare(ld.keys[iEnd], to) > 0 {
-				iEnd--
-			}
-		}
-		for i := iEnd; i >= 0; i-- {
-			k := ld.keys[i]
-			if from != nil && bytes.Compare(k, from) < 0 {
-				return nil
-			}
-			v := ld.vals[i]
-			if isOverflowStub(v) {
-				logLen, firstPage := decodeOverflowStub(v)
-				v, err = t.readOverflowChain(firstPage, logLen)
-				if err != nil {
-					return err
-				}
-			}
-			if isCompressedValue(v) {
-				v, err = decompressValue(v)
-				if err != nil {
-					return err
-				}
-			}
-			if !fn(k, v) {
-				return nil
-			}
-		}
-		prev, err := t.prevLeaf(pid, ld.parent, root)
-		if err != nil {
-			return err
-		}
-		pid = prev
 	}
 	return nil
+}
+
+// descendLeaf validates the entire serialized leaf, retaining only offsets.
+// Callers may retain callback data, so copy only the entries they actually see.
+func (t *BTree) descendLeaf(pid uint64, from, to []byte, fn func(k, v []byte) bool) (parent uint64, done bool, err error) {
+	page, release, err := t.eng.readPagePooled(pid)
+	if err != nil {
+		return 0, false, err
+	}
+	defer release()
+	n, err := leafEntryCount(page)
+	if err != nil {
+		return 0, false, err
+	}
+	var scratch [128]int
+	offsets := scratch[:0]
+	off := btreeHeaderSize
+	for range n {
+		entryOffset := off
+		key, _, err := readLeafEntry(page, &off)
+		if err != nil {
+			return 0, false, err
+		}
+		if to == nil || bytes.Compare(key, to) <= 0 {
+			offsets = append(offsets, entryOffset)
+		}
+	}
+	for _, entryOffset := range slices.Backward(offsets) {
+		key, value, err := readLeafEntry(page, &entryOffset)
+		if err != nil {
+			return 0, false, err
+		}
+		if from != nil && bytes.Compare(key, from) < 0 {
+			return 0, true, nil
+		}
+		value, err = t.resolveLeafValue(value)
+		if err != nil {
+			return 0, false, err
+		}
+		if !fn(append([]byte(nil), key...), value) {
+			return 0, true, nil
+		}
+	}
+	return binary.BigEndian.Uint64(page[16:24]), false, nil
+}
+
+// resolveLeafValue materializes an owned value from its serialized leaf entry.
+func (t *BTree) resolveLeafValue(value []byte) ([]byte, error) {
+	if isOverflowStub(value) {
+		logicalLength, firstPage := decodeOverflowStub(value)
+		data, err := t.readOverflowChain(firstPage, logicalLength)
+		if err != nil {
+			return nil, err
+		}
+		if isCompressedValue(data) {
+			return t.eng.decompressValue(data)
+		}
+		return data, nil
+	}
+	if isCompressedValue(value) {
+		return t.eng.decompressValue(value)
+	}
+	return append([]byte(nil), value...), nil
 }
 
 // DescendRange calls fn for every key in [from, to] inclusive in descending
@@ -516,9 +504,9 @@ func (t *BTree) DescendRange(from, to []byte, fn func(k, v []byte) bool) error {
 	return t.DescendRangeFromRoot(hdr.BTreeRoot, from, to, fn)
 }
 
-// rightmostLeaf returns the page ID of the rightmost leaf whose keys are ≤ to
-// (or the absolute rightmost leaf if to is nil).
-func (t *BTree) rightmostLeaf(root uint64, to []byte) (uint64, error) {
+// seekLeaf finds the leaf for key. With no key, select the leftmost or
+// rightmost leaf according to rightmost.
+func (t *BTree) seekLeaf(root uint64, key []byte, rightmost bool) (uint64, error) {
 	pid := root
 	for {
 		page, release, err := t.eng.readPagePooled(pid)
@@ -529,17 +517,11 @@ func (t *BTree) rightmostLeaf(root uint64, to []byte) (uint64, error) {
 			release()
 			return pid, nil
 		}
-		in, err := parseInternalPage(page)
+		pid, err = lookupInternalChildForSeek(page, key, rightmost)
 		release()
 		if err != nil {
 			return 0, err
 		}
-		if to == nil {
-			pid = in.ptrs[len(in.ptrs)-1]
-			continue
-		}
-		ci := internalPickChild(in.keys, to)
-		pid = in.ptrs[ci]
 	}
 }
 
@@ -567,33 +549,8 @@ func (t *BTree) prevLeaf(leafPID, parentPID, root uint64) (uint64, error) {
 				return t.prevLeaf(parentPID, parentParent, root)
 			}
 			// Descend into left sibling to find its rightmost leaf.
-			return t.rightmostLeaf(in.ptrs[i-1], nil)
+			return t.seekLeaf(in.ptrs[i-1], nil, true)
 		}
 	}
 	return 0, nil
-}
-
-func (t *BTree) leftmostLeaf(root uint64, from []byte) (uint64, error) {
-	pid := root
-	for {
-		page, release, err := t.eng.readPagePooled(pid)
-		if err != nil {
-			return 0, err
-		}
-		if page[5] == btreeKindLeaf {
-			release()
-			return pid, nil
-		}
-		in, err := parseInternalPage(page)
-		release()
-		if err != nil {
-			return 0, err
-		}
-		if from == nil {
-			pid = in.ptrs[0]
-			continue
-		}
-		ci := internalPickChild(in.keys, from)
-		pid = in.ptrs[ci]
-	}
 }
