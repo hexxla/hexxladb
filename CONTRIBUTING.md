@@ -2,13 +2,13 @@
 
 ## Prerequisites
 
-- **Go** toolchain matching the **`go`** line in [`go.mod`](go.mod) (currently **Go 1.27.0**; [Go toolchains](https://go.dev/doc/toolchain) can select that release automatically).
+- **Go 1.27.3 or newer**, as required by [`go.mod`](go.mod). [Go toolchain selection](https://go.dev/doc/toolchain) can select the required version automatically.
 - **[Task](https://taskfile.dev)** v3 (CI currently pins **v3.53.1**) for repository build and validation workflows.
 - Repository analyzers require no global installation. [`scripts/tool.sh`](scripts/tool.sh)
-  runs reviewed versions of golangci-lint, Gosec, govulncheck, gocyclo, and
-  gocognit under the minimum Go 1.27.0 toolchain. The first run needs network;
-  subsequent runs use the Go module and toolchain caches.
-- Optional: **[pre-commit](https://pre-commit.com)** for Git hooks ([`.pre-commit-config.yaml`](.pre-commit-config.yaml)).
+  runs reviewed versions of golangci-lint, govulncheck, gocyclo, and
+  gocognit with the active Go toolchain. The first run needs network access.
+  Subsequent runs use the Go module and toolchain caches.
+- Optional: the [staged secret-scanning Git hook](.githooks/README.md).
 
 ## Clone and run
 
@@ -29,19 +29,20 @@ Copy [`.env.example`](.env.example) to `.env` if you use a local env file (the b
 
 ## Quality gates
 
-**`task ci`** is the single pre-push gate: it runs **[`scripts/ci.sh`](scripts/ci.sh)** — the same script **GitHub Actions** invokes through Task (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)). You do **not** need to run the script separately unless you are debugging one step. A bare **`task`** (no task name) runs the same pipeline.
+Run `task ci` before pushing. The [Required CI job](.github/workflows/ci.yml)
+uses the same [runner](scripts/ci.sh) and scans the pushed commit range for secrets.
+The runner validates module metadata, workflows, Go formatting and lint, import
+boundaries, the exported API baseline, known vulnerabilities, and dependency
+licenses. One serialized race run writes coverage to `.tmp/coverage.out`.
+GitHub Actions uses the Go version declared in `go.mod` for builds, tests,
+lint, and vulnerability scans.
 
-```bash
-task
-# same as: task ci
-```
+The scheduled Security workflow runs `govulncheck`. Dispatch it manually
+for the broader Trivy inventory report. Re-enable the Security and
+Integration workflows in GitHub if their schedules are disabled for inactivity.
 
-That includes: **`gofmt -l`**, **`go vet ./...`**, architecture boundaries,
-the exact exported-API compatibility baseline,
-**`go test -race ./...`**, pinned **govulncheck**, **golangci-lint**, standalone
-**Gosec**, cyclomatic/cognitive/CRAP analysis, and **`go mod tidy`** (with a
-clean `go.mod` / `go.sum` check when **`CI=true`**). No analyzer is skipped when
-it is absent from `PATH`.
+For the optional complexity report, run `task complexity` with that profile
+from the current source or set `COVERAGE_PROFILE` to an equivalent profile.
 
 Shortcuts:
 
@@ -60,7 +61,7 @@ Shortcuts:
 | `task bench`        | Benchmarks (`go test -bench=. -benchmem ./...`); **not** run in default CI                                                                                                                                                                                                                                                                                                                                  |
 | `task bench-stress` | Longer **`BenchmarkAPI_*`** (preload 512 / 2k / 10k per sub-bench); **not** in CI                                                                                                                                                                                                                                                                                                                           |
 | `task fuzz`         | Short fuzz smoke on internal decoders (~2s per target); **not** in default CI                                                                                                                                                                                                                                                                                                                               |
-| `task mutation-test-dry` | Gremlins analysis from a bounded, isolated source snapshot; part of `task ci-full`                                                                                                                                                                                                                                                                                                                     |
+| `task mutation-test-dry` | Gremlins analysis from a bounded, isolated source snapshot                                                                                                                                                                                                                                                                                                                     |
 | `task mutation-test` | Full mutation run with efficacy and coverage gates; optionally set `TARGET=./package`                                                                                                                                                                                                                                                                                                                       |
 
 ## Benchmarks and fuzzing
@@ -85,7 +86,7 @@ Technical backlog, explicit non-goals, and **documented vs implemented** audit n
 
 Prefer **table-driven** tests and **`t.Parallel()`** where data is independent. **Durability / heavier tests** use **`//go:build integration`** (see [`db_durability_test.go`](db_durability_test.go) vs [`durability_integration_test.go`](durability_integration_test.go)); run them with **`task integration`**. Default **`task ci`** does **not** include the integration tag so PRs stay fast.
 
-**Crash ordering (`SIGKILL`):** [`crash_ordering_integration_test.go`](crash_ordering_integration_test.go) spawns **`TestIntegration_crashChild`** subprocesses blocked on named barriers (`HEXXLADB_TEST_CRASH_AT`). Use **`task integration`** or **`go test -race -parallel=1 -timeout=30m -tags=integration -run='^TestIntegration_' ./...`** (not a high **`go test -parallel`**) locally so these do not overlap each other. The name filter selects only the tagged integration set; `task ci` owns the ordinary unit/race suite.
+**Crash ordering (`SIGKILL`):** [`crash_ordering_integration_test.go`](crash_ordering_integration_test.go) spawns **`TestIntegration_crashChild`** subprocesses blocked on named barriers (`HEXXLADB_TEST_CRASH_AT`). Use **`task integration`** or **`go test -race -parallel=1 -timeout=30m -tags=integration -run='^TestIntegration' ./...`** (not a high **`go test -parallel`**) locally so these do not overlap each other. The name filter selects only the tagged integration set; `task ci` owns the ordinary unit/race suite.
 
 **Scale integration:** [`scale_integration_test.go`](scale_integration_test.go) writes **~10k** `PutCell` rows ( **~1k** when **`go test -short`** is set) plus secondary index checks and reopen verification. Expect **seconds** of runtime and **tens of MB** temp disk under `-race`; run before release or when changing the btree / secondaries.
 
@@ -97,11 +98,18 @@ Follow **[`docs/architecture/HEXAGONAL_ARCHITECTURE.md`](docs/architecture/HEXAG
 
 ## Supply chain (repo automation)
 
-- **Dependabot** — [`.github/dependabot.yml`](.github/dependabot.yml) opens weekly PRs for **`gomod`** dependency updates (tune schedule and limits there).
+- **Dependabot** — [`.github/dependabot.yml`](.github/dependabot.yml) opens weekly PRs for Go module and GitHub Actions updates.
 - **Secret scanning** — enable **secret scanning** (and push protection if your plan allows) in the repository or organization **Settings → Code security**. That is the primary guard against committed credentials; editor hooks are a convenience, not a substitute.
 
 ## Editor and agent assets
 
-The repository tracks shared settings for **VS Code** in [`.vscode/`](.vscode) and **Zed** in [`.zed/`](.zed). Both editors expose the same repository-native commands from [`Taskfile.yml`](Taskfile.yml); contributors remain free to use any editor.
+Use any editor with the shared formatting conventions in [`.editorconfig`](.editorconfig). Editor preferences are local. Run build, test, and CI commands from [`Taskfile.yml`](Taskfile.yml).
 
 Repository-specific Codex skills belong in [`.agents/skills/`](.agents/skills). Each skill is a directory containing a `SKILL.md`; add one only after a repeated HexxlaDB workflow has demonstrated that project-specific guidance is useful.
+## GitHub repository settings
+
+After the new workflow passes on a pull request, configure the `main` ruleset
+to require pull requests and the **Required CI** check from GitHub Actions.
+Block force pushes and branch deletion. Protect version tags matching
+`v*.*.*` so only release maintainers can create them. Configure the GitHub
+`release` environment to require approval before publication.

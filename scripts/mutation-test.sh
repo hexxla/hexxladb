@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/ci/pre-push/06-gremlins.sh
+# scripts/mutation-test.sh
 # Mutation testing using Gremlins for semantic stability.
 # Targets fast, self-contained packages with high test coverage.
 # Config: .gremlins.yaml (workers, timeout-coefficient, mutant toggles).
@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 RED='\033[0;31m'
@@ -68,7 +68,10 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-mapfile -d '' -t source_files < <(git ls-files -z --cached --others --exclude-standard)
+source_files=()
+while IFS= read -r -d '' file; do
+    [[ -e "$file" || -L "$file" ]] && source_files+=("$file")
+done < <(git ls-files -z --cached --others --exclude-standard)
 ((${#source_files[@]} > 0)) || die "Git-visible source set is empty"
 if ((${#source_files[@]} > MAX_SOURCE_FILES)); then
     die "source snapshot has ${#source_files[@]} files; safety limit is $MAX_SOURCE_FILES"
@@ -122,7 +125,7 @@ declare -A MIN_MCOVER=(
     ["./internal/index"]=50
 )
 
-# CI mode: use --dry-run for speed in pre-push; full runs via `task mutation-test`.
+# Default to the local dry run. Use `task mutation-test` for full runs.
 DRY_RUN=true
 if [[ "${GREMLINS_FULL:-}" == "1" ]]; then
     DRY_RUN=false

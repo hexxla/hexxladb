@@ -22,14 +22,14 @@ tasks:
       - task --list
 
   ci:
-    desc: Run the same full pipeline as GitHub Actions
+    desc: Run the shared CI validation checks
     cmds:
       - bash scripts/ci.sh
 
   integration:
     desc: Run optional integration tests serially with the race detector
     cmds:
-      - go test -count=1 -race -parallel=1 -timeout=30m -tags=integration -run='^TestIntegration_' ./...
+      - go test -count=1 -race -parallel=1 -timeout=30m -tags=integration -run='^TestIntegration' ./...
 
   bench-tmp:
     desc: Create the benchmark temporary directory
@@ -357,22 +357,7 @@ tasks:
   complexity:
     desc: Run cyclomatic, cognitive, and CRAP complexity checks
     cmds:
-      - bash scripts/ci/pre-push/05-complexity.sh
-
-  pre-commit-install:
-    desc: Install the optional pre-commit hooks
-    cmds:
-      - pre-commit install
-
-  pre-commit-run:
-    desc: Run all optional pre-commit hooks
-    cmds:
-      - pre-commit run --all-files
-
-  pre-commit-update:
-    desc: Update optional pre-commit hook revisions
-    cmds:
-      - pre-commit autoupdate
+      - bash scripts/complexity.sh
 
   test:
     desc: Run all tests with the race detector
@@ -404,11 +389,6 @@ tasks:
     cmds:
       - go mod tidy
 
-  ci-full:
-    desc: Run CI, complexity, mutation, and coupling analysis
-    cmds:
-      - bash scripts/ci/ci.sh
-
   mutation-test:
     desc: Run full Gremlins mutation testing; optionally set TARGET
     preconditions:
@@ -418,7 +398,7 @@ tasks:
       TARGET: '{{.TARGET | default ""}}'
     cmds:
       - 'echo "==> Running Gremlins mutation testing${TARGET:+: $TARGET}"'
-      - GREMLINS_FULL=1 bash scripts/ci/pre-push/06-gremlins.sh
+      - GREMLINS_FULL=1 bash scripts/mutation-test.sh
 
   mutation-test-dry:
     desc: Run the fast Gremlins mutation dry-run
@@ -427,4 +407,4 @@ tasks:
         msg: "gremlins not found; install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0"
     cmds:
       - 'echo "==> Running Gremlins mutation testing (dry-run)..."'
-      - bash scripts/ci/pre-push/06-gremlins.sh
+      - bash scripts/mutation-test.sh

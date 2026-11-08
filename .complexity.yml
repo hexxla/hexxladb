@@ -121,4 +121,3 @@ complexity:
     # At 50% coverage: flags cyclo>=20 (20²×0.125+20=70 < 100; cyclo>=28 → ~128).
     # Tighten toward 50 as coverage improves.
     threshold: 100
-    coverage_profile: "coverage.out"

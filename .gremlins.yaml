@@ -26,7 +26,7 @@ unleash:
   threshold:
     # NOTE: gremlins dev build does not exit non-zero on threshold violations
     # (errors.As unwrap through cobra fails). Thresholds here are documentation
-    # only. Enforcement is done in 06-gremlins.sh by parsing stdout.
+    # only. Enforcement is done in scripts/mutation-test.sh by parsing stdout.
     #
     # Baseline 2026-05-09 (full run, workers=4):
     #   lattice:   efficacy=100% mcover=88%

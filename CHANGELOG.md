@@ -2,7 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dependency security** — upgrade the Go crypto and text modules to versions that address the high-severity advisories reported by the dependency inventory scan.
+
 ### Changed
+
+- **Go toolchain** — require Go 1.27.3 or newer. GitHub Actions uses the version in `go.mod`.
+
+- **CI and releases** — consolidate PR checks, reuse race coverage, and validate release packages before publication.
+
+- **Editor configuration** — keep Zed and VS Code settings local and use the shared Taskfile for development commands.
 
 - **Codex Go guidance** — use the JetBrains Modern Go Guidelines plugin for version-specific idioms. The repository instructions define the compatibility requirements.
 

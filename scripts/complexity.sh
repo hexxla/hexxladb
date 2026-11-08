@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# scripts/ci/pre-push/05-complexity.sh
+# scripts/complexity.sh
 # Full complexity analysis with CRAP scoring
-# Runs on all Go files before push
+# Run explicitly to inspect complexity and coverage.
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 RED='\033[0;31m'
@@ -125,17 +125,14 @@ get_crap_threshold() {
 declare -A coverage_map
 
 load_coverage() {
-    local coverage_file="${1:-coverage.out}"
+    local coverage_file="${COVERAGE_PROFILE:-.tmp/coverage.out}"
+    local coverage_report
 
-    # Always regenerate — a stale profile from a partial run causes false CRAP violations.
-    echo -e "${YELLOW}  Generating coverage profile (go test -count=1 ./...)...${NC}"
-    rm -f "$coverage_file"
-    go test -count=1 -coverprofile="$coverage_file" -covermode=atomic ./... >/dev/null 2>&1 || true
-
-    if [[ ! -f "$coverage_file" ]]; then
-        echo -e "${YELLOW}  Coverage generation failed — CRAP scores assume 0% coverage${NC}"
-        return
+    if [[ ! -s "$coverage_file" ]]; then
+        echo "Run task ci or set COVERAGE_PROFILE to a current coverage profile." >&2
+        exit 1
     fi
+    coverage_report=$(go tool cover -func="$coverage_file")
 
     # `go tool cover -func` output (one line per function):
     #   github.com/hexxla/hexxladb/query_exec.go:295:  applyPredicates   82.4%
@@ -152,7 +149,7 @@ load_coverage() {
         covfile="${location%:*}"
         covfile="${covfile#github.com/hexxla/hexxladb/}"
         coverage_map["$covfile|$fname"]="$pct"
-    done < <(go tool cover -func="$coverage_file" 2>/dev/null || true)
+    done <<< "$coverage_report"
 }
 
 # Calculate CRAP score: (cyclomatic² × (1 - coverage/100)³) + cyclomatic
@@ -197,7 +194,7 @@ crap_violations=()
 # review while excluding ignored build caches, fixtures, and generated trees.
 source_files=()
 while IFS= read -r -d '' file; do
-    [[ "$file" == *_test.go || "$file" == vendor/* ]] && continue
+    [[ ! -f "$file" || "$file" == *_test.go || "$file" == vendor/* ]] && continue
     source_files+=("$file")
 done < <(git ls-files -z --cached --others --exclude-standard -- '*.go')
 if ((${#source_files[@]} == 0)); then

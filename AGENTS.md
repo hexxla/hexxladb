@@ -40,6 +40,6 @@ Do not put completed history in the roadmap or `TODO.md`; it belongs in `CHANGEL
 
 ## Repository workflow
 
-Preserve unrelated work and keep commits focused. Use short, one-line commit messages. Optional hooks are installed with `task pre-commit-install`, but they do not replace `task ci`.
+Preserve unrelated work and keep commits focused. Use short, one-line commit messages. The [optional Git hook](.githooks/README.md) scans staged changes for secrets.
 
 Codex-compatible project skills live under `.agents/skills/<skill-name>/SKILL.md`. Add one only for a recurring HexxlaDB-specific workflow; keep general engineering policy in this file.

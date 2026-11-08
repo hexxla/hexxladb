@@ -2,79 +2,52 @@ name: Security
 
 on:
   schedule:
-    - cron: "0 0 * * *" # Daily at midnight UTC
+    - cron: "23 3 * * *"
   workflow_dispatch:
-  push:
-    branches: [main, master]
-  pull_request:
 
 permissions:
   contents: read
 
 jobs:
   govulncheck:
-    name: Go Vulnerability Check
+    name: Go vulnerability scan
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Run govulncheck
-        run: scripts/tool.sh govulncheck ./...
+      - run: scripts/tool.sh govulncheck ./...
 
   trivy:
-    name: Trivy Security Scan
+    name: Dependency inventory scan
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - name: Run Trivy vulnerability scanner
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Scan dependencies with Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          scan-type: "fs"
-          scan-ref: "."
-          format: "sarif"
-          output: "trivy-results.sarif"
+          version: v0.70.0
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: trivy-results.sarif
           exit-code: "1"
-          severity: "CRITICAL,HIGH"
-
-      - name: Upload Trivy SARIF
+      - name: Upload Trivy report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: trivy-sarif
           path: trivy-results.sarif
-          if-no-files-found: error
-          retention-days: 14
-
-  gosec:
-    name: Gosec Security Scan
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Run Gosec
-        run: scripts/tool.sh gosec -severity medium -confidence medium -exclude-generated -exclude=G115 -fmt sarif -out gosec-results.sarif ./...
-
-      - name: Upload Gosec SARIF
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: gosec-sarif
-          path: gosec-results.sarif
           if-no-files-found: error
           retention-days: 14

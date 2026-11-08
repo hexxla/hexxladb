@@ -76,7 +76,7 @@ using a `v0.y.z` version; the v1 API commitment remains a separate decision.
 
 The initial candidate profile is:
 
-- the Go module embedded in one Linux/amd64 process using Go 1.27.0 or newer;
+- the Go module embedded in one Linux/amd64 process using Go 1.27.3 or newer;
 - exactly one open owner for each database path and serialized public writes;
 - a trusted local filesystem that honors exclusive creation, file locking, and
   `fsync`/`fdatasync` durability for the primary, WAL, and optional changelog;
@@ -199,7 +199,7 @@ recorded result, not permission to infer readiness from a version number.
 | Production adoption | At least one named production deployment has an owner-confirmed backup/restore drill and upgrade report. | No production deployment evidence is recorded in the repository. | **Not met** |
 | API commitment | Every root file in the inventory is v1-candidate or deprecated; no provisional row remains; all pre-v1 breaks have migration notes. | Every exported root file is classified above; consumer-facing signatures use root aliases and `task api-check` enforces the v0.6 candidate baseline. | **Pass on current candidate; repeat at release** |
 | Format upgrade and refusal | v1 fixture migrates to logically equivalent v2 and authenticated v3 data/indexes; v2 migrates with history preserved; cancellation preserves source; older/newer formats are refused. | `migration_test.go`: `TestMigrateV1ToV2*`, `TestMigrate*Authenticated*`, `TestMigratePublishedV051Fixture`, `TestOpenRefusesNewerFormatVersion`; authenticated page/WAL faults are covered by `encryption*_test.go` and `internal/engine/authenticated_recovery_test.go`. | **Pass on current candidate; repeat at release** |
-| Supported toolchain policy | `task ci` runs format, vet, boundaries, workflow lint, race, vulnerability, pinned Go lint, standalone security, complexity, and tidy without skipped or unreconciled checks on Go 1.27.0. | Pinned versions and toolchain are in `scripts/tool.sh`; release evidence must attach the successful `task ci` output. | **Pending release run** |
+| Supported toolchain policy | `task ci` validates formatting, lint, import boundaries, workflows, exported API, race tests, vulnerabilities, licenses, and module metadata. CI scans and builds with the reviewed patch release while `go.mod` defines the consumer baseline. | Recheck the CI, security, and release runs on the exact v1 candidate. |
 | Crash and recovery | `task integration` passes on the release commit, including named crash barriers; a recovery drill is recorded. | Test procedure exists in `CONTRIBUTING.md` and `OPERATIONS.md`; no v1-candidate run is recorded. | **Not met** |
 | Performance envelope | Seeded performance, vector-scale, and lattice-placement evidence is regenerated on release hardware and stays within documented thresholds. | Reproducible commands and current baselines exist in `PERFORMANCE_EVIDENCE.md`; no v1-candidate run is recorded. | **Not met** |
 | Release operations | Signed/tagged release rehearsal, SBOM generation, backup drill, and rollback/downgrade refusal drill complete from the candidate commit. | Workflows and drills exist; no v1-candidate rehearsal is recorded. | **Not met** |
