@@ -50,6 +50,10 @@
 
 ### Changed
 
+- **README** — explain topic neighborhoods, separate released installation from the checkout quickstart, and document the current explorer controls.
+
+- **Terminal explorer layout** — compact tabs and lists, adaptive column widths, contextual keyboard help, and a scrollable Inspector.
+
 - **Examples and builds** — `task demo` runs the new temporary-database quickstart. The ports-and-adapters and remote-access examples remain available. Spatial recipes live in the API guide, and evidence runners moved to `tools/evidence` with their Task entry points. `task build` builds the CLI and TUI.
 - **Terminal explorer** — use `task seed` and then `task tui` for a synthetic fixture. The explorer focuses on cells, the hex grid, and inspection, with seams and diff as secondary views. Use `hexxladb info`, `check`, and `stats` for diagnostics.
 

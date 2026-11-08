@@ -6,8 +6,6 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/table"
 
 	"github.com/hexxla/hexxladb"
 )
@@ -83,112 +81,44 @@ func (v *diffView) loadCmd() tea.Cmd {
 	}
 }
 
+func (v *diffView) Help() []string {
+	return []string{helpItem("↑↓", "move"), helpItem("r", "refresh")}
+}
+
 func (v *diffView) View() string {
-	if !v.loaded {
-		return styleLoading.Render("  ⟳  Computing snapshot diff…")
+	switch {
+	case !v.loaded:
+		return styleDim.Render("Computing snapshot diff…")
+	case errors.Is(v.err, hexxladb.ErrMVCCRequired):
+		return styleDim.Render("Snapshot diff requires MVCC.")
+	case v.err != nil:
+		return styleBad.Render("Diff error: " + terminalText(v.err.Error()))
 	}
-
-	w := max(40, v.width-6)
-
-	if v.err != nil {
-		if errors.Is(v.err, hexxladb.ErrMVCCRequired) {
-			return lipgloss.JoinVertical(lipgloss.Left,
-				viewTitle("◈ Snapshot Diff", v.width),
-				"",
-				styleDim.Render("  Database not opened with MVCC enabled — diff requires EnableMVCC: true."),
-				"",
-				styleHelp.Render("  "+helpItem("r", "retry")),
-			)
-		}
-		return styleBad.Render(fmt.Sprintf("  ✗  Diff error: %v", v.err))
-	}
-
 	d := v.diff
 	if d == nil || (len(d.Cells) == 0 && len(d.Seams) == 0) {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			viewTitle("◈ Snapshot Diff", v.width),
-			"",
-			styleDim.Render("  No changes detected in last 10 commits."),
-			"",
-			styleHelp.Render("  "+helpItem("r", "refresh")),
-		)
+		return styleDim.Render("No changes in the last ten commits.")
 	}
 
-	colW := max(14, (w-6)/2)
-	statCard := func(label, val string, clr lipgloss.Color) string {
-		return lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(clr).
-			Background(colorBg2).
-			Padding(0, 2).
-			Width(colW).
-			Render(styleCardDim.Render(label) + "\n" +
-				lipgloss.NewStyle().Foreground(clr).Background(colorBg2).Bold(true).Render(val))
+	summary := styleDim.Render(fmt.Sprintf("%d cell · %d seam changes", len(d.Cells), len(d.Seams)))
+	if v.width >= 50 {
+		summary += styleDim.Render(fmt.Sprintf(" · commits %d–%d", d.FromSeq, d.ToSeq))
 	}
-
-	summaryRow := lipgloss.JoinHorizontal(lipgloss.Top,
-		statCard("CELL CHANGES", fmt.Sprintf("%d", len(d.Cells)), colorGreen),
-		" ",
-		statCard("SEAM CHANGES", fmt.Sprintf("%d", len(d.Seams)), colorOrange),
-	)
-
-	// ── cell diff table ───────────────────────────────────────────────────────
-	visH := max(3, v.height-14)
-	start := 0
-	if v.cursor >= visH {
-		start = v.cursor - visH + 1
+	if len(d.Cells) == 0 {
+		return summary
 	}
-	end := min(start+visH, len(d.Cells))
-
-	contentW := max(20, w-32)
-	t := table.New().
-		Border(lipgloss.NormalBorder()).
-		BorderStyle(lipgloss.NewStyle().Foreground(colorText2)).
-		Headers("", "OP", "COORD", "CONTENT").
-		Width(w).
-		StyleFunc(func(row, _ int) lipgloss.Style {
-			if row == table.HeaderRow {
-				return lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Bold(true).Padding(0, 1)
-			}
-			actualIdx := start + row
-			base := lipgloss.NewStyle().Padding(0, 1).Background(colorBg1)
-			if actualIdx == v.cursor {
-				base = base.Background(colorBg3).Bold(true)
-			}
-			if actualIdx < len(d.Cells) && d.Cells[actualIdx].Op == hexxladb.DiffOpDelete {
-				return base.Foreground(colorOrange)
-			}
-			return base
+	room := v.height - 2
+	start, end := visibleRows(len(d.Cells), v.cursor, room)
+	coordWidth := len("COORD")
+	for _, cell := range d.Cells[start:end] {
+		coordWidth = max(coordWidth, len(coordText(cell.Coord)))
+	}
+	table := compactTable{
+		columns: []column{{label: "OP", width: 6}, {label: "COORD", width: min(coordWidth, v.width/4)}, {label: "CONTENT"}},
+		width:   v.width,
+	}
+	return fitRight(summary, styleDim.Render(rowPosition(v.cursor, len(d.Cells))), v.width) + "\n" +
+		table.render(len(d.Cells), v.cursor, room, func(i int) []string {
+			cell := d.Cells[i]
+			return []string{string(cell.Op), coordText(cell.Coord), cell.Record.RawContent}
 		})
-
-	for i := start; i < end; i++ {
-		c := d.Cells[i]
-		marker := styleDim.Render("  ")
-		if i == v.cursor {
-			marker = lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg3).Render(" ▶")
-		}
-		coord := c.Coord
-		opStr := string(c.Op)
-		content := truncStr(c.Record.RawContent, contentW)
-		t = t.Row(marker, opStr, fmt.Sprintf("(%d,%d)", coord.Q, coord.R), content)
-	}
-
-	pct := 0
-	if len(d.Cells) > 0 {
-		pct = (v.cursor + 1) * 100 / len(d.Cells)
-	}
-	scrollInfo := styleDim.Render(fmt.Sprintf("  %d/%d  (%d%%)", min(v.cursor+1, len(d.Cells)), len(d.Cells), pct))
-
-	help := helpItem("↑↓/jk", "navigate") + "  " + helpItem("r", "refresh")
-
-	return lipgloss.JoinVertical(lipgloss.Left,
-		viewTitle("◈ Snapshot Diff  (last 10 commits)", v.width),
-		"",
-		summaryRow,
-		"",
-		scrollInfo,
-		t.Render(),
-		"",
-		styleHelp.Render("  "+help),
-	)
 }

@@ -1,169 +1,30 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/hexxla/hexxladb"
 )
 
 var (
-	appBg  = lipgloss.NewStyle().Background(lipgloss.Color("235")).Foreground(lipgloss.Color("252"))
-	subtle = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-
-	colorPurple = lipgloss.Color("61")  // primary accent
-	colorCyan   = lipgloss.Color("81")  // secondary accent / data
-	colorGreen  = lipgloss.Color("42")  // success / included
-	colorPink   = lipgloss.Color("213") // warning / superseded
-	colorOrange = lipgloss.Color("214") // caution / seam
-	colorRed    = lipgloss.Color("196") // error / warning
-	colorYellow = lipgloss.Color("229") // highlight / tags
-
-	// Backgrounds
-	colorBg0 = lipgloss.Color("235") // near-black base
-	colorBg1 = lipgloss.Color("236") // panel bg
-	colorBg2 = lipgloss.Color("237") // card / row bg
-	colorBg3 = lipgloss.Color("238") // selected row bg
-
-	// Text
-	colorText0 = lipgloss.Color("252") // primary
-	colorText1 = lipgloss.Color("245") // secondary
-	colorText2 = lipgloss.Color("243") // dim / muted
-
-	// Tab border — active tab has open bottom to merge with content
-	activeTabBorder = lipgloss.Border{
-		Top:         "─",
-		Bottom:      " ",
-		Left:        "│",
-		Right:       "│",
-		TopLeft:     "╭",
-		TopRight:    "╮",
-		BottomLeft:  "┘",
-		BottomRight: "└",
-	}
-	inactiveTabBorder = lipgloss.Border{
-		Top:         "─",
-		Bottom:      "─",
-		Left:        "│",
-		Right:       "│",
-		TopLeft:     "╭",
-		TopRight:    "╮",
-		BottomLeft:  "┴",
-		BottomRight: "┴",
-	}
-
-	styleTabActive = lipgloss.NewStyle().
-			Border(activeTabBorder, true).
-			BorderForeground(colorPurple).
-			Foreground(colorText0).
-			Bold(true).
-			Padding(0, 2)
-
-	styleTabInactive = lipgloss.NewStyle().
-				Border(inactiveTabBorder, true).
-				BorderForeground(colorText2).
-				Foreground(colorText1).
-				Padding(0, 2)
-
-	styleBorder = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorPurple)
-
-	styleBorderSubtle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(colorText2)
-
-	// Status bar segments
-	styleStatusLeft = lipgloss.NewStyle().
-			Background(colorPurple).
-			Foreground(colorBg0).
-			Bold(true).
-			Padding(0, 1)
-
-	styleStatusMid = lipgloss.NewStyle().
-			Background(colorBg2).
-			Foreground(colorText1).
-			Padding(0, 1)
-
-	styleStatusRight = lipgloss.NewStyle().
-				Background(lipgloss.Color("#1A1040")).
-				Foreground(colorText2).
-				Padding(0, 1)
-
-	// Section headers inside views
-	styleViewTitle = lipgloss.NewStyle().
-			Foreground(colorPurple).
-			Background(colorBg1).
-			Bold(true)
-
-	styleSectionHeader = lipgloss.NewStyle().
-				Foreground(colorCyan).
-				Background(colorBg1).
-				Bold(true)
-
-	styleDim = lipgloss.NewStyle().
-			Foreground(colorText2).
-			Background(colorBg1)
-
-	styleTag = lipgloss.NewStyle().
-			Foreground(colorYellow).
-			Background(lipgloss.Color("#2A2600")).
-			Padding(0, 1)
-
-	styleBad = lipgloss.NewStyle().
-			Foreground(colorRed).
-			Background(colorBg1)
-
-	// Help bar at bottom of content
-	styleHelp = lipgloss.NewStyle().
-			Foreground(colorText2).
-			Background(colorBg1).
-			Italic(true)
-
-	styleHelpKey = lipgloss.NewStyle().
-			Foreground(colorCyan).
-			Background(colorBg1).
-			Bold(true)
-
-	// Card-interior text styles (colorBg2 background for use inside styleCard panels).
-	styleCardDim = lipgloss.NewStyle().
-			Foreground(colorText2).
-			Background(colorBg2)
-
-	styleCardHeader = lipgloss.NewStyle().
-			Foreground(colorCyan).
-			Background(colorBg2).
-			Bold(true)
-
-	styleCardKey = lipgloss.NewStyle().
-			Foreground(colorPurple).
-			Background(colorBg2).
-			Bold(true)
-
-	styleCardValue = lipgloss.NewStyle().
-			Foreground(colorText0).
-			Background(colorBg2)
-
-	// Loading spinner text
-	styleLoading = lipgloss.NewStyle().
-			Foreground(colorPurple).
-			Background(colorBg1).
-			Bold(true).
-			Italic(true)
+	styleAccent = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6442A5", Dark: "#BEA4FF"}).Bold(true)
+	styleActive = styleAccent.Background(lipgloss.AdaptiveColor{Light: "#EEE7F9", Dark: "#382D50"})
+	styleDim    = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#555961", Dark: "#A4A9B4"})
+	styleBad    = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#A51D34", Dark: "#FF9AA8"})
 )
 
-// helpItem renders a key + description pair for the help bar.
-func helpItem(key, desc string) string {
-	return styleHelpKey.Render(key) + styleDim.Render(" "+desc)
+func coordText(c hexxladb.Coord) string { return fmt.Sprintf("(%d,%d)", c.Q, c.R) }
+
+func helpItem(key, action string) string {
+	return styleAccent.Render(key) + " " + styleDim.Render(action)
 }
 
-// viewTitle renders a section title with a dim underline rule, sized to width w.
-func viewTitle(title string, w int) string {
-	t := styleViewTitle.Render(title)
-	rule := styleDim.Render(strings.Repeat("─", max(0, w-lipgloss.Width(t)-1)))
-	return lipgloss.JoinHorizontal(lipgloss.Top, t, " ", rule)
-}
+func helpLine(items ...string) string { return strings.Join(items, "  ") }
 
 // terminalText discards terminal escape sequences and normalizes control
 // characters from database and user text before applying trusted styles.
@@ -184,28 +45,86 @@ func truncStr(s string, width int) string {
 	return ansi.Truncate(terminalText(s), max(0, width), "…")
 }
 
-// barGraph renders a colored bar of proportional width against colorBg1.
-func barGraph(value, maxVal, maxWidth int, clr lipgloss.Color) string {
-	return barGraphBg(value, maxVal, maxWidth, clr, colorBg1)
+// clipLines clips styled text to the screen without stripping trusted styles.
+func clipLines(text string, width, height int) string {
+	var lines []string
+	for line := range strings.SplitSeq(text, "\n") {
+		if len(lines) == height {
+			break
+		}
+		lines = append(lines, ansi.Truncate(line, width, ""))
+	}
+	return strings.Join(lines, "\n")
 }
 
-// barGraphBg renders a colored bar with an explicit background color.
-func barGraphBg(value, maxVal, maxWidth int, clr, bg lipgloss.Color) string {
-	if maxVal == 0 {
-		return ""
-	}
-	w := value * maxWidth / maxVal
-	if w < 1 && value > 0 {
-		w = 1
-	}
-	return lipgloss.NewStyle().Foreground(clr).Background(bg).Render(strings.Repeat("█", max(0, w)))
+type column struct {
+	label string
+	width int // a zero-width column receives the remaining space
+	right bool
 }
 
-// contentWidth returns a safe width for content, with fallback to 80.
-// Prevents division by zero on tiny terminals.
-func contentWidth(w int) int {
-	if w > 4 {
-		return w
+// compactTable uses one line per record. The cursor occupies the leading
+// character of the first field and shares the selected row's highlight.
+type compactTable struct {
+	columns []column
+	width   int
+}
+
+func (t compactTable) render(count, cursor, room int, row func(int) []string) string {
+	widths := make([]int, len(t.columns))
+	headers := make([]string, len(t.columns))
+	spare := t.width - 1 - 2*(len(t.columns)-1)
+	for i, col := range t.columns {
+		widths[i] = col.width
+		headers[i] = col.label
+		spare -= col.width
 	}
-	return 80
+	for i := range widths {
+		if widths[i] == 0 {
+			widths[i] = max(1, spare)
+			break
+		}
+	}
+
+	var out strings.Builder
+	out.WriteString(styleDim.Bold(true).Render(" " + t.line(headers, widths)))
+	start, end := visibleRows(count, cursor, room)
+	for i := start; i < end; i++ {
+		line := t.line(row(i), widths)
+		out.WriteByte('\n')
+		if i == cursor {
+			out.WriteString(styleActive.Render("›" + line))
+		} else {
+			out.WriteString(" " + line)
+		}
+	}
+	return out.String()
+}
+
+func (t compactTable) line(values []string, widths []int) string {
+	parts := make([]string, len(values))
+	for i, value := range values {
+		part := truncStr(value, widths[i])
+		pad := strings.Repeat(" ", widths[i]-ansi.StringWidth(part))
+		if t.columns[i].right {
+			part = pad + part
+		} else {
+			part += pad
+		}
+		parts[i] = part
+	}
+	return strings.Join(parts, "  ")
+}
+
+func visibleRows(count, cursor, room int) (int, int) {
+	room = min(count, max(0, room))
+	start := min(max(0, cursor-room/2), count-room)
+	return start, start + room
+}
+
+func rowPosition(cursor, count int) string {
+	if count == 0 {
+		return "0 rows"
+	}
+	return fmt.Sprintf("%d / %d", cursor+1, count)
 }

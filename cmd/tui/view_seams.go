@@ -5,8 +5,6 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/table"
 
 	"github.com/hexxla/hexxladb"
 )
@@ -99,115 +97,49 @@ func (v *seamsView) loadCmd() tea.Cmd {
 	}
 }
 
+func (v *seamsView) Help() []string {
+	return []string{helpItem("↑↓", "move"), helpItem("r", "refresh")}
+}
+
 func (v *seamsView) View() string {
-	if !v.loaded {
-		return styleLoading.Render("  ⟳  Loading seams…")
+	switch {
+	case !v.loaded:
+		return styleDim.Render("Loading seams…")
+	case v.err != nil:
+		return styleBad.Render(fmt.Sprintf("Seams error: %s", terminalText(v.err.Error())))
+	case len(v.seams) == 0:
+		return styleDim.Render("No seams found.")
 	}
-	if v.err != nil {
-		return styleBad.Render(fmt.Sprintf("  ✗  Seams error: %v", v.err))
+	count := len(v.seams)
+	room := v.height - 2
+	start, end := visibleRows(count, v.cursor, room)
+	coordsWidth := len("CELLS")
+	typeWidth, statusWidth := len("TYPE"), len("STATUS")
+	for _, seam := range v.seams[start:end] {
+		coordsWidth = max(coordsWidth, len(coordText(seam.coordA))+len(coordText(seam.coordB))+3)
+		typeWidth = max(typeWidth, len(seam.stype))
+		statusWidth = max(statusWidth, len(seam.status))
 	}
-	if len(v.seams) == 0 {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			viewTitle("◈ Seams", v.width),
-			"",
-			styleDim.Render("  No seams found.  "+styleHelpKey.Render("r")+" to refresh."),
-		)
+	wide := v.width >= 66
+	columns := []column{{label: "CELLS", width: min(coordsWidth, v.width*2/5)}}
+	if wide {
+		columns = append(columns, column{label: "TYPE", width: min(typeWidth, 16)},
+			column{label: "STATUS", width: min(statusWidth, 12)})
 	}
-
-	w := max(60, v.width-6)
-	visH := max(3, v.height-8)
-
-	// Viewport: keep cursor visible, centered when possible
-	start := max(0, v.cursor-visH/2)
-	end := min(start+visH, len(v.seams))
-	if end-start < visH && start > 0 {
-		start = max(0, end-visH)
+	columns = append(columns, column{label: "REASON"})
+	table := compactTable{columns: columns, width: v.width}
+	summary := "Visible seams"
+	if !wide {
+		selected := v.seams[v.cursor]
+		summary = terminalText(selected.stype + " · " + selected.status)
 	}
-
-	seamTypeColor := func(st string) lipgloss.Color {
-		switch st {
-		case hexxladb.SeamTypeSupersedes:
-			return colorPink
-		case hexxladb.SeamTypeConflict:
-			return colorOrange
-		default:
-			return colorCyan
-		}
-	}
-	statusColor := func(s string) lipgloss.Color {
-		switch s {
-		case "resolved":
-			return colorGreen
-		case "unresolved":
-			return colorRed
-		default:
-			return colorText2
-		}
-	}
-
-	t := table.New().
-		Border(lipgloss.NormalBorder()).
-		BorderStyle(lipgloss.NewStyle().Foreground(colorText2)).
-		Headers("", "CELL A", "CELL B", "TYPE", "STATUS", "REASON").
-		Width(w).
-		StyleFunc(func(row, col int) lipgloss.Style {
-			if row == table.HeaderRow {
-				return lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Bold(true).Padding(0, 1)
+	return fitRight(styleDim.Render(summary), styleDim.Render(rowPosition(v.cursor, count)), v.width) + "\n" +
+		table.render(count, v.cursor, room, func(i int) []string {
+			seam := v.seams[i]
+			ends := coordText(seam.coordA) + " → " + coordText(seam.coordB)
+			if wide {
+				return []string{ends, seam.stype, seam.status, seam.reason}
 			}
-			actualIdx := start + row
-			base := lipgloss.NewStyle().Padding(0, 1).Background(colorBg1)
-			switch {
-			case actualIdx == v.cursor:
-				base = base.Background(colorBg3).Foreground(colorCyan).Bold(true)
-			case row%2 == 0:
-				base = base.Foreground(colorText1)
-			default:
-				base = base.Foreground(colorText0)
-			}
-			if actualIdx < len(v.seams) {
-				s := v.seams[actualIdx]
-				switch col {
-				case 3:
-					return base.Foreground(seamTypeColor(s.stype))
-				case 4:
-					return base.Foreground(statusColor(s.status))
-				}
-			}
-			return base
+			return []string{ends, seam.reason}
 		})
-
-	for i := start; i < end; i++ {
-		s := v.seams[i]
-		marker := "  "
-		if i == v.cursor {
-			marker = lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Render(" ▶")
-		}
-		t = t.Row(
-			marker,
-			fmt.Sprintf("(%d,%d)", s.coordA.Q, s.coordA.R),
-			fmt.Sprintf("(%d,%d)", s.coordB.Q, s.coordB.R),
-			terminalText(s.stype),
-			terminalText(s.status),
-			truncStr(s.reason, 30),
-		)
-	}
-
-	// legend
-	legend := lipgloss.JoinHorizontal(lipgloss.Left,
-		lipgloss.NewStyle().Foreground(colorOrange).Background(colorBg1).Render("  ⋈ mark_conflict"),
-		"   ",
-		lipgloss.NewStyle().Foreground(colorPink).Background(colorBg1).Render("↺ supersedes"),
-		styleDim.Render(fmt.Sprintf("   total: %d", len(v.seams))),
-	)
-
-	help := helpItem("↑↓/jk", "navigate") + "  " + helpItem("r", "refresh")
-
-	return lipgloss.JoinVertical(lipgloss.Left,
-		viewTitle("◈ Seams", v.width),
-		legend,
-		"",
-		t.Render(),
-		"",
-		styleHelp.Render("  "+help),
-	)
 }

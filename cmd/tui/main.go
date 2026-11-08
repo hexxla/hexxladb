@@ -8,10 +8,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/hexxla/hexxladb"
 	"github.com/hexxla/hexxladb/internal/cmdconfig"
@@ -44,7 +45,7 @@ func run() int {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	slog.SetDefault(log)
 
-	p := tea.NewProgram(newModel(db, dbPath), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(newModel(db, dbPath), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "tui error: %v\n", err)
 		return 1
@@ -54,13 +55,19 @@ func run() int {
 
 var tabNames = [...]string{"Cells", "Hex Grid", "Inspector", "Seams", "Diff"}
 
-const inspectorTab = 2
+const (
+	inspectorTab = 2
+	frameRows    = 2
+	minWidth     = 24
+)
 
 type model struct {
 	dbPath   string
 	metadata string
 	tabs     [len(tabNames)]view
 	current  int
+	returnTo int
+	showHelp bool
 	width    int
 	height   int
 }
@@ -95,12 +102,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		tabH := lipgloss.Height(m.renderTabBar())
-		statusH := 1
-		contentH := max(1, m.height-tabH-statusH)
-		contentW := m.width
 		for _, t := range m.tabs {
-			t.SetSize(contentW, contentH)
+			t.SetSize(m.width, max(0, m.height-frameRows))
 		}
 		return m, nil
 
@@ -114,6 +117,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "q":
 				return m, tea.Quit
+			case "?":
+				m.showHelp = !m.showHelp
+				return m, nil
+			case "esc":
+				if m.showHelp {
+					m.showHelp = false
+					return m, nil
+				}
+				if m.current == inspectorTab {
+					return m.switchTab(m.returnTo)
+				}
 			case "1", "2", "3", "4", "5":
 				return m.switchTab(int(msg.String()[0] - '1'))
 			case "tab":
@@ -122,12 +136,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.switchTab((m.current - 1 + len(m.tabs)) % len(m.tabs))
 			}
 		}
+		if m.showHelp {
+			return m, nil
+		}
 
 	case tabReply:
 		if selection, ok := msg.message.(inspectCellMsg); ok {
 			if m.current != msg.index {
 				return m, nil
 			}
+			m.returnTo = m.current
 			m.current = inspectorTab
 			return m.updateTab(inspectorTab, selection)
 		}
@@ -138,6 +156,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) switchTab(idx int) (tea.Model, tea.Cmd) {
 	m.current = idx
+	m.showHelp = false
 	return m.updateTab(idx, tabActivatedMsg{})
 }
 
@@ -160,74 +179,96 @@ func (m model) updateTab(index int, msg tea.Msg) (tea.Model, tea.Cmd) {
 type tabActivatedMsg struct{}
 
 func (m model) View() string {
-	if m.width == 0 {
+	if m.width <= 0 || m.height <= 0 {
 		return ""
 	}
+	if m.width < minWidth || m.height < 6 {
+		return ansi.Truncate("Resize terminal · q quit", m.width, "")
+	}
 
-	tabBar := m.renderTabBar()
-	content := m.renderContent()
-	statusBar := m.renderStatusBar()
-
-	return lipgloss.JoinVertical(lipgloss.Left, tabBar, content, statusBar)
+	body := m.tabs[m.current].View()
+	if m.showHelp {
+		body = m.renderHelp()
+	}
+	bodyHeight := m.height - frameRows
+	body = clipLines(body, m.width, bodyHeight)
+	pad := strings.Repeat("\n", bodyHeight-strings.Count(body, "\n")-1)
+	return m.renderTabBar() + "\n" + body + pad + "\n" + m.renderFooter()
 }
 
 func (m model) renderTabBar() string {
-	var rendered []string
+	var tabs []string
 	for i, name := range tabNames {
-		if i == m.current {
-			rendered = append(rendered, styleTabActive.Render(name))
-		} else {
-			rendered = append(rendered, styleTabInactive.Render(name))
+		if m.width < 68 && i == 1 {
+			name = "Grid"
 		}
+		if m.width < 52 && i == inspectorTab {
+			name = "Inspect"
+		}
+		if m.width < 38 && i != m.current {
+			name = ""
+		}
+		label := fmt.Sprint(i + 1)
+		if name != "" {
+			label += " " + name
+		}
+		style := styleDim
+		if i == m.current {
+			style = styleActive
+		}
+		tabs = append(tabs, style.Render(label))
 	}
-	row := lipgloss.JoinHorizontal(lipgloss.Bottom, rendered...)
-	rowH := lipgloss.Height(row)
-	gapW := max(0, m.width-lipgloss.Width(row))
-	// Gap fills horizontally; height must match the tab row so bottom-edge aligns.
-	gap := lipgloss.NewStyle().
-		Background(appBg.GetBackground()).
-		Foreground(subtle.GetForeground()).
-		Width(gapW).
-		Height(rowH).
-		AlignVertical(lipgloss.Bottom).
-		Render(strings.Repeat("─", gapW))
-	return lipgloss.JoinHorizontal(lipgloss.Bottom, row, gap)
+	separator := "  "
+	if m.width < 52 {
+		separator = " "
+	}
+	bar := strings.Join(tabs, separator)
+	if m.width >= 68 {
+		bar = styleAccent.Render("HexxlaDB") + "   " + bar
+	}
+	return ansi.Truncate(bar, m.width, "")
 }
 
-func (m model) renderContent() string {
-	tabH := lipgloss.Height(m.renderTabBar())
-	statusH := 1
-	contentH := max(1, m.height-tabH-statusH)
-	contentW := contentWidth(m.width)
-
-	inner := ""
-	if m.current >= 0 && m.current < len(m.tabs) {
-		inner = m.tabs[m.current].View()
+func (m model) renderFooter() string {
+	view := m.tabs[m.current]
+	if view.Consuming() {
+		return fitRight(helpLine(view.Help()...), m.fileLabel(), m.width)
 	}
-
-	// MaxHeight and Height together ensure content never pushes tabs off screen.
-	// Height sets explicit height, MaxHeight clips overflow.
-	clipped := lipgloss.NewStyle().MaxHeight(contentH).Height(contentH).Render(inner)
-	return lipgloss.NewStyle().Width(contentW).Background(colorBg1).Render(
-		lipgloss.Place(
-			contentW, contentH,
-			lipgloss.Left, lipgloss.Top,
-			clipped,
-			lipgloss.WithWhitespaceBackground(colorBg1),
-		),
-	)
+	controls := view.Help()
+	if m.showHelp {
+		controls = []string{helpItem("Esc", "close help")}
+	}
+	global := helpLine(helpItem("?", "help"), helpItem("q", "quit"))
+	available := m.width - ansi.StringWidth(global)
+	var kept []string
+	for _, item := range controls {
+		available -= ansi.StringWidth(item) + 2
+		if available < 0 {
+			break
+		}
+		kept = append(kept, item)
+	}
+	return fitRight(helpLine(append(kept, global)...), m.fileLabel(), m.width)
 }
 
-func (m model) renderStatusBar() string {
-	left := styleStatusLeft.Render(" ◈ HexxlaDB ")
-	mid := fmt.Sprintf(" %s · %s ", m.dbPath, m.metadata)
-	keys := styleStatusRight.Render(" 1-5 tabs · Tab cycle · q quit ")
+func (m model) fileLabel() string {
+	return styleDim.Render(truncStr(filepath.Base(m.dbPath), 32))
+}
 
-	midW := max(0, m.width-lipgloss.Width(left)-lipgloss.Width(keys))
-	if midW == 0 {
-		return lipgloss.JoinHorizontal(lipgloss.Top, left, keys)
+func (m model) renderHelp() string {
+	lines := []string{
+		styleAccent.Render("Keyboard shortcuts"),
+		helpLine(helpItem("1–5", "switch view"), helpItem("Tab / Shift+Tab", "cycle views"), helpItem("q", "quit")),
+		styleDim.Render(tabNames[m.current]) + "  " + helpLine(m.tabs[m.current].Help()...),
+		styleDim.Render(terminalText(m.dbPath) + " · " + m.metadata),
 	}
-	mid = styleStatusMid.Width(midW).Render(truncStr(mid, midW-2))
+	return ansi.Wrap(strings.Join(lines, "\n"), m.width, "")
+}
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, mid, keys)
+func fitRight(left, right string, width int) string {
+	gap := width - ansi.StringWidth(left) - ansi.StringWidth(right)
+	if gap < 2 {
+		return ansi.Truncate(left, width, "…")
+	}
+	return left + strings.Repeat(" ", gap) + right
 }

@@ -6,8 +6,7 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/table"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/hexxla/hexxladb"
 )
@@ -175,161 +174,79 @@ func (v *cellsView) browse() tea.Cmd {
 	return func() tea.Msg { return loadCells(db, request) }
 }
 
+func (v *cellsView) Help() []string {
+	if v.searching {
+		return []string{helpItem("Enter", "search"), helpItem("Esc", "cancel")}
+	}
+	return []string{helpItem("/", "search"), helpItem("Enter", "inspect"),
+		helpItem("↑↓/jk", "move"), helpItem("e", "mode"), helpItem("r", "browse"), helpItem("g/G", "first/last")}
+}
+
 func (v *cellsView) View() string {
+	total := v.totalRows()
+	title := styleDim.Render("Browse · " + searchModeLabel(v.searchMode))
+	if v.searched {
+		title = styleDim.Render(fmt.Sprintf("%s · %q", searchModeLabel(v.resultMode), v.query))
+	}
+	position := styleDim.Render(rowPosition(v.cursor, total))
+	title = ansi.Truncate(title, max(0, v.width-ansi.StringWidth(position)-2), "…")
+	lines := []string{fitRight(title, position, v.width)}
+	if v.searching {
+		prefix := "/ " + searchModeLabel(v.searchMode) + "  "
+		text := terminalText(v.input)
+		excess := ansi.StringWidth(text) - max(1, v.width-len(prefix)-1)
+		if excess > 0 {
+			text = ansi.TruncateLeft(text, excess+1, "…")
+		}
+		lines[0] = styleAccent.Render(prefix) + text + styleAccent.Render("▏")
+	}
+
 	switch {
 	case v.loading:
-		return lipgloss.JoinVertical(lipgloss.Left, v.renderSearchBar(), styleLoading.Render("  ⟳  Loading cells…"))
-	case v.totalRows() == 0:
-		return v.renderEmptyState()
-	default:
-		return v.renderCellTable(v.totalRows(), v.searched)
+		lines = append(lines, styleDim.Render("Loading cells…"))
+	case v.err != nil:
+		lines = append(lines, styleBad.Render("Search / browse: "+terminalText(v.err.Error())))
+	case total == 0 && v.searched:
+		lines = append(lines, styleDim.Render("No matching cells."))
+	case total == 0:
+		lines = append(lines, styleDim.Render("No cells in this database."))
 	}
-}
-
-func (v *cellsView) renderEmptyState() string {
-	text := "  No cells found in database."
-	if v.searched {
-		text = fmt.Sprintf("  No results for %q.", v.query)
-	}
-	state := styleDim.Render(text)
-	if v.err != nil {
-		state = v.renderError()
-	}
-	return lipgloss.JoinVertical(lipgloss.Left,
-		v.renderSearchBar(), state,
-		styleHelp.Render("  "+helpItem("/", "new search")+"  "+helpItem("r", "browse cells")),
-	)
-}
-
-func (v *cellsView) renderError() string {
-	if v.searched {
-		return styleBad.Render("  Search: " + terminalText(v.err.Error()))
-	}
-	return styleBad.Render("  Cells: " + terminalText(v.err.Error()))
-}
-
-// renderCellTable renders the main cell table with headers, rows, and footer.
-func (v *cellsView) renderCellTable(total int, isSearch bool) string {
-	w := max(60, v.width-4)
-
-	// ── visible window: reserve title(1)+scrollInfo(1)+searchbar(1-2)+help(1) = 4-5 lines
-	extraLines := 4
-	if v.searching {
-		extraLines++
-	}
-	if v.err != nil {
-		extraLines++
-	}
-	visH := max(3, v.height-extraLines)
-
-	// Viewport: keep cursor visible, centered when possible
-	start := max(0, v.cursor-visH/2)
-	end := min(start+visH, total)
-	if end-start < visH && start > 0 {
-		start = max(0, end-visH)
-	}
-
-	// ── column widths
-	coordW := 10
-	tagsW := 20
-	confW := 6
-	contentW := max(10, w-coordW-tagsW-confW-10)
-
-	var headers []string
-	if isSearch {
-		headers = []string{" ", "COORD", "CONTENT", "TAGS", "SCORE"}
-	} else {
-		headers = []string{" ", "COORD", "CONTENT", "TAGS", "CONF"}
-	}
-
-	t := table.New().
-		Border(lipgloss.NormalBorder()).
-		BorderStyle(lipgloss.NewStyle().Foreground(colorText2)).
-		Headers(headers...).
-		Width(w).
-		StyleFunc(v.cellTableStyleFunc(start, isSearch))
-
-	for i := start; i < end; i++ {
-		c, score := v.rowCell(i)
-		marker := styleDim.Render("  ")
-		if i == v.cursor {
-			marker = lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg3).Render(" ▶")
-		}
-		coord := fmt.Sprintf("(%d,%d)", c.Coord.Q, c.Coord.R)
-		content := truncStr(c.RawContent, contentW)
-		tags := truncStr(strings.Join(c.Tags, " "), tagsW)
-		var last string
-		if isSearch {
-			last = fmt.Sprintf("%.2f", score)
-		} else {
-			last = fmt.Sprintf("%.2f", c.Provenance.Confidence)
-		}
-		t = t.Row(marker, coord, content, tags, last)
-	}
-
-	pct := 0
 	if total > 0 {
-		pct = (v.cursor + 1) * 100 / total
+		lines = append(lines, v.renderRows(total, v.height-len(lines)-1))
 	}
-	title := "◈ Cells"
-	if isSearch {
-		modeStr := searchModeLabel(v.resultMode)
-		title = fmt.Sprintf("◈ Cells  ⌕ %q [%s] — %d results", v.query, modeStr, total)
-	}
-	scrollInfo := styleDim.Render(fmt.Sprintf("  %d/%d  (%d%%)", v.cursor+1, total, pct))
-
-	help := helpItem("↑↓/jk", "navigate") + "  " +
-		helpItem("g/G", "top/bottom") + "  " +
-		helpItem("Enter", "inspect") + "  " +
-		helpItem("/", "search") + "  " +
-		helpItem("e", "cycle: lex→sem→hybrid") + "  " +
-		helpItem("r", "browse cells")
-
-	parts := []string{viewTitle(title, v.width), scrollInfo}
-	if v.err != nil {
-		parts = append(parts, v.renderError())
-	}
-	if bar := v.renderSearchBar(); bar != "" {
-		parts = append(parts, bar)
-	}
-	tableRender := t.Render()
-	// Clip table to viewport height to prevent overflow
-	tableRender = lipgloss.NewStyle().MaxHeight(visH).Render(tableRender)
-	parts = append(parts, tableRender, styleHelp.Render("  "+help))
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	return strings.Join(lines, "\n")
 }
 
-// cellTableStyleFunc returns the StyleFunc for the cell table, parameterised by scroll start and mode.
-func (v *cellsView) cellTableStyleFunc(start int, isSearch bool) func(row, col int) lipgloss.Style {
-	return func(row, col int) lipgloss.Style {
-		if row == table.HeaderRow {
-			return lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Bold(true).Padding(0, 1)
-		}
-		actualIdx := start + row
-		base := lipgloss.NewStyle().Padding(0, 1).Background(colorBg1)
-		switch {
-		case actualIdx == v.cursor:
-			base = base.Background(colorBg3).Foreground(colorCyan).Bold(true)
-		case row%2 == 0:
-			base = base.Foreground(colorText1)
-		default:
-			base = base.Foreground(colorText0)
-		}
-		switch col {
-		case 2: // content
-			if actualIdx != v.cursor {
-				return base.Foreground(colorText0)
-			}
-		case 3: // tags
-			return base.Foreground(colorYellow)
-		case 4: // conf/score
-			if isSearch {
-				return base.Foreground(colorPurple)
-			}
-			return base.Foreground(colorGreen)
-		}
-		return base
+func (v *cellsView) renderRows(total, room int) string {
+	start, end := visibleRows(total, v.cursor, room)
+	coordWidth, tagsWidth := len("COORD"), len("TAGS")
+	for i := start; i < end; i++ {
+		cell, _ := v.rowCell(i)
+		coordWidth = max(coordWidth, len(coordText(cell.Coord)))
+		tagsWidth = max(tagsWidth, ansi.StringWidth(terminalText(strings.Join(cell.Tags, " "))))
 	}
+	last := "CONF"
+	if v.searched {
+		last = "SCORE"
+	}
+	columns := []column{{label: "COORD", width: min(coordWidth, v.width/3)}, {label: "CONTENT"}}
+	showTags := v.width >= 55
+	if showTags {
+		columns = append(columns, column{label: "TAGS", width: min(tagsWidth, 24, v.width/4)})
+	}
+	columns = append(columns, column{label: last, width: 6, right: true})
+	table := compactTable{columns: columns, width: v.width}
+	return table.render(total, v.cursor, room, func(i int) []string {
+		cell, score := v.rowCell(i)
+		values := []string{coordText(cell.Coord), cell.RawContent}
+		if showTags {
+			values = append(values, strings.Join(cell.Tags, " "))
+		}
+		if !v.searched {
+			score = cell.Provenance.Confidence
+		}
+		return append(values, fmt.Sprintf("%.2f", score))
+	})
 }
 
 func searchModeLabel(mode string) string {
@@ -341,28 +258,4 @@ func searchModeLabel(mode string) string {
 	default:
 		return "lexical"
 	}
-}
-
-func searchModeColor(mode string) lipgloss.Color {
-	switch mode {
-	case "embedding":
-		return colorPink
-	case "hybrid":
-		return colorGreen
-	default:
-		return colorCyan
-	}
-}
-
-func (v *cellsView) renderSearchBar() string {
-	if v.searching {
-		modeStr := searchModeLabel(v.searchMode)
-		modeClr := searchModeColor(v.searchMode)
-		return lipgloss.NewStyle().Foreground(colorCyan).Background(colorBg1).Render("  ⌕  ") +
-			lipgloss.NewStyle().Foreground(modeClr).Background(colorBg1).Render("["+modeStr+"] ") +
-			lipgloss.NewStyle().Foreground(colorText0).Background(colorBg1).Bold(true).Render(terminalText(v.input)) +
-			lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Render("█") +
-			styleDim.Render("  Enter=search  Esc=clear")
-	}
-	return ""
 }

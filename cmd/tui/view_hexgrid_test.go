@@ -27,13 +27,14 @@ func TestHexGridFOVRendersOccludedCell(t *testing.T) {
 	}
 
 	view := &hexGridView{db: db, radius: 2}
+	view.SetSize(60, 16)
 	view.Update(view.loadCmd()())
 	ansi := regexp.MustCompile(`\x1b\[[0-9;]*m`)
-	if got := ansi.ReplaceAllString(view.View(), ""); !strings.Contains(got, "[●]") {
+	if got := ansi.ReplaceAllString(view.View(), ""); !strings.Contains(got, "●") {
 		t.Fatalf("regular grid does not show the occupied marker: %q", got)
 	}
 	view.showFOV = true
-	if got := ansi.ReplaceAllString(view.View(), ""); !strings.Contains(got, "[○]") || strings.Contains(got, "[●]") {
+	if got := ansi.ReplaceAllString(view.View(), ""); !strings.Contains(got, "○") || strings.Contains(got, "●") {
 		t.Fatalf("FOV grid did not mark the occluded cell: %q", got)
 	}
 }

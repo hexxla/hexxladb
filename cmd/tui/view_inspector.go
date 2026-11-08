@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/hexxla/hexxladb"
 )
@@ -25,13 +25,20 @@ type inspectorView struct {
 	packErr     error
 	request     uint64
 	width       int
+	height      int
+	scroll      int
+	contextMode bool
+	lines       []string
 }
 
 func newInspectorView(db *hexxladb.DB) view {
 	return &inspectorView{db: db}
 }
 
-func (v *inspectorView) SetSize(w, _ int) { v.width = w }
+func (v *inspectorView) SetSize(w, h int) {
+	v.width, v.height = w, h
+	v.reflow()
+}
 
 func (v *inspectorView) Update(msg tea.Msg) (view, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -45,6 +52,7 @@ func (v *inspectorView) Update(msg tea.Msg) (view, tea.Cmd) {
 			if msg.err == nil {
 				v.data = &msg.cell
 			}
+			v.reflow()
 		}
 	case contextLoadedMsg:
 		if msg.request == v.request {
@@ -52,6 +60,7 @@ func (v *inspectorView) Update(msg tea.Msg) (view, tea.Cmd) {
 			v.packErr = msg.err
 			v.pack = msg.pack
 			v.fovCells = msg.visible
+			v.reflow()
 		}
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -60,6 +69,22 @@ func (v *inspectorView) Update(msg tea.Msg) (view, tea.Cmd) {
 				cmd := v.loadContext(msg.String() == "f")
 				return v, cmd
 			}
+		case "d":
+			v.contextMode = false
+			v.scroll = 0
+			v.reflow()
+		case "up", "k":
+			v.scrollBy(-1)
+		case "down", "j":
+			v.scrollBy(1)
+		case "pgup":
+			v.scrollBy(-v.pageHeight())
+		case "pgdown":
+			v.scrollBy(v.pageHeight())
+		case "g", "home":
+			v.scroll = 0
+		case "G", "end":
+			v.scroll = v.maxScroll()
 		case "r":
 			if v.selected {
 				cmd := v.selectCell(v.cell)
@@ -76,7 +101,10 @@ func (v *inspectorView) selectCell(coord hexxladb.Coord) tea.Cmd {
 	v.cellLoading = true
 	v.cellErr = nil
 	v.data = nil
+	v.contextMode = false
+	v.scroll = 0
 	v.clearContext()
+	v.reflow()
 	db, request := v.db, v.request
 	return func() tea.Msg {
 		var cell hexxladb.CellView
@@ -100,6 +128,9 @@ func (v *inspectorView) clearContext() {
 func (v *inspectorView) loadContext(fov bool) tea.Cmd {
 	v.clearContext()
 	v.packLoading = true
+	v.contextMode = true
+	v.scroll = 0
+	v.reflow()
 	db, coord, request := v.db, v.cell, v.request
 	return func() tea.Msg {
 		if fov {
@@ -138,268 +169,123 @@ func loadContextPack(db *hexxladb.DB, coord hexxladb.Coord) (hexxladb.ContextPac
 	return pack, err
 }
 
+func (v *inspectorView) Help() []string {
+	return []string{helpItem("Esc", "back"), helpItem("↑↓", "scroll"), helpItem("d", "details"),
+		helpItem("c", "context"), helpItem("f", "FOV"), helpItem("r", "reload"), helpItem("PgUp/PgDn", "page")}
+}
+
 func (v *inspectorView) View() string {
-	w := max(40, v.width-6)
-	halfW := w/2 - 2
-
-	if v.data == nil {
-		prompt := styleDim.Render("  Press Enter on a cell in Cells or Hex Grid to inspect it.")
-		switch {
-		case v.cellLoading:
-			prompt = styleLoading.Render("  ⟳  Loading cell…")
-		case v.cellErr != nil:
-			prompt = styleBad.Render(fmt.Sprintf("  Cell (%d,%d): %v", v.cell.Q, v.cell.R, v.cellErr))
+	title := styleAccent.Render("Inspect")
+	if v.selected {
+		title = styleAccent.Render(coordText(v.cell)) + styleDim.Render(" · Details")
+		if v.contextMode {
+			title = styleAccent.Render(coordText(v.cell)) + styleDim.Render(" · Context")
 		}
-		return lipgloss.JoinVertical(lipgloss.Left, viewTitle("◈ Cell Inspector", v.width), "", prompt)
 	}
-
-	// ── cell detail card ─────────────────────────────────────────────────────
-	kv := func(label, value string) string {
-		return lipgloss.JoinHorizontal(lipgloss.Left,
-			styleCardKey.Width(14).Render(label+":"),
-			styleCardValue.Render(value),
-		)
+	end := min(v.scroll+v.pageHeight(), len(v.lines))
+	if len(v.lines) > v.pageHeight() {
+		title = fitRight(title, styleDim.Render(fmt.Sprintf("%d–%d / %d", v.scroll+1, end, len(v.lines))), v.width)
 	}
+	return title + "\n" + strings.Join(v.lines[v.scroll:end], "\n")
+}
 
-	tagsStr := strings.Join(v.data.Tags, "  ")
-	if tagsStr == "" {
-		tagsStr = styleCardDim.Render("(none)")
-	} else {
-		var parts []string
-		for _, t := range v.data.Tags {
-			parts = append(parts, styleTag.Render(terminalText(t)))
-		}
-		tagsStr = strings.Join(parts, " ")
+func (v *inspectorView) pageHeight() int { return max(1, v.height-1) }
+func (v *inspectorView) maxScroll() int  { return max(0, len(v.lines)-v.pageHeight()) }
+
+func (v *inspectorView) scrollBy(delta int) {
+	v.scroll = min(max(0, v.scroll+delta), v.maxScroll())
+}
+
+func (v *inspectorView) reflow() {
+	width := max(1, v.width)
+	content := v.content()
+	v.lines = strings.Split(ansi.Wrap(content, width, ""), "\n")
+	v.scroll = min(v.scroll, v.maxScroll())
+}
+
+func (v *inspectorView) content() string {
+	switch {
+	case v.cellLoading:
+		return styleDim.Render("Loading cell…")
+	case v.cellErr != nil:
+		return styleBad.Render("Cell error: " + terminalText(v.cellErr.Error()))
+	case v.data == nil:
+		return styleDim.Render("Press Enter on a cell in Cells or Hex Grid.")
+	case v.contextMode:
+		return v.contextContent()
 	}
+	cell := v.data
+	meta := fmt.Sprintf("Confidence %.3f", cell.Provenance.Confidence)
+	if cell.Provenance.SourceID != "" {
+		meta += " · Source " + terminalText(cell.Provenance.SourceID)
+	}
+	lines := []string{styleDim.Render(meta)}
+	if len(cell.Tags) > 0 {
+		lines = append(lines, styleDim.Render("Tags ")+terminalText(strings.Join(cell.Tags, " · ")))
+	}
+	if cell.ClusterHint != nil {
+		lines = append(lines, styleDim.Render("Cluster ")+coordText(*cell.ClusterHint))
+	}
+	lines = append(lines, "", terminalBody(cell.RawContent))
+	for _, facet := range cell.Facets {
+		lines = append(lines, "", styleAccent.Render(fmt.Sprintf("Facet %d", facet.ID)), terminalBody(facet.DerivedContent))
+	}
+	return strings.Join(lines, "\n")
+}
 
-	cellDetail := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorCyan).
-		Background(colorBg2).
-		Padding(0, 2).
-		Width(halfW).
-		Render(
-			styleCardHeader.Render("Cell") + "\n" +
-				kv("Coord", fmt.Sprintf("(%d,%d)", v.data.Coord.Q, v.data.Coord.R)) + "\n" +
-				kv("Confidence", fmt.Sprintf("%.3f", v.data.Provenance.Confidence)) + "\n" +
-				kv("Source", truncStr(v.data.Provenance.SourceID, halfW-18)) + "\n" +
-				"\n" +
-				styleCardDim.Render("Tags") + "\n" +
-				tagsStr + "\n\n" +
-				styleCardDim.Render("Content") + "\n" +
-				styleCardValue.Render(terminalBody(v.data.RawContent)) + v.renderEnrichment(),
-		)
-
-	// ── context pack ─────────────────────────────────────────────────────────────
-	var packPanel string
+func (v *inspectorView) contextContent() string {
 	switch {
 	case v.packLoading:
-		packPanel = styleBorderSubtle.Background(colorBg2).Width(halfW).Padding(0, 2).Render(
-			lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg2).Bold(true).Italic(true).Render("⟳  Loading context…"),
-		)
+		return styleDim.Render("Loading context…")
 	case v.packErr != nil:
-		packPanel = styleBad.Render(fmt.Sprintf("  Context error: %v", v.packErr))
-	case v.pack == nil && v.fovCells == nil:
-		packPanel = styleBorderSubtle.Background(colorBg2).Width(halfW).Padding(0, 2).Render(
-			styleCardHeader.Render("Context Loading") + "\n" +
-				styleCardDim.Render("Press ") + lipgloss.NewStyle().Foreground(colorCyan).Background(colorBg2).Bold(true).Render("c") + styleCardDim.Render(" radial context pack\n") +
-				styleCardDim.Render("Press ") + lipgloss.NewStyle().Foreground(colorGreen).Background(colorBg2).Bold(true).Render("f") + styleCardDim.Render(" FOV-filtered context\n") +
-				styleCardDim.Render("(radius 3, seam-aware, visibility-filtered)"),
-		)
-	case v.fovCells != nil:
-		packPanel = v.renderFOV(halfW)
-	default:
-		packPanel = v.renderPack(halfW)
+		return styleBad.Render("Context error: " + terminalText(v.packErr.Error()))
+	case v.pack != nil:
+		return renderContextPack(*v.pack, v.width)
 	}
-
-	top := lipgloss.JoinHorizontal(lipgloss.Top, cellDetail, "  ", packPanel)
-
-	// ── explain panel ─────────────────────────────────────────────────────────
-	var explainPanel string
-	if v.packErr == nil && v.pack != nil && len(v.pack.Explanations) > 0 {
-		explainPanel = v.renderExplain(w)
+	lines := []string{styleAccent.Render(fmt.Sprintf("FOV context · %d visible cells · radius 3", len(v.fovCells)))}
+	for _, cell := range v.fovCells {
+		coord, _ := hexxladb.Unpack(cell.Key)
+		lines = append(lines, contextRow(coord, cell.Provenance.Confidence, cell.RawContent, v.width))
 	}
-
-	help := helpItem("c", "radial context") + "  " + helpItem("f", "FOV context") + "  " + helpItem("r", "reset")
-
-	parts := []string{
-		viewTitle("◈ Cell Inspector", v.width),
-		"",
-		top,
-	}
-	if explainPanel != "" {
-		parts = append(parts, "", explainPanel)
-	}
-	parts = append(parts, "", styleHelp.Render("  "+help))
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	return strings.Join(lines, "\n")
 }
 
-func (v *inspectorView) renderEnrichment() string {
-	var details strings.Builder
-	if v.data.ClusterHint != nil {
-		fmt.Fprintf(&details, "\n\nCluster hint (%d,%d)", v.data.ClusterHint.Q, v.data.ClusterHint.R)
+func renderContextPack(pack hexxladb.ContextPack, width int) string {
+	lines := []string{styleAccent.Render(fmt.Sprintf("Radial context · %d cells · %d seams", len(pack.Cells), len(pack.Seams)))}
+	if pack.Stats.CandidatesScanned > 0 {
+		stats := fmt.Sprintf("%d candidates · radius %d", pack.Stats.CandidatesScanned, pack.Stats.MaxRingUsed)
+		if pack.Stats.ResultLimitReached {
+			stats += " · result limit reached"
+		}
+		lines = append(lines, styleDim.Render(stats))
 	}
-	for _, facet := range v.data.Facets {
-		fmt.Fprintf(&details, "\n\nFacet %d: %s", facet.ID, terminalBody(facet.DerivedContent))
+	for _, cell := range pack.Cells {
+		row := contextRow(cell.Coord, cell.Provenance.Confidence, cell.RawContent, width)
+		if cell.SupersededFrom != nil {
+			row += styleDim.Render(" · replaced " + coordText(*cell.SupersededFrom))
+		}
+		lines = append(lines, row)
 	}
-	return details.String()
-}
-
-func (v *inspectorView) renderPack(w int) string {
-	p := v.pack
-	var sb strings.Builder
-
-	sb.WriteString(styleCardHeader.Render("Context Pack") + "\n")
-	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Left,
-		styleCardDim.Render("cells: "), lipgloss.NewStyle().Foreground(colorGreen).Background(colorBg2).Render(fmt.Sprintf("%d", len(p.Cells))),
-		styleCardDim.Render("  seams: "), lipgloss.NewStyle().Foreground(colorOrange).Background(colorBg2).Render(fmt.Sprintf("%d", len(p.Seams))),
-	) + "\n")
-
-	if p.Stats.CandidatesScanned > 0 {
-		sb.WriteString(styleCardDim.Render(fmt.Sprintf(
-			"scanned %d, limit reached %t, max ring %d",
-			p.Stats.CandidatesScanned, p.Stats.ResultLimitReached, p.Stats.MaxRingUsed,
-		)) + "\n")
-	}
-	sb.WriteString("\n")
-
-	maxConf := 0.0
-	for _, c := range p.Cells {
-		if c.Provenance.Confidence > maxConf {
-			maxConf = c.Provenance.Confidence
+	if len(pack.Seams) > 0 {
+		lines = append(lines, "", styleAccent.Render("Seams"))
+		for _, seam := range pack.Seams {
+			lines = append(lines, terminalText(seam.SeamType+" · "+seam.Reason))
 		}
 	}
-	if maxConf == 0 {
-		maxConf = 1
-	}
-
-	for _, c := range p.Cells {
-		prefix := styleCardDim.Render("  ")
-		clr := colorText0
-		if c.SupersededFrom != nil {
-			prefix = lipgloss.NewStyle().Foreground(colorPink).Background(colorBg2).Render(" ↺")
-			clr = colorCyan
-		}
-		bar := barGraphBg(int(c.Provenance.Confidence*100), int(maxConf*100), 8, colorGreen, colorBg2)
-		line := lipgloss.JoinHorizontal(lipgloss.Left,
-			prefix,
-			lipgloss.NewStyle().Foreground(colorText2).Background(colorBg2).Width(10).Render(
-				fmt.Sprintf("(%d,%d)", c.Coord.Q, c.Coord.R),
-			),
-			bar,
-			styleCardDim.Render("  "),
-			lipgloss.NewStyle().Foreground(clr).Background(colorBg2).Render(truncStr(c.RawContent, w-32)),
-		)
-		if c.SupersededFrom != nil {
-			line += "\n" + lipgloss.NewStyle().Foreground(colorPink).Background(colorBg2).Render(
-				fmt.Sprintf("    ↳ superseded (%d,%d)", c.SupersededFrom.Q, c.SupersededFrom.R),
-			)
-		}
-		sb.WriteString(line + "\n")
-	}
-
-	if len(p.Seams) > 0 {
-		sb.WriteString("\n" + styleCardHeader.Render("Seams in Pack") + "\n")
-		for _, s := range p.Seams {
-			sb.WriteString(
-				lipgloss.NewStyle().Foreground(colorOrange).Background(colorBg2).Render(fmt.Sprintf("  ⋈ %s", terminalText(s.SeamType))) +
-					styleCardDim.Render(fmt.Sprintf("  %s", truncStr(s.Reason, w-24))) + "\n")
-		}
-	}
-
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorPurple).
-		Background(colorBg2).
-		Padding(0, 1).
-		Width(w).
-		Render(sb.String())
-}
-
-func (v *inspectorView) renderFOV(w int) string {
-	cells := v.fovCells
-	var sb strings.Builder
-
-	sb.WriteString(styleCardHeader.Render("FOV Context (visibility-filtered)") + "\n")
-	sb.WriteString(lipgloss.JoinHorizontal(lipgloss.Left,
-		styleCardDim.Render("visible cells: "), lipgloss.NewStyle().Foreground(colorGreen).Background(colorBg2).Render(fmt.Sprintf("%d", len(cells))),
-		styleCardDim.Render("  center: "), styleCardValue.Render(fmt.Sprintf("(%d,%d)", v.cell.Q, v.cell.R)),
-		styleCardDim.Render("  radius: "), styleCardValue.Render("3"),
-	) + "\n")
-	sb.WriteString(styleCardDim.Render("empty cells block line-of-sight") + "\n\n")
-
-	maxConf := 0.0
-	for _, c := range cells {
-		if c.Provenance.Confidence > maxConf {
-			maxConf = c.Provenance.Confidence
-		}
-	}
-	if maxConf == 0 {
-		maxConf = 1
-	}
-
-	for _, c := range cells {
-		coord, _ := hexxladb.Unpack(c.Key)
-		dist := v.cell.Distance(coord)
-		bar := barGraphBg(int(c.Provenance.Confidence*100), int(maxConf*100), 8, colorGreen, colorBg2)
-		line := lipgloss.JoinHorizontal(lipgloss.Left,
-			lipgloss.NewStyle().Foreground(colorText2).Background(colorBg2).Width(10).Render(
-				fmt.Sprintf("(%d,%d)", coord.Q, coord.R),
-			),
-			lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg2).Width(4).Render(
-				fmt.Sprintf("d%d", dist),
-			),
-			bar,
-			styleCardDim.Render("  "),
-			lipgloss.NewStyle().Foreground(colorText0).Background(colorBg2).Render(truncStr(c.RawContent, w-36)),
-		)
-		sb.WriteString(line + "\n")
-	}
-
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorGreen).
-		Background(colorBg2).
-		Padding(0, 1).
-		Width(w).
-		Render(sb.String())
-}
-
-func (v *inspectorView) renderExplain(w int) string {
-	var sb strings.Builder
-	sb.WriteString(styleCardHeader.Render("Assembly Decisions") + "\n")
-	for _, ex := range v.pack.Explanations {
-		var marker string
-		switch ex.Reason {
-		case "included":
-			marker = lipgloss.NewStyle().Foreground(colorGreen).Background(colorBg2).Render("✓")
-		case "superseded":
-			marker = lipgloss.NewStyle().Foreground(colorPink).Background(colorBg2).Render("↺")
-		default:
-			marker = lipgloss.NewStyle().Foreground(colorRed).Background(colorBg2).Render("✗")
-		}
-		detail := styleCardDim.Render(fmt.Sprintf("ring=%-2d", ex.Ring))
-		reason := lipgloss.NewStyle().Foreground(func() lipgloss.Color {
-			switch ex.Reason {
-			case "included":
-				return colorGreen
-			case "superseded":
-				return colorPink
-			default:
-				return colorRed
+	if len(pack.Explanations) > 0 {
+		lines = append(lines, "", styleAccent.Render("Assembly decisions"))
+		for _, decision := range pack.Explanations {
+			row := fmt.Sprintf("%s · ring %d · %s", coordText(decision.Coord), decision.Ring, decision.Reason)
+			if decision.SupersededBy != nil {
+				row += " → " + coordText(*decision.SupersededBy)
 			}
-		}()).Background(colorBg2).Render(ex.Reason)
-		extra := ""
-		if ex.SupersededBy != nil {
-			extra = styleCardDim.Render(fmt.Sprintf(" → (%d,%d)", ex.SupersededBy.Q, ex.SupersededBy.R))
+			lines = append(lines, styleDim.Render(row))
 		}
-		fmt.Fprintf(&sb, "  %s  (%d,%d) %s  %s%s\n",
-			marker,
-			ex.Coord.Q, ex.Coord.R,
-			detail,
-			reason,
-			extra,
-		)
 	}
-	return styleBorderSubtle.Background(colorBg2).Width(w).Padding(0, 1).Render(sb.String())
+	return strings.Join(lines, "\n")
+}
+
+func contextRow(coord hexxladb.Coord, confidence float64, content string, width int) string {
+	label := fmt.Sprintf("%s %.2f  ", coordText(coord), confidence)
+	return styleDim.Render(label) + truncStr(content, width-len(label))
 }

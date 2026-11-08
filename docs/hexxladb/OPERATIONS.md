@@ -96,14 +96,20 @@ standard-base64 `HEXXLA_ENCRYPTION_KEY`, matching the credential used to open
 the database in the application. The CLI commands `info`, `check`, and
 `stats` use the same credential variables.
 
-- **Cells** lists up to 200 visible cells. Use `/` for lexical search and
-  Enter to inspect a row. Browsing and lexical search report partial results
-  when they reach the 20,000-row scan limit. Press `e` to cycle search modes.
+Use `1`–`5` or Tab to switch views and `?` for contextual shortcuts.
+The footer shows the main actions for the active view.
+
+- **Cells** lists up to 200 visible cells. The `›` next to a coordinate
+  marks the selected row. Use `/` for lexical search and Enter to inspect
+  a row. In narrow windows, the Inspector shows the selected cell's tags.
+  Browsing and lexical search report partial results at the 20,000-row scan limit. Press `e` to cycle search modes.
 - **Hex Grid** shows occupancy and per-ring density. Use the arrow keys to
   move, `+` or `-` to zoom, `v` to toggle the visibility overlay, and
   Enter to inspect the center.
 - **Inspector** shows typed cell details, including facets and cluster hints.
-  Use `c` for a radial context pack or `f` for visibility-filtered context.
+  Use `c` for a radial context pack, `f` for visibility-filtered context,
+  or `d` for cell details. Scroll with the arrow keys or Page Up and Page
+  Down. Esc returns to the originating view.
 - **Seams** lists visible seams. **Diff** shows retained MVCC cell and seam
   history over the last ten commit sequences. The diff lists cell changes and
   summarizes the number of seam changes.

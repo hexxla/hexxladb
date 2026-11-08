@@ -214,18 +214,17 @@ v1. The five-sample medians at 2,000 cells were 15,733 ns/op for v2 and 15,819
 ns/op for v3 (+0.55%); both reported 451 allocations and approximately 34.7 KiB
 allocated per operation. The difference is within run variation and establishes
 no read-path regression from authenticated decryption. It also shows that the
-larger cost in the README table belongs to the current MVCC version-seek path,
-not the page cipher; future MVCC allocation work requires its own profile and
-acceptance target.
+2026-08-26 baseline primarily reflects the cost of MVCC version seeks.
+Future MVCC allocation work requires its own profile and acceptance target.
 
 These are in-process CPU and synthetic point-read measurements, not a durability
 or storage-device throughput claim. Crash-marker recovery, tamper faults,
 migration, compaction, backup/restore, and rotation are correctness gates and
 remain covered by their dedicated tests.
 
-### Current public-API snapshot
+### Public API baseline from August 26, 2026
 
-The 2026-08-26 README refresh ran after the bounded-work, query-planner,
+This historical baseline was measured after the bounded-work, query-planner,
 integrity, and HNSW remediation. Each benchmark below ran sequentially in five
 independent samples against a fresh temporary database. Fixed iteration counts
 keep the suite bounded while giving short operations enough repetitions:

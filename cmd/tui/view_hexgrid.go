@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -19,6 +18,7 @@ type hexGridView struct {
 	radius  int
 	showFOV bool // toggle FOV overlay
 	width   int
+	height  int
 	request uint64
 	loading bool
 	data    gridLoadedMsg
@@ -28,7 +28,7 @@ func newHexGridView(db *hexxladb.DB) view {
 	return &hexGridView{db: db, center: hexxladb.Coord{}, radius: 3}
 }
 
-func (v *hexGridView) SetSize(w, _ int) { v.width = w }
+func (v *hexGridView) SetSize(w, h int) { v.width, v.height = w, h }
 
 type gridLoadedMsg struct {
 	request  uint64
@@ -130,77 +130,80 @@ func loadGrid(db *hexxladb.DB, center hexxladb.Coord, radius int) gridLoadedMsg 
 	return gridLoadedMsg{occupied: occupied, density: ringDensity, err: err}
 }
 
+func (v *hexGridView) Help() []string {
+	return []string{helpItem("↑↓←→", "pan"), helpItem("+/-", "zoom"), helpItem("v", "FOV"),
+		helpItem("Enter", "inspect"), helpItem("0", "origin"), helpItem("r", "refresh")}
+}
+
 func (v *hexGridView) View() string {
 	if v.loading || v.request == 0 {
-		return styleLoading.Render("  ⟳  Loading hex grid…")
+		return styleDim.Render("Loading hex grid…")
 	}
 	if v.data.err != nil {
-		return styleBad.Render(fmt.Sprintf("  ✗  Hex grid error: %v", v.data.err))
+		return styleBad.Render("Hex grid error: " + terminalText(v.data.err.Error()))
 	}
-	w := max(40, v.width-6)
-	occupied := v.data.occupied
+	radius := min(v.radius, max(0, (v.width-1)/4), max(0, (v.height-3)/2))
+	title := fmt.Sprintf("%s · radius %d", coordText(v.center), v.radius)
+	if radius < v.radius {
+		title += fmt.Sprintf(" · showing %d", radius)
+	}
+	if v.showFOV {
+		title += " · FOV on"
+	}
+	grid := v.renderGrid(radius)
+	gridWidth := 4*radius + 1
+	density := v.densityLines()
+	if v.width >= gridWidth+22 && v.height >= len(density)+1 {
+		panel := lipgloss.JoinHorizontal(lipgloss.Top, grid, "   ", strings.Join(density, "\n"))
+		return styleAccent.Render(title) + "\n" + panel
+	}
+	return styleAccent.Render(title) + "\n" + grid + "\n" + density[0]
+}
 
+func (v *hexGridView) renderGrid(radius int) string {
+	occupied := v.data.occupied
 	var visible map[hexxladb.Coord]bool
 	if v.showFOV {
 		visible = inspect.VisibleHexes(v.center, v.radius, occupied)
 	}
-	grid := hexxladb.RenderHexGrid(context.Background(), v.center, v.radius, func(c hexxladb.Coord) string {
-		return hexGridMarker(occupied[c], v.showFOV && !visible[c])
-	})
-	coloredGrid := strings.NewReplacer(
-		"·", styleDim.Render("·"),
-		"●", lipgloss.NewStyle().Foreground(colorCyan).Background(colorBg1).Bold(true).Render("●"),
-		"○", styleDim.Render("○"),
-		"×", styleDim.Render("×"),
-	).Replace(grid)
-
-	fovLabel := ""
-	if v.showFOV {
-		fovLabel = lipgloss.NewStyle().Foreground(colorGreen).Background(colorBg1).Render("  FOV ON") +
-			styleDim.Render(fmt.Sprintf(" (%d visible)", len(visible)))
-	}
-
-	gridPanel := styleBorder.Background(colorBg1).Padding(0, 2).
-		Render(
-			styleSectionHeader.Render(fmt.Sprintf("Hex Grid — center (%d,%d) radius %d", v.center.Q, v.center.R, v.radius)) + fovLabel + "\n\n" +
-				coloredGrid,
-		)
-
-	// ── ring stats ────────────────────────────────────────────────────────────
-	var ringLines strings.Builder
-	for _, rd := range v.data.density {
-		pct := 0
-		if rd.Total > 0 {
-			pct = rd.Occupied * 100 / rd.Total
+	var grid strings.Builder
+	for r := -radius; r <= radius; r++ {
+		if r > -radius {
+			grid.WriteByte('\n')
 		}
-		bar := barGraph(rd.Occupied, rd.Total, 20, colorCyan)
-		ringLines.WriteString(
-			lipgloss.JoinHorizontal(lipgloss.Left,
-				styleDim.Render(fmt.Sprintf("  ring %d  ", rd.Ring)),
-				bar,
-				styleDim.Render(fmt.Sprintf("  %d/%d (%d%%)", rd.Occupied, rd.Total, pct)),
-			) + "\n",
-		)
+		first, last := max(-radius, -radius-r), min(radius, radius-r)
+		grid.WriteString(strings.Repeat(" ", 2*(first+radius)+r))
+		for q := first; q <= last; q++ {
+			if q > first {
+				grid.WriteByte(' ')
+			}
+			c := hexxladb.Coord{Q: v.center.Q + q, R: v.center.R + r}
+			marker := hexGridMarker(occupied[c], v.showFOV && !visible[c])
+			switch {
+			case c == v.center && occupied[c]:
+				grid.WriteString(styleActive.Render("◆"))
+			case c == v.center:
+				grid.WriteString(styleActive.Render("◇"))
+			case occupied[c] && (!v.showFOV || visible[c]):
+				grid.WriteString(styleAccent.Render(marker))
+			default:
+				grid.WriteString(styleDim.Render(marker))
+			}
+		}
 	}
-	statsPanel := styleBorderSubtle.Background(colorBg1).Width(w/3).Padding(0, 1).
-		Render(styleSectionHeader.Render("Ring Density") + "\n" + ringLines.String())
+	return grid.String()
+}
 
-	help := strings.Join([]string{
-		helpItem("↑↓←→/hjkl", "move center"),
-		helpItem("+/-", "zoom"),
-		helpItem("v", "toggle FOV (○ hidden cell, × hidden space)"),
-		helpItem("0", "origin"),
-		helpItem("r", "refresh"),
-		helpItem("Enter", "inspect center"),
-	}, "  ")
-
-	return lipgloss.JoinVertical(lipgloss.Left,
-		viewTitle("◈ Hex Grid", v.width),
-		"",
-		lipgloss.JoinHorizontal(lipgloss.Top, gridPanel, "  ", statsPanel),
-		"",
-		styleHelp.Render("  "+help),
-	)
+func (v *hexGridView) densityLines() []string {
+	positions := 1 + 3*v.radius*(v.radius+1)
+	lines := []string{styleDim.Render(fmt.Sprintf("Occupied %d/%d", len(v.data.occupied), positions))}
+	if v.showFOV {
+		lines = append(lines, styleDim.Render("○ occluded · × hidden"))
+	}
+	for _, ring := range v.data.density {
+		lines = append(lines, styleDim.Render(fmt.Sprintf("Ring %d  %d/%d", ring.Ring, ring.Occupied, ring.Total)))
+	}
+	return lines
 }
 
 func hexGridMarker(occupied, hidden bool) string {

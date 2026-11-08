@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/hexxla/hexxladb"
 	"github.com/hexxla/hexxladb/internal/cmdconfig"
@@ -71,6 +72,7 @@ func TestTabReplyDeliveredAfterTabSwitch(t *testing.T) {
 func TestInspectorIgnoresStaleContextAndDisplaysErrors(t *testing.T) {
 	t.Parallel()
 	v := &inspectorView{}
+	v.SetSize(80, 20)
 	v.selectCell(hexxladb.Coord{})
 	v.Update(cellDetailMsg{request: v.request, cell: hexxladb.CellView{RawContent: "first"}})
 	v.loadContext(true)
@@ -110,5 +112,69 @@ func TestTruncationPreservesUnicodeAndStripsControls(t *testing.T) {
 	input := "\x1b]52;c;YWJj\a猫 café"
 	if got := truncStr(input, 5); got != "猫 c…" {
 		t.Fatalf("truncated text = %q", got)
+	}
+}
+
+func TestExplorerLayoutFitsWideAndNarrowWindows(t *testing.T) {
+	t.Parallel()
+	cells := &cellsView{cursor: 29}
+	for i := range 30 {
+		cells.cells = append(cells.cells, hexxladb.CellView{
+			Coord: hexxladb.Coord{Q: i}, RawContent: "猫 café · a longer fixture row", Tags: []string{"example"},
+		})
+	}
+	grid := &hexGridView{radius: 8, request: 1}
+	inspector := &inspectorView{selected: true, data: new(hexxladb.CellView{RawContent: strings.Repeat("A long detail.\n", 20)})}
+	seams := &seamsView{loaded: true, seams: []seamRow{{stype: "conflict", status: "unresolved", reason: "fixture seam"}}}
+	diff := &diffView{loaded: true, diff: new(hexxladb.SnapshotDiff{
+		Cells: []hexxladb.CellDiff{{Op: hexxladb.DiffOpPut}},
+	})}
+	m := model{tabs: [...]view{cells, grid, inspector, seams, diff}}
+
+	for _, size := range []tea.WindowSizeMsg{{Width: 24, Height: 6}, {Width: 40, Height: 12}, {Width: 80, Height: 24}, {Width: 132, Height: 34}} {
+		resized, _ := m.Update(size)
+		m = resized.(model)
+		for i := range m.tabs {
+			m.current = i
+			lines := strings.Split(m.View(), "\n")
+			if len(lines) != size.Height {
+				t.Fatalf("view %d at %v has %d rows", i, size, len(lines))
+			}
+			for _, line := range lines {
+				if ansi.StringWidth(line) > size.Width {
+					t.Fatalf("view %d at %v overflows on %q", i, size, line)
+				}
+			}
+			if !strings.Contains(ansi.Strip(lines[len(lines)-1]), "q quit") {
+				t.Fatalf("view %d at %v lost the quit hint", i, size)
+			}
+		}
+		plain := ansi.Strip(cells.View())
+		if !strings.Contains(plain, " COORD") || !strings.Contains(plain, "›(29,0)") || strings.Count(plain, "›") != 1 {
+			t.Fatalf("selection is missing or detached at %v: %q", size, plain)
+		}
+	}
+}
+
+func TestInspectorScrollAndReturnToOrigin(t *testing.T) {
+	t.Parallel()
+	inspector := &inspectorView{
+		selected: true,
+		data:     new(hexxladb.CellView{RawContent: strings.Repeat("Visible line.\n", 20) + "last line"}),
+	}
+	inspector.SetSize(40, 10)
+	if strings.Contains(inspector.View(), "last line") {
+		t.Fatal("last line appeared before scrolling")
+	}
+	inspector.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	if !strings.Contains(inspector.View(), "last line") {
+		t.Fatal("End did not scroll to the last line")
+	}
+
+	grid := &hexGridView{request: 1}
+	m := model{current: inspectorTab, returnTo: 1, tabs: [...]view{&cellsView{}, grid, inspector, &seamsView{}, &diffView{}}}
+	back, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if back.(model).current != 1 {
+		t.Fatal("Escape did not return to the grid")
 	}
 }

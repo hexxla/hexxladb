@@ -6,6 +6,7 @@ import tea "github.com/charmbracelet/bubbletea"
 type view interface {
 	Update(msg tea.Msg) (view, tea.Cmd)
 	View() string
+	Help() []string
 	SetSize(w, h int)
 	// Consuming reports whether the tab is in a text-input mode (e.g. search
 	// bar open). When true, the model skips global shortcuts so keypresses
