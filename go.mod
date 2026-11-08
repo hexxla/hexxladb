@@ -8,7 +8,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.10.1
 	github.com/oklog/ulid/v2 v2.1.0
 	golang.org/x/crypto v0.55.0
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.49.0
 )
 
 require (
