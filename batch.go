@@ -1,8 +1,10 @@
 package hexxladb
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
@@ -16,10 +18,10 @@ import (
 type BatchPutCellOptions struct {
 	// BatchSize controls how many cells are written per transaction. Default 128.
 	BatchSize int
-	// OnProgress is called after each successfully written cell with the 0-based index.
+	// OnProgress is called after each durably committed cell with the 0-based index.
 	OnProgress func(index int)
-	// ContinueOnError, when true, skips cells that fail validation or encoding
-	// and continues with the remaining cells. Errors are collected and returned
+	// ContinueOnError, when true, skips cells rejected before any cell changes are staged.
+	// Storage and post-write hook failures abort the current batch. Errors are collected and returned
 	// at the end via [BatchPutCellResult.Errors].
 	ContinueOnError bool
 }
@@ -61,14 +63,15 @@ func (db *DB) BatchPutCells(ctx context.Context, cells []CellRecord, opts *Batch
 		end := min(start+batchSize, len(cells))
 		batch := cells[start:end]
 		batchWritten := 0
+		readyToCommit := false
 		progressIndices := make([]int, 0, len(batch))
 		err := db.Update(func(tx *Tx) error {
 			for i, rec := range batch {
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				if err := tx.PutCell(ctx, rec); err != nil {
-					if continueOnError {
+				if rejected, err := tx.putCell(ctx, rec); err != nil {
+					if continueOnError && rejected {
 						result.Errors = append(result.Errors, BatchPutCellError{
 							Index: start + i,
 							Err:   err,
@@ -80,9 +83,13 @@ func (db *DB) BatchPutCells(ctx context.Context, cells []CellRecord, opts *Batch
 				batchWritten++
 				progressIndices = append(progressIndices, start+i)
 			}
+			if err := cmp.Or(ctx.Err(), tx.cellWriteErr); err != nil {
+				return err
+			}
+			readyToCommit = true
 			return nil
 		})
-		if err != nil {
+		if err != nil && (!readyToCommit || !errors.Is(err, ErrCommitDurable)) {
 			return result, err
 		}
 		result.Written += batchWritten
@@ -90,6 +97,9 @@ func (db *DB) BatchPutCells(ctx context.Context, cells []CellRecord, opts *Batch
 			for _, index := range progressIndices {
 				onProgress(index)
 			}
+		}
+		if err != nil {
+			return result, err
 		}
 	}
 	return result, nil

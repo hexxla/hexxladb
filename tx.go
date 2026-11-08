@@ -1,7 +1,7 @@
 package hexxladb
 
 import (
-	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -35,7 +35,8 @@ type Tx struct {
 	cellOverlay map[lattice.PackedCoord][]byte
 	// cellDeleted tracks coordinates deleted via [Tx.DeleteCell] in the current Update.
 	// Checked before cellOverlay and btree scan so same-tx delete is visible.
-	cellDeleted map[lattice.PackedCoord]bool
+	cellDeleted  map[lattice.PackedCoord]bool
+	cellWriteErr error // storage or hook failure requires abort even if the callback ignores it
 }
 
 // View runs fn inside a read-only transaction. Many concurrent View calls are allowed;
@@ -59,6 +60,8 @@ func (db *DB) View(fn func(*Tx) error) error {
 
 // ViewAt runs fn inside a read-only transaction pinned to read_seq (commit sequence).
 // read_seq must not exceed the database header's CommitSeq or [ErrReadSeqFuture] is returned.
+// On MVCC databases, typed edge and embedding reads on older sequences return
+// [ErrHistoricalDataUnavailable].
 func (db *DB) ViewAt(readSeq uint64, fn func(*Tx) error) error {
 	if fn == nil {
 		return ErrNilCallback
@@ -104,6 +107,13 @@ func (db *DB) ViewAtTime(asOf time.Time, fn func(*Tx) error) error {
 	}
 	tx := &Tx{db: db, writable: false, readSeq: readSeq, cachedBTreeRoot: ch.btreeRoot}
 	return fn(tx)
+}
+
+func (tx *Tx) checkCurrentData() error {
+	if !tx.writable && tx.db.useMVCC && tx.readSeq != tx.db.cachedHdr.Load().commitSeq {
+		return ErrHistoricalDataUnavailable
+	}
+	return nil
 }
 
 // Update runs fn inside an exclusive read-write transaction. The database lock remains held
@@ -168,11 +178,11 @@ func (db *DB) Update(fn func(*Tx) error) error { //nolint:gocyclo // durability 
 	callbackStarted := time.Now()
 	fnErr := fn(tx)
 	db.writeStats.callback.Add(int64(time.Since(callbackStarted)))
-	if fnErr != nil {
+	if err := cmp.Or(fnErr, tx.cellWriteErr); err != nil {
 		if metaTimelineKey != nil {
 			_ = db.btree.Delete(metaTimelineKey)
 		}
-		return fnErr
+		return err
 	}
 	if err := db.stageChangelogOutbox(tx, commitWall); err != nil {
 		return fmt.Errorf("%w: durable changelog intent: %w", ErrCommitFinalization, err)
@@ -236,7 +246,8 @@ func (db *DB) Batch(fn func(*Tx) error) error {
 	return db.Update(fn)
 }
 
-// Get returns the value for key in the ordered store, or (nil, false, nil) if missing.
+// Get returns a physical key from the ordered store, or (nil, false, nil) if missing.
+// Use typed getters for MVCC visibility.
 func (tx *Tx) Get(key []byte) (val []byte, ok bool, err error) {
 	if tx == nil || tx.db == nil {
 		return nil, false, ErrClosed
@@ -253,21 +264,17 @@ func (tx *Tx) Get(key []byte) (val []byte, ok bool, err error) {
 	return val, ok, mapEngineDataError(err)
 }
 
-// Put inserts or replaces a key/value pair. Only allowed inside [DB.Update].
-//
-// MVCC (format v2): low-level insertion order matters for internal-tree invariants.
-// Prefer [Tx.PutCell], [Tx.PutFacet], and other primitives over raw Put for application data.
-// MVCC invariant: write __meta/commit-time/ keys before cell/ keys to keep timeline consistent.
+// Put inserts or replaces an application-owned key/value pair inside [DB.Update].
+// Use a namespace such as app/. Database-owned namespaces return [ErrInvalidArgument].
+// Application values do not participate in typed record validation, MVCC, or changefeed.
 func (tx *Tx) Put(key, val []byte) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
 	}
-	if tx.db.useMVCC && bytes.HasPrefix(key, []byte(index.CellPrefix)) {
-		if _, _, err := index.ParseCellVersionKey(key); err != nil {
-			return fmt.Errorf("%w: MVCC databases require version-suffixed cell/ keys — use Tx.PutCell: %w", ErrInvalidArgument, err)
-		}
+	if index.IsReservedKey(key) {
+		return fmt.Errorf("%w: database-owned key; use the typed write API", ErrInvalidArgument)
 	}
-	return mapEngineDataError(tx.db.btree.Put(key, val))
+	return tx.putDirect(key, val)
 }
 
 // getDirect reads a value by key without public API guards.
@@ -281,10 +288,7 @@ func (tx *Tx) getDirect(key []byte) (val []byte, ok bool, err error) {
 	return val, ok, mapEngineDataError(err)
 }
 
-// putDirect writes a key/value pair without MVCC format validation.
-// Internal primitives (PutCell, putSeamWithOp) use this because they already
-// construct correctly-formatted keys; the MVCC guard in [Tx.Put] is for
-// external callers only.
+// putDirect writes a physical row for typed primitives and trusted maintenance.
 func (tx *Tx) putDirect(key, val []byte) error {
 	if err := tx.requireWritable(); err != nil {
 		return err

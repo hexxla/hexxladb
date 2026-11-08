@@ -110,6 +110,10 @@ var (
 	// ErrMVCCRequired is returned when an MVCC-only operation is called on a format-v1 database.
 	ErrMVCCRequired = errors.New("hexxladb: operation requires MVCC (EnableMVCC on open)")
 
+	// ErrHistoricalDataUnavailable means a historical view requested current-only
+	// edges or embeddings. Use [DB.View] to read those records at the current head.
+	ErrHistoricalDataUnavailable = errors.New("hexxladb: edges and embeddings are current-only")
+
 	// ErrSnapshotTagNotFound means [DB.ViewAtTag] or [DB.DeleteSnapshotTag] was called with a
 	// label that has no corresponding entry created by [DB.TagSnapshot].
 	ErrSnapshotTagNotFound = errors.New("hexxladb: snapshot tag not found")
@@ -138,8 +142,8 @@ var (
 	// The returned result slice is partial but sorted and capped as requested.
 	ErrQueryScanLimit = errors.New("hexxladb: query scan limit reached")
 
-	// ErrSpatialScanLimit means a seam lookup exhausted its bounded secondary-row
-	// or materialized-result budget. No partial result is returned.
+	// ErrSpatialScanLimit means a seam lookup or context load exhausted its work
+	// or result budget. No partial result is returned.
 	ErrSpatialScanLimit = errors.New("hexxladb: spatial scan limit reached")
 
 	// ErrRotationIncomplete means an interrupted encryption rotation must be

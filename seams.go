@@ -222,6 +222,10 @@ func (tx *Tx) FindSeamsAt(ctx context.Context, center Coord, radius int, unresol
 }
 
 func (tx *Tx) findSeams(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool, asOf *time.Time) ([]record.SeamRecord, error) {
+	return tx.findSeamsWithBudget(ctx, center, radius, unresolvedOnly, asOf, seamSearchBudget{})
+}
+
+func (tx *Tx) findSeamsWithBudget(ctx context.Context, center lattice.Coord, radius int, unresolvedOnly bool, asOf *time.Time, budget seamSearchBudget) ([]record.SeamRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -248,10 +252,14 @@ func (tx *Tx) findSeams(ctx context.Context, center lattice.Coord, radius int, u
 
 	var out []record.SeamRecord
 	seen := make(map[string]struct{})
-	budget := seamSearchBudget{}
 	for c := range lattice.WalkRingsSeq(center, radius) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		if budget.charge != nil {
+			if err := budget.charge(); err != nil {
+				return nil, err
+			}
 		}
 		if err := tx.scanSeamsForCoord(ctx, c, center, radius, unresolvedOnly, asOf, &out, seen, &budget); err != nil {
 			return nil, err
@@ -370,12 +378,16 @@ func (tx *Tx) collectSeamFind(out *[]record.SeamRecord, seen map[string]struct{}
 type seamSearchBudget struct {
 	indexRows int
 	results   int
+	charge    func() error
 }
 
 func (b *seamSearchBudget) addIndexRow() error {
 	b.indexRows++
 	if b.indexRows > MaxSeamIndexRows {
 		return fmt.Errorf("%w: seam index rows exceed %d", ErrSpatialScanLimit, MaxSeamIndexRows)
+	}
+	if b.charge != nil {
+		return b.charge()
 	}
 	return nil
 }

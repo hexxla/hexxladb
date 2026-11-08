@@ -55,7 +55,7 @@ func (tx *Tx) getCellVisibleRaw(key lattice.PackedCoord) (raw []byte, commitSeq 
 	}
 	// Zero-length value is an MVCC tombstone (cell deleted at this commit_seq).
 	if len(val) == 0 {
-		return nil, 0, false, nil
+		return nil, seq, false, nil
 	}
 	return val, seq, true, nil
 }

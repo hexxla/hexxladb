@@ -41,11 +41,10 @@
 //   - [DB.Compact], [DB.CompactWithOptions], [CompactTo], [CompactToWithOptions] — bounded copy-compaction to reclaim dead pages
 //     with optional durable progress and destination verification; [PreflightCompactTo]
 //     checks paths, source storage, and capacity (see docs/hexxladb/OPERATIONS.md).
-//   - [Tx.Get], [Tx.Put], [Tx.AscendRange] — byte-key ordered store.
-//     Lattice primitives: [Tx.FindFreeCellPlacement], [Tx.PutCell], [Tx.GetCell], [Tx.DeleteCell], [Tx.DeleteCellWithOutcome], [Tx.WalkRing], [Tx.PutSeam],
+//   - Lattice primitives: [Tx.FindUnusedCellPlacement], [Tx.FindFreeCellPlacement], [Tx.PutCell], [Tx.GetCell], [Tx.DeleteCell], [Tx.DeleteCellWithOutcome], [Tx.WalkRing], [Tx.PutSeam],
 //     [Tx.FindSeams], [Tx.FindSeamsAt], [Tx.AscendSeams], [Tx.LoadContext], [Tx.ResolveSeam];
 //     public context, raw-spatial, seam, and candidate constants bound enumeration
-//     work and return [ErrSpatialScanLimit] when a seam scan exhausts its budget;
+//     work and return [ErrSpatialScanLimit] when a context or seam scan exhausts its budget;
 //     facets/edges: [Tx.PutFacet], [Tx.GetFacet], [Tx.AscendFacetsForCell],
 //     [Tx.PutEdge], [Tx.GetEdge], [Tx.AscendEdgesFrom] ([facets_edges.go]);
 //     stable record aliases: [CellRecord], [SeamRecord], [FacetWalkRecord], [EdgeWalkRecord] ([export.go]);
@@ -64,6 +63,8 @@
 //     [Tx.TagCooccurrences], [Tx.UntaggedCells], [RenderHexGrid], [Tx.RenderHexGridFromDB];
 //     derived hierarchy: [NewSuperHexSummaryIndex], [SuperHexSummaryIndex], and
 //     [SuperHexSummary] (rebuildable aperture-7 occupancy summaries).
+//   - [Tx.Get], [Tx.Put], [Tx.AscendRange] — advanced byte-key operations. [Tx.Put] accepts
+//     application-owned keys. Typed getters apply MVCC visibility.
 //   - Embedding / vector search: dimension auto-detected from first [Tx.PutEmbedding]
 //     (or pre-set via [Options.EmbeddingDimension]); [Options.DistanceMetric] (default cosine);
 //     [Tx.PutEmbedding], [Tx.PutEmbeddingWithOptions], [Tx.GetEmbedding], [Tx.DeleteEmbedding];
@@ -71,8 +72,9 @@
 //     [Tx.SearchByEmbeddingWithStats] (execution path and effective breadth), [EmbeddingSearchConfig];
 //     runtime configuration introspection through [DB.EmbeddingDimension] and [DB.EmbeddingMetric];
 //     bounded derived-index publication through [DB.RebuildEmbeddingIndex];
-//     [Tx.ReindexEmbeddings]; [CellQuery.Embedding] / [CellSearchConfig.Embedding] integrate
-//     vector search into [Tx.QueryCells] / [Tx.SearchCells] (see docs/hexxladb/API_REFERENCE.md).
+//     [Tx.ReindexEmbeddings]; [CellQuery.Embedding] integrates vector search into
+//     [Tx.QueryCells]. Historical views reject typed edge and vector reads with
+//     [ErrHistoricalDataUnavailable].
 //   - Sentinel errors are defined in errors.go and support [errors.Is]. Recovery-sensitive
 //     categories include lifecycle ([ErrDatabaseClosed], [ErrDatabaseLocked]), persisted integrity
 //     ([ErrCorruptDatabase]), bounded scans ([ErrQueryScanLimit], [ErrSpatialScanLimit]), format and migration

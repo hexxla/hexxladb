@@ -86,6 +86,11 @@ func (tx *Tx) validateCellQuery(ctx context.Context, q CellQuery) error {
 	if q.MaxScanRows < 0 {
 		return fmt.Errorf("%w: MaxScanRows must not be negative", ErrInvalidArgument)
 	}
+	if len(q.Embedding) > 0 {
+		if err := tx.checkCurrentData(); err != nil {
+			return err
+		}
+	}
 	if len(q.Embedding) > 0 && q.MaxScanRows > 0 {
 		return fmt.Errorf("%w: MaxScanRows cannot bound embedding graph reads", ErrInvalidArgument)
 	}
@@ -227,14 +232,17 @@ func scoreRecord(q CellQuery, rec record.CellRecord, queryLow string, embeddingS
 		explanation = buildExplanation(q, rec, c, score, queryLow, embeddingScore)
 	}
 
+	cell := CellView{
+		Coord: c, RawContent: rec.RawContent, Tags: rec.Tags,
+		Provenance: rec.Provenance, Validity: rec.Validity,
+	}
+	if rec.ClusterHint != nil {
+		if hint, err := lattice.Unpack(*rec.ClusterHint); err == nil {
+			cell.ClusterHint = new(hint)
+		}
+	}
 	return CellQueryResult{
-		Cell: CellView{
-			Coord:      c,
-			RawContent: rec.RawContent,
-			Tags:       rec.Tags,
-			Provenance: rec.Provenance,
-			Validity:   rec.Validity,
-		},
+		Cell:        cell,
 		Score:       score,
 		Explanation: explanation,
 	}, true

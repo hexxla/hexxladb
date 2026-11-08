@@ -117,6 +117,7 @@ type CellQuery struct {
 	// are found, the search is exhausted, or EmbeddingCandidateLimit is reached.
 	// With unlimited MaxResults and no explicit candidate limit, all embeddings
 	// are scanned exactly.
+	// Historical views return [ErrHistoricalDataUnavailable] when Embedding is set.
 	Embedding []float32
 
 	// EmbeddingCandidateLimit bounds the number of distinct embedding candidates
@@ -129,7 +130,8 @@ type CellQuery struct {
 
 // CellQueryResult is one result from [Tx.QueryCells].
 type CellQueryResult struct {
-	// Cell is the fully assembled view of the matching cell, including Coord.
+	// Cell contains the primary fields of the matching cell. Use [Tx.AssembleCellView]
+	// or [Tx.LoadContext] to include related records.
 	Cell CellView
 
 	// Score is the composite relevance score used for SortByScore ordering.

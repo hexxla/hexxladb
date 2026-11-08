@@ -37,11 +37,12 @@ All reads and writes occur through [`Tx`](../../tx.go):
 | [`DB.View`](../../tx.go)                                                                             | Read the latest committed state.                 |
 | [`DB.ViewAt`](../../tx.go), [`DB.ViewAtTime`](../../tx.go), [`DB.ViewAtTag`](../../snapshot_tags.go) | Read an MVCC snapshot.                           |
 | [`DB.Update`](../../tx.go)                                                                           | Run one write transaction.                       |
-| [`DB.Batch`](../../tx.go)                                                                            | Alias for `Update`; useful for call-site intent. |
 
 Callbacks must not mix or nest read and write transactions on the same `DB`. Commit failures match [`ErrCommitFinalization`](../../errors.go); [`ErrCommitDurable`](../../errors.go) additionally identifies a known-durable primary commit whose changefeed recovery requires close and reopen. See [`TX.md`](./TX.md) for locking, snapshots, validity, and failure semantics.
 
-[`Tx.Get`](../../tx.go), [`Tx.Put`](../../tx.go), and [`Tx.AscendRange`](../../tx.go) expose raw byte keys. Prefer the typed lattice operations below so record encodings and secondary indexes remain consistent.
+`DB.Batch` remains a compatibility spelling of `DB.Update`. For historical graph
+or vector requests, use a separate `DB.View` if current data is acceptable.
+See [snapshot semantics](./TX.md#mvcc-temporal-semantics).
 
 ## Coordinates and records
 
@@ -66,6 +67,14 @@ Violations return `ErrInvalidArgument` before serialization or index updates.
 
 HexxlaDB does not infer semantic anchors or enforce clustering. [`Tx.FindFreeCellPlacement`](../../cells.go) searches from a caller-supplied anchor in deterministic ring order and returns the first coordinate without a visible cell, its packed key, and the number of occupied positions probed. Call it inside the same `DB.Update` as `PutCell`; the writable transaction prevents another writer from claiming the result, while `PutCell` remains the explicit canonical write. The helper does not reserve a result from repeated calls in the same transaction, so write the returned key before searching again. It accepts radii from zero through `MaxCellPlacementRadius`, requires the complete search disk to fit within the packable coordinate range, and returns `ErrNoFreeCellPlacement` on bounded exhaustion. A current MVCC tombstone is free for placement; writing there creates a new version while retained snapshots continue to expose the earlier cell.
 
+Use [`Tx.FindUnusedCellPlacement`](../../cells.go) for a new logical identity in an
+MVCC database with edges or seams. It skips recorded tombstones, including
+deletions staged in the current update. Legacy placement can reuse an address
+still referenced by inbound edges or seams. On format v1 and for histories
+predating MVCC migration, keep an application-owned allocation map if addresses
+must never be reused. The allocator checks cell history. The application owns
+references to coordinates that never contained a cell.
+
 Preserve existing coordinates during incremental insertion; represent an intentional move by creating a successor and calling `MarkSupersedes` rather than deleting or rewriting history. `ClusterHint` is stored metadata only. Applications continue to own anchor selection, semantic grouping, relocation policy, and placement-quality thresholds.
 
 The [`lattice_placement_evidence`](../../examples/lattice_placement_evidence) example implements that workflow entirely through the public API and compares semantic and spatial neighborhood quality.
@@ -76,7 +85,7 @@ Use these methods inside `View` or `Update` callbacks:
 
 | Task                                    | API                                                                                                           |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Select a bounded free cell placement    | [`Tx.FindFreeCellPlacement`](../../cells.go)                                                            |
+| Select a bounded cell placement         | [`Tx.FindUnusedCellPlacement`, `Tx.FindFreeCellPlacement`](../../cells.go)                                                            |
 | Store and retrieve a cell               | [`Tx.PutCell`, `Tx.GetCell`](../../cells.go)                                                             |
 | Delete a cell                           | [`Tx.DeleteCell`, `Tx.DeleteCellWithOutcome`](../../delete_cell.go)                                           |
 | Stream a ring or validity-filtered ring | [`Tx.WalkRing`, `Tx.WalkRingAt`, `Tx.WalkRingFacets`](../../spatial_reads.go)                                    |
@@ -86,7 +95,9 @@ Use these methods inside `View` or `Update` callbacks:
 | Stream snapshot-visible seams           | [`Tx.AscendSeams`](../../seam_scan.go)                                                               |
 | Resolve a seam                          | [`Tx.ResolveSeam`](../../seams.go)                                                                       |
 
-[`DB.BatchPutCells`](../../batch.go) writes large cell collections in bounded transactions with progress and optional per-cell error collection.
+[`DB.BatchPutCells`](../../batch.go) writes large cell collections in bounded transactions. `ContinueOnError`
+collects pre-write rejections. Storage and post-write hook failures abort the
+current chunk. Progress and the written count describe durable rows.
 
 [`Tx.ExportCellsJSON`](../../batch.go) streams visible cells in a bounded spatial
 disk as a JSON array. [`DB.ImportCellsJSON`](../../batch.go) consumes that shape
@@ -118,11 +129,21 @@ The canonical record families and key encodings are in [`HEXXLA_DB.md`](./HEXXLA
 | [`Tx.WalkEdges`](../../pathfind_api.go)             | Bounded breadth-first traversal over stored edges.                                   |
 | [`Tx.ScanContextRaw`, `Tx.ScanContextAtRaw`](../../spatial_reads.go) | Compatibility primitives for bounded nearest-first raw cell scans. Prefer `LoadContext` for new retrieval code. |
 
-[`LoadContextConfig`](../../context_load.go) controls seeds, ring bounds, validity time, edge expansion, the `MaxCells` result limit, and assembly; validity, supersession, explanations, and requested seams apply across dispatch strategies. A single-seed ring load is nearest-first; multi-seed loads merge candidates round-robin in caller-supplied seed order and deduplicate coordinates and seams. Public constants bound radius, seeds, results, hops, and combined coordinate probes. HexxlaDB does not rank by confidence or count LLM tokens during context assembly. Applications own product ranking, complete-request rendering, provider/model token accounting, and output-token reservation. `ViewAt` snapshot time and record validity time are independent; see [`TX.md`](./TX.md).
+[`LoadContextConfig`](../../context_load.go) controls seeds, ring bounds, validity time, edge expansion, the `MaxCells` result limit, and assembly; validity, supersession, explanations, and requested seams apply across dispatch strategies. A single-seed ring load is nearest-first; multi-seed loads merge candidates round-robin in caller-supplied seed order and deduplicate coordinates and seams. Graph traversal counts only assembled live results against `MaxCells` and stops
+once that limit is reached. Separate limits apply to coordinate probes,
+outgoing edge rows, and seam probes and index rows. Those work limits are shared
+across seeds and enrichment. Exceeding a runtime work limit returns
+`ErrSpatialScanLimit`. `AsOf` filters cells; it does not filter enrichment by
+its validity window. HexxlaDB does not rank by confidence or count LLM tokens during context assembly. Applications own product ranking, complete-request rendering, provider/model token accounting, and output-token reservation. `ViewAt` snapshot time and record validity time are independent; see [`TX.md`](./TX.md).
 
 ## Query and content search
 
-[`Tx.QueryCells`](../../query_exec.go) executes structured [`CellQuery`](../../query.go) filters and uses an applicable secondary index when possible. [`Tx.SearchCells`](../../search.go) provides ranked lexical, substring, tag, source, temporal, and optional embedding-assisted retrieval.
+[`Tx.QueryCells`](../../query_exec.go) is the main entry point for finding
+seeds. It returns ranked hits containing the primary cell fields. Use
+`AssembleCellView` for one enriched cell or `LoadContext` for expansion from
+one or more seeds. `SearchCells` is a compatibility wrapper whose default
+scope is 32 rings around its center and whose default result limit is 20.
+With `QueryCells`, a zero radius leaves spatial scope unrestricted.
 
 The query planner uses the exact coordinate-probe count to prefer a small
 spatial disk over an unknown-cardinality tag or source range; otherwise it uses
@@ -145,11 +166,19 @@ results, so measure recall with representative filter selectivity.
 Typical retrieval flow:
 
 ```text
-SearchCells or QueryCells
-  -> choose one or more Coord seeds
-  -> LoadContext, LoadContextFOV, or LoadContextVoronoi
+DB.View
+  -> QueryCells
+  -> choose one or more Cell.Coord seeds
+  -> LoadContext
   -> ContextPack
 ```
+
+### Specialized retrieval
+
+Use `WalkEdges` for reachability and `FindEdgePath` for weighted paths.
+`WalkEdgeCoords` remains an alias of `WalkEdges`. Field of view
+(`LoadContextFOV`) returns raw cells, and Voronoi (`LoadContextVoronoi`) returns
+raw cells grouped by seed index.
 
 Weighted Voronoi assigns each coordinate in the footprint to the seed with the
 lowest path cost within the hop radius. Seed order breaks cost ties. Invalid
@@ -251,6 +280,13 @@ the `v0.y.z` line until the external graduation gates in
 committed v0.6 surface so additions, signature changes, and public documentation
 changes require deliberate compatibility review.
 
+## Advanced byte-key access
+
+[`Tx.Put`](../../tx.go) writes application-owned values. Use a prefix such as
+`app/`. Writes under database-owned families return `ErrInvalidArgument`.
+`Tx.Get` and `Tx.AscendRange` expose physical rows. Use typed reads for MVCC
+visibility and typed writes for validation, indexes, and changefeed.
+
 ## Changefeed, health, and maintenance
 
 | API                                                                          | Use                                                    |
@@ -299,7 +335,9 @@ See [`CHANGEFEED.md`](./CHANGEFEED.md), [`OPERATIONS.md`](./OPERATIONS.md), [`DU
 
 [`CellValidator`](../../hooks.go) validates cells before persistence. [`AfterPutCellHook`](../../hooks.go) and [`AfterPutSeamHook`](../../hooks.go) run synchronously after their corresponding logical writes. Function adapters are provided for all three interfaces, and hooks are configured through [`Options`](../../options.go).
 
-Hook errors are returned to the transaction callback. They do not provide an independent transactional boundary; callers must follow the commit-finalization guidance in [`TX.md`](./TX.md).
+A cell post-write hook error aborts the update. For seam hooks, return the
+hook error from the update callback to abort. Dispatch irreversible external
+effects after commit confirmation. See [commit finalization](./TX.md#commit-finalization-failures).
 
 ## Errors
 

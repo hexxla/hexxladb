@@ -42,7 +42,10 @@ A reproducible policy should maintain these invariants:
 2. Choose collision candidates in a stable order. `FindFreeCellPlacement` applies deterministic concentric-ring order around the caller's fixed anchor and reports the occupied positions it probes.
 3. Never shift existing coordinates during ordinary insertion. Append new records at the next free candidate so stored links, external references, and neighborhood explanations remain stable.
 4. Treat `ClusterHint` as caller-owned metadata. HexxlaDB persists it but does not validate the hint, place the cell near it, or keep hinted groups together.
-5. Model relocation as lifecycle history: create the successor at a new free coordinate, write its semantic and provenance metadata, and record an explicit directional supersession in the same update. Keep the predecessor addressable for audit; context assembly substitutes the successor only when the caller requests supersession filtering.
+5. Keep coordinate identity stable when using edges or seams. Deletion can
+   leave inbound references and seams. On MVCC databases, use
+   `FindUnusedCellPlacement` to skip deleted coordinates with recorded history.
+6. Model relocation as lifecycle history: create the successor at a new free coordinate, write its semantic and provenance metadata, and record an explicit directional supersession in the same update. Keep the predecessor addressable for audit; context assembly substitutes the successor only when the caller requests supersession filtering.
 
 Applications should retain a stable record-ID-to-coordinate mapping or enough record metadata to reconstruct it. HexxlaDB owns only bounded geometric collision resolution; semantic clustering, anchor selection, relocation triggers, and acceptable neighborhood-quality thresholds remain product policy.
 

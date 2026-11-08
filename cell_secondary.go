@@ -102,12 +102,6 @@ func (tx *Tx) removeCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) 
 	return tx.visitCellSecondaryKeys(rec, commitSeq, tx.deleteDirect)
 }
 
-func (tx *Tx) putCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) error {
-	return tx.visitCellSecondaryKeys(rec, commitSeq, func(key []byte) error {
-		return tx.putDirect(key, emptySecondaryVal)
-	})
-}
-
 func (tx *Tx) cellSourceScanBounds(sourceID string) (from, to []byte, err error) {
 	if tx.db.useMVCC {
 		return index.SourceRangePrefixAllVersions(sourceID)

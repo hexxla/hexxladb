@@ -53,6 +53,7 @@ type EmbeddingSearchResult struct {
 // SearchByEmbedding finds the cells whose embeddings are most similar to vec.
 // Uses HNSW graph when available, falling back to flat scan over the embed/ keyspace.
 // Returns empty results if no embeddings have been stored yet (dimension not configured).
+// On historical snapshots it returns [ErrHistoricalDataUnavailable].
 func (tx *Tx) SearchByEmbedding(vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, error) {
 	results, _, err := tx.SearchByEmbeddingWithStats(vec, cfg)
 	return results, err
@@ -73,6 +74,9 @@ func (tx *Tx) searchByEmbedding(ctx context.Context, vec []float32, cfg Embeddin
 	}
 	if tx.db.activeEng() == nil {
 		return nil, EmbeddingSearchStats{}, ErrDatabaseClosed
+	}
+	if err := tx.checkCurrentData(); err != nil {
+		return nil, EmbeddingSearchStats{}, err
 	}
 	if err := validateEmbeddingVector(vec); err != nil {
 		return nil, EmbeddingSearchStats{}, err

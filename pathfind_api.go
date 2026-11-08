@@ -1,6 +1,7 @@
 package hexxladb
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
@@ -29,12 +30,16 @@ type FindEdgePathConfig struct {
 // (empty = all edges). Edge weights are used as traversal costs unless
 // [FindEdgePathConfig.CostFunc] is set. Returns nil if no path exists.
 // Returns [ErrInvalidArgument] if a reachable goal has only paths whose
-// accumulated costs overflow float64.
+// accumulated costs overflow float64. On historical snapshots it returns
+// [ErrHistoricalDataUnavailable].
 func (tx *Tx) FindEdgePath(ctx context.Context, start, goal Coord, cfg FindEdgePathConfig) ([]Coord, error) {
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
 	}
 	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := tx.checkCurrentData(); err != nil {
 		return nil, err
 	}
 	if start == goal {
@@ -58,23 +63,56 @@ func (tx *Tx) FindEdgePath(ctx context.Context, start, goal Coord, cfg FindEdgeP
 // WalkEdges performs a breadth-first traversal from start following edges,
 // returning all reachable coordinates up to maxHops hops and maxNodes total.
 // Only edges whose relationType matches filter are followed (empty = all).
+// On historical snapshots it returns [ErrHistoricalDataUnavailable].
 func (tx *Tx) WalkEdges(ctx context.Context, start Coord, filter string, maxHops, maxNodes int) ([]Coord, error) {
-	return tx.walkEdges(ctx, start, matchExactRelation(filter), maxHops, maxNodes)
-}
-
-func (tx *Tx) walkEdges(ctx context.Context, start Coord, matches func(string) bool, maxHops, maxNodes int) ([]Coord, error) {
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
 	}
-	if err := ctx.Err(); err != nil {
+	if err := tx.checkCurrentData(); err != nil {
 		return nil, err
 	}
-	traversal := newEdgeTraversal(ctx, tx, matches, nil)
-	result := pathfind.BFS(start, traversal.neighbors, maxHops, maxNodes)
-	if traversal.err != nil {
-		return result, traversal.err
+	var result []Coord
+	err := walkEdgeCoords(ctx, start, maxHops, matchExactRelation(filter), func(from PackedCoord, fn func(EdgeWalkRecord) bool) error {
+		return tx.ascendEdgesFrom(from, ctx.Err, fn)
+	}, func(coord Coord) bool {
+		result = append(result, coord)
+		return maxNodes <= 0 || len(result) < maxNodes
+	})
+	return result, err
+}
+
+func walkEdgeCoords(ctx context.Context, start Coord, maxHops int, matches func(string) bool,
+	ascend func(PackedCoord, func(EdgeWalkRecord) bool) error, visit func(Coord) bool,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	return result, ctx.Err()
+	if err := validatePackedRadius(start, 0); err != nil {
+		return err
+	}
+	err := pathfind.VisitBFS(start, func(from Coord, yield func(Coord) bool) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		packed, err := lattice.Pack(from)
+		if err != nil {
+			return err
+		}
+		var coordErr error
+		scanErr := ascend(packed, func(edge EdgeWalkRecord) bool {
+			if matches != nil && !matches(edge.RelationType) {
+				return true
+			}
+			to, err := lattice.Unpack(edge.To)
+			if err != nil {
+				coordErr = err
+				return false
+			}
+			return yield(to)
+		})
+		return cmp.Or(scanErr, coordErr)
+	}, maxHops, visit)
+	return cmp.Or(err, ctx.Err())
 }
 
 // WalkEdgeCoords performs BFS from start following edges matching filter,
@@ -162,7 +200,7 @@ func (t *edgeTraversal) load(from lattice.Coord) {
 
 	clear(t.weights)
 	t.order = t.order[:0]
-	err = t.tx.AscendEdgesFrom(packed, func(edge record.EdgeRecord) bool {
+	err = t.tx.ascendEdgesFrom(packed, t.ctx.Err, func(edge record.EdgeRecord) bool {
 		if t.matches != nil && !t.matches(edge.RelationType) {
 			return true
 		}

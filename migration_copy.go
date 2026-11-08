@@ -99,7 +99,7 @@ func applyMigrationPair(ctx context.Context, tx *Tx, pair migrationPair) error {
 	case isMigrationDerivedKey(pair.key), isMigrationChangelogKey(pair.key):
 		return nil
 	default:
-		return tx.Put(pair.key, pair.value)
+		return tx.putDirect(pair.key, pair.value)
 	}
 }
 

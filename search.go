@@ -32,14 +32,14 @@ type CellSearchConfig struct {
 	SourceID string
 
 	// Center and Radius apply a spatial restriction: only cells within Radius rings
-	// of Center are considered. Zero Radius with zero Center means no restriction.
+	// of Center are considered. Zero Radius uses MaxScanRadius (default 32).
 	Center Coord
 	Radius int
 
 	// MaxResults caps the number of returned results (default 20; 0 uses default).
 	MaxResults int
 
-	// MaxScanRadius controls how far from origin to walk when Radius is zero
+	// MaxScanRadius controls how far from Center to walk when Radius is zero
 	// (default 32). Increase for sparse or geographically wide databases.
 	MaxScanRadius int
 
@@ -51,10 +51,10 @@ type CellSearchConfig struct {
 }
 
 // CellSearchResult is one entry returned by [Tx.SearchCells].
-// The Coord field can be used directly as a seed for [Tx.LoadContext]
+// The Cell.Coord field can be used directly as a seed for [Tx.LoadContext]
 // or collected into [LoadContextConfig.Seeds] for multi-seed assembly.
 type CellSearchResult struct {
-	// Cell is the fully assembled view of the matching cell.
+	// Cell contains the primary fields of the matching cell.
 	Cell CellView
 	// Score is the composite relevance score (higher is more relevant).
 	// See the scoring table in the package documentation for breakdown.
@@ -64,7 +64,7 @@ type CellSearchResult struct {
 // SearchCells scans visible cells and returns results ranked by relevance score.
 //
 // SearchCells is a convenience wrapper over [Tx.QueryCells]. For full control
-// over sort order, temporal filters, ExcludeTags, and Explain mode use
+// over scope, sort order, temporal filters, ExcludeTags, and Explain mode use
 // [Tx.QueryCells] directly.
 //
 // Multi-word queries are tokenized on whitespace. Each token is scored
@@ -83,6 +83,8 @@ type CellSearchResult struct {
 // Results are sorted descending by Score; ties broken by Confidence descending.
 // An empty Query still applies all other filters and scores by Confidence plus
 // embedding similarity when supplied.
+//
+// For new callers, prefer [Tx.QueryCells] with an explicit search scope.
 func (tx *Tx) SearchCells(ctx context.Context, cfg CellSearchConfig) ([]CellSearchResult, error) {
 	q := CellQuery{
 		Query:         cfg.Query,

@@ -1,13 +1,18 @@
 package views
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"sync"
 	"time"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
 )
+
+// ErrGraphCandidateLimit means context assembly exceeded its graph coordinate budget.
+var ErrGraphCandidateLimit = errors.New("context graph candidate limit reached")
 
 // LoadContextParams is the unified parameter set for all context loading strategies.
 // The implementation selects the best internal algorithm based on the provided fields.
@@ -24,7 +29,10 @@ type LoadContextParams struct {
 
 	// WalkEdges, when set, switches to graph BFS traversal. The caller supplies
 	// a walk with any relation filtering already configured.
-	WalkEdges func(ctx context.Context, start lattice.Coord, maxHops, maxCoords int) ([]lattice.Coord, error)
+	WalkEdges func(ctx context.Context, start lattice.Coord, maxHops int, visit func(lattice.Coord) bool) error
+
+	// MaxGraphCandidates bounds the number of coordinates visited across seeds.
+	MaxGraphCandidates int
 
 	// MaxHops limits BFS depth when WalkEdges is set (default 5).
 	MaxHops int
@@ -84,31 +92,33 @@ func normalizeParams(p LoadContextParams) LoadContextParams {
 
 // loadContextByEdges walks edges from each seed via BFS, assembles CellViews, wraps into ContextPack.
 func loadContextByEdges(ctx context.Context, tx TxReader, p LoadContextParams) (ContextPack, error) {
-	maxCoords := p.MaxCells
-
-	seen := make(map[lattice.Coord]struct{})
-	var allCoords []lattice.Coord
-
+	coll := newCandidateCollector(min(p.MaxCells, 256), p.AsOf, p.Assembly.Assemble, p.Assembly)
+	var visitErr error
 	for _, seed := range p.Seeds {
-		coords, err := p.WalkEdges(ctx, seed, p.MaxHops, maxCoords)
-		if err != nil {
+		err := p.WalkEdges(ctx, seed, p.MaxHops, func(coord lattice.Coord) bool {
+			if coll.scanned == p.MaxGraphCandidates {
+				visitErr = ErrGraphCandidateLimit
+				return false
+			}
+			coll.scanned++
+			visitErr = coll.processCoord(ctx, tx, coord, nearestSeedDistance(coord, p.Seeds))
+			return visitErr == nil && len(coll.items) < p.MaxCells
+		})
+		if err := cmp.Or(err, visitErr); err != nil {
 			return ContextPack{}, err
 		}
-		for _, c := range coords {
-			if len(allCoords) >= maxCoords {
-				break
-			}
-			if _, dup := seen[c]; !dup {
-				seen[c] = struct{}{}
-				allCoords = append(allCoords, c)
-			}
-		}
-		if len(allCoords) >= maxCoords {
+		if len(coll.items) == p.MaxCells {
 			break
 		}
 	}
 
-	return assembleCoordsIntoContextPack(ctx, tx, allCoords, p.Seeds, p.MaxCells, p.MaxRing, p.AsOf, p.Assembly)
+	pack := buildContextPack(coll.items, coll.explanations, coll.scanned, p.MaxCells, p.Assembly)
+	if p.Assembly.IncludeSeams {
+		if err := attachSeams(ctx, tx, p.Seeds, p.MaxRing, p.Assembly, &pack); err != nil {
+			return ContextPack{}, err
+		}
+	}
+	return pack, nil
 }
 
 // seedResult holds the per-seed ContextPack or an error from concurrent assembly.

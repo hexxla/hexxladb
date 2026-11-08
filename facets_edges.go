@@ -157,6 +157,7 @@ func (tx *Tx) PutEdge(rec EdgeWalkRecord) error {
 }
 
 // GetEdge returns the edge for (from, to, relationType), or (zero, false, nil) if missing.
+// On historical snapshots it returns [ErrHistoricalDataUnavailable].
 func (tx *Tx) GetEdge(from, to PackedCoord, relationType string) (EdgeWalkRecord, bool, error) {
 	if tx == nil || tx.db == nil {
 		return record.EdgeRecord{}, false, ErrClosed
@@ -166,6 +167,9 @@ func (tx *Tx) GetEdge(from, to PackedCoord, relationType string) (EdgeWalkRecord
 	}
 	if tx.db.activeEng() == nil {
 		return record.EdgeRecord{}, false, ErrDatabaseClosed
+	}
+	if err := tx.checkCurrentData(); err != nil {
+		return record.EdgeRecord{}, false, err
 	}
 	k, err := index.EdgeKey(from, to, relationType)
 	if err != nil {
@@ -187,18 +191,32 @@ func (tx *Tx) GetEdge(from, to PackedCoord, relationType string) (EdgeWalkRecord
 
 // AscendEdgesFrom visits every edge whose from-cell matches from (prefix scan in key order).
 // It stops when fn returns false or when keys leave the matching from-cell prefix.
+// On historical snapshots it returns [ErrHistoricalDataUnavailable].
 func (tx *Tx) AscendEdgesFrom(from PackedCoord, fn func(EdgeWalkRecord) bool) error {
+	return tx.ascendEdgesFrom(from, nil, fn)
+}
+
+func (tx *Tx) ascendEdgesFrom(from PackedCoord, beforeDecode func() error, fn func(EdgeWalkRecord) bool) error {
 	if tx == nil || tx.db == nil {
 		return ErrClosed
 	}
 	if tx.db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
+	if err := tx.checkCurrentData(); err != nil {
+		return err
+	}
 	prefix := index.EdgeFromPrefix(from)
 	var decodeErr error
 	err := tx.AscendRange(prefix, nil, func(k, v []byte) bool {
 		if !bytes.HasPrefix(k, prefix) {
 			return false
+		}
+		if beforeDecode != nil {
+			if err := beforeDecode(); err != nil {
+				decodeErr = err
+				return false
+			}
 		}
 		rec, err := record.DecodeEdge(v)
 		if err != nil {

@@ -89,12 +89,16 @@ func validateEmbeddingVector(vec []float32) error {
 
 // GetEmbedding returns the vector embedding for the cell at coord, or (nil, false, nil) if none stored.
 // Returns (nil, false, nil) if no embeddings have been stored yet (dimension not configured).
+// On historical snapshots it returns [ErrHistoricalDataUnavailable].
 func (tx *Tx) GetEmbedding(coord PackedCoord) (vec []float32, ok bool, err error) {
 	if tx == nil || tx.db == nil {
 		return nil, false, ErrClosed
 	}
 	if tx.db.activeEng() == nil {
 		return nil, false, ErrDatabaseClosed
+	}
+	if err := tx.checkCurrentData(); err != nil {
+		return nil, false, err
 	}
 	dim := tx.db.eng.EmbeddingDim()
 	if dim == 0 {

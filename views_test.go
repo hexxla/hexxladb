@@ -238,7 +238,7 @@ func TestFilterSuperseded_OriginSuccessor(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		return tx.Put(index.CellKey(packed), []byte{1})
+		return hexxladb.PutRawFixture(tx, index.CellKey(packed), []byte{1})
 	}); err != nil {
 		t.Fatal(err)
 	}

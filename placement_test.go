@@ -254,3 +254,36 @@ func TestTx_FindFreeCellPlacementMVCCReusesTombstoneAndPreservesHistory(t *testi
 		t.Fatal(err)
 	}
 }
+
+func TestTx_FindUnusedCellPlacementPreservesDeletedIdentity(t *testing.T) {
+	t.Parallel()
+	db := openHookDB(t, &hexxladb.Options{EnableMVCC: true})
+	anchor := hexxladb.Coord{}
+	key := mustPackTest(t, anchor)
+	mustPutCell(t, db, anchor, "original")
+	checkPlacement := func(tx *hexxladb.Tx) error {
+		free, err := tx.FindFreeCellPlacement(t.Context(), anchor, 0)
+		if err != nil || free.Key != key {
+			t.Fatalf("legacy free placement = %+v, %v", free, err)
+		}
+		if _, err := tx.FindUnusedCellPlacement(t.Context(), anchor, 0); !errors.Is(err, hexxladb.ErrNoFreeCellPlacement) {
+			t.Fatalf("unused placement at deleted anchor: %v", err)
+		}
+		unused, err := tx.FindUnusedCellPlacement(t.Context(), anchor, 1)
+		if err != nil || unused.Coord != hexxladb.Ring(anchor, 1)[0] || unused.Probes != 1 {
+			t.Fatalf("unused placement = %+v, %v", unused, err)
+		}
+		return nil
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		if err := tx.DeleteCell(t.Context(), key); err != nil {
+			return err
+		}
+		return checkPlacement(tx)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Update(checkPlacement); err != nil {
+		t.Fatal(err)
+	}
+}

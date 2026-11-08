@@ -2,6 +2,7 @@ package hexxladb
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -338,5 +339,42 @@ func assertRecoveryCell(t *testing.T, db *DB, coord lattice.PackedCoord, content
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBatchPutCellsReportsOnlyKnownDurableCommits(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		hook bool
+		want int
+	}{{"post-commit", false, 1}, {"callback-error", true, 0}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			opts := commitRecoveryOptions(false)
+			if tc.hook {
+				opts.AfterPutCell = AfterPutCellHookFunc(func(context.Context, CellRecord) error {
+					return ErrCommitDurable
+				})
+			}
+			db, err := Open(filepath.Join(t.TempDir(), "batch.db"), opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			if !tc.hook {
+				db.commitFaults = &commitFaultHooks{
+					afterEngineCommit: func() error { return errInjectedCommitBoundary },
+				}
+			}
+			progress := 0
+			result, err := db.BatchPutCells(t.Context(), []CellRecord{{RawContent: "batch"}}, &BatchPutCellOptions{
+				ContinueOnError: true,
+				OnProgress:      func(int) { progress++ },
+			})
+			if !errors.Is(err, ErrCommitDurable) || result.Written != tc.want || progress != tc.want {
+				t.Fatalf("batch = %+v, %v, progress=%d; want written=%d", result, err, progress, tc.want)
+			}
+		})
 	}
 }

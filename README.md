@@ -267,8 +267,8 @@ Public API guide: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE
 | `PutEmbedding` / `SearchByEmbedding`                    | Store a vector; HNSW nearest-neighbor search                            |
 | `PutEmbeddingWithOptions` / `RebuildEmbeddingIndex`     | Defer graph work for bulk ingestion, then validate and publish atomically |
 | `SearchByEmbeddingWithStats`                            | Search with the selected HNSW/flat path and effective breadth           |
-| `QueryCells` / `SearchCells`                            | Hybrid ANN+filter search or multi-term lexical search                   |
-| `LoadContext` / `LoadContextFOV` / `LoadContextVoronoi` | Result-bounded context assembly — ring walk, FOV, or multi-seed Voronoi |
+| `QueryCells`                                          | Find and rank seeds by text, filters, or embedding similarity           |
+| `LoadContext`                                         | Assemble a bounded pack around selected seeds                            |
 | `FindEdgePath` / `WalkEdges`                            | Weighted shortest path and BFS reachability over cell edges             |
 | `NewSuperHexSummaryIndex` + summary methods             | Rebuildable aperture-7 occupancy summaries maintained from changelog    |
 | `MarkConflict` / `MarkSupersedes` / `FindSeams`         | Record and retrieve contradictions and supersessions                    |

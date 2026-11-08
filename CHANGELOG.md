@@ -2,17 +2,27 @@
 
 ## [Unreleased]
 
+### API compatibility
+
+- **Historical reads** — typed edge and vector reads on older MVCC views return `ErrHistoricalDataUnavailable` where they previously read current data. Use versioned records for historical retrieval or open a separate `DB.View` for current graph and vector data.
+- **Raw writes** — `Tx.Put` returns `ErrInvalidArgument` for database-owned key families. Use typed methods for database records and move application writes to a prefix such as `app/`. Existing raw values remain readable. The database format and open behavior are unchanged.
+- **Cell batches and hooks** — `ContinueOnError` skips only pre-write rejections. Storage and post-write hook errors abort the current chunk. A cell post-write hook error also aborts direct `DB.Update` calls even when the callback ignores it. Move skippable validation to `CellValidator`.
+
 ### Performance
 
 - **Read and graph paths** — traverse B+ tree separators without materializing them, copy only consumed range rows, and reuse decoder scratch per database and adjacency scratch per graph expansion. This reduces MVCC point-read and graph traversal allocations while preserving page validation and snapshot semantics.
 
 ### Added
 
+- **Identity-preserving placement** — `FindUnusedCellPlacement` skips recorded MVCC tombstones for new logical cells. `FindFreeCellPlacement` retains its documented reuse behavior.
+
 - **Snapshot seam iteration** — `Tx.AscendSeams` visits one visible seam version per ID and supports early stopping.
 
 - **MVCC index repair** — `RepairMVCCIndexesTo` and `hexxladb compact --rebuild-mvcc-indexes` rebuild cell and seam secondary indexes from retained versions in a verified, source-preserving copy.
 
 ### Fixed
+
+- **Bounded context and query hits** — graph assembly counts visible results after filtering, streams adjacency until the pack fills, and shares work limits across edge and seam scans. Query hits preserve the primary cell cluster hint.
 
 - **Operator diagnostics** — the TUI counts and displays logical seams from its snapshot, surfaces diagnostic read failures, and marks occluded positions in the hex grid.
 

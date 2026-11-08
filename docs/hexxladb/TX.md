@@ -41,6 +41,9 @@ If the engine commit is known durable but changelog append, sync, or outbox clea
 ## Byte keys and lattice primitives
 
 **[`Tx.Get`](../../tx.go)**, **`Put`**, **`AscendRange`** operate on raw **`[]byte`** keys/values backed by the engine B+ tree.
+Raw reads expose physical rows and do not apply typed MVCC visibility.
+Raw writes reject database-owned families and remain available for application
+keys such as `app/`.
 
 The lattice API adds **`PutCell`**, **`GetCell`**, **`WalkRing`**, **`PutSeam`**, **`FindSeams`**, **`LoadContext`**, and **`ResolveSeam`** on **`Tx`**. Writes require **`Update`**; reads use **`View`** (or **`Update`**).
 
@@ -71,6 +74,12 @@ For MVCC formats v2 and v3 the authoritative visibility clock is **`CommitSeq`**
 - **[`DB.ViewAt(readSeq)`](../../tx.go)** pins `read_seq` for the callback. Cell, facet, and seam point reads use the version suffix's byte ordering to seek directly to the largest stored `commit_seq <= read_seq`, then stop after one valid version. [`ErrReadSeqFuture`](../../errors.go) is returned if `read_seq` exceeds the header's `CommitSeq`.
 - **[`DB.ViewAtTime(asOf)`](../../tx.go)** maps UTC wall time to a `read_seq` using the commit timeline: during each MVCC `Update`, an `__meta/commit-time/` btree key records `(wall_unix_nano, writeSeq)` (wall timestamp sampled at transaction start). The resolver seeks to the latest signed timestamp at or before `asOf`, breaking ties by commit sequence. Determinism requires stable UTC clock usage; the same `asOf` yields the same snapshot for a given database history.
 - **Secondary indexes (`tag/`, `source/`, `time/`, seam secondaries):** version-suffixed entries are retained alongside committed primary versions. Readers deduplicate by logical ID and check that the snapshot-visible record matches the requested tag, source, or week. Deleting a cell preserves the previous committed index entries until its old version is pruned. For databases written by an affected release, see [repairing MVCC secondary indexes](./OPERATIONS.md#repairing-mvcc-secondary-indexes).
+- **Current-only families:** Edges and embeddings are stored at head. Typed
+  graph and vector operations return `ErrHistoricalDataUnavailable` when the
+  requested sequence precedes head, including embedding queries and context
+  graph expansion or edge enrichment. Use a separate `DB.View` when you
+  explicitly want current graph or vector data. Separate views can observe
+  different commits.
 - **Validity vs snapshot:** [`WalkRingAt`](../../spatial_reads.go), [`FindSeamsAt`](../../seams.go), and [`LoadContextConfig.AsOf`](../../context_load.go) filter by record validity windows — orthogonal to `read_seq` (snapshot time vs. domain validity interval).
 
 ## Secondary indexes — `source/` and `time/`

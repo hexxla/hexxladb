@@ -326,7 +326,7 @@ func TestSnapshotDiff_ReportsCorruptCellVersion(t *testing.T) {
 	db := openDiffDB(t, true)
 	p := packDiffCoord(t, 0, 0)
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		return tx.Put(index.CellKeyWithVersion(p, 1), []byte("not-a-cell-record"))
+		return hexxladb.PutRawFixture(tx, index.CellKeyWithVersion(p, 1), []byte("not-a-cell-record"))
 	}); err != nil {
 		t.Fatal(err)
 	}

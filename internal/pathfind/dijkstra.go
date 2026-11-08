@@ -20,34 +20,57 @@ func zeroHeuristic(_, _ lattice.Coord) float64 { return 0 }
 //
 // maxNodes caps the total visited set (0 = unlimited).
 func BFS(start lattice.Coord, neighbors NeighborFunc, maxDepth, maxNodes int) []lattice.Coord {
+	var result []lattice.Coord
+	_ = VisitBFS(start, func(c lattice.Coord, yield func(lattice.Coord) bool) error {
+		for _, neighbor := range neighbors(c) {
+			if !yield(neighbor) {
+				break
+			}
+		}
+		return nil
+	}, maxDepth, func(c lattice.Coord) bool {
+		result = append(result, c)
+		return maxNodes <= 0 || len(result) < maxNodes
+	})
+	return result
+}
+
+// VisitBFS streams discovered coordinates in breadth-first order. Returning
+// false from visit stops immediately, including during an adjacency scan.
+func VisitBFS(start lattice.Coord, neighbors func(lattice.Coord, func(lattice.Coord) bool) error, maxDepth int, visit func(lattice.Coord) bool) error {
 	type entry struct {
 		coord lattice.Coord
 		depth int
 	}
+	if !visit(start) {
+		return nil
+	}
 
 	visited := map[lattice.Coord]struct{}{start: {}}
-	queue := []entry{{coord: start, depth: 0}}
-	result := []lattice.Coord{start}
-
+	queue := []entry{{coord: start}}
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
-
 		if maxDepth > 0 && cur.depth >= maxDepth {
 			continue
 		}
 
-		for _, nb := range neighbors(cur.coord) {
-			if maxNodes > 0 && len(result) >= maxNodes {
-				return result
-			}
+		stopped := false
+		err := neighbors(cur.coord, func(nb lattice.Coord) bool {
 			if _, seen := visited[nb]; seen {
-				continue
+				return true
 			}
 			visited[nb] = struct{}{}
-			result = append(result, nb)
+			if !visit(nb) {
+				stopped = true
+				return false
+			}
 			queue = append(queue, entry{coord: nb, depth: cur.depth + 1})
+			return true
+		})
+		if err != nil || stopped {
+			return err
 		}
 	}
-	return result
+	return nil
 }

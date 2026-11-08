@@ -246,39 +246,6 @@ func loadContextByRings(ctx context.Context, tx TxReader, center lattice.Coord, 
 	return pack, nil
 }
 
-// assembleCoordsIntoContextPack assembles an ordered coordinate list through
-// the same validity, supersession, deduplication, and result-limit path used by
-// ring retrieval.
-func assembleCoordsIntoContextPack(ctx context.Context, tx TxReader, coords, seeds []lattice.Coord, maxCells, defaultSeamRadius int, asOf *time.Time, cfg ContextAssemblyConfig) (ContextPack, error) {
-	if err := ctx.Err(); err != nil {
-		return ContextPack{}, err
-	}
-	if maxCells <= 0 {
-		return ContextPack{}, ErrInvalidArgument
-	}
-	opts := cfg.Assemble
-	if opts == (AssembleCellViewOpts{}) {
-		opts = DefaultAssembleCellViewOpts()
-	}
-	coll := newCandidateCollector(min(len(coords), maxCells), asOf, opts, cfg)
-	for _, coord := range coords {
-		if len(coll.items) >= maxCells {
-			break
-		}
-		coll.scanned++
-		if err := coll.processCoord(ctx, tx, coord, nearestSeedDistance(coord, seeds)); err != nil {
-			return ContextPack{}, err
-		}
-	}
-	pack := buildContextPack(coll.items, coll.explanations, coll.scanned, maxCells, cfg)
-	if cfg.IncludeSeams {
-		if err := attachSeams(ctx, tx, seeds, defaultSeamRadius, cfg, &pack); err != nil {
-			return ContextPack{}, err
-		}
-	}
-	return pack, nil
-}
-
 func nearestSeedDistance(coord lattice.Coord, seeds []lattice.Coord) int {
 	if len(seeds) == 0 {
 		return 0

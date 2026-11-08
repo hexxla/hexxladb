@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hexxla/hexxladb/internal/views"
@@ -19,15 +20,18 @@ const (
 	MaxContextResults = 10_000
 	// MaxContextHops bounds graph traversal depth for [Tx.LoadContext].
 	MaxContextHops = 128
-	// MaxContextCandidateProbes bounds the combined radial and seam coordinate
-	// work accepted by one [Tx.LoadContext] call.
+	// MaxContextCandidateProbes bounds radial and regional seam coordinate work
+	// during validation and the number of candidates visited in graph mode.
 	MaxContextCandidateProbes = 200_000
+	// MaxContextEdgeRows bounds outgoing edge rows scanned for traversal and
+	// enrichment across a single context load, including nonmatching relations.
+	MaxContextEdgeRows = 200_000
+	// MaxContextSeamWork bounds seam coordinate probes and index rows across a
+	// single context load, including regional seams and supersession.
+	MaxContextSeamWork = 200_000
 )
 
-// LoadContextConfig is the unified configuration for all context loading strategies.
-// Pass it to [Tx.LoadContext]; the DB selects the optimal internal algorithm
-// automatically based on the provided fields — callers do not need to know about
-// multi-seed deduplication or graph BFS internals.
+// LoadContextConfig controls seed expansion and enrichment for [Tx.LoadContext].
 type LoadContextConfig struct {
 	// Seeds is one or more seed coordinates (required).
 	// Multiple seeds are expanded concurrently and merged round-robin in seed order.
@@ -62,13 +66,14 @@ type LoadContextConfig struct {
 
 // LoadContext is the unified context loading entry point.
 //
-// The DB selects the optimal algorithm automatically:
-//   - EdgeFilter non-empty → graph BFS traversal (naturally excludes cells with no edge connections)
+// Expansion follows these rules:
+//   - EdgeFilter non-empty → breadth-first graph traversal starting at each seed
 //   - Multiple seeds → concurrent deduped ring walks merged round-robin
 //   - Otherwise → deterministic nearest-first ring walk
 //
 // Always returns [ContextPack] with assembled [CellView] values regardless of the
-// internal algorithm chosen.
+// internal algorithm chosen. Exhausted work budgets return [ErrSpatialScanLimit]
+// without a partial pack. Historical views cannot traverse or include current edges.
 func (tx *Tx) LoadContext(ctx context.Context, cfg LoadContextConfig) (ContextPack, error) {
 	if tx == nil || tx.db == nil {
 		return ContextPack{}, ErrClosed
@@ -83,6 +88,12 @@ func (tx *Tx) LoadContext(ctx context.Context, cfg LoadContextConfig) (ContextPa
 		return ContextPack{}, err
 	}
 
+	if cfg.EdgeFilter != "" || cfg.Assembly.Assemble.IncludeEdges {
+		if err := tx.checkCurrentData(); err != nil {
+			return ContextPack{}, err
+		}
+	}
+	reader := &contextReader{Tx: tx, ctx: ctx}
 	p := views.LoadContextParams{
 		Seeds:    cfg.Seeds,
 		MaxRing:  cfg.MaxRing,
@@ -93,19 +104,54 @@ func (tx *Tx) LoadContext(ctx context.Context, cfg LoadContextConfig) (ContextPa
 	}
 	if cfg.EdgeFilter != "" {
 		matches := matchContextRelations(cfg.EdgeFilter)
-		p.WalkEdges = func(ctx context.Context, start Coord, maxHops, maxCoords int) ([]Coord, error) {
-			return tx.walkEdges(ctx, start, matches, maxHops, maxCoords)
+		p.MaxGraphCandidates = MaxContextCandidateProbes
+		p.WalkEdges = func(ctx context.Context, start Coord, maxHops int, visit func(Coord) bool) error {
+			return walkEdgeCoords(ctx, start, maxHops, matches, reader.AscendEdgesFrom, visit)
 		}
 	}
 
-	pack, err := views.LoadContext(ctx, tx, p)
+	pack, err := views.LoadContext(ctx, reader, p)
 	if err != nil {
+		if errors.Is(err, views.ErrGraphCandidateLimit) {
+			return ContextPack{}, fmt.Errorf("%w: %w", ErrSpatialScanLimit, err)
+		}
 		if errors.Is(err, views.ErrInvalidArgument) {
 			return ContextPack{}, ErrInvalidArgument
 		}
 		return ContextPack{}, err
 	}
 	return pack, nil
+}
+
+// One reader shares work limits across traversal, enrichment, and parallel seeds.
+type contextReader struct {
+	*Tx
+	ctx      context.Context
+	edgeRows atomic.Int64
+	seamWork atomic.Int64
+}
+
+func (r *contextReader) AscendEdgesFrom(from PackedCoord, fn func(EdgeWalkRecord) bool) error {
+	return r.ascendEdgesFrom(from, func() error {
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
+		if r.edgeRows.Add(1) > MaxContextEdgeRows {
+			return fmt.Errorf("%w: context edge rows exceed %d", ErrSpatialScanLimit, MaxContextEdgeRows)
+		}
+		return nil
+	}, fn)
+}
+
+func (r *contextReader) FindSeams(ctx context.Context, center Coord, radius int, unresolvedOnly bool) ([]SeamRecord, error) {
+	return r.findSeamsWithBudget(ctx, center, radius, unresolvedOnly, nil, seamSearchBudget{
+		charge: func() error {
+			if r.seamWork.Add(1) > MaxContextSeamWork {
+				return fmt.Errorf("%w: context seam work exceeds %d", ErrSpatialScanLimit, MaxContextSeamWork)
+			}
+			return nil
+		},
+	})
 }
 
 func matchContextRelations(filter string) func(string) bool {
@@ -145,11 +191,7 @@ func validateLoadContextConfig(cfg LoadContextConfig) error {
 	if maxRing == 0 {
 		maxRing = 5
 	}
-	maxCells := cfg.MaxCells
-	if maxCells == 0 {
-		maxCells = 256
-	}
-	work := int64(maxCells)
+	var work int64
 	if cfg.EdgeFilter == "" {
 		work = int64(len(cfg.Seeds)) * int64(hexDiskCellCount(maxRing))
 	}

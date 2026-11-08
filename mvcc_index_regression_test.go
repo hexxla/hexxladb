@@ -160,7 +160,7 @@ func TestRepairMVCCIndexesToRestoresRetainedHistory(t *testing.T) {
 				if err := tx.PutSeam(ctx, seam); err != nil {
 					return err
 				}
-				return tx.Put(rawKey, []byte("application data"))
+				return tx.putDirect(rawKey, []byte("application data"))
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -179,7 +179,7 @@ func TestRepairMVCCIndexesToRestoresRetainedHistory(t *testing.T) {
 				if err := tx.removeSeamSecondaryIndex(seam, 1); err != nil {
 					return err
 				}
-				return tx.Put(stale, nil)
+				return tx.putDirect(stale, nil)
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -277,7 +277,7 @@ func TestViewAtTimeAcrossUnixEpoch(t *testing.T) {
 	assertSnapshot(beforeEpoch, 0)
 	// Model an existing timeline recorded with a clock on the other side of epoch.
 	if err := db.Update(func(tx *Tx) error {
-		return tx.Put(index.CommitTimeKey(beforeEpoch.UnixNano(), 1), nil)
+		return tx.putDirect(index.CommitTimeKey(beforeEpoch.UnixNano(), 1), nil)
 	}); err != nil {
 		t.Fatal(err)
 	}

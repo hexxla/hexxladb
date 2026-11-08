@@ -641,7 +641,7 @@ func TestEmbedding_ReindexReportsMalformedCellKey(t *testing.T) {
 	t.Parallel()
 	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		return tx.Put([]byte("cell/x"), []byte("malformed"))
+		return hexxladb.PutRawFixture(tx, []byte("cell/x"), []byte("malformed"))
 	}); err != nil {
 		t.Fatal(err)
 	}
