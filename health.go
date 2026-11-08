@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
@@ -516,7 +517,7 @@ func secondarySourceIndexConsistent(tx *Tx, dbMVCC bool, k []byte, live map[latt
 		if rec.Key != p {
 			return false, fmt.Errorf("%w: source-indexed cell key mismatch", ErrCorruptDatabase)
 		}
-		return rec.Provenance.SourceID == sid, nil
+		return strings.TrimSpace(rec.Provenance.SourceID) == sid, nil
 	}
 	_, alive := live[p]
 	return alive, nil

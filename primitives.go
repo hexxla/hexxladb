@@ -1,6 +1,7 @@
 package hexxladb
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"fmt"
@@ -136,9 +137,9 @@ func (tx *Tx) PutCell(ctx context.Context, rec CellRecord) error {
 	if err := tx.putDirect(key, data); err != nil {
 		return err
 	}
-	// Non-MVCC: replace-in-place secondary keys. MVCC: keep prior commit's source/time
-	// keys so snapshot reads ([ViewAt]) still see correct index entries; reclaim via pruning.
-	if had && !tx.db.useMVCC {
+	// Replace staged index entries for this commit. Older commits keep their
+	// index entries until their primary versions are pruned.
+	if had && oldSeq == tx.writeSeq {
 		if err := tx.removeCellSecondaryIndex(old, oldSeq); err != nil {
 			return err
 		}
@@ -146,7 +147,7 @@ func (tx *Tx) PutCell(ctx context.Context, rec CellRecord) error {
 	if err := tx.putCellSecondaryIndex(rec, tx.writeSeq); err != nil {
 		return err
 	}
-	tx.cellOverlay[rec.Key] = rec
+	tx.cellOverlay[rec.Key] = data
 	delete(tx.cellDeleted, rec.Key) // clear same-tx delete if re-putting
 	tx.noteChangelog(changelog.OpPutCell, index.CellKey(rec.Key), data)
 	if h := tx.db.afterPutCell; h != nil {
@@ -198,9 +199,12 @@ func (tx *Tx) WalkRing(ctx context.Context, center Coord, ring int, fn func(Coor
 		if err != nil {
 			return err
 		}
-		raw, _, ok, err := tx.getCellVisibleRaw(p)
+		raw, seq, ok, err := tx.getCellVisibleRaw(p)
 		if err != nil {
 			return err
+		}
+		if seq != 0 && seq == tx.writeSeq {
+			raw = bytes.Clone(raw)
 		}
 		if !fn(c, raw, ok) {
 			break
@@ -317,17 +321,18 @@ func (tx *Tx) putSeamWithOp(ctx context.Context, rec record.SeamRecord, clogOp b
 }
 
 // validateAndPrepareSeamOverwrite checks endpoint consistency for an existing seam and
-// removes stale secondary indexes in non-MVCC mode.
+// removes secondary indexes for an overwritten physical version.
 func (tx *Tx) validateAndPrepareSeamOverwrite(pk []byte, rec record.SeamRecord) error {
-	// MVCC does not remove seam-source/seam-time keys on overwrite: entries are versioned by
-	// commit_seq and must remain for [ViewAt] scans; pruning reclaims superseded versions.
 	if tx.db.useMVCC {
-		old, _, ok, err := tx.visibleSeamAndSeq(rec.ID)
-		if err != nil {
+		old, seq, ok, err := tx.visibleSeamAndSeq(rec.ID)
+		if err != nil || !ok {
 			return err
 		}
-		if ok {
-			return checkSeamEndpoints(old, rec)
+		if err := checkSeamEndpoints(old, rec); err != nil {
+			return err
+		}
+		if seq == tx.writeSeq {
+			return tx.removeSeamSecondaryIndex(old, seq)
 		}
 		return nil
 	}

@@ -147,7 +147,8 @@ func migrateV2ToAuthenticated(ctx context.Context, srcPath, destPath string, opt
 	if opts.ResetChangelog {
 		skipKey = isMigrationChangelogKey
 	}
-	return compactFromTx(ctx, srcTx, destPath, destOpts, srcHeader, batchSize, compactProgress, true, skipKey)
+	copyOpts := CompactOptions{BatchSize: batchSize, OnProgress: compactProgress, VerifyDestination: true}
+	return compactFromTx(ctx, srcTx, destPath, destOpts, srcHeader, copyOpts, skipKey, false)
 }
 
 func prepareV2AuthenticatedMigration(

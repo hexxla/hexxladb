@@ -28,6 +28,8 @@ type FindEdgePathConfig struct {
 // Only edges whose relationType matches [FindEdgePathConfig.Filter] are traversed
 // (empty = all edges). Edge weights are used as traversal costs unless
 // [FindEdgePathConfig.CostFunc] is set. Returns nil if no path exists.
+// Returns [ErrInvalidArgument] if a reachable goal has only paths whose
+// accumulated costs overflow float64.
 func (tx *Tx) FindEdgePath(ctx context.Context, start, goal Coord, cfg FindEdgePathConfig) ([]Coord, error) {
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
@@ -39,16 +41,16 @@ func (tx *Tx) FindEdgePath(ctx context.Context, start, goal Coord, cfg FindEdgeP
 		return []Coord{start}, nil
 	}
 
-	traversal := newEdgeTraversal(ctx, tx, cfg.Filter, cfg.CostFunc)
-	path := pathfind.Dijkstra(start, goal, traversal.neighbors, traversal.cost, cfg.MaxExpand)
+	traversal := newEdgeTraversal(ctx, tx, matchExactRelation(cfg.Filter), cfg.CostFunc)
+	path, pathErr := pathfind.Dijkstra(start, goal, traversal.neighbors, traversal.cost, cfg.MaxExpand)
 	if traversal.err != nil {
 		return nil, traversal.err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if path == nil {
-		return nil, nil
+	if pathErr != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, pathErr)
 	}
 	return path, nil
 }
@@ -57,13 +59,17 @@ func (tx *Tx) FindEdgePath(ctx context.Context, start, goal Coord, cfg FindEdgeP
 // returning all reachable coordinates up to maxHops hops and maxNodes total.
 // Only edges whose relationType matches filter are followed (empty = all).
 func (tx *Tx) WalkEdges(ctx context.Context, start Coord, filter string, maxHops, maxNodes int) ([]Coord, error) {
+	return tx.walkEdges(ctx, start, matchExactRelation(filter), maxHops, maxNodes)
+}
+
+func (tx *Tx) walkEdges(ctx context.Context, start Coord, matches func(string) bool, maxHops, maxNodes int) ([]Coord, error) {
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	traversal := newEdgeTraversal(ctx, tx, filter, nil)
+	traversal := newEdgeTraversal(ctx, tx, matches, nil)
 	result := pathfind.BFS(start, traversal.neighbors, maxHops, maxNodes)
 	if traversal.err != nil {
 		return result, traversal.err
@@ -78,6 +84,13 @@ func (tx *Tx) WalkEdgeCoords(ctx context.Context, start Coord, filter string, ma
 	return tx.WalkEdges(ctx, start, filter, maxHops, maxCoords)
 }
 
+func matchExactRelation(filter string) func(string) bool {
+	if filter == "" {
+		return nil
+	}
+	return func(relation string) bool { return relation == filter }
+}
+
 // edgeTraversal resolves and caches one weighted adjacency list per expanded
 // coordinate. The shortest-path search asks for neighbors before asking for
 // their costs, so one edge-prefix scan serves the whole expansion instead of
@@ -85,18 +98,18 @@ func (tx *Tx) WalkEdgeCoords(ctx context.Context, start Coord, filter string, ma
 type edgeTraversal struct {
 	tx       *Tx
 	ctx      context.Context
-	filter   string
+	matches  func(string) bool
 	override func(from, to Coord) float64
 	adj      map[lattice.Coord]map[lattice.Coord]float64
 	order    map[lattice.Coord][]lattice.Coord
 	err      error
 }
 
-func newEdgeTraversal(ctx context.Context, tx *Tx, filter string, override func(from, to Coord) float64) *edgeTraversal {
+func newEdgeTraversal(ctx context.Context, tx *Tx, matches func(string) bool, override func(from, to Coord) float64) *edgeTraversal {
 	return &edgeTraversal{
 		tx:       tx,
 		ctx:      ctx,
-		filter:   filter,
+		matches:  matches,
 		override: override,
 		adj:      make(map[lattice.Coord]map[lattice.Coord]float64),
 		order:    make(map[lattice.Coord][]lattice.Coord),
@@ -147,7 +160,7 @@ func (t *edgeTraversal) load(from lattice.Coord) {
 	weights := make(map[lattice.Coord]float64)
 	var neighbors []lattice.Coord
 	err = t.tx.AscendEdgesFrom(packed, func(edge record.EdgeRecord) bool {
-		if t.filter != "" && edge.RelationType != t.filter {
+		if t.matches != nil && !t.matches(edge.RelationType) {
 			return true
 		}
 		to, unpackErr := lattice.Unpack(edge.To)

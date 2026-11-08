@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"time"
 
 	"github.com/hexxla/hexxladb/internal/changelog"
@@ -12,7 +13,6 @@ import (
 	"github.com/hexxla/hexxladb/internal/engine/crashtest"
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
-	"github.com/hexxla/hexxladb/internal/record"
 )
 
 // Tx is a database transaction or snapshot view. Obtain it only from [DB.View], [DB.ViewAt], [DB.Update], or [DB.Batch].
@@ -31,8 +31,8 @@ type Tx struct {
 	writeSeq uint64
 	// cachedBTreeRoot is hdr.BTreeRoot captured when a read-only tx opens (View paths); unused for writers.
 	cachedBTreeRoot uint64
-	// cellOverlay holds uncommitted cell writes in the current Update (read-your-writes).
-	cellOverlay map[lattice.PackedCoord]record.CellRecord
+	// cellOverlay holds owned encoded writes for read-your-writes.
+	cellOverlay map[lattice.PackedCoord][]byte
 	// cellDeleted tracks coordinates deleted via [Tx.DeleteCell] in the current Update.
 	// Checked before cellOverlay and btree scan so same-tx delete is visible.
 	cellDeleted map[lattice.PackedCoord]bool
@@ -97,7 +97,7 @@ func (db *DB) ViewAtTime(asOf time.Time, fn func(*Tx) error) error {
 	readSeq := ch.commitSeq
 	if db.useMVCC {
 		var err error
-		readSeq, err = db.resolveReadSeqAtOrBeforeUnixNano(asOf.UTC().UnixNano())
+		readSeq, err = db.resolveReadSeqAtOrBefore(asOf)
 		if err != nil {
 			return err
 		}
@@ -153,7 +153,7 @@ func (db *DB) Update(fn func(*Tx) error) error { //nolint:gocyclo // durability 
 			writable:    true,
 			readSeq:     ch.commitSeq,
 			writeSeq:    wseq,
-			cellOverlay: make(map[lattice.PackedCoord]record.CellRecord),
+			cellOverlay: make(map[lattice.PackedCoord][]byte),
 		}
 		// Insert commit-time row before MVCC physical cells so btree key order matches sorted key
 		// order (__meta/commit-time/… sorts before cell/…). Writing cells first then meta produced a
@@ -356,7 +356,24 @@ func (tx *Tx) noteChangelog(op byte, key, encoded []byte) {
 	})
 }
 
-func (db *DB) resolveReadSeqAtOrBeforeUnixNano(unixNano int64) (uint64, error) {
+func (db *DB) resolveReadSeqAtOrBefore(asOf time.Time) (uint64, error) {
+	if asOf.Before(time.Unix(0, math.MinInt64)) {
+		return 0, nil
+	}
+	unixNano := int64(math.MaxInt64)
+	if !asOf.After(time.Unix(0, math.MaxInt64)) {
+		unixNano = asOf.UnixNano()
+	}
+	readSeq, err := db.resolveCommitTimePartition(unixNano)
+	if err != nil || readSeq != 0 || unixNano < 0 {
+		return readSeq, err
+	}
+	// No nonnegative commit qualifies. The most recent negative commit,
+	// if any, predates every nonnegative as-of timestamp.
+	return db.resolveCommitTimePartition(-1)
+}
+
+func (db *DB) resolveCommitTimePartition(unixNano int64) (uint64, error) {
 	from, to := index.CommitTimeScanBounds(unixNano)
 	ch := db.cachedHdr.Load()
 	// Descend from the upper bound so the first hit is the largest commit ≤ asOf.

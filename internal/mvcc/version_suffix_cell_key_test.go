@@ -27,7 +27,7 @@ func TestCellPhysicalKeyWithVersionSuffix_parseCommitSeqRoundTrip(t *testing.T) 
 	}
 }
 
-// Two physical keys for one logical cell; visibility by read_seq (E1 stub).
+// Verify that the physical scan and visibility selector agree on commit boundaries.
 func TestCellPhysicalKeyWithVersionSuffix_twoCommitsVisibleByReadSeq(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

@@ -82,8 +82,8 @@ func (tx *Tx) deleteCellV1(key lattice.PackedCoord) (removed bool, err error) {
 	return true, nil
 }
 
-// deleteCellMVCC writes a tombstone for the cell, removes visible secondary
-// indexes, tombstones visible facets, and hard-deletes outbound edges.
+// deleteCellMVCC tombstones the cell and its facets, removes staged secondary
+// entries, and hard-deletes outbound edges.
 func (tx *Tx) deleteCellMVCC(ctx context.Context, key lattice.PackedCoord) (removed bool, err error) {
 	old, oldSeq, had, err := tx.visibleCellAndSeq(key)
 	if err != nil {
@@ -99,9 +99,11 @@ func (tx *Tx) deleteCellMVCC(ctx context.Context, key lattice.PackedCoord) (remo
 		return false, err
 	}
 
-	// Remove secondary indexes for the version being superseded.
-	if err := tx.removeCellSecondaryIndex(old, oldSeq); err != nil {
-		return false, err
+	// A tombstone supersedes committed versions without erasing their indexes.
+	if oldSeq == tx.writeSeq {
+		if err := tx.removeCellSecondaryIndex(old, oldSeq); err != nil {
+			return false, err
+		}
 	}
 
 	// Tombstone visible facets.

@@ -248,7 +248,7 @@ func run(dbPath string) error {
 	// PHASE 2: Field of View
 	// ════════════════════════════════════════════════════════════════
 	printHeader("Phase 2: Field of View (LoadContextFOV)")
-	printNote("Symmetric shadowcasting FOV (Albert Ford 2021 adaptation) from center.")
+	printNote("Symmetric field of view from the center, using exact hexagon shadows.")
 	printNote("Opaque function: empty grid positions = walls. Guaranteed symmetric: if A sees B, B sees A.")
 	fmt.Println()
 
@@ -359,7 +359,7 @@ func run(dbPath string) error {
 	// PHASE 4: Voronoi Partitioning
 	// ════════════════════════════════════════════════════════════════
 	printHeader("Phase 4: Voronoi Partitioning (LoadContextVoronoi)")
-	printNote("Multi-source Dijkstra assigns each coordinate to the lowest-cost seed.")
+	printNote("Each coordinate is assigned to the lowest-cost seed within the hop budget.")
 	printNote("No overlap between regions — fair budget allocation per seed. Supports optional WeightFunc for non-uniform cost.")
 	fmt.Println()
 

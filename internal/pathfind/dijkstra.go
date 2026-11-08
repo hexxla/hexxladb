@@ -5,10 +5,11 @@ import "github.com/hexxla/hexxladb/internal/lattice"
 // Dijkstra finds the shortest path from start to goal using uniform-cost search.
 // Equivalent to A* with a zero heuristic. Suitable when no good distance estimate
 // is available (e.g. traversal over edges with varying weights).
+// Returns ErrCostOverflow if all paths to a reachable goal overflow float64.
 //
 // maxExpand limits the number of nodes expanded (0 = unlimited).
-func Dijkstra(start, goal lattice.Coord, neighbors NeighborFunc, cost CostFunc, maxExpand int) Path {
-	return AStar(start, goal, neighbors, cost, zeroHeuristic, maxExpand)
+func Dijkstra(start, goal lattice.Coord, neighbors NeighborFunc, cost CostFunc, maxExpand int) (Path, error) {
+	return shortestPath(start, goal, neighbors, cost, zeroHeuristic, maxExpand)
 }
 
 func zeroHeuristic(_, _ lattice.Coord) float64 { return 0 }

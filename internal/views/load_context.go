@@ -22,12 +22,11 @@ type LoadContextParams struct {
 	// MaxCells is the maximum number of cells returned (default 256).
 	MaxCells int
 
-	// EdgeFilter, when non-empty, switches to graph BFS traversal.
-	// Comma-separated list of relation types to follow (e.g. "requires,causes").
-	// Requires the TxReader to satisfy TxEdgeWalker.
-	EdgeFilter string
+	// WalkEdges, when set, switches to graph BFS traversal. The caller supplies
+	// a walk with any relation filtering already configured.
+	WalkEdges func(ctx context.Context, start lattice.Coord, maxHops, maxCoords int) ([]lattice.Coord, error)
 
-	// MaxHops limits BFS depth when EdgeFilter is set (default 5).
+	// MaxHops limits BFS depth when WalkEdges is set (default 5).
 	MaxHops int
 
 	// AsOf pins context assembly to a specific time (validity filter only).
@@ -38,18 +37,9 @@ type LoadContextParams struct {
 	Assembly ContextAssemblyConfig
 }
 
-// TxEdgeWalker extends TxReader with edge-walk capability needed for graph-based loading.
-// *Tx satisfies this structurally; callers that don't need graph traversal don't need it.
-type TxEdgeWalker interface {
-	TxReader
-	// WalkEdgeCoords performs BFS from start, following edges matching filter,
-	// up to maxHops depth and maxCoords total. Returns visited coordinates.
-	WalkEdgeCoords(ctx context.Context, start lattice.Coord, filter string, maxHops, maxCoords int) ([]lattice.Coord, error)
-}
-
 // LoadContext is the unified context loading entry point. It selects the optimal
 // algorithm automatically:
-//   - EdgeFilter non-empty  → graph BFS traversal (requires TxEdgeWalker)
+//   - WalkEdges set → graph BFS traversal
 //   - Multiple seeds → concurrent deduped multi-seed ring walk
 //   - Otherwise → deterministic nearest-first ring walk
 //
@@ -64,12 +54,8 @@ func LoadContext(ctx context.Context, tx TxReader, p LoadContextParams) (Context
 	p = normalizeParams(p)
 
 	switch {
-	case p.EdgeFilter != "":
-		walker, ok := tx.(TxEdgeWalker)
-		if !ok {
-			return ContextPack{}, ErrEdgeWalkerRequired
-		}
-		return loadContextByEdges(ctx, walker, p)
+	case p.WalkEdges != nil:
+		return loadContextByEdges(ctx, tx, p)
 
 	case len(p.Seeds) > 1:
 		return loadContextMultiSeedConcurrent(ctx, tx, p)
@@ -87,7 +73,7 @@ func normalizeParams(p LoadContextParams) LoadContextParams {
 	if p.MaxCells <= 0 {
 		p.MaxCells = 256
 	}
-	if p.MaxHops <= 0 && p.EdgeFilter != "" {
+	if p.MaxHops <= 0 && p.WalkEdges != nil {
 		p.MaxHops = 5
 	}
 	if p.Assembly.Assemble == (AssembleCellViewOpts{}) {
@@ -97,14 +83,14 @@ func normalizeParams(p LoadContextParams) LoadContextParams {
 }
 
 // loadContextByEdges walks edges from each seed via BFS, assembles CellViews, wraps into ContextPack.
-func loadContextByEdges(ctx context.Context, tx TxEdgeWalker, p LoadContextParams) (ContextPack, error) {
+func loadContextByEdges(ctx context.Context, tx TxReader, p LoadContextParams) (ContextPack, error) {
 	maxCoords := p.MaxCells
 
 	seen := make(map[lattice.Coord]struct{})
 	var allCoords []lattice.Coord
 
 	for _, seed := range p.Seeds {
-		coords, err := tx.WalkEdgeCoords(ctx, seed, p.EdgeFilter, p.MaxHops, maxCoords)
+		coords, err := p.WalkEdges(ctx, seed, p.MaxHops, maxCoords)
 		if err != nil {
 			return ContextPack{}, err
 		}
@@ -239,14 +225,4 @@ func mergeSeedExplanations(results []seedResult, cells []CellView, explain bool)
 		}
 	}
 	return merged
-}
-
-// ErrEdgeWalkerRequired is returned when EdgeFilter is set but the TxReader
-// does not implement TxEdgeWalker.
-var ErrEdgeWalkerRequired = errEdgeWalkerRequired{}
-
-type errEdgeWalkerRequired struct{}
-
-func (errEdgeWalkerRequired) Error() string {
-	return "views: EdgeFilter requires TxEdgeWalker; the transaction does not support edge walks"
 }

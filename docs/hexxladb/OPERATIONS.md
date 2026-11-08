@@ -408,6 +408,27 @@ db.PruneCellVersions(beforeSeq, 100_000) // remove stale versions
 db.Compact(ctx, destPath)                // rewrite without dead pages
 ```
 
+### Repairing MVCC secondary indexes
+
+Older writers could remove a deleted cell's historical tag, source, and week
+entries or leave stale entries after an edit in the same commit. To rebuild
+those indexes for the history still present in an MVCC database, close the
+owning process, keep a backup of its recovery set, and run:
+
+```bash
+hexxladb compact --rebuild-mvcc-indexes -o memory.repaired.db memory.db
+```
+
+The command uses [`RepairMVCCIndexesTo`](../../compact.go) to rebuild cell and
+seam secondary indexes from retained primary versions in bounded batches.
+It verifies the candidate before publishing it and preserves commit sequences,
+tombstones, and seams whose endpoints were deleted. Check an affected
+historical query on the candidate, then use
+the replacement and changelog rules below. Keep the original as the rollback
+copy. Versions already removed by pruning require a backup that retains them.
+The ordinary compaction preflight estimates copy capacity. Allow additional
+space for rebuilt index entries, especially when historical rows are missing.
+
 ### Notes
 
 - **Format preservation:** destination inherits format version, MVCC flag, `MaxValueBytes`, and encryption from the source header. Encryption credentials must be supplied via `opts` for encrypted sources.

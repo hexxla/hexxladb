@@ -1,11 +1,14 @@
 package hexxladb
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 
 	"github.com/hexxla/hexxladb/internal/engine"
+	"github.com/hexxla/hexxladb/internal/index"
+	"github.com/hexxla/hexxladb/internal/record"
 )
 
 // compactCtxCheckInterval is how many keys between context cancellation checks during compaction.
@@ -62,12 +65,29 @@ func CompactTo(ctx context.Context, srcPath, destPath string, opts *Options) err
 
 // CompactToWithOptions is [CompactTo] with bounded-batch and progress controls.
 func CompactToWithOptions(ctx context.Context, srcPath, destPath string, opts *Options, compactOpts *CompactOptions) error {
+	return compactTo(ctx, srcPath, destPath, opts, compactOpts, false)
+}
+
+// RepairMVCCIndexesTo copy-compacts an MVCC database into a verified destination
+// and reconstructs cell tag/source/time and seam source/time indexes from all
+// retained primary versions. It preserves the source, commit sequences and
+// tombstones. See [CompactTo] for path, locking and encryption requirements.
+func RepairMVCCIndexesTo(ctx context.Context, srcPath, destPath string, opts *Options, compactOpts *CompactOptions) error {
+	return compactTo(ctx, srcPath, destPath, opts, compactOpts, true)
+}
+
+func compactTo(ctx context.Context, srcPath, destPath string, opts *Options, compactOpts *CompactOptions, rebuildMVCCIndexes bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	batchSize, onProgress, verifyDestination, err := resolveCompactOptions(compactOpts)
+	copyOpts, err := resolveCompactOptions(compactOpts)
 	if err != nil {
 		return err
+	}
+	if rebuildMVCCIndexes {
+		if _, err := validateMaintenancePaths(srcPath, destPath, false); err != nil {
+			return fmt.Errorf("repair MVCC indexes: %w", err)
+		}
 	}
 
 	// Open source with cache disabled: sequential read-once scan gets zero cache benefit
@@ -79,6 +99,10 @@ func CompactToWithOptions(ctx context.Context, srcPath, destPath string, opts *O
 		cloned := *srcOpts
 		cloned.PageCacheSize = -1
 		srcOpts = &cloned
+	}
+	if rebuildMVCCIndexes {
+		srcOpts = maintenanceSourceOptions(opts)
+		srcOpts.requireExistingPrimary = true
 	}
 	src, err := Open(srcPath, srcOpts)
 	if err != nil {
@@ -94,7 +118,7 @@ func CompactToWithOptions(ctx context.Context, srcPath, destPath string, opts *O
 	}
 	ch := src.cachedHdr.Load()
 	srcTx := &Tx{db: src, readSeq: ch.commitSeq, cachedBTreeRoot: ch.btreeRoot}
-	return compactFromTx(ctx, srcTx, destPath, compactDestOpts(srcHdr, opts), srcHdr, batchSize, onProgress, verifyDestination, nil)
+	return compactFromTx(ctx, srcTx, destPath, compactDestOpts(srcHdr, opts), srcHdr, copyOpts, nil, rebuildMVCCIndexes)
 }
 
 // Compact creates a compacted copy of the open database at destPath. The source
@@ -116,7 +140,7 @@ func (db *DB) CompactWithOptions(ctx context.Context, destPath string, compactOp
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	batchSize, onProgress, verifyDestination, err := resolveCompactOptions(compactOpts)
+	copyOpts, err := resolveCompactOptions(compactOpts)
 	if err != nil {
 		return err
 	}
@@ -135,26 +159,21 @@ func (db *DB) CompactWithOptions(ctx context.Context, destPath string, compactOp
 	}
 	ch := db.cachedHdr.Load()
 	srcTx := &Tx{db: db, readSeq: ch.commitSeq, cachedBTreeRoot: ch.btreeRoot}
-	return compactFromTx(ctx, srcTx, destPath, compactDestOpts(srcHdr, nil), srcHdr, batchSize, onProgress, verifyDestination, nil)
+	return compactFromTx(ctx, srcTx, destPath, compactDestOpts(srcHdr, nil), srcHdr, copyOpts, nil, false)
 }
 
-func resolveCompactOptions(opts *CompactOptions) (
-	batchSize int,
-	onProgress func(CompactProgress),
-	verifyDestination bool,
-	err error,
-) {
-	batchSize = compactBatchSize
+func resolveCompactOptions(opts *CompactOptions) (CompactOptions, error) {
 	if opts == nil {
-		return batchSize, nil, false, nil
+		return CompactOptions{BatchSize: compactBatchSize}, nil
 	}
 	if opts.BatchSize < 0 || opts.BatchSize > compactBatchSize {
-		return 0, nil, false, fmt.Errorf("%w: compact BatchSize must be zero or between 1 and %d", ErrInvalidArgument, compactBatchSize)
+		return CompactOptions{}, fmt.Errorf("%w: compact BatchSize must be zero or between 1 and %d", ErrInvalidArgument, compactBatchSize)
 	}
-	if opts.BatchSize > 0 {
-		batchSize = opts.BatchSize
+	resolved := *opts
+	if resolved.BatchSize == 0 {
+		resolved.BatchSize = compactBatchSize
 	}
-	return batchSize, opts.OnProgress, opts.VerifyDestination, nil
+	return resolved, nil
 }
 
 // compactDestOpts builds Options for the destination DB from the source header.
@@ -185,11 +204,13 @@ func compactFromTx(
 	destPath string,
 	destOpts *Options,
 	srcHdr engine.Header,
-	batchSize int,
-	onProgress func(CompactProgress),
-	verifyDestination bool,
+	copyOpts CompactOptions,
 	skipKey func([]byte) bool,
+	rebuildMVCCIndexes bool,
 ) (retErr error) {
+	if rebuildMVCCIndexes && !srcTx.db.useMVCC {
+		return ErrMVCCRequired
+	}
 	dest, err := openDB(destPath, destOpts, true)
 	if err != nil {
 		return fmt.Errorf("compact: create dest: %w", err)
@@ -203,7 +224,7 @@ func compactFromTx(
 			removeDBFiles(destPath)
 		}
 	}()
-	if err := compactCopyTx(ctx, srcTx, dest, batchSize, onProgress, skipKey); err != nil {
+	if err := compactCopyTx(ctx, srcTx, dest, copyOpts, skipKey, rebuildMVCCIndexes); err != nil {
 		return err
 	}
 	if srcHdr.FormatVersion >= 2 {
@@ -220,8 +241,12 @@ func compactFromTx(
 			return fmt.Errorf("compact: update dest header: %w", err)
 		}
 	}
-	if verifyDestination {
-		report, err := dest.HealthCheck(ctx, DefaultHealthCheckConfig())
+	if copyOpts.VerifyDestination || rebuildMVCCIndexes {
+		healthConfig := DefaultHealthCheckConfig()
+		// Deletion intentionally leaves seams. Repair preserves those seams,
+		// including any whose endpoints have since been deleted.
+		healthConfig.CheckOrphans = !rebuildMVCCIndexes
+		report, err := dest.HealthCheck(ctx, healthConfig)
 		if err != nil {
 			return fmt.Errorf("compact: verify destination: %w", err)
 		}
@@ -246,40 +271,54 @@ func healthReportHasErrors(report HealthReport) bool {
 	return len(report.OrphanedSeams) > 0 || report.TagIndexErrors > 0 || report.SourceIndexErrors > 0
 }
 
-func compactCopyTx(ctx context.Context, srcTx *Tx, dest *DB, batchSize int, onProgress func(CompactProgress), skipKey func([]byte) bool) error {
-	batch := make([]compactPair, 0, batchSize)
+func compactCopyTx(ctx context.Context, srcTx *Tx, dest *DB, opts CompactOptions, skipKey func([]byte) bool, rebuildMVCCIndexes bool) error {
+	batch := make([]compactPair, 0, opts.BatchSize)
 	var copiedKeys uint64
 	var copyErr error
-	flush := func() bool {
+	flush := func() error {
 		if len(batch) == 0 {
-			return true
+			return nil
 		}
-		copyErr = writeCompactBatch(ctx, dest, batch)
-		if copyErr == nil {
-			copiedKeys += uint64(len(batch)) //nolint:gosec // batch length is non-negative and bounded to 4096.
-			if onProgress != nil {
-				onProgress(CompactProgress{CopiedKeys: copiedKeys})
-			}
+		if err := writeCompactBatch(ctx, dest, batch); err != nil {
+			return err
 		}
+		copiedKeys += uint64(len(batch)) //nolint:gosec // batch length is non-negative and bounded to 4096.
+		if opts.OnProgress != nil {
+			opts.OnProgress(CompactProgress{CopiedKeys: copiedKeys})
+		}
+		clear(batch)
 		batch = batch[:0]
-		return copyErr == nil
+		return nil
 	}
-
+	emit := func(k, v []byte) error {
+		batch = append(batch, compactPair{
+			k: bytes.Clone(k),
+			v: bytes.Clone(v),
+		})
+		if len(batch) == opts.BatchSize {
+			return flush()
+		}
+		return nil
+	}
 	err := srcTx.AscendRange(nil, nil, func(k, v []byte) bool {
+		if copyErr = ctx.Err(); copyErr != nil {
+			return false
+		}
 		if skipKey != nil && skipKey(k) {
 			return true
 		}
-		if len(batch)%compactCtxCheckInterval == 0 {
-			if err := ctx.Err(); err != nil {
-				copyErr = err
+		if rebuildMVCCIndexes && isRebuiltSecondaryKey(k) {
+			if len(v) != 0 {
+				copyErr = fmt.Errorf("%w: secondary key %x has a nonempty value", ErrCorruptDatabase, k)
 				return false
 			}
+			return true
 		}
-		batch = append(batch, compactPair{
-			k: append([]byte(nil), k...),
-			v: append([]byte(nil), v...),
-		})
-		return len(batch) < batchSize || flush()
+		copyErr = emit(k, v)
+		if copyErr == nil && rebuildMVCCIndexes {
+			copyErr = srcTx.emitMVCCSecondaries(k, v, func(key []byte) error { return emit(key, nil) })
+		}
+		return copyErr == nil
 	})
 	if err != nil {
 		return fmt.Errorf("compact: scan src: %w", err)
@@ -287,8 +326,55 @@ func compactCopyTx(ctx context.Context, srcTx *Tx, dest *DB, batchSize int, onPr
 	if copyErr != nil {
 		return fmt.Errorf("compact: copy: %w", copyErr)
 	}
-	if !flush() {
-		return fmt.Errorf("compact: copy: %w", copyErr)
+	if err := flush(); err != nil {
+		return fmt.Errorf("compact: copy: %w", err)
+	}
+	return nil
+}
+
+func isRebuiltSecondaryKey(key []byte) bool {
+	var err error
+	switch {
+	case bytes.HasPrefix(key, []byte(index.SourcePrefix)):
+		_, _, err = index.ParseSourceKey(key)
+	case bytes.HasPrefix(key, []byte(index.TimePrefix)):
+		_, _, err = index.ParseTimeKey(key)
+	case bytes.HasPrefix(key, []byte(index.TagPrefix)):
+		_, _, err = index.ParseTagKey(key)
+	case bytes.HasPrefix(key, []byte(index.SeamSourcePrefix)):
+		_, _, err = index.ParseSeamSourceKey(key)
+	case bytes.HasPrefix(key, []byte(index.SeamTimePrefix)):
+		_, _, err = index.ParseSeamTimeKey(key)
+	default:
+		return false
+	}
+	return err == nil
+}
+
+func (tx *Tx) emitMVCCSecondaries(key, value []byte, emit func([]byte) error) error {
+	switch {
+	case bytes.HasPrefix(key, []byte(index.CellPrefix)):
+		if len(value) == 0 {
+			return nil // A tombstone has no secondary entries.
+		}
+		cell, seq, err := decodeCellVersionForIndexes(key, value)
+		if err != nil {
+			return err
+		}
+		return tx.visitCellSecondaryKeys(cell, seq, emit)
+	case bytes.HasPrefix(key, []byte(index.SeamPrefix)):
+		id, seq, err := index.ParseSeamVersionKey(key)
+		if err != nil {
+			return fmt.Errorf("%w: parse seam version for index repair: %w", ErrCorruptDatabase, err)
+		}
+		seam, err := record.DecodeSeam(value)
+		if err != nil {
+			return fmt.Errorf("%w: decode seam version for index repair: %w", ErrCorruptDatabase, err)
+		}
+		if seam.ID != id {
+			return fmt.Errorf("%w: seam key and record ID differ", ErrCorruptDatabase)
+		}
+		return tx.visitSeamSecondaryKeys(seam, seq, emit)
 	}
 	return nil
 }

@@ -121,10 +121,10 @@ re-exported from internal/lattice; see docs/hexxladb/HEXXLA.md and
 internal/lattice/PACKED_COORD.md for geometry and key layout.
 
 Private spatial algorithms power the context-loading methods above: symmetric
-shadowcasting for Tx.LoadContextFOV, multi-source Dijkstra with an optional
-VoronoiWeightFunc for Tx.LoadContextVoronoi, and pathfinding heuristics for
-regular-grid callers. Tx.FindEdgePath uses Dijkstra because stored edges may be
-long-range and have subunit weights.
+hex shadowcasting for Tx.LoadContextFOV, bounded-hop shortest paths with an
+optional VoronoiWeightFunc for Tx.LoadContextVoronoi, and pathfinding heuristics
+for regular-grid callers. Tx.FindEdgePath uses Dijkstra because stored edges may
+be long-range and have subunit weights.
 
 # Embedding in your program
 
@@ -423,6 +423,13 @@ func RenderHexGrid(ctx context.Context, center Coord, maxR int, labelFn func(Coo
     larger areas. labelFn is called for each coordinate; return a short string
     (≤5 chars) or "" for empty. If labelFn is nil, all positions show ".".
 
+func RepairMVCCIndexesTo(ctx context.Context, srcPath, destPath string, opts *Options, compactOpts *CompactOptions) error
+    RepairMVCCIndexesTo copy-compacts an MVCC database into a verified
+    destination and reconstructs cell tag/source/time and seam source/time
+    indexes from all retained primary versions. It preserves the source, commit
+    sequences and tombstones. See CompactTo for path, locking and encryption
+    requirements.
+
 func RotateEncryption(path string, currentOpts, newOpts *Options) error
     RotateEncryption rewrites the database at path using newOpts encryption
     settings. It performs an offline logical copy (all key/value rows) into a
@@ -541,8 +548,9 @@ type CellPlacement struct {
 
 type CellQuery struct {
 
-	// Query is matched against RawContent (substring), Tags (exact or prefix),
-	// and SourceID (exact). Empty string disables lexical matching.
+	// Query requires at least one whitespace-separated token to match RawContent
+	// (substring), Tags (exact or prefix), or SourceID (exact), case-insensitively.
+	// A blank query disables lexical matching.
 	Query string
 
 	// RequireTags requires ALL listed tags to be present on a cell (AND).
@@ -598,21 +606,22 @@ type CellQuery struct {
 	// cannot bound HNSW graph reads.
 	MaxScanRows int
 
-	// Embedding triggers ANN-accelerated seed selection via [Tx.SearchByEmbedding].
-	// When non-nil, the planner uses the embedding index to narrow the candidate
-	// set and boosts scores by embedding similarity. The vector length must match
-	// [DB.EmbeddingDimension] (auto-detected on first [Tx.PutEmbedding]).
+	// Embedding selects candidates and adds embedding similarity to their scores.
+	// The vector length must match [DB.EmbeddingDimension] (auto-detected on
+	// first [Tx.PutEmbedding]).
 	// Returns empty results if no embeddings have been stored yet.
-	// All other predicate fields (tags, temporal, spatial, etc.) are applied as
-	// post-filters on the embedding results. Candidate retrieval widens
-	// progressively until MaxResults matches are found, the ANN result is
-	// exhausted, or EmbeddingCandidateLimit is reached.
+	// All other predicates, including Query, are applied to embedding candidates.
+	// With a positive MaxResults, candidate retrieval widens until enough matches
+	// are found, the search is exhausted, or EmbeddingCandidateLimit is reached.
+	// With unlimited MaxResults and no explicit candidate limit, all embeddings
+	// are scanned exactly.
 	Embedding []float32
 
-	// EmbeddingCandidateLimit bounds ANN candidates considered before structured
-	// post-filtering. Zero chooses a bounded adaptive default. Values above
-	// [MaxEmbeddingFilterCandidates] are rejected. A low value can return fewer
-	// than MaxResults even when qualifying embeddings exist beyond the window.
+	// EmbeddingCandidateLimit bounds the number of distinct embedding candidates
+	// checked against the other predicates, even when MaxResults is unlimited.
+	// Zero chooses a bounded adaptive default when MaxResults is positive.
+	// Values above [MaxEmbeddingFilterCandidates] are rejected. A low limit can
+	// exclude matches beyond the candidate window.
 	EmbeddingCandidateLimit int
 }
     CellQuery is a composable predicate specification for Tx.QueryCells.
@@ -669,11 +678,9 @@ func NewUserMessageCell(coord PackedCoord, content, sessionID string, confidence
 
 type CellSearchConfig struct {
 	// Query is matched against RawContent (case-insensitive substring),
-	// Tags (exact and prefix, case-insensitive), and SourceID (exact).
-	// Multi-word queries are automatically tokenized on whitespace: each token
-	// is scored independently and contributions summed, so "machine learning"
-	// scores cells that contain both terms higher than cells containing only one.
-	// Empty query matches all cells (useful for pure filter/tag queries).
+	// Tags (exact and prefix, case-insensitive), and SourceID (case-insensitive
+	// exact match). At least one whitespace-separated token must match.
+	// An empty query disables the lexical filter.
 	Query string
 
 	// RequireTags filters to cells that carry ALL of these tags (AND semantics).
@@ -1594,7 +1601,7 @@ const (
 	SortByScore SortOrder = iota
 	// SortByConfidence sorts results by Provenance.Confidence descending.
 	SortByConfidence
-	// SortByRecency sorts results by ValidFrom descending (most recently written first).
+	// SortByRecency sorts results by ValidFrom descending.
 	// Cells with no ValidFrom are sorted after cells that have one.
 	SortByRecency
 	// SortByCoord sorts results by Coord lexicographically ascending (Q then R).
@@ -1782,6 +1789,8 @@ func (tx *Tx) FindEdgePath(ctx context.Context, start, goal Coord, cfg FindEdgeP
     Only edges whose relationType matches FindEdgePathConfig.Filter are
     traversed (empty = all edges). Edge weights are used as traversal costs
     unless FindEdgePathConfig.CostFunc is set. Returns nil if no path exists.
+    Returns ErrInvalidArgument if a reachable goal has only paths whose
+    accumulated costs overflow float64.
 
 func (tx *Tx) FindFreeCellPlacement(ctx context.Context, anchor Coord, maxRadius int) (CellPlacement, error)
     FindFreeCellPlacement finds the first coordinate without a visible cell
@@ -1856,8 +1865,10 @@ func (tx *Tx) LoadContextFOV(ctx context.Context, center Coord, maxR int, opaque
     LoadContextFOV loads cells around center using field-of-view filtering.
     Only cells that are visible from center (via deterministic symmetric
     shadowcasting) are included. The opaque function determines which
-    coordinates block vision; cells for which opaque returns true are themselves
-    included (the wall is visible) but block cells behind them.
+    coordinates block vision; cells for which opaque returns true block
+    centre-to-centre sight lines, including contact with hex edges or vertices.
+    The first blocking hex is visible. The opacity callback must be stable
+    throughout the call.
 
     This is useful for sparse grids where large empty/irrelevant regions
     should not consume the context budget. Compared to plain radial loading,
@@ -1866,8 +1877,8 @@ func (tx *Tx) LoadContextFOV(ctx context.Context, center Coord, maxR int, opaque
 
 func (tx *Tx) LoadContextVoronoi(ctx context.Context, seeds []Coord, cfg VoronoiContextConfig) (map[int][]CellRecord, error)
     LoadContextVoronoi partitions the area around multiple seeds using a Voronoi
-    diagram (multi-source Dijkstra on the hex grid), then loads cells for each
-    region.
+    diagram using minimum traversal cost within MaxRadius hops, then loads cells
+    for each region in cost order with deterministic seed and coordinate ties.
 
     Unlike loading independent radial neighborhoods per seed (which causes
     overlap near adjacent seeds), Voronoi assigns each coordinate to exactly
@@ -2006,20 +2017,21 @@ func (tx *Tx) SearchCells(ctx context.Context, cfg CellSearchConfig) ([]CellSear
     Tx.QueryCells directly.
 
     Multi-word queries are tokenized on whitespace. Each token is scored
-    independently and contributions summed. A cell matching all tokens in a
-    query scores higher than one matching only some.
+    independently and contributions are summed, including when an embedding is
+    supplied.
 
     Scoring per token (contributions are additive across all tokens):
       - Token matches a tag exactly (case-insensitive): +1.0
       - Token is a prefix of a tag (case-insensitive): +0.8
-      - Token found verbatim in RawContent: +0.6
+      - Lowercased token found verbatim in RawContent: +0.6
       - Token found case-insensitively in RawContent: +0.5
-      - Token matches SourceID exactly: +0.3
+      - Token matches SourceID exactly (case-insensitive): +0.3
       - Confidence bonus (once, not per token): +0.1 × Confidence
 
     Each tag contributes at most once per token (exact beats prefix). Results
-    are sorted descending by Score; ties broken by Confidence descending. An
-    empty Query still applies all filter fields and scores by Confidence only.
+    are sorted descending by Score; ties broken by Confidence descending.
+    An empty Query still applies all other filters and scores by Confidence plus
+    embedding similarity when supplied.
 
 func (tx *Tx) TagCooccurrences(ctx context.Context, minCount int) ([]TagPair, error)
     TagCooccurrences returns pairs of tags that appear together on visible
@@ -2079,7 +2091,7 @@ type ValidityWire = record.ValidityWire
     Re-exported from internal/record for public API access.
 
 type VoronoiContextConfig struct {
-	// MaxRadius bounds the Dijkstra expansion from each seed (default 4).
+	// MaxRadius bounds the number of traversal hops from each seed (default 4).
 	MaxRadius int
 	// MaxCellsPerSeed caps cells loaded per Voronoi region (default 64).
 	MaxCellsPerSeed int
@@ -2091,9 +2103,10 @@ type VoronoiContextConfig struct {
     VoronoiContextConfig configures Tx.LoadContextVoronoi.
 
 type VoronoiWeightFunc = lattice.WeightFunc
-    VoronoiWeightFunc returns an additional traversal cost for a coordinate
-    (must be >= 0). Return 0 for uniform cost, which is identical to the default
-    geometric Voronoi behaviour. Nil is treated as uniform cost.
+    VoronoiWeightFunc returns an additional traversal cost for a
+    coordinate (must be finite and >= 0). Cumulative cost overflow returns
+    ErrInvalidArgument. Return 0 for uniform cost, which is identical to the
+    default geometric Voronoi behaviour. Nil is treated as uniform cost.
 
 type WriteStats struct {
 	Calls        uint64
@@ -2160,27 +2173,30 @@ func CoarsenMulti(c Coord, factor, levels int) (Coord, error)
     Equivalent to calling CoarsenCoord n times in sequence.
 
 func FieldOfView(origin Coord, maxRadius int, opaque func(Coord) bool) []Coord
-    FieldOfView computes visible coordinates from origin up to maxRadius.
-    Delegates to FieldOfViewShadowcast for accuracy and O(visible) performance.
-
-    Opaque cells at the boundary ARE included (visible but blocking). Returns
-    nil if maxRadius < 0 or opaque is nil. Returns {origin} if maxRadius == 0.
+    FieldOfView computes visible coordinates from origin up to maxRadius. Opaque
+    hexes block centre-to-centre sight lines, including boundary contact. The
+    first blocking hex is visible. Results are deterministic and nearest-first.
+    Returns nil if maxRadius < 0 or opaque is nil. Returns {origin} if maxRadius
+    == 0.
 
 func FieldOfViewRaycast(origin Coord, maxRadius int, opaque func(Coord) bool) []Coord
     FieldOfViewRaycast is the original raycasting implementation, retained for
     regression comparison in tests. Not used in production paths.
 
 func FieldOfViewShadowcast(origin Coord, maxRadius int, opaque func(Coord) bool) []Coord
-    FieldOfViewShadowcast computes visible coordinates using symmetric
-    shadowcasting (Albert Ford 2021, hex adaptation). Six sextants cover the hex
-    grid around origin. Within each sextant, shadow slopes track blocked angular
-    ranges, scanning outward row by row. Visible coordinates are returned in
-    deterministic nearest-first order.
+    FieldOfViewShadowcast casts the angular shadows of regular hexagons using
+    exact integer directions. A floor tile is visible when the segment joining
+    its centre to origin does not intersect another opaque hex, including edges.
+    This geometric rule is reciprocal and invariant under hex rotations.
 
-    Guarantees full symmetry: if A sees B then B sees A (for floor tiles).
-    Opaque cells at the boundary are included (the wall is seen but blocks
-    behind it). Returns nil if maxRadius < 0 or opaque is nil. Returns {origin}
-    if maxRadius == 0.
+    Tiles are processed by squared Euclidean distance. A line crossing from one
+    hex's Voronoi region into the next moves to a centre farther from origin,
+    so every possible blocker is processed before its target. A range-add,
+    point- query tree tracks which candidate directions have entered a shadow.
+
+    Work is O(R² log R) and memory O(R²) for radius R. The opacity callback is
+    evaluated once for each non-origin coordinate in the disk and must be stable
+    throughout the call. Opaque origins do not block their own outgoing sight.
 
 func HexLine(a, b Coord) []Coord
     HexLine returns the hex coordinates on a straight line from a to b
@@ -2507,7 +2523,7 @@ type ContextPack struct {
 func LoadContext(ctx context.Context, tx TxReader, p LoadContextParams) (ContextPack, error)
     LoadContext is the unified context loading entry point. It selects the
     optimal algorithm automatically:
-      - EdgeFilter non-empty → graph BFS traversal (requires TxEdgeWalker)
+      - WalkEdges set → graph BFS traversal
       - Multiple seeds → concurrent deduped multi-seed ring walk
       - Otherwise → deterministic nearest-first ring walk
 

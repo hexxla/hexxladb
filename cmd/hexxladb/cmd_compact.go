@@ -14,6 +14,7 @@ func cmdCompact(args []string) int {
 	output := fs.String("o", "", "Destination database file (required)")
 	dryRun := fs.Bool("dry-run", false, "Run source, path, and capacity checks without creating the destination")
 	batchSize := fs.Int("batch-size", 0, "Physical keys per durable batch (default 4096; maximum 4096)")
+	rebuildIndexes := fs.Bool("rebuild-mvcc-indexes", false, "Rebuild cell and seam secondary indexes from retained MVCC history")
 	passphraseEnvironment := fs.String(
 		"passphrase-env",
 		"HEXXLA_PASSPHRASE",
@@ -71,7 +72,11 @@ func cmdCompact(args []string) int {
 		return 0
 	}
 
-	if err := hexxladb.CompactToWithOptions(ctx, srcPath, dstPath, sourceOptions, &hexxladb.CompactOptions{
+	copyDatabase := hexxladb.CompactToWithOptions
+	if *rebuildIndexes {
+		copyDatabase = hexxladb.RepairMVCCIndexesTo
+	}
+	if err := copyDatabase(ctx, srcPath, dstPath, sourceOptions, &hexxladb.CompactOptions{
 		BatchSize:         *batchSize,
 		VerifyDestination: true,
 		OnProgress: func(progress hexxladb.CompactProgress) {
@@ -82,7 +87,7 @@ func cmdCompact(args []string) int {
 		return 1
 	}
 
-	destinationStorage, err := verifyMaintenanceDestination(ctx, dstPath, sourceOptions)
+	destinationStorage, err := verifyMaintenanceDestination(ctx, dstPath, sourceOptions, !*rebuildIndexes)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hexxladb compact: verify: %v\n", err)
 		return 1

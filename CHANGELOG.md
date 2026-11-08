@@ -2,7 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- **MVCC index repair** — `RepairMVCCIndexesTo` and `hexxladb compact --rebuild-mvcc-indexes` rebuild cell and seam secondary indexes from retained versions in a verified, source-preserving copy.
+
 ### Fixed
+
+- **MVCC snapshots and indexes** — preserve secondary entries until their committed versions are pruned, replace entries for same-transaction edits, and recheck source and week against visible cell and seam records. Time-based snapshots resolve timestamps on both sides of the Unix epoch.
+
+- **Spatial context and graph traversal** — use reciprocal hex visibility and cost-optimal weighted Voronoi within the hop budget. Context loading follows relation lists and keeps live supersession targets at the origin. Edge path search handles accumulated cost overflow without selecting an invalid shortest route.
+
+- **Query filters and ranking** — honor embedding candidate limits with unlimited results, require a lexical match in text-and-vector queries, and place undated records after dated ones. The exact vector fallback streams embeddings through a reusable buffer.
+
+- **WAL fuzz coverage** — exercise framed replay, sequence filtering, checksum corruption, and authenticated records from a compact corpus.
 
 - **Crash testing** — ordinary builds ignore the crash-barrier environment variables. Blocking barriers compile only with the integration tag.
 

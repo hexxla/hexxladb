@@ -14,7 +14,7 @@ const (
 	SortByScore SortOrder = iota
 	// SortByConfidence sorts results by Provenance.Confidence descending.
 	SortByConfidence
-	// SortByRecency sorts results by ValidFrom descending (most recently written first).
+	// SortByRecency sorts results by ValidFrom descending.
 	// Cells with no ValidFrom are sorted after cells that have one.
 	SortByRecency
 	// SortByCoord sorts results by Coord lexicographically ascending (Q then R).
@@ -38,8 +38,9 @@ const (
 type CellQuery struct {
 	// --- Lexical ---
 
-	// Query is matched against RawContent (substring), Tags (exact or prefix),
-	// and SourceID (exact). Empty string disables lexical matching.
+	// Query requires at least one whitespace-separated token to match RawContent
+	// (substring), Tags (exact or prefix), or SourceID (exact), case-insensitively.
+	// A blank query disables lexical matching.
 	Query string
 
 	// RequireTags requires ALL listed tags to be present on a cell (AND).
@@ -107,21 +108,22 @@ type CellQuery struct {
 
 	// --- Embedding / vector ---
 
-	// Embedding triggers ANN-accelerated seed selection via [Tx.SearchByEmbedding].
-	// When non-nil, the planner uses the embedding index to narrow the candidate
-	// set and boosts scores by embedding similarity. The vector length must match
-	// [DB.EmbeddingDimension] (auto-detected on first [Tx.PutEmbedding]).
+	// Embedding selects candidates and adds embedding similarity to their scores.
+	// The vector length must match [DB.EmbeddingDimension] (auto-detected on
+	// first [Tx.PutEmbedding]).
 	// Returns empty results if no embeddings have been stored yet.
-	// All other predicate fields (tags, temporal, spatial, etc.) are applied as
-	// post-filters on the embedding results. Candidate retrieval widens
-	// progressively until MaxResults matches are found, the ANN result is
-	// exhausted, or EmbeddingCandidateLimit is reached.
+	// All other predicates, including Query, are applied to embedding candidates.
+	// With a positive MaxResults, candidate retrieval widens until enough matches
+	// are found, the search is exhausted, or EmbeddingCandidateLimit is reached.
+	// With unlimited MaxResults and no explicit candidate limit, all embeddings
+	// are scanned exactly.
 	Embedding []float32
 
-	// EmbeddingCandidateLimit bounds ANN candidates considered before structured
-	// post-filtering. Zero chooses a bounded adaptive default. Values above
-	// [MaxEmbeddingFilterCandidates] are rejected. A low value can return fewer
-	// than MaxResults even when qualifying embeddings exist beyond the window.
+	// EmbeddingCandidateLimit bounds the number of distinct embedding candidates
+	// checked against the other predicates, even when MaxResults is unlimited.
+	// Zero chooses a bounded adaptive default when MaxResults is positive.
+	// Values above [MaxEmbeddingFilterCandidates] are rejected. A low limit can
+	// exclude matches beyond the candidate window.
 	EmbeddingCandidateLimit int
 }
 

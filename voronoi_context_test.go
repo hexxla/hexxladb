@@ -297,3 +297,52 @@ func TestLoadContextVoronoiRejectsUnboundedWork(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadContextVoronoiPreservesHopBudget(t *testing.T) {
+	t.Parallel()
+	db := openVoronoiTestDB(t)
+	target, err := hexxladb.Pack(hexxladb.Coord{R: -4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.PutCell(t.Context(), hexxladb.CellRecord{Key: target, RawContent: "reachable in four hops"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		regions, err := tx.LoadContextVoronoi(t.Context(), []hexxladb.Coord{{}, {Q: 3}}, hexxladb.VoronoiContextConfig{
+			MaxRadius: 4,
+			WeightFunc: func(c hexxladb.Coord) float64 {
+				if c == (hexxladb.Coord{R: -1}) {
+					return 5
+				}
+				return 0
+			},
+		})
+		if err != nil {
+			return err
+		}
+		if len(regions[0]) != 1 || regions[0][0].Key != target {
+			t.Fatalf("seed zero lost its four-hop target: %v", regions)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadContextVoronoiRejectsCostOverflow(t *testing.T) {
+	t.Parallel()
+	db := openVoronoiTestDB(t)
+	err := db.View(func(tx *hexxladb.Tx) error {
+		_, err := tx.LoadContextVoronoi(t.Context(), []hexxladb.Coord{{}}, hexxladb.VoronoiContextConfig{
+			MaxRadius:  2,
+			WeightFunc: func(hexxladb.Coord) float64 { return math.MaxFloat64 },
+		})
+		return err
+	})
+	if !errors.Is(err, hexxladb.ErrInvalidArgument) {
+		t.Fatalf("error=%v, want ErrInvalidArgument for accumulated overflow", err)
+	}
+}

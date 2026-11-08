@@ -19,6 +19,21 @@ import (
 
 var emptySecondaryVal = []byte{}
 
+func decodeCellVersionForIndexes(key, value []byte) (record.CellRecord, uint64, error) {
+	coord, seq, err := index.ParseCellVersionKey(key)
+	if err != nil {
+		return record.CellRecord{}, 0, fmt.Errorf("%w: parse indexed cell version: %w", ErrCorruptDatabase, err)
+	}
+	cell, err := record.DecodeCell(value)
+	if err != nil {
+		return record.CellRecord{}, 0, fmt.Errorf("%w: decode indexed cell version: %w", ErrCorruptDatabase, err)
+	}
+	if cell.Key != coord {
+		return record.CellRecord{}, 0, fmt.Errorf("%w: cell version key and record coordinate differ", ErrCorruptDatabase)
+	}
+	return cell, seq, nil
+}
+
 // cellSourceSecondaryKey returns the source/ index key for rec at commitSeq, or (nil, nil) when no source row.
 func (tx *Tx) cellSourceSecondaryKey(rec record.CellRecord, commitSeq uint64) ([]byte, error) {
 	sid := strings.TrimSpace(rec.Provenance.SourceID)
@@ -50,40 +65,7 @@ func (tx *Tx) cellTagSecondaryKey(tag string, key lattice.PackedCoord, commitSeq
 	return index.TagKey(tag, key)
 }
 
-func (tx *Tx) removeCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) error {
-	if tx == nil || tx.db == nil {
-		return ErrClosed
-	}
-	if tx.db.activeEng() == nil {
-		return ErrDatabaseClosed
-	}
-	k, err := tx.cellSourceSecondaryKey(rec, commitSeq)
-	if err != nil {
-		return err
-	}
-	if k != nil {
-		if err := tx.deleteDirect(k); err != nil {
-			return err
-		}
-	}
-	if tk, ok := tx.cellTimeSecondaryKey(rec, commitSeq); ok {
-		if err := tx.deleteDirect(tk); err != nil {
-			return err
-		}
-	}
-	for _, tag := range record.UniqueSortedTags(rec.Tags) {
-		k, err := tx.cellTagSecondaryKey(tag, rec.Key, commitSeq)
-		if err != nil {
-			return err
-		}
-		if err := tx.deleteDirect(k); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (tx *Tx) putCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) error {
+func (tx *Tx) visitCellSecondaryKeys(rec record.CellRecord, commitSeq uint64, visit func([]byte) error) error {
 	k, err := tx.cellSourceSecondaryKey(rec, commitSeq)
 	if err != nil {
 		if errors.Is(err, index.ErrSourceIDTooLong) {
@@ -92,12 +74,12 @@ func (tx *Tx) putCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) err
 		return err
 	}
 	if k != nil {
-		if err := tx.putDirect(k, emptySecondaryVal); err != nil {
+		if err := visit(k); err != nil {
 			return err
 		}
 	}
 	if tk, ok := tx.cellTimeSecondaryKey(rec, commitSeq); ok {
-		if err := tx.putDirect(tk, emptySecondaryVal); err != nil {
+		if err := visit(tk); err != nil {
 			return err
 		}
 	}
@@ -109,11 +91,21 @@ func (tx *Tx) putCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) err
 			}
 			return err
 		}
-		if err := tx.putDirect(k, emptySecondaryVal); err != nil {
+		if err := visit(k); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (tx *Tx) removeCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) error {
+	return tx.visitCellSecondaryKeys(rec, commitSeq, tx.deleteDirect)
+}
+
+func (tx *Tx) putCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) error {
+	return tx.visitCellSecondaryKeys(rec, commitSeq, func(key []byte) error {
+		return tx.putDirect(key, emptySecondaryVal)
+	})
 }
 
 func (tx *Tx) cellSourceScanBounds(sourceID string) (from, to []byte, err error) {
@@ -195,6 +187,9 @@ func (tx *Tx) ascendCellsBySource(
 			}
 			return true
 		}
+		if strings.TrimSpace(rec.Provenance.SourceID) != sourceID {
+			return true
+		}
 		return fn(rec)
 	})
 	if err != nil {
@@ -237,6 +232,9 @@ func (tx *Tx) AscendCellsInTimeBucket(ctx context.Context, bucket int64, fn func
 				scanErr = err
 				return false
 			}
+			return true
+		}
+		if visibleBucket, hasBucket := index.WeekBucketFromValidity(rec.Validity); !hasBucket || visibleBucket != bucket {
 			return true
 		}
 		return fn(rec)

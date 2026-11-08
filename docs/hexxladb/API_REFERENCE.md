@@ -135,8 +135,11 @@ returns sorted partial results together with `ErrQueryScanLimit`; it is rejected
 for embedding queries because candidate counts cannot bound HNSW graph reads.
 Filtered embedding queries instead widen the ANN window progressively.
 `CellQuery.EmbeddingCandidateLimit` bounds post-filter candidates through
-`MaxEmbeddingFilterCandidates`; reaching that window may underfill results, so
-measure recall with representative filter selectivity.
+`MaxEmbeddingFilterCandidates`, including when the result count is unlimited.
+If both limits are unset, the query scores all stored embeddings exactly.
+With text and an embedding supplied, at least one lexical token must match and
+embedding similarity contributes to ranking. A bounded window may underfill
+results, so measure recall with representative filter selectivity.
 
 Typical retrieval flow:
 
@@ -147,9 +150,13 @@ SearchCells or QueryCells
   -> ContextPack
 ```
 
-Weighted Voronoi output contains each coordinate exactly once under its final
-lowest-cost owner. Weight callbacks must return finite, non-negative costs;
-invalid costs return `ErrInvalidArgument`.
+Weighted Voronoi assigns each coordinate in the footprint to the seed with the
+lowest path cost within the hop radius. Seed order breaks cost ties. Invalid
+penalties or overflowing path costs return `ErrInvalidArgument`. FOV uses
+symmetric center-to-center visibility, with an opaque hex boundary blocking
+sight through it. Graph context accepts a comma-separated set of relation names
+in a single breadth-first traversal. `FindEdgePath` returns `ErrInvalidArgument`
+when a reachable goal has only paths whose costs overflow `float64`.
 
 Spatial work is bounded before lattice expansion: raw/ring scans accept radii
 through `MaxSpatialScanRadius`; seam lookup additionally bounds radius, index
@@ -259,6 +266,7 @@ changes require deliberate compatibility review.
 | [`PreflightCompactTo`](../../maintenance_preflight.go)                       | Check source storage, path collisions, and copy capacity without creating a candidate. |
 | [`DB.Compact`, `CompactTo`](../../compact.go)                                | Rewrite live keys into a new compact file.                     |
 | [`DB.CompactWithOptions`, `CompactToWithOptions`](../../compact.go)          | Bound copy batches, receive durable progress, and optionally verify the candidate. |
+| [`RepairMVCCIndexesTo`](../../compact.go)                                    | Rebuild MVCC secondary indexes in a verified copy from retained primary versions. |
 | [`PreflightMigrateV1ToV2`](../../maintenance_preflight.go)                   | Check v1 format, credentials, changelog/resume state, paths, and capacity without copying a new batch. |
 | [`MigrateV1ToV2`](../../migration.go)                                       | Offline, resumable logical migration into an MVCC database.    |
 | [`PreflightMigrateToAuthenticated`](../../maintenance_preflight.go)          | Check a v1/v2 source, destination credentials, changelog policy, paths, and capacity without creating a v3 candidate. |

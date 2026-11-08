@@ -73,12 +73,15 @@ func verifyMaintenanceDestination(
 	ctx context.Context,
 	path string,
 	opts *hexxladb.Options,
+	checkOrphans bool,
 ) (hexxladb.StorageStats, error) {
 	db, err := hexxladb.Open(path, opts)
 	if err != nil {
 		return hexxladb.StorageStats{}, fmt.Errorf("reopen destination: %w", err)
 	}
-	report, healthErr := db.HealthCheck(ctx, hexxladb.DefaultHealthCheckConfig())
+	healthConfig := hexxladb.DefaultHealthCheckConfig()
+	healthConfig.CheckOrphans = checkOrphans
+	report, healthErr := db.HealthCheck(ctx, healthConfig)
 	storage, storageErr := db.StorageStats()
 	closeErr := db.Close()
 	if healthErr != nil {

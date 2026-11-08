@@ -1,13 +1,15 @@
 package lattice
 
 import (
-	"container/heap"
+	"cmp"
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 )
 
-// ErrInvalidWeight means a Voronoi weight was negative or non-finite.
+// ErrInvalidWeight means a Voronoi weight was negative or non-finite, or a
+// cumulative traversal cost overflowed.
 var ErrInvalidWeight = errors.New("lattice: invalid Voronoi weight")
 
 // WeightFunc returns an additional traversal cost for coord (must be >= 0).
@@ -22,7 +24,7 @@ type VoronoiCell struct {
 	Distance int
 }
 
-// Voronoi computes a hex-grid Voronoi diagram via multi-source Dijkstra.
+// Voronoi computes a hex-grid Voronoi diagram with a bounded-hop shortest-path search.
 // Each hex within maxRadius of any seed is assigned to the seed whose
 // cumulative traversal cost (hop count + WeightFunc penalties) is lowest.
 // Ties are broken by seed order (lower index wins).
@@ -30,7 +32,7 @@ type VoronoiCell struct {
 // When weightFn is nil, behaviour is identical to the previous uniform-BFS
 // implementation — every hop costs 1.0 and the result is purely geometric.
 //
-// Returns the partition as a slice of VoronoiCell in visit order, and
+// Returns the partition ordered by cost, seed index, hop count and coordinate, and
 // a map from each coordinate to its owning seed index for fast lookup.
 //
 // maxRadius bounds the BFS hop depth from each seed (must be > 0).
@@ -49,7 +51,7 @@ type voronoiSearch struct {
 	assignments    map[Coord]voronoiAssignment
 	discoveryOrder []Coord
 	weights        map[Coord]float64
-	queue          voronoiPQ
+	frontier       []voronoiState
 	weightFn       WeightFunc
 	maxRadius      int
 }
@@ -72,7 +74,7 @@ func newVoronoiSearch(seeds []Coord, maxRadius int, weightFn WeightFunc) *vorono
 		assignments:    make(map[Coord]voronoiAssignment, 3*maxRadius*maxRadius+3*maxRadius+1),
 		discoveryOrder: make([]Coord, 0, 3*maxRadius*maxRadius+3*maxRadius+1),
 		weights:        make(map[Coord]float64),
-		queue:          make(voronoiPQ, 0, len(seeds)),
+		frontier:       make([]voronoiState, 0, len(seeds)),
 		weightFn:       weightFn,
 		maxRadius:      maxRadius,
 	}
@@ -82,58 +84,81 @@ func newVoronoiSearch(seeds []Coord, maxRadius int, weightFn WeightFunc) *vorono
 		}
 		search.assignments[s] = voronoiAssignment{seedIdx: i}
 		search.discoveryOrder = append(search.discoveryOrder, s)
-		heap.Push(&search.queue, &voronoiItem{coord: s, seedIdx: i})
+		search.frontier = append(search.frontier, voronoiState{coord: s, assignment: voronoiAssignment{seedIdx: i}})
 	}
-	heap.Init(&search.queue)
 	return search
 }
 
+// Every frontier contains paths with the same hop count. A cheaper path found
+// in a later frontier cannot erase the earlier path's remaining hop budget.
+// A state is expanded only when it improves the best cost/seed already reached
+// with at most that many hops. Uniform costs therefore visit each cell once.
+// Two rolling frontiers bound memory by the union of the seed disks.
 func (search *voronoiSearch) run() error {
-	for search.queue.Len() > 0 {
-		cur := heap.Pop(&search.queue).(*voronoiItem)
-		assigned := search.assignments[cur.coord]
-		if cur.cost != assigned.cost || cur.seedIdx != assigned.seedIdx || cur.hops != assigned.hops {
-			continue // stale entry
+	for range search.maxRadius {
+		next := make([]voronoiState, 0, len(search.frontier))
+		positions := make(map[Coord]int, len(search.frontier))
+		for _, current := range search.frontier {
+			var err error
+			next, err = search.expand(current, next, positions)
+			if err != nil {
+				return err
+			}
 		}
-		if cur.hops >= search.maxRadius {
-			continue
-		}
-		if err := search.expand(cur); err != nil {
-			return err
+		search.frontier = next
+		if len(next) == 0 {
+			break
 		}
 	}
 	return nil
 }
 
-func (search *voronoiSearch) expand(cur *voronoiItem) error {
-	for _, neighbor := range cur.coord.Neighbors() {
+type voronoiState struct {
+	coord      Coord
+	assignment voronoiAssignment
+}
+
+func (search *voronoiSearch) expand(current voronoiState, next []voronoiState, positions map[Coord]int) ([]voronoiState, error) {
+	for _, neighbor := range current.coord.Neighbors() {
 		penalty, err := search.penalty(neighbor)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		newCost := cur.cost + 1.0 + penalty
-		newHops := cur.hops + 1
+		candidate := voronoiAssignment{
+			cost:    current.assignment.cost + 1 + penalty,
+			seedIdx: current.assignment.seedIdx,
+			hops:    current.assignment.hops + 1,
+		}
+		if math.IsInf(candidate.cost, 0) {
+			return nil, fmt.Errorf("%w: cumulative cost overflow at coordinate %+v", ErrInvalidWeight, neighbor)
+		}
 		previous, seen := search.assignments[neighbor]
-		if seen && !betterVoronoiAssignment(newCost, cur.seedIdx, newHops, previous.cost, previous.seedIdx, previous.hops) {
+		if seen && !betterVoronoiAssignment(candidate.cost, candidate.seedIdx, candidate.hops, previous.cost, previous.seedIdx, previous.hops) {
 			continue
 		}
 		if !seen {
 			search.discoveryOrder = append(search.discoveryOrder, neighbor)
 		}
-		search.assignments[neighbor] = voronoiAssignment{cost: newCost, seedIdx: cur.seedIdx, hops: newHops}
-		heap.Push(&search.queue, &voronoiItem{coord: neighbor, seedIdx: cur.seedIdx, cost: newCost, hops: newHops})
+		search.assignments[neighbor] = candidate
+		state := voronoiState{coord: neighbor, assignment: candidate}
+		if position, found := positions[neighbor]; found {
+			next[position] = state
+		} else {
+			positions[neighbor] = len(next)
+			next = append(next, state)
+		}
 	}
-	return nil
+	return next, nil
 }
 
 func (search *voronoiSearch) penalty(coord Coord) (float64, error) {
+	if search.weightFn == nil {
+		return 0, nil
+	}
 	if penalty, ok := search.weights[coord]; ok {
 		return penalty, nil
 	}
-	var penalty float64
-	if search.weightFn != nil {
-		penalty = search.weightFn(coord)
-	}
+	penalty := search.weightFn(coord)
 	if penalty < 0 || math.IsNaN(penalty) || math.IsInf(penalty, 0) {
 		return 0, fmt.Errorf("%w at coordinate %+v: %v", ErrInvalidWeight, coord, penalty)
 	}
@@ -153,6 +178,19 @@ func (search *voronoiSearch) result() (cells []VoronoiCell, owner map[Coord]int,
 			Distance: assigned.hops,
 		})
 	}
+	slices.SortFunc(cells, func(a, b VoronoiCell) int {
+		left, right := search.assignments[a.Coord], search.assignments[b.Coord]
+		if betterVoronoiAssignment(left.cost, left.seedIdx, left.hops, right.cost, right.seedIdx, right.hops) {
+			return -1
+		}
+		if betterVoronoiAssignment(right.cost, right.seedIdx, right.hops, left.cost, left.seedIdx, left.hops) {
+			return 1
+		}
+		if a.Coord.Q != b.Coord.Q {
+			return cmp.Compare(a.Coord.Q, b.Coord.Q)
+		}
+		return cmp.Compare(a.Coord.R, b.Coord.R)
+	})
 	return cells, owner, nil
 }
 
@@ -164,41 +202,6 @@ func betterVoronoiAssignment(cost float64, seedIdx, hops int, oldCost float64, o
 		return seedIdx < oldSeedIdx
 	}
 	return hops < oldHops
-}
-
-// voronoiItem is a priority queue entry for weighted Voronoi.
-type voronoiItem struct {
-	coord   Coord
-	seedIdx int
-	cost    float64
-	hops    int
-	index   int
-}
-
-// voronoiPQ implements heap.Interface (min-heap by cost, tie-break by seedIdx).
-type voronoiPQ []*voronoiItem
-
-func (pq voronoiPQ) Len() int      { return len(pq) }
-func (pq voronoiPQ) Swap(i, j int) { pq[i], pq[j] = pq[j], pq[i]; pq[i].index = i; pq[j].index = j }
-func (pq voronoiPQ) Less(i, j int) bool {
-	if pq[i].cost != pq[j].cost {
-		return pq[i].cost < pq[j].cost
-	}
-	return pq[i].seedIdx < pq[j].seedIdx
-}
-func (pq *voronoiPQ) Push(x any) {
-	item := x.(*voronoiItem)
-	item.index = len(*pq)
-	*pq = append(*pq, item)
-}
-func (pq *voronoiPQ) Pop() any {
-	old := *pq
-	n := len(old)
-	item := old[n-1]
-	old[n-1] = nil
-	item.index = -1
-	*pq = old[:n-1]
-	return item
 }
 
 // VoronoiRegion returns only the coordinates assigned to a specific seed index.

@@ -2,6 +2,7 @@ package hexxladb
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -43,11 +44,6 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
 	maxResults := q.MaxResults
 	queryLow := strings.ToLower(strings.TrimSpace(q.Query))
 
-	// ── plan: choose primary scan strategy ───────────────────────────────────
-	// The embedding path needs a scores map, so it materialises a small bounded
-	// candidate set (MaxResults×2) and falls through to the fused loop below.
-	// All other paths use a fused yield callback: filter+score happen inside the
-	// scan callback itself, so no intermediate []CellRecord slice is allocated.
 	var results []CellQueryResult
 	var scanLimitErr error
 
@@ -113,20 +109,21 @@ func (tx *Tx) queryCellsByIndex(ctx context.Context, q CellQuery, queryLow strin
 		if ctx.Err() != nil {
 			return false
 		}
-		if r, ok := tx.scoreRecord(q, rec, queryLow, nil); ok {
+		if r, ok := scoreRecord(q, rec, queryLow, 0); ok {
 			results = append(results, r)
 		}
 		return true
 	}
 
 	var err error
+	indexSourceID := strings.TrimSpace(q.SourceID)
 	switch {
 	case preferSpatialPlan(q):
 		err = tx.scanByRadiusFused(ctx, q.Center, q.Radius, q.MaxScanRows, yield)
 	case len(q.RequireTags) > 0:
 		err = tx.scanByTagFused(ctx, q.RequireTags[0], q.MaxScanRows, yield)
-	case q.SourceID != "":
-		err = tx.scanBySourceFused(ctx, q.SourceID, q.MaxScanRows, yield)
+	case indexSourceID != "":
+		err = tx.scanBySourceFused(ctx, indexSourceID, q.MaxScanRows, yield)
 	case !q.After.IsZero() || !q.Before.IsZero():
 		// A signed week bucket is not lexicographically ordered by its
 		// on-disk uint64 representation. Scan primary cells so ranges that
@@ -208,45 +205,26 @@ func (tx *Tx) scanAllCellsFused(ctx context.Context, maxScanRows int, yield func
 
 // scoreRecord applies predicates, scores, and builds a CellQueryResult.
 // Returns (result, true) if the record passes all filters; (zero, false) otherwise.
-func (tx *Tx) scoreRecord(q CellQuery, rec record.CellRecord, queryLow string, embScores map[lattice.PackedCoord]float64) (CellQueryResult, bool) {
+func scoreRecord(q CellQuery, rec record.CellRecord, queryLow string, embeddingScore float64) (CellQueryResult, bool) {
 	coord, err := lattice.Unpack(rec.Key)
 	if err != nil {
 		return CellQueryResult{}, false
 	}
 	c := Coord(coord)
 
-	if !applyPredicates(q, rec, c, queryLow) {
+	if !applyPredicates(q, rec, c) {
 		return CellQueryResult{}, false
 	}
 
-	// Pre-lowercase and deduplicate tags once per record so repeated stored tags
-	// cannot inflate lexical relevance.
-	tagsLow := make([]string, 0, len(rec.Tags))
-	seenTags := make(map[string]struct{}, len(rec.Tags))
-	for _, tag := range rec.Tags {
-		tagLow := strings.ToLower(tag)
-		if _, seen := seenTags[tagLow]; seen {
-			continue
-		}
-		seenTags[tagLow] = struct{}{}
-		tagsLow = append(tagsLow, tagLow)
-	}
-
-	score := scoreCell(queryLow, tagsLow, rec.RawContent, rec.Provenance.SourceID, rec.Provenance.Confidence)
-
-	if embScores != nil {
-		if es, ok := embScores[rec.Key]; ok {
-			score += es
-		}
-	}
-
-	if queryLow != "" && embScores == nil && score <= 0.1*rec.Provenance.Confidence {
+	score, matched := scoreCell(queryLow, rec.Tags, rec.RawContent, rec.Provenance.SourceID, rec.Provenance.Confidence)
+	if !matched {
 		return CellQueryResult{}, false
 	}
+	score += embeddingScore
 
 	var explanation string
 	if q.Explain {
-		explanation = buildExplanation(q, rec, c, score, queryLow)
+		explanation = buildExplanation(q, rec, c, score, queryLow, embeddingScore)
 	}
 
 	return CellQueryResult{
@@ -316,37 +294,33 @@ func (tx *Tx) scanByRadiusFused(ctx context.Context, center Coord, radius, maxSc
 }
 
 func (tx *Tx) queryCellsByEmbedding(ctx context.Context, q CellQuery, queryLow string, maxResults int) ([]CellQueryResult, error) {
-	if maxResults <= 0 {
-		candidates, scores, err := tx.scanAllEmbeddings(q.Embedding)
-		if err != nil {
-			return nil, err
-		}
-		results := make([]CellQueryResult, 0, len(candidates))
-		for _, rec := range candidates {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			if result, ok := tx.scoreRecord(q, rec, queryLow, scores); ok {
-				results = append(results, result)
-			}
-		}
-		return results, nil
+	if maxResults <= 0 && q.EmbeddingCandidateLimit == 0 {
+		return tx.queryCellsByFlatEmbedding(ctx, q, queryLow)
 	}
 
 	candidateLimit := q.EmbeddingCandidateLimit
 	if candidateLimit == 0 {
 		candidateLimit = min(MaxEmbeddingFilterCandidates, max(100, multiplyCapped(maxResults, 16, MaxEmbeddingFilterCandidates)))
 	}
-	fetchK := min(candidateLimit, max(20, multiplyCapped(maxResults, 2, candidateLimit)))
+	fetchK := candidateLimit
+	if maxResults > 0 {
+		fetchK = min(candidateLimit, max(20, multiplyCapped(maxResults, 2, candidateLimit)))
+	}
 	seen := make(map[lattice.PackedCoord]struct{}, fetchK)
-	results := make([]CellQueryResult, 0, min(maxResults, fetchK))
-	embeddingScore := make(map[lattice.PackedCoord]float64, 1)
+	results := make([]CellQueryResult, 0, min(fetchK, max(maxResults, 0)))
 	for {
-		hits, err := tx.SearchByEmbedding(q.Embedding, EmbeddingSearchConfig{MaxResults: fetchK})
+		hits, _, err := tx.searchByEmbedding(ctx, q.Embedding, EmbeddingSearchConfig{MaxResults: fetchK})
 		if err != nil {
 			return nil, err
 		}
 		for _, hit := range hits {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			// Approximate result sets from successive searches need not be nested.
+			if len(seen) == candidateLimit {
+				break
+			}
 			if _, duplicate := seen[hit.Coord]; duplicate {
 				continue
 			}
@@ -358,13 +332,11 @@ func (tx *Tx) queryCellsByEmbedding(ctx context.Context, q CellQuery, queryLow s
 			if !ok {
 				continue
 			}
-			clear(embeddingScore)
-			embeddingScore[hit.Coord] = hit.Score
-			if result, matched := tx.scoreRecord(q, rec, queryLow, embeddingScore); matched {
+			if result, matched := scoreRecord(q, rec, queryLow, hit.Score); matched {
 				results = append(results, result)
 			}
 		}
-		if len(results) >= maxResults || len(hits) < fetchK || fetchK == candidateLimit {
+		if (maxResults > 0 && len(results) >= maxResults) || len(hits) < fetchK || len(seen) == candidateLimit || fetchK == candidateLimit {
 			return results, nil
 		}
 		fetchK = min(candidateLimit, fetchK*2)
@@ -378,41 +350,41 @@ func multiplyCapped(value, factor, limit int) int {
 	return value * factor
 }
 
-func (tx *Tx) scanAllEmbeddings(vec []float32) ([]record.CellRecord, map[lattice.PackedCoord]float64, error) {
-	if err := validateEmbeddingVector(vec); err != nil {
-		return nil, nil, err
+func (tx *Tx) queryCellsByFlatEmbedding(ctx context.Context, q CellQuery, queryLow string) ([]CellQueryResult, error) {
+	if err := validateEmbeddingVector(q.Embedding); err != nil {
+		return nil, err
 	}
 	dim := tx.db.eng.EmbeddingDim()
+	results := []CellQueryResult{}
 	if dim == 0 {
-		return nil, nil, nil
+		return results, nil
 	}
-	if len(vec) != int(dim) {
-		return nil, nil, fmt.Errorf("%w: want %d, got %d", ErrEmbeddingDimension, dim, len(vec))
+	if len(q.Embedding) != int(dim) {
+		return nil, fmt.Errorf("%w: want %d, got %d", ErrEmbeddingDimension, dim, len(q.Embedding))
 	}
-	candidates, err := tx.collectEmbeddingCandidates()
-	if err != nil {
-		return nil, nil, err
-	}
-	recs := make([]record.CellRecord, 0, len(candidates))
-	scores := make(map[lattice.PackedCoord]float64, len(candidates))
 	metric := tx.db.eng.EmbeddingMetric()
-	for _, candidate := range candidates {
-		rec, ok, err := tx.GetCell(candidate.coord)
+	err := tx.scanEmbeddings(ctx, func(coord lattice.PackedCoord, vec []float32) error {
+		rec, ok, err := tx.GetCell(coord)
 		if err != nil {
-			return nil, nil, err
+			return err
 		}
 		if !ok {
-			continue
+			return nil
 		}
-		recs = append(recs, rec)
-		scores[candidate.coord] = engine.Similarity(vec, candidate.vec, metric)
+		if result, matched := scoreRecord(q, rec, queryLow, engine.Similarity(q.Embedding, vec, metric)); matched {
+			results = append(results, result)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	return recs, scores, nil
+	return results, nil
 }
 
 // ── predicate pipeline ────────────────────────────────────────────────────────
 
-func applyPredicates(q CellQuery, rec record.CellRecord, c Coord, _ string) bool {
+func applyPredicates(q CellQuery, rec record.CellRecord, c Coord) bool {
 	// RequireTags AND
 	if len(q.RequireTags) > 0 && !hasAllTags(rec.Tags, q.RequireTags) {
 		return false
@@ -480,14 +452,17 @@ func sortResults(results []CellQueryResult, order SortOrder) {
 		})
 	case SortByRecency:
 		slices.SortFunc(results, func(a, b CellQueryResult) int {
-			vi, vj := validFromNanos(a.Cell), validFromNanos(b.Cell)
-			if vi > vj {
-				return -1
-			}
-			if vi < vj {
+			at, bt := a.Cell.Validity.ValidFrom, b.Cell.Validity.ValidFrom
+			switch {
+			case at == nil && bt == nil:
+				return 0
+			case at == nil:
 				return 1
+			case bt == nil:
+				return -1
+			default:
+				return cmp.Compare(*bt, *at)
 			}
-			return 0
 		})
 	case SortByCoord:
 		slices.SortFunc(results, func(a, b CellQueryResult) int {
@@ -517,24 +492,19 @@ func sortResults(results []CellQueryResult, order SortOrder) {
 	}
 }
 
-func validFromNanos(cv CellView) int64 {
-	if cv.Validity.ValidFrom != nil {
-		return *cv.Validity.ValidFrom
-	}
-	return 0
-}
-
 // ── explain ───────────────────────────────────────────────────────────────────
 
-func buildExplanation(_ CellQuery, rec record.CellRecord, c Coord, score float64, queryLow string) string {
+func buildExplanation(q CellQuery, rec record.CellRecord, c Coord, score float64, queryLow string, embeddingScore float64) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "coord=(%d,%d) score=%.2f conf=%.2f", c.Q, c.R, score, rec.Provenance.Confidence)
+	if len(q.Embedding) > 0 {
+		fmt.Fprintf(&sb, " embedding=%.2f", embeddingScore)
+	}
 	if queryLow != "" {
 		fmt.Fprintf(&sb, " query=%q", queryLow)
-		tokens := strings.Fields(queryLow)
 		contentLow := strings.ToLower(rec.RawContent)
 		sourceIDLow := strings.ToLower(rec.Provenance.SourceID)
-		for _, tok := range tokens {
+		for tok := range strings.FieldsSeq(queryLow) {
 			for _, tag := range rec.Tags {
 				tagLow := strings.ToLower(tag)
 				if tagLow == tok {

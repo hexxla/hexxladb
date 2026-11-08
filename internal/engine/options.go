@@ -19,6 +19,9 @@ type Options struct {
 	// CreateExclusive requires path not to exist. It is used by maintenance operations
 	// that must never merge into or overwrite an existing database.
 	CreateExclusive bool
+	// RequireExistingPrimary prevents opening a missing or empty primary as a
+	// new database. A missing WAL may still be created for an existing primary.
+	RequireExistingPrimary bool
 	// Hooks optional page transforms (e.g. encryption).
 	Hooks *PageHooks
 	// NewEncryptedDB sets FeatureEncryptedDataPages on newly created database files.

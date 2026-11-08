@@ -3,7 +3,9 @@ package hexxladb_test
 import (
 	"context"
 	"errors"
+	"math"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -105,6 +107,79 @@ func TestQueryCells_FilteredEmbeddingWidensCandidates(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestQueryCells_HybridLexicalFilterAndCandidateLimit(t *testing.T) {
+	t.Parallel()
+	for _, path := range []hexxladb.EmbeddingSearchPath{hexxladb.EmbeddingSearchPathHNSW, hexxladb.EmbeddingSearchPathFlat} {
+		t.Run(string(path), func(t *testing.T) {
+			db := openEmbeddingDB(t, 2, hexxladb.DistanceDotProduct)
+			ctx := t.Context()
+			vec := []float32{1, 0}
+			if err := db.Update(func(tx *hexxladb.Tx) error {
+				for i, content := range []string{"cat", "dog near", "dog far"} {
+					key := mustPackTest(t, hexxladb.Coord{Q: i})
+					cell := hexxladb.CellRecord{Key: key, RawContent: content}
+					if content == "dog near" {
+						cell.Provenance.Confidence = math.MaxFloat64 // a match must survive loss of precision in the score
+					}
+					if err := tx.PutCell(ctx, cell); err != nil {
+						return err
+					}
+					weights := [...]float32{5, 2, -3}
+					opts := hexxladb.EmbeddingWriteOptions{DeferIndexMaintenance: path == hexxladb.EmbeddingSearchPathFlat}
+					if err := tx.PutEmbeddingWithOptions(key, []float32{weights[i], 0}, opts); err != nil {
+						return err
+					}
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.View(func(tx *hexxladb.Tx) error {
+				_, stats, err := tx.SearchByEmbeddingWithStats(vec, hexxladb.EmbeddingSearchConfig{MaxResults: 1})
+				if err != nil {
+					return err
+				}
+				if stats.Path != path {
+					t.Fatalf("embedding path = %q, want %q", stats.Path, path)
+				}
+				for _, tc := range []struct {
+					name       string
+					query      string
+					maxResults int
+					cap        int
+					want       []string
+				}{
+					{name: "bounded hybrid", query: "DOG", maxResults: 3, want: []string{"dog near", "dog far"}},
+					{name: "exact unlimited hybrid", query: "dog", want: []string{"dog near", "dog far"}},
+					{name: "unlimited results with a cap", cap: 1, want: []string{"cat"}},
+					{name: "negative result limit with a cap", maxResults: -1, cap: 1, want: []string{"cat"}},
+					{name: "cap applied before lexical filter", query: "dog", cap: 1},
+					{name: "lexical match inside cap", query: "dog", cap: 2, want: []string{"dog near"}},
+				} {
+					t.Run(tc.name, func(t *testing.T) {
+						results, err := tx.QueryCells(t.Context(), hexxladb.CellQuery{
+							Query: tc.query, Embedding: vec, MaxResults: tc.maxResults, EmbeddingCandidateLimit: tc.cap,
+						})
+						if err != nil {
+							t.Fatal(err)
+						}
+						var got []string
+						for _, result := range results {
+							got = append(got, result.Cell.RawContent)
+						}
+						if !slices.Equal(got, tc.want) {
+							t.Fatalf("contents = %v, want %v", got, tc.want)
+						}
+					})
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
@@ -372,6 +447,30 @@ func TestQueryCells_SourceID(t *testing.T) {
 	}
 }
 
+func TestQueryCells_SourceIDMatchesRawValue(t *testing.T) {
+	t.Parallel()
+	db := openQueryDB(t)
+	sources := []string{"source", " source ", " "}
+	for i, source := range sources {
+		putQueryCell(t, db, hexxladb.Coord{Q: i}, "cell", source, nil, 1, time.Time{})
+	}
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		for i, source := range sources {
+			results, err := tx.QueryCells(t.Context(), hexxladb.CellQuery{SourceID: source})
+			if err != nil {
+				return err
+			}
+			want := hexxladb.Coord{Q: i}
+			if len(results) != 1 || results[0].Cell.Coord != want {
+				t.Errorf("SourceID %q results = %+v, want only %v", source, results, want)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestQueryCells_ConfidenceRange(t *testing.T) {
 	t.Parallel()
 	db := openQueryDB(t)
@@ -594,10 +693,11 @@ func TestQueryCells_SortByRecency(t *testing.T) {
 	t.Parallel()
 	db := openQueryDB(t)
 
-	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	putQueryCell(t, db, hexxladb.Coord{Q: 0, R: 0}, "oldest", "src", []string{"x"}, 0.8, base.Add(-2*24*time.Hour))
-	putQueryCell(t, db, hexxladb.Coord{Q: 1, R: 0}, "newest", "src", []string{"x"}, 0.8, base.Add(2*24*time.Hour))
-	putQueryCell(t, db, hexxladb.Coord{Q: 2, R: 0}, "middle", "src", []string{"x"}, 0.8, base)
+	epoch := time.Unix(0, 0)
+	putQueryCell(t, db, hexxladb.Coord{}, "missing", "src", nil, 0.8, time.Time{})
+	putQueryCell(t, db, hexxladb.Coord{Q: 1}, "before epoch", "src", nil, 0.8, epoch.Add(-time.Nanosecond))
+	putQueryCell(t, db, hexxladb.Coord{Q: 2}, "after epoch", "src", nil, 0.8, epoch.Add(time.Nanosecond))
+	putQueryCell(t, db, hexxladb.Coord{Q: 3}, "epoch", "src", nil, 0.8, epoch)
 
 	ctx := context.Background()
 	if err := db.View(func(tx *hexxladb.Tx) error {
@@ -608,14 +708,13 @@ func TestQueryCells_SortByRecency(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if len(results) < 3 {
-			t.Fatalf("got %d results, want 3", len(results))
+		var got []string
+		for _, result := range results {
+			got = append(got, result.Cell.RawContent)
 		}
-		if results[0].Cell.RawContent != "newest" {
-			t.Errorf("first = %q, want 'newest'", results[0].Cell.RawContent)
-		}
-		if results[2].Cell.RawContent != "oldest" {
-			t.Errorf("last = %q, want 'oldest'", results[2].Cell.RawContent)
+		want := []string{"after epoch", "epoch", "before epoch", "missing"}
+		if !slices.Equal(got, want) {
+			t.Fatalf("recency order = %v, want %v", got, want)
 		}
 		return nil
 	}); err != nil {

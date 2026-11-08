@@ -2,10 +2,12 @@ package hexxladb_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
 	"github.com/hexxla/hexxladb"
+	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
 )
@@ -192,6 +194,103 @@ func TestFilterSuperseded_excludesStale(t *testing.T) {
 		return nil
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFilterSuperseded_OriginSuccessor(t *testing.T) {
+	t.Parallel()
+	db := openPathfindTestDB(t)
+	stale, origin := hexxladb.Coord{Q: 9}, hexxladb.Coord{}
+	mustPutCell(t, db, stale, "stale")
+	mustPutCell(t, db, origin, "current")
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.MarkSupersedes(origin, stale, "updated")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := hexxladb.LoadContextConfig{
+		Seeds: []hexxladb.Coord{stale}, MaxRing: 1,
+		Assembly: hexxladb.ContextAssemblyConfig{FilterSuperseded: true, Explain: true},
+	}
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		pack, err := tx.LoadContext(t.Context(), cfg)
+		if err != nil {
+			return err
+		}
+		if len(pack.Cells) != 1 {
+			t.Fatalf("got %d cells, want only the successor at the origin", len(pack.Cells))
+		}
+		cell := pack.Cells[0]
+		if cell.Coord != origin || cell.RawContent != "current" || cell.SupersededFrom == nil || *cell.SupersededFrom != stale {
+			t.Fatalf("unexpected successor: %+v", cell)
+		}
+		if len(pack.Explanations) == 0 || pack.Explanations[0].SupersededBy == nil || *pack.Explanations[0].SupersededBy != origin {
+			t.Fatalf("explanations omitted the successor at the origin: %+v", pack.Explanations)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	packed, err := hexxladb.Pack(origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.Put(index.CellKey(packed), []byte{1})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err = db.View(func(tx *hexxladb.Tx) error {
+		_, err := tx.LoadContext(t.Context(), cfg)
+		return err
+	})
+	if !errors.Is(err, record.ErrInvalidRecord) {
+		t.Fatalf("corrupt successor: got %v, want ErrInvalidRecord", err)
+	}
+}
+
+func TestFilterSuperseded_HopLimit(t *testing.T) {
+	t.Parallel()
+	db := openPathfindTestDB(t)
+	const maxHops = 16
+	var chain [maxHops + 2]hexxladb.Coord
+	for i := range chain {
+		chain[i] = hexxladb.Coord{Q: i * 3}
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		for i, from := range chain[:len(chain)-1] {
+			if err := tx.MarkSupersedes(chain[i+1], from, "updated"); err != nil {
+				return err
+			}
+		}
+		return putCell(tx, chain[len(chain)-1], "current")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		cfg := hexxladb.LoadContextConfig{
+			Seeds: []hexxladb.Coord{chain[1]}, MaxRing: 1,
+			Assembly: hexxladb.ContextAssemblyConfig{FilterSuperseded: true},
+		}
+		pack, err := tx.LoadContext(t.Context(), cfg)
+		if err != nil {
+			return err
+		}
+		if len(pack.Cells) != 1 || pack.Cells[0].Coord != chain[len(chain)-1] {
+			t.Fatalf("at the hop limit: got %v, want the terminal successor", pack.Cells)
+		}
+		cfg.Seeds[0] = chain[0]
+		pack, err = tx.LoadContext(t.Context(), cfg)
+		if err != nil {
+			return err
+		}
+		if len(pack.Cells) != 0 {
+			t.Fatalf("past the hop limit: got %v, want no successor", pack.Cells)
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 }

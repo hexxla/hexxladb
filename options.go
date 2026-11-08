@@ -17,6 +17,8 @@ type MVCCRetention struct {
 
 // Options configures opening a database (see [Open]).
 type Options struct {
+	// requireExistingPrimary prevents maintenance from creating a source file.
+	requireExistingPrimary bool
 	// newIncompleteCompaction is set only for an exclusively created internal
 	// compaction destination so its first durable header is fail-closed.
 	newIncompleteCompaction bool

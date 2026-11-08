@@ -219,8 +219,13 @@ func (db *DB) markEmbeddingIndexDirty() error {
 	})
 }
 
-func (db *DB) snapshotEmbeddingsForRebuild(ctx context.Context, maxVectors int) ([]flatScanCandidate, uint64, error) {
-	var candidates []flatScanCandidate
+type embeddingRebuildCandidate struct {
+	coord lattice.PackedCoord
+	vec   []float32
+}
+
+func (db *DB) snapshotEmbeddingsForRebuild(ctx context.Context, maxVectors int) ([]embeddingRebuildCandidate, uint64, error) {
+	var candidates []embeddingRebuildCandidate
 	var revision uint64
 	err := db.View(func(tx *Tx) error {
 		state, found, err := tx.loadEmbeddingIndexState()
@@ -255,7 +260,7 @@ func (db *DB) snapshotEmbeddingsForRebuild(ctx context.Context, maxVectors int) 
 				scanErr = decodeErr
 				return false
 			}
-			candidates = append(candidates, flatScanCandidate{coord: coord, vec: vector})
+			candidates = append(candidates, embeddingRebuildCandidate{coord: coord, vec: vector})
 			return true
 		})
 		if err != nil {
@@ -323,7 +328,7 @@ type memoryHNSWStorage struct {
 	nodes      map[lattice.PackedCoord]*hnsw.Node
 }
 
-func newMemoryHNSWStorage(candidates []flatScanCandidate) *memoryHNSWStorage {
+func newMemoryHNSWStorage(candidates []embeddingRebuildCandidate) *memoryHNSWStorage {
 	embeddings := make(map[lattice.PackedCoord][]float32, len(candidates))
 	for _, candidate := range candidates {
 		embeddings[candidate.coord] = candidate.vec

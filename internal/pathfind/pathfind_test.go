@@ -131,7 +131,10 @@ func TestDijkstra_basic(t *testing.T) {
 	t.Parallel()
 	start := lattice.Coord{Q: 0, R: 0}
 	goal := lattice.Coord{Q: 2, R: -1}
-	path := pathfind.Dijkstra(start, goal, hexNeighbors, pathfind.UniformCost, 0)
+	path, err := pathfind.Dijkstra(start, goal, hexNeighbors, pathfind.UniformCost, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	dist := start.Distance(goal)
 	if len(path) != dist+1 {
 		t.Fatalf("Dijkstra: expected len=%d, got %d", dist+1, len(path))

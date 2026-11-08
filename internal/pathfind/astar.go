@@ -2,19 +2,30 @@ package pathfind
 
 import (
 	"container/heap"
+	"errors"
+	"math"
+	"slices"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
+// ErrCostOverflow indicates that the cheapest path has no finite float64 cost.
+var ErrCostOverflow = errors.New("pathfind: cumulative path cost overflows float64")
+
 // AStar finds the shortest path from start to goal using the A* algorithm.
-// Returns nil if no path exists. The neighbors function determines graph
-// connectivity; the cost function determines edge weights; the heuristic
-// estimates remaining distance (must be admissible for optimal results).
+// Returns nil if no path with a finite accumulated cost exists. The neighbors
+// function determines graph connectivity, the cost function determines edge
+// weights, and the heuristic must be admissible for optimal results.
 //
 // maxExpand limits the number of nodes expanded (0 = unlimited).
 func AStar(start, goal lattice.Coord, neighbors NeighborFunc, cost CostFunc, heuristic HeuristicFunc, maxExpand int) Path {
+	path, _ := shortestPath(start, goal, neighbors, cost, heuristic, maxExpand)
+	return path
+}
+
+func shortestPath(start, goal lattice.Coord, neighbors NeighborFunc, cost CostFunc, heuristic HeuristicFunc, maxExpand int) (Path, error) {
 	if start == goal {
-		return Path{start}
+		return Path{start}, nil
 	}
 
 	s := &astarState{
@@ -30,15 +41,18 @@ func AStar(start, goal lattice.Coord, neighbors NeighborFunc, cost CostFunc, heu
 			continue
 		}
 		if cur.coord == goal {
-			return reconstructPath(s.cameFrom, goal)
+			if math.IsInf(cur.g, 1) {
+				return nil, ErrCostOverflow
+			}
+			return reconstructPath(s.cameFrom, goal), nil
 		}
 		if maxExpand > 0 && expanded >= maxExpand {
-			return nil
+			return nil, nil
 		}
 		expanded++
 		s.expandNode(cur, goal, neighbors, cost, heuristic)
 	}
-	return nil
+	return nil, nil
 }
 
 // astarState holds mutable A* search state.
@@ -55,6 +69,8 @@ func (s *astarState) expandNode(cur *pqItem, goal lattice.Coord, neighbors Neigh
 		if edgeCost < 0 {
 			continue
 		}
+		// Keep overflowed arrivals at +Inf so a reachable goal can be
+		// distinguished from an unreachable one. Finite arrivals take priority.
 		tentG := cur.g + edgeCost
 		if prev, ok := s.gScore[nb]; ok && tentG >= prev {
 			continue
@@ -77,9 +93,6 @@ func reconstructPath(cameFrom map[lattice.Coord]lattice.Coord, goal lattice.Coor
 		path = append(path, prev)
 		cur = prev
 	}
-	// Reverse in place.
-	for i, j := 0, len(path)-1; i < j; i, j = i+1, j-1 {
-		path[i], path[j] = path[j], path[i]
-	}
+	slices.Reverse(path)
 	return path
 }

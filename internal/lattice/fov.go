@@ -1,179 +1,156 @@
 package lattice
 
 import (
+	"cmp"
 	"math"
 	"slices"
+	"sort"
 )
 
 // FieldOfView computes visible coordinates from origin up to maxRadius.
-// Delegates to FieldOfViewShadowcast for accuracy and O(visible) performance.
-//
-// Opaque cells at the boundary ARE included (visible but blocking).
+// Opaque hexes block centre-to-centre sight lines, including boundary contact.
+// The first blocking hex is visible. Results are deterministic and nearest-first.
 // Returns nil if maxRadius < 0 or opaque is nil. Returns {origin} if maxRadius == 0.
 func FieldOfView(origin Coord, maxRadius int, opaque func(Coord) bool) []Coord {
 	return FieldOfViewShadowcast(origin, maxRadius, opaque)
 }
 
-// FieldOfViewShadowcast computes visible coordinates using symmetric shadowcasting
-// (Albert Ford 2021, hex adaptation). Six sextants cover the hex grid around origin.
-// Within each sextant, shadow slopes track blocked angular ranges, scanning outward
-// row by row. Visible coordinates are returned in deterministic nearest-first order.
+// FieldOfViewShadowcast casts the angular shadows of regular hexagons using
+// exact integer directions. A floor tile is visible when the segment joining
+// its centre to origin does not intersect another opaque hex, including edges.
+// This geometric rule is reciprocal and invariant under hex rotations.
 //
-// Guarantees full symmetry: if A sees B then B sees A (for floor tiles).
-// Opaque cells at the boundary are included (the wall is seen but blocks behind it).
-// Returns nil if maxRadius < 0 or opaque is nil. Returns {origin} if maxRadius == 0.
+// Tiles are processed by squared Euclidean distance. A line crossing from one
+// hex's Voronoi region into the next moves to a centre farther from origin, so
+// every possible blocker is processed before its target. A range-add, point-
+// query tree tracks which candidate directions have entered a shadow.
+//
+// Work is O(R² log R) and memory O(R²) for radius R. The opacity callback is
+// evaluated once for each non-origin coordinate in the disk and must be stable
+// throughout the call. Opaque origins do not block their own outgoing sight.
 func FieldOfViewShadowcast(origin Coord, maxRadius int, opaque func(Coord) bool) []Coord {
 	if maxRadius < 0 || opaque == nil {
 		return nil
 	}
-	visible := make(map[Coord]struct{}, 1+3*maxRadius*(maxRadius+1))
-	visible[origin] = struct{}{}
 	if maxRadius == 0 {
 		return []Coord{origin}
 	}
-	for s := range 6 {
-		scanSextant(origin, maxRadius, s, opaque, visible)
+	rays := WalkRings(nil, Coord{}, maxRadius)[1:]
+	cells := make([]fovCell, len(rays))
+	hasBlocker := false
+	for i, offset := range rays {
+		blocked := opaque(Coord{Q: origin.Q + offset.Q, R: origin.R + offset.R})
+		cells[i] = fovCell{offset: offset, blocked: blocked}
+		hasBlocker = hasBlocker || blocked
 	}
-	out := make([]Coord, 0, len(visible))
-	for c := range visible {
-		out = append(out, c)
+	if !hasBlocker {
+		visible := make([]Coord, 1, len(rays)+1)
+		visible[0] = origin
+		for _, offset := range rays {
+			visible = append(visible, Coord{Q: origin.Q + offset.Q, R: origin.R + offset.R})
+		}
+		sortFOVVisible(visible, origin)
+		return visible
 	}
-	slices.SortFunc(out, func(a, b Coord) int {
-		da, db := origin.Distance(a), origin.Distance(b)
-		switch {
-		case da < db:
-			return -1
-		case da > db:
-			return 1
-		}
-		switch {
-		case a.Q < b.Q:
-			return -1
-		case a.Q > b.Q:
-			return 1
-		case a.R < b.R:
-			return -1
-		case a.R > b.R:
-			return 1
-		default:
-			return 0
-		}
+	slices.SortFunc(cells, func(a, b fovCell) int { return compareFOVDirections(a.offset, b.offset) })
+	for i := range cells {
+		rays[i] = cells[i].offset
+		cells[i].ray = i
+	}
+	slices.SortFunc(cells, func(a, b fovCell) int {
+		return cmp.Compare(fovDistanceSquared(a.offset), fovDistanceSquared(b.offset))
 	})
-	return out
-}
-
-// sextantBasis defines the (rowQ, rowR, colQ, colR) axial components for each
-// of the 6 hex sextants. Each sextant covers exactly one side of each ring:
-//   - row vector = cubeDirections[i] in axial (outward corner direction)
-//   - col vector = ring walk step direction for side i (sweeps along ring side)
-//
-// Derived from the ring walk in ring.go: side i starts at cubeDirections[i]*d
-// and walks d steps in axial direction (i+2)%6.
-var sextantBasis = [6][4]int{
-	{1, 0, 0, -1},  // side 0: out={1,0},  step={0,-1}
-	{1, -1, -1, 0}, // side 1: out={1,-1}, step={-1,0}
-	{0, -1, -1, 1}, // side 2: out={0,-1}, step={-1,1}
-	{-1, 0, 0, 1},  // side 3: out={-1,0}, step={0,1}
-	{-1, 1, 1, 0},  // side 4: out={-1,1}, step={1,0}
-	{0, 1, 1, -1},  // side 5: out={0,1},  step={1,-1}
-}
-
-// fovRow holds the slope bounds and depth for a single shadowcasting scan row.
-// Slopes are in [0, 1] across the face of one ring side.
-type fovRow struct {
-	depth      int
-	startSlope frac // inclusive; tiles with slope > startSlope are in light
-	endSlope   frac // inclusive; tiles with slope < endSlope are in light
-}
-
-// scanSextant performs the shadowcasting scan for one sextant using an explicit
-// stack to avoid recursion depth limits at large maxRadius.
-func scanSextant(origin Coord, maxRadius, sextant int, opaque func(Coord) bool, visible map[Coord]struct{}) {
-	b := sextantBasis[sextant]
-	rQ, rR, cQ, cR := b[0], b[1], b[2], b[3]
-
-	stack := []fovRow{{depth: 1, startSlope: frac{0, 1}, endSlope: frac{1, 1}}}
-	for len(stack) > 0 {
-		row := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if row.depth > maxRadius {
-			continue
+	shadows := make(fovShadows, len(rays)+1)
+	visible := make([]Coord, 1, len(rays)+1)
+	visible[0] = origin
+	for _, cell := range cells {
+		coord := Coord{Q: origin.Q + cell.offset.Q, R: origin.R + cell.offset.R}
+		if !shadows.contains(cell.ray) {
+			visible = append(visible, coord)
 		}
-		stack = scanRow(origin, row, maxRadius, rQ, rR, cQ, cR, opaque, visible, stack)
+		if cell.blocked {
+			shadows.cast(cell.offset, rays)
+		}
+	}
+	sortFOVVisible(visible, origin)
+	return visible
+}
+
+func sortFOVVisible(visible []Coord, origin Coord) {
+	slices.SortFunc(visible, func(a, b Coord) int {
+		return cmp.Or(cmp.Compare(origin.Distance(a), origin.Distance(b)), cmp.Compare(a.Q, b.Q), cmp.Compare(a.R, b.R))
+	})
+}
+
+type fovCell struct {
+	offset  Coord
+	ray     int
+	blocked bool
+}
+
+func fovDistanceSquared(c Coord) int {
+	return c.Q*c.Q + c.Q*c.R + c.R*c.R
+}
+
+// compareFOVDirections orders nonzero axial vectors counterclockwise from +Q.
+// The axial-to-Cartesian transformation preserves the sign of cross products.
+func compareFOVDirections(a, b Coord) int {
+	aLower := a.R < 0 || a.R == 0 && a.Q < 0
+	bLower := b.R < 0 || b.R == 0 && b.Q < 0
+	if aLower != bLower {
+		if aLower {
+			return 1
+		}
+		return -1
+	}
+	return cmp.Compare(0, fovCross(a, b))
+}
+
+func fovCross(a, b Coord) int {
+	return a.Q*b.R - a.R*b.Q
+}
+
+// Hex vertices are represented in axial coordinates scaled by three. These
+// are intersections of the perpendicular bisectors to adjacent hex centres.
+var fovHexVertices = [...]Coord{{Q: 1, R: 1}, {Q: 2, R: -1}, {Q: 1, R: -2}, {Q: -1, R: -1}, {Q: -2, R: 1}, {Q: -1, R: 2}}
+
+// fovShadows is a Fenwick tree over a difference array of shadow counts.
+// Adding [start, end) changes two entries; a prefix sum tests one direction.
+type fovShadows []int
+
+func (shadows fovShadows) add(position, delta int) {
+	for i := position + 1; i < len(shadows); i += i & -i {
+		shadows[i] += delta
 	}
 }
 
-// scanRow processes one depth row within a sextant. Columns run 0..depth-1.
-// Slopes are (col + 0.5) / depth for tile centres, boundaries at (col ± 0.5) / depth.
-// Returns the updated stack with child rows to process.
-func scanRow(origin Coord, row fovRow, maxRadius, rQ, rR, cQ, cR int, opaque func(Coord) bool, visible map[Coord]struct{}, stack []fovRow) []fovRow {
-	// Ford's formula: min_col = roundTiesUp(depth * startSlope),
-	//                 max_col = roundTiesDown(depth * endSlope).
-	minCol := roundTiesUp(mulFrac(row.startSlope, row.depth))
-	maxCol := roundTiesDown(mulFrac(row.endSlope, row.depth))
-	if minCol < 0 {
-		minCol = 0
+func (shadows fovShadows) contains(position int) bool {
+	count := 0
+	for i := position + 1; i > 0; i -= i & -i {
+		count += shadows[i]
 	}
-	if maxCol >= row.depth {
-		maxCol = row.depth - 1
-	}
-
-	prevOpaque := false
-	for col := minCol; col <= maxCol; col++ {
-		c := Coord{
-			Q: origin.Q + row.depth*rQ + col*cQ,
-			R: origin.R + row.depth*rR + col*cR,
-		}
-		if origin.Distance(c) > maxRadius {
-			continue
-		}
-		isOpaque := opaque(c)
-		if isOpaque || isSymmetric(row, col) {
-			visible[c] = struct{}{}
-		}
-		if prevOpaque && !isOpaque {
-			row.startSlope = tileSlope(col, row.depth)
-		}
-		if !prevOpaque && isOpaque {
-			stack = append(stack, fovRow{
-				depth:      row.depth + 1,
-				startSlope: row.startSlope,
-				endSlope:   tileSlope(col, row.depth),
-			})
-		}
-		prevOpaque = isOpaque
-	}
-	if !prevOpaque {
-		stack = append(stack, fovRow{depth: row.depth + 1, startSlope: row.startSlope, endSlope: row.endSlope})
-	}
-	return stack
+	return count > 0
 }
 
-// isSymmetric returns true when the tile centre at col falls within [startSlope, endSlope].
-// Tile centre slope = col / depth. Uses cross-multiplication for exact integer arithmetic.
-// col/depth >= start.num/start.den  →  col*start.den >= start.num*depth
-// col/depth <= end.num/end.den      →  col*end.den   <= end.num*depth
-func isSymmetric(row fovRow, col int) bool {
-	lhs := col*row.startSlope.den >= row.startSlope.num*row.depth
-	rhs := col*row.endSlope.den <= row.endSlope.num*row.depth
-	return lhs && rhs
+func (shadows fovShadows) cast(offset Coord, rays []Coord) {
+	left, right := offset, offset
+	for _, vertex := range fovHexVertices {
+		direction := Coord{Q: 3*offset.Q + vertex.Q, R: 3*offset.R + vertex.R}
+		if fovCross(left, direction) < 0 {
+			left = direction
+		}
+		if fovCross(right, direction) > 0 {
+			right = direction
+		}
+	}
+	start, _ := slices.BinarySearchFunc(rays, left, compareFOVDirections)
+	end := sort.Search(len(rays), func(i int) bool { return compareFOVDirections(rays[i], right) > 0 })
+	shadows.add(start, 1)
+	shadows.add(end, -1)
+	if compareFOVDirections(left, right) > 0 {
+		shadows.add(0, 1)
+	}
 }
-
-// tileSlope returns the left-edge slope for a tile: (col - 0.5) / depth = (2*col-1)/(2*depth).
-// Used for both start and end slope updates, matching Ford's single slope(tile) function.
-func tileSlope(col, depth int) frac { return frac{2*col - 1, 2 * depth} }
-
-// frac is an integer fraction num/den (den > 0).
-type frac struct{ num, den int }
-
-// mulFrac returns (f.num/f.den) * n as float64.
-func mulFrac(f frac, n int) float64 { return float64(f.num*n) / float64(f.den) }
-
-// roundTiesUp returns floor(n + 0.5).
-func roundTiesUp(n float64) int { return int(math.Floor(n + 0.5)) }
-
-// roundTiesDown returns ceil(n - 0.5).
-func roundTiesDown(n float64) int { return int(math.Ceil(n - 0.5)) }
 
 // FieldOfViewRaycast is the original raycasting implementation, retained for
 // regression comparison in tests. Not used in production paths.

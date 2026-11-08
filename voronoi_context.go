@@ -13,13 +13,14 @@ const (
 )
 
 // VoronoiWeightFunc returns an additional traversal cost for a coordinate
-// (must be >= 0). Return 0 for uniform cost, which is identical to the default
+// (must be finite and >= 0). Cumulative cost overflow returns ErrInvalidArgument.
+// Return 0 for uniform cost, which is identical to the default
 // geometric Voronoi behaviour. Nil is treated as uniform cost.
 type VoronoiWeightFunc = lattice.WeightFunc
 
 // VoronoiContextConfig configures [Tx.LoadContextVoronoi].
 type VoronoiContextConfig struct {
-	// MaxRadius bounds the Dijkstra expansion from each seed (default 4).
+	// MaxRadius bounds the number of traversal hops from each seed (default 4).
 	MaxRadius int
 	// MaxCellsPerSeed caps cells loaded per Voronoi region (default 64).
 	MaxCellsPerSeed int
@@ -39,7 +40,8 @@ func (cfg *VoronoiContextConfig) withDefaults() {
 }
 
 // LoadContextVoronoi partitions the area around multiple seeds using a Voronoi
-// diagram (multi-source Dijkstra on the hex grid), then loads cells for each region.
+// diagram using minimum traversal cost within MaxRadius hops, then loads cells
+// for each region in cost order with deterministic seed and coordinate ties.
 //
 // Unlike loading independent radial neighborhoods per seed (which causes overlap
 // near adjacent seeds), Voronoi assigns each coordinate to exactly one seed.

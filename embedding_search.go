@@ -3,11 +3,10 @@ package hexxladb
 import (
 	"bytes"
 	"container/heap"
+	"context"
 	"errors"
 	"fmt"
-	"runtime"
 	"slices"
-	"sync"
 
 	"github.com/hexxla/hexxladb/internal/engine"
 	"github.com/hexxla/hexxladb/internal/hnsw"
@@ -62,6 +61,13 @@ func (tx *Tx) SearchByEmbedding(vec []float32, cfg EmbeddingSearchConfig) ([]Emb
 // SearchByEmbeddingWithStats is [Tx.SearchByEmbedding] with execution-path
 // observability for profiling and operational metrics.
 func (tx *Tx) SearchByEmbeddingWithStats(vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, EmbeddingSearchStats, error) {
+	return tx.searchByEmbedding(context.Background(), vec, cfg)
+}
+
+func (tx *Tx) searchByEmbedding(ctx context.Context, vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, EmbeddingSearchStats, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, EmbeddingSearchStats{}, err
+	}
 	if tx == nil || tx.db == nil {
 		return nil, EmbeddingSearchStats{}, ErrClosed
 	}
@@ -101,44 +107,51 @@ func (tx *Tx) SearchByEmbeddingWithStats(vec []float32, cfg EmbeddingSearchConfi
 		if results, used, searchErr := tx.searchHNSW(vec, maxResults, cfg.MinScore, efSearch, metric); searchErr != nil {
 			return nil, EmbeddingSearchStats{}, searchErr
 		} else if used {
-			return results, EmbeddingSearchStats{Path: EmbeddingSearchPathHNSW, EfSearch: efSearch}, nil
+			return results, EmbeddingSearchStats{Path: EmbeddingSearchPathHNSW, EfSearch: efSearch}, ctx.Err()
 		}
 	}
 
 	// Flat-scan fallback.
-	results, err := tx.flatScanEmbeddings(vec, maxResults, cfg.MinScore, metric)
+	results, err := tx.flatScanEmbeddings(ctx, vec, maxResults, cfg.MinScore, metric)
 	return results, EmbeddingSearchStats{Path: EmbeddingSearchPathFlat}, err
 }
 
-// flatScanCandidate pairs a coordinate with its embedding vector.
-type flatScanCandidate struct {
-	coord lattice.PackedCoord
-	vec   []float32
-}
-
-// flatScanEmbeddings collects all embeddings and scores them in parallel.
-func (tx *Tx) flatScanEmbeddings(vec []float32, maxResults int, minScore float64, metric engine.DistanceMetric) ([]EmbeddingSearchResult, error) {
-	candidates, err := tx.collectEmbeddingCandidates()
+// flatScanEmbeddings scores vectors as they are read and retains only the top K.
+func (tx *Tx) flatScanEmbeddings(ctx context.Context, vec []float32, maxResults int, minScore float64, metric engine.DistanceMetric) ([]EmbeddingSearchResult, error) {
+	var hits searchMinHeap
+	var haveCandidates bool
+	err := tx.scanEmbeddings(ctx, func(coord lattice.PackedCoord, candidate []float32) error {
+		haveCandidates = true
+		score := engine.Similarity(vec, candidate, metric)
+		if minScore != 0 && score < minScore {
+			return nil
+		}
+		pushOrReplace(&hits, EmbeddingSearchResult{Coord: coord, Score: score}, maxResults)
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	if len(candidates) == 0 {
+	if !haveCandidates {
 		return nil, nil
 	}
 
-	hits := flatScanParallelScore(candidates, vec, maxResults, minScore, metric)
-	return heapToResults(hits, maxResults), nil
+	return heapToResults(hits), nil
 }
 
-// collectEmbeddingCandidates scans the embed/ keyspace and returns all stored vectors.
-func (tx *Tx) collectEmbeddingCandidates() ([]flatScanCandidate, error) {
-	var candidates []flatScanCandidate
+// scanEmbeddings visits the embed/ keyspace. The decoded vector is valid only
+// until the visitor returns.
+func (tx *Tx) scanEmbeddings(ctx context.Context, visit func(lattice.PackedCoord, []float32) error) error {
+	var vector []float32
 	var scanErr error
 	dimension := tx.db.eng.EmbeddingDim()
 	from := []byte(index.EmbedPrefix)
 	to := index.EmbedKeyEnd()
-	err := tx.db.btree.AscendRange(from, to, func(k, v []byte) bool {
-		if !bytes.HasPrefix(k, []byte(index.EmbedPrefix)) {
+	err := tx.AscendRange(from, to, func(k, v []byte) bool {
+		if scanErr = ctx.Err(); scanErr != nil {
+			return false
+		}
+		if !bytes.HasPrefix(k, from) {
 			return false
 		}
 		coord, parseErr := index.ParseEmbedKey(k)
@@ -146,85 +159,38 @@ func (tx *Tx) collectEmbeddingCandidates() ([]flatScanCandidate, error) {
 			scanErr = fmt.Errorf("%w: invalid embedding key: %w", ErrCorruptDatabase, parseErr)
 			return false
 		}
-		vector, decodeErr := decodeEmbedding(v, dimension)
-		if decodeErr != nil {
-			scanErr = decodeErr
+		vector, scanErr = decodeEmbeddingWithBuffer(v, dimension, vector)
+		if scanErr != nil {
 			return false
 		}
-		candidates = append(candidates, flatScanCandidate{
-			coord: coord,
-			vec:   vector,
-		})
-		return true
+		scanErr = visit(coord, vector)
+		return scanErr == nil
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if scanErr != nil {
-		return nil, scanErr
+		return scanErr
 	}
-	return candidates, nil
-}
-
-// flatScanParallelScore computes similarity in parallel using worker goroutines,
-// each maintaining a local top-K min-heap, then merges results.
-func flatScanParallelScore(candidates []flatScanCandidate, vec []float32, maxResults int, minScore float64, metric engine.DistanceMetric) searchMinHeap {
-	numWorkers := max(min(runtime.NumCPU(), len(candidates)), 1)
-	chunkSize := (len(candidates) + numWorkers - 1) / numWorkers
-	workerResults := make([][]searchHit, numWorkers)
-
-	var wg sync.WaitGroup
-	for w := range numWorkers {
-		start := w * chunkSize
-		end := min(start+chunkSize, len(candidates))
-		if start >= end {
-			continue
-		}
-		wg.Go(func() {
-			var localHeap searchMinHeap
-			for _, c := range candidates[start:end] {
-				s := engine.Similarity(vec, c.vec, metric)
-				if minScore != 0 && s < minScore {
-					continue
-				}
-				pushOrReplace(&localHeap, searchHit{coord: c.coord, score: s}, maxResults)
-			}
-			workerResults[w] = []searchHit(localHeap)
-		})
-	}
-	wg.Wait()
-
-	return mergeSearchHits(workerResults, maxResults)
-}
-
-// mergeSearchHits merges per-worker hit slices into a single top-K min-heap.
-func mergeSearchHits(workerResults [][]searchHit, maxResults int) searchMinHeap {
-	var finalHeap searchMinHeap
-	for _, wr := range workerResults {
-		for _, item := range wr {
-			pushOrReplace(&finalHeap, item, maxResults)
-		}
-	}
-	return finalHeap
+	return ctx.Err()
 }
 
 // pushOrReplace pushes hit onto the heap if under capacity, or replaces the
-// minimum if hit.score is better.
-func pushOrReplace(h *searchMinHeap, hit searchHit, maxSize int) {
+// least competitive hit.
+func pushOrReplace(h *searchMinHeap, hit EmbeddingSearchResult, maxSize int) {
 	if h.Len() < maxSize {
 		heap.Push(h, hit)
-	} else if hit.score > (*h)[0].score {
+	} else if worseEmbeddingHit((*h)[0], hit) {
 		(*h)[0] = hit
 		heap.Fix(h, 0)
 	}
 }
 
-// heapToResults extracts results from a min-heap in descending score order.
-func heapToResults(h searchMinHeap, _ int) []EmbeddingSearchResult {
+// heapToResults extracts results in descending score order.
+func heapToResults(h searchMinHeap) []EmbeddingSearchResult {
 	out := make([]EmbeddingSearchResult, h.Len())
 	for i := range slices.Backward(out) {
-		item := heap.Pop(&h).(searchHit) //nolint:forcetypeassert // heap invariant guarantees searchHit
-		out[i] = EmbeddingSearchResult{Coord: item.coord, Score: item.score}
+		out[i] = heap.Pop(&h).(EmbeddingSearchResult) //nolint:forcetypeassert // heap invariant guarantees EmbeddingSearchResult
 	}
 	return out
 }
@@ -264,21 +230,23 @@ func (tx *Tx) searchHNSW(vec []float32, maxResults int, minScore float64, efSear
 	return out, true, nil
 }
 
-// searchHit is a scored embedding result used internally for top-K selection.
-type searchHit struct {
-	coord lattice.PackedCoord
-	score float64
+// worseEmbeddingHit breaks score ties in favor of the earlier physical key.
+func worseEmbeddingHit(a, b EmbeddingSearchResult) bool {
+	if a.Score != b.Score {
+		return a.Score < b.Score
+	}
+	return b.Coord.Less(a.Coord)
 }
 
 // searchMinHeap is a min-heap on score for top-K selection.
-type searchMinHeap []searchHit
+type searchMinHeap []EmbeddingSearchResult
 
 func (h searchMinHeap) Len() int           { return len(h) }
-func (h searchMinHeap) Less(i, j int) bool { return h[i].score < h[j].score }
+func (h searchMinHeap) Less(i, j int) bool { return worseEmbeddingHit(h[i], h[j]) }
 func (h searchMinHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
 
 func (h *searchMinHeap) Push(x any) {
-	*h = append(*h, x.(searchHit)) //nolint:forcetypeassert // heap contract
+	*h = append(*h, x.(EmbeddingSearchResult)) //nolint:forcetypeassert // heap contract
 }
 
 func (h *searchMinHeap) Pop() any {

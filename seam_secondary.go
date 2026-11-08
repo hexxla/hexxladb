@@ -38,13 +38,7 @@ func (tx *Tx) seamTimeSecondaryKey(rec record.SeamRecord, commitSeq uint64) ([]b
 	return index.SeamTimeKey(b, rec.ID)
 }
 
-func (tx *Tx) removeSeamSecondaryIndex(rec record.SeamRecord, commitSeq uint64) error {
-	if tx == nil || tx.db == nil {
-		return ErrClosed
-	}
-	if tx.db.activeEng() == nil {
-		return ErrDatabaseClosed
-	}
+func (tx *Tx) visitSeamSecondaryKeys(rec record.SeamRecord, commitSeq uint64, visit func([]byte) error) error {
 	k, err := tx.seamSourceSecondaryKey(rec, commitSeq)
 	if err != nil {
 		if errors.Is(err, index.ErrSourceIDTooLong) {
@@ -53,7 +47,7 @@ func (tx *Tx) removeSeamSecondaryIndex(rec record.SeamRecord, commitSeq uint64) 
 		return err
 	}
 	if k != nil {
-		if err := tx.deleteDirect(k); err != nil {
+		if err := visit(k); err != nil {
 			return err
 		}
 	}
@@ -62,36 +56,19 @@ func (tx *Tx) removeSeamSecondaryIndex(rec record.SeamRecord, commitSeq uint64) 
 		return err
 	}
 	if tk != nil {
-		if err := tx.deleteDirect(tk); err != nil {
-			return err
-		}
+		return visit(tk)
 	}
 	return nil
 }
 
+func (tx *Tx) removeSeamSecondaryIndex(rec record.SeamRecord, commitSeq uint64) error {
+	return tx.visitSeamSecondaryKeys(rec, commitSeq, tx.deleteDirect)
+}
+
 func (tx *Tx) putSeamSecondaryIndex(rec record.SeamRecord, commitSeq uint64) error {
-	k, err := tx.seamSourceSecondaryKey(rec, commitSeq)
-	if err != nil {
-		if errors.Is(err, index.ErrSourceIDTooLong) {
-			return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-		}
-		return err
-	}
-	if k != nil {
-		if err := tx.putDirect(k, emptySecondaryVal); err != nil {
-			return err
-		}
-	}
-	tk, err := tx.seamTimeSecondaryKey(rec, commitSeq)
-	if err != nil {
-		return err
-	}
-	if tk != nil {
-		if err := tx.putDirect(tk, emptySecondaryVal); err != nil {
-			return err
-		}
-	}
-	return nil
+	return tx.visitSeamSecondaryKeys(rec, commitSeq, func(key []byte) error {
+		return tx.putDirect(key, emptySecondaryVal)
+	})
 }
 
 func (tx *Tx) seamSourceScanBounds(sourceID string) (from, to []byte, err error) {
@@ -151,6 +128,10 @@ func (tx *Tx) AscendSeamsBySource(ctx context.Context, sourceID string, fn func(
 		}
 		rec, err := record.DecodeSeam(raw)
 		if err != nil {
+			scanErr = fmt.Errorf("%w: decode source-indexed seam: %w", ErrCorruptDatabase, err)
+			return false
+		}
+		if strings.TrimSpace(rec.Provenance.SourceID) != sourceID {
 			return true
 		}
 		return fn(rec)
@@ -198,6 +179,10 @@ func (tx *Tx) AscendSeamsInTimeBucket(ctx context.Context, bucket int64, fn func
 		}
 		rec, err := record.DecodeSeam(raw)
 		if err != nil {
+			scanErr = fmt.Errorf("%w: decode time-indexed seam: %w", ErrCorruptDatabase, err)
+			return false
+		}
+		if visibleBucket, hasBucket := index.WeekBucketFromValidity(rec.Validity); !hasBucket || visibleBucket != bucket {
 			return true
 		}
 		return fn(rec)

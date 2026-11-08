@@ -2,6 +2,7 @@ package hexxladb
 
 import (
 	"bytes"
+	"fmt"
 
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
@@ -201,7 +202,7 @@ func (db *DB) PruneCellVersions(beforeSeq uint64, maxDelete int) (deleted int, e
 		prevCoord lattice.PackedCoord
 		hasPrev   bool
 	)
-	_ = db.btree.AscendRange([]byte(index.CellPrefix), nil, func(k, _ []byte) bool {
+	err = db.btree.AscendRange([]byte(index.CellPrefix), nil, func(k, _ []byte) bool {
 		if !bytes.HasPrefix(k, []byte(index.CellPrefix)) {
 			return false
 		}
@@ -221,6 +222,9 @@ func (db *DB) PruneCellVersions(beforeSeq uint64, maxDelete int) (deleted int, e
 		hasPrev = true
 		return len(toDelete) < maxDelete
 	})
+	if err != nil {
+		return 0, mapEngineDataError(err)
+	}
 	// prevKey after the scan is always the latest version of its coordinate — never emit it.
 
 	if len(toDelete) == 0 {
@@ -237,24 +241,10 @@ func (db *DB) PruneCellVersions(beforeSeq uint64, maxDelete int) (deleted int, e
 		}
 		toDelete = toDelete[len(batch):]
 
-		if err := db.eng.BeginWriteTxn(); err != nil {
+		count, err := db.pruneCellVersionBatch(batch)
+		deleted += count
+		if err != nil {
 			return deleted, err
-		}
-		for _, key := range batch {
-			if err := db.btree.Delete(key); err != nil {
-				db.eng.AbortWriteTxn()
-				return deleted, err
-			}
-			deleted++
-		}
-		if err := db.eng.CommitWriteTxn(); err != nil {
-			db.eng.AbortWriteTxn()
-			return deleted, err
-		}
-		// Refresh the cached header after each sub-batch commit so subsequent
-		// View calls see the updated BTreeRoot without a pread.
-		if fhdr, fErr := db.eng.ReadHeader(); fErr == nil {
-			db.storeCachedHeader(fhdr.CommitSeq, fhdr.BTreeRoot)
 		}
 		// Release and re-acquire the lock between sub-batches to allow
 		// concurrent readers to make progress.
@@ -266,6 +256,53 @@ func (db *DB) PruneCellVersions(beforeSeq uint64, maxDelete int) (deleted int, e
 			}
 		}
 	}
+	return deleted, nil
+}
+
+// pruneCellVersionBatch removes each obsolete primary and its indexes in the
+// same engine transaction. The caller holds db.mu.
+func (db *DB) pruneCellVersionBatch(batch [][]byte) (int, error) {
+	if db.recoveryRequired.Load() {
+		return 0, fmt.Errorf("%w: close and reopen required", ErrCommitFinalization)
+	}
+	if err := db.eng.BeginWriteTxn(); err != nil {
+		return 0, err
+	}
+	defer db.eng.AbortWriteTxn()
+	tx := &Tx{db: db, writable: true}
+	deleted := 0
+	for _, key := range batch {
+		value, found, err := tx.getDirect(key)
+		if err != nil {
+			return 0, err
+		}
+		if !found {
+			continue
+		}
+		if len(value) != 0 {
+			cell, seq, err := decodeCellVersionForIndexes(key, value)
+			if err != nil {
+				return 0, err
+			}
+			if err := tx.removeCellSecondaryIndex(cell, seq); err != nil {
+				return 0, err
+			}
+		}
+		if err := tx.deleteDirect(key); err != nil {
+			return 0, err
+		}
+		deleted++
+	}
+	if err := db.eng.CommitWriteTxn(); err != nil {
+		db.recoveryRequired.Store(true)
+		return 0, fmt.Errorf("%w: prune cell versions: %w", ErrCommitFinalization, err)
+	}
+	header, err := db.eng.ReadHeader()
+	if err != nil {
+		db.recoveryRequired.Store(true)
+		return deleted, durableCommitError("read header after pruning cell versions", err)
+	}
+	db.storeCachedHeader(header.CommitSeq, header.BTreeRoot)
 	return deleted, nil
 }
 

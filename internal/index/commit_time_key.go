@@ -1,6 +1,9 @@
 package index
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"math"
+)
 
 const commitTimePrefix = "__meta/commit-time/"
 
@@ -18,9 +21,14 @@ func CommitTimeKey(unixNanos int64, commitSeq uint64) []byte {
 	return out
 }
 
-// CommitTimeScanBounds returns inclusive range for all commits at or before unixNanos.
+// CommitTimeScanBounds returns inclusive bounds within the timestamp's sign
+// partition. Existing keys sort negative timestamps after nonnegative ones.
 func CommitTimeScanBounds(unixNanos int64) (from, to []byte) {
-	from = CommitTimeKey(0, 0)
+	start := int64(0)
+	if unixNanos < 0 {
+		start = math.MinInt64
+	}
+	from = CommitTimeKey(start, 0)
 	to = CommitTimeKey(unixNanos, ^uint64(0))
 	return from, to
 }

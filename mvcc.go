@@ -41,14 +41,8 @@ func (tx *Tx) getCellVisibleRaw(key lattice.PackedCoord) (raw []byte, commitSeq 
 	if tx.cellDeleted[key] {
 		return nil, 0, false, nil
 	}
-	if tx.cellOverlay != nil {
-		if rec, o := tx.cellOverlay[key]; o {
-			b, err := record.EncodeCell(rec)
-			if err != nil {
-				return nil, 0, false, err
-			}
-			return b, tx.writeSeq, true, nil
-		}
+	if data, ok := tx.cellOverlay[key]; ok {
+		return data, tx.writeSeq, true, nil
 	}
 	from := index.CellKeyWithVersion(key, 0)
 	to := index.CellKeyWithVersion(key, tx.readSeq)
@@ -136,7 +130,7 @@ func (tx *Tx) getSeamVisibleRaw(id string) (raw []byte, commitSeq uint64, ok boo
 	if err != nil {
 		return nil, 0, false, err
 	}
-	to, err := index.SeamKeyWithVersion(id, tx.readSeq)
+	to, err := index.SeamKeyWithVersion(id, max(tx.readSeq, tx.writeSeq))
 	if err != nil {
 		return nil, 0, false, err
 	}

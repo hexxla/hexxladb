@@ -152,11 +152,9 @@ func TestVoronoi_symmetry(t *testing.T) {
 
 func TestVoronoi_weighted(t *testing.T) {
 	t.Parallel()
-	// Seed A at (0,0), seed B at (6,0). Target cell: (4,0).
-	// Barrier: cells (1,0) and (2,0) on A's direct path have huge penalty.
-	// With uniform BFS, A reaches (4,0) in 4 hops (wins over B's 2 hops). → A wins.
-	// With barriers on (1,0) and (2,0), A's cheapest path to (4,0) costs
-	//   ≥ 1+100+1+100+1+1 ≫ B's cost of 1+1 = 2. → B wins.
+	// The midpoint (3,0) is three hops from either seed, so seed A wins
+	// the uniform tie. Penalties on A's direct route force a detour of at
+	// least four hops, while B still reaches the midpoint at cost three.
 	barrier := map[lattice.Coord]bool{
 		{Q: 1, R: 0}: true,
 		{Q: 2, R: 0}: true,
@@ -169,11 +167,11 @@ func TestVoronoi_weighted(t *testing.T) {
 	}
 	sA := lattice.Coord{Q: 0, R: 0}
 	sB := lattice.Coord{Q: 6, R: 0}
-	target := lattice.Coord{Q: 4, R: 0}
+	target := lattice.Coord{Q: 3, R: 0}
 	_, owner := lattice.Voronoi([]lattice.Coord{sA, sB}, 8, weightFn)
 
 	if owner[target] != 1 {
-		t.Fatalf("target (4,0) should belong to seed B (idx 1) with barriers, got %d", owner[target])
+		t.Fatalf("target (3,0) should belong to seed B (idx 1) with barriers, got %d", owner[target])
 	}
 	// Uniform nil regression: a cell near A (3 hops from A, 3 from B = equidistant)
 	// should belong to A due to tie-break (lower seed index). Use (3,0).

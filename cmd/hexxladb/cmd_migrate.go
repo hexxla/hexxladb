@@ -135,7 +135,7 @@ func cmdMigrate(args []string, authenticated bool) int {
 		return 1
 	}
 
-	destinationStorage, err := verifyMaintenanceDestination(ctx, destPath, destinationOptions)
+	destinationStorage, err := verifyMaintenanceDestination(ctx, destPath, destinationOptions, true)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hexxladb %s: verify: %v\n", command, err)
 		return 1

@@ -2,7 +2,9 @@ package hexxladb_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -104,6 +106,62 @@ func TestFindEdgePath_SubunitWeightsRemainOptimal(t *testing.T) {
 		want := []hexxladb.Coord{start, via, goal}
 		if !slices.Equal(path, want) {
 			t.Fatalf("weighted shortest path: got %v, want %v", path, want)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFindEdgePath_Overflow(t *testing.T) {
+	t.Parallel()
+	db := openPathfindTestDB(t)
+	start := hexxladb.Coord{}
+	first := hexxladb.Coord{Q: 1}
+	second := hexxladb.Coord{R: 1}
+	goal := hexxladb.Coord{Q: 1, R: 1}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		for _, edge := range []struct {
+			from, to hexxladb.Coord
+			cost     float64
+		}{
+			{start, first, 0.75 * math.MaxFloat64},
+			{first, goal, math.MaxFloat64},
+			{start, second, 0.9 * math.MaxFloat64},
+			{second, goal, 0.25 * math.MaxFloat64},
+		} {
+			if err := tx.LinkCells(edge.from, edge.to, "weighted", edge.cost, record.ProvenanceWire{}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		path, err := tx.FindEdgePath(t.Context(), start, goal, hexxladb.FindEdgePathConfig{})
+		if path != nil || !errors.Is(err, hexxladb.ErrInvalidArgument) {
+			t.Fatalf("only overflowing routes: got %v, %v; want nil, ErrInvalidArgument", path, err)
+		}
+		path, err = tx.FindEdgePath(t.Context(), start, goal, hexxladb.FindEdgePathConfig{
+			CostFunc: func(from, to hexxladb.Coord) float64 {
+				switch {
+				case from == first:
+					return math.MaxFloat64
+				case from == start && to == second:
+					return 0.5 * math.MaxFloat64
+				default:
+					return 0.25 * math.MaxFloat64
+				}
+			},
+		})
+		if want := []hexxladb.Coord{start, second, goal}; err != nil || !slices.Equal(path, want) {
+			t.Fatalf("finite alternative: got %v, %v; want %v, nil", path, err, want)
+		}
+		path, err = tx.FindEdgePath(t.Context(), start, hexxladb.Coord{Q: 100}, hexxladb.FindEdgePathConfig{})
+		if path != nil || err != nil {
+			t.Fatalf("disconnected goal: got %v, %v; want nil, nil", path, err)
 		}
 		return nil
 	}); err != nil {
@@ -408,6 +466,62 @@ func TestLoadContext_ByEdges_basic(t *testing.T) {
 		return nil
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadContext_ByMultipleRelations(t *testing.T) {
+	t.Parallel()
+	db := openPathfindTestDB(t)
+	seed, required, caused, other := hexxladb.Coord{}, hexxladb.Coord{Q: 1}, hexxladb.Coord{Q: 2}, hexxladb.Coord{R: 1}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		for _, coord := range []hexxladb.Coord{seed, required, caused, other} {
+			if err := putCell(tx, coord, "cell"); err != nil {
+				return err
+			}
+		}
+		for _, edge := range []struct {
+			from, to hexxladb.Coord
+			relation string
+		}{
+			{seed, required, "requires"},
+			{required, caused, "causes"},
+			{seed, other, "requires,causes"},
+		} {
+			if err := tx.LinkCells(edge.from, edge.to, edge.relation, 1, record.ProvenanceWire{}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		for _, filter := range []string{"requires,causes", "requires, causes, requires,"} {
+			pack, err := tx.LoadContext(t.Context(), hexxladb.LoadContextConfig{
+				Seeds: []hexxladb.Coord{seed}, EdgeFilter: filter, MaxHops: 2,
+			})
+			if err != nil {
+				return err
+			}
+			var got []hexxladb.Coord
+			for _, cell := range pack.Cells {
+				got = append(got, cell.Coord)
+			}
+			if want := []hexxladb.Coord{seed, required, caused}; !slices.Equal(got, want) {
+				t.Fatalf("filter %q returned %v, want %v", filter, got, want)
+			}
+		}
+		got, err := tx.WalkEdges(t.Context(), seed, "requires,causes", 2, 10)
+		if err != nil {
+			return err
+		}
+		if want := []hexxladb.Coord{seed, other}; !slices.Equal(got, want) {
+			t.Fatalf("exact relation walk returned %v, want %v", got, want)
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 }

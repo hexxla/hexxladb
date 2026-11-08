@@ -154,6 +154,7 @@ func openEngineOptions(path string, opts *Options, createExclusive bool) (*engin
 	eopts.CreateExclusive = createExclusive
 	if opts != nil {
 		eopts.NewIncompleteCompaction = opts.newIncompleteCompaction
+		eopts.RequireExistingPrimary = opts.requireExistingPrimary
 	}
 	return eopts, xtsKey, nil
 }

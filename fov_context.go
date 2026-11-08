@@ -25,8 +25,9 @@ func (cfg *FOVContextConfig) withDefaults() {
 // Only cells that are visible from center (via deterministic symmetric
 // shadowcasting) are included.
 // The opaque function determines which coordinates block vision; cells for which
-// opaque returns true are themselves included (the wall is visible) but block
-// cells behind them.
+// opaque returns true block centre-to-centre sight lines, including contact with
+// hex edges or vertices. The first blocking hex is visible. The opacity callback
+// must be stable throughout the call.
 //
 // This is useful for sparse grids where large empty/irrelevant regions should
 // not consume the context budget. Compared to plain radial loading, FOV skips

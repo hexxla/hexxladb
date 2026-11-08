@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/hexxla/hexxladb/internal/engine"
 	"github.com/hexxla/hexxladb/internal/hnsw"
@@ -172,6 +173,10 @@ func encodeFloat32s(v []float32) []byte {
 
 // decodeEmbedding validates and decodes a persisted little-endian vector.
 func decodeEmbedding(encoded []byte, dimension uint16) ([]float32, error) {
+	return decodeEmbeddingWithBuffer(encoded, dimension, nil)
+}
+
+func decodeEmbeddingWithBuffer(encoded []byte, dimension uint16, buffer []float32) ([]float32, error) {
 	wantBytes := int(dimension) * 4
 	if dimension == 0 || len(encoded) != wantBytes {
 		return nil, fmt.Errorf(
@@ -182,7 +187,7 @@ func decodeEmbedding(encoded []byte, dimension uint16) ([]float32, error) {
 			dimension,
 		)
 	}
-	vector := make([]float32, int(dimension))
+	vector := slices.Grow(buffer[:0], int(dimension))[:int(dimension)]
 	for i := range vector {
 		value := math.Float32frombits(binary.LittleEndian.Uint32(encoded[i*4:]))
 		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {

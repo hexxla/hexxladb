@@ -221,3 +221,30 @@ func TestLoadContextFOV_rejectsUnboundedWork(t *testing.T) {
 		t.Fatalf("opacity callback called %d times for rejected radius", opacityCalls)
 	}
 }
+
+func TestLoadContextFOVSingleBlockerReciprocity(t *testing.T) {
+	t.Parallel()
+	db := openFOVTestDB(t)
+	populateFOVCells(t, db, 2)
+	ends := []hexxladb.Coord{{}, {Q: 2, R: -1}}
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		for i, origin := range ends {
+			target, err := hexxladb.Pack(ends[1-i])
+			if err != nil {
+				return err
+			}
+			cells, err := tx.LoadContextFOV(t.Context(), origin, 5, func(c hexxladb.Coord) bool {
+				return c == (hexxladb.Coord{Q: 1})
+			}, hexxladb.FOVContextConfig{})
+			if err != nil {
+				return err
+			}
+			if slices.ContainsFunc(cells, func(c hexxladb.CellRecord) bool { return c.Key == target }) {
+				t.Fatalf("origin %v sees %v through the blocker boundary", origin, ends[1-i])
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

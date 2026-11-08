@@ -92,8 +92,8 @@
 // internal/lattice/PACKED_COORD.md for geometry and key layout.
 //
 // Private spatial algorithms power the context-loading methods above: symmetric
-// shadowcasting for [Tx.LoadContextFOV], multi-source Dijkstra with an optional
-// [VoronoiWeightFunc] for [Tx.LoadContextVoronoi], and pathfinding heuristics for
+// hex shadowcasting for [Tx.LoadContextFOV], bounded-hop shortest paths with an
+// optional [VoronoiWeightFunc] for [Tx.LoadContextVoronoi], and pathfinding heuristics for
 // regular-grid callers. [Tx.FindEdgePath] uses
 // Dijkstra because stored edges may be long-range and have subunit weights.
 //

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hexxla/hexxladb/internal/views"
@@ -83,13 +84,18 @@ func (tx *Tx) LoadContext(ctx context.Context, cfg LoadContextConfig) (ContextPa
 	}
 
 	p := views.LoadContextParams{
-		Seeds:      cfg.Seeds,
-		MaxRing:    cfg.MaxRing,
-		MaxCells:   cfg.MaxCells,
-		EdgeFilter: cfg.EdgeFilter,
-		MaxHops:    cfg.MaxHops,
-		AsOf:       cfg.AsOf,
-		Assembly:   cfg.Assembly,
+		Seeds:    cfg.Seeds,
+		MaxRing:  cfg.MaxRing,
+		MaxCells: cfg.MaxCells,
+		MaxHops:  cfg.MaxHops,
+		AsOf:     cfg.AsOf,
+		Assembly: cfg.Assembly,
+	}
+	if cfg.EdgeFilter != "" {
+		matches := matchContextRelations(cfg.EdgeFilter)
+		p.WalkEdges = func(ctx context.Context, start Coord, maxHops, maxCoords int) ([]Coord, error) {
+			return tx.walkEdges(ctx, start, matches, maxHops, maxCoords)
+		}
 	}
 
 	pack, err := views.LoadContext(ctx, tx, p)
@@ -100,6 +106,22 @@ func (tx *Tx) LoadContext(ctx context.Context, cfg LoadContextConfig) (ContextPa
 		return ContextPack{}, err
 	}
 	return pack, nil
+}
+
+func matchContextRelations(filter string) func(string) bool {
+	if !strings.Contains(filter, ",") {
+		return matchExactRelation(filter)
+	}
+	allowed := make(map[string]struct{})
+	for relation := range strings.SplitSeq(filter, ",") {
+		if relation = strings.TrimSpace(relation); relation != "" {
+			allowed[relation] = struct{}{}
+		}
+	}
+	return func(relation string) bool {
+		_, ok := allowed[relation]
+		return ok
+	}
 }
 
 func validateLoadContextConfig(cfg LoadContextConfig) error {

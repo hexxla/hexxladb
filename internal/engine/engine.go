@@ -91,7 +91,7 @@ func open(path string, opts *Options, syncParents func(...string) error) (*Engin
 	usePrimaryFdatasync := opts != nil && opts.UsePrimaryFdatasync
 
 	exclusiveOpen := opts != nil && opts.CreateExclusive
-	db, dbCreated, err := openEngineFile(path, exclusiveOpen)
+	db, dbCreated, err := openPrimaryFile(path, opts, exclusiveOpen)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +118,6 @@ func open(path string, opts *Options, syncParents func(...string) error) (*Engin
 		_ = db.Close()
 		return nil, err
 	}
-
 	effectivePageSize, err := openBootstrapPageSize(db, st, opts, usePrimaryFdatasync)
 	if err != nil {
 		_ = db.Close()
@@ -229,10 +228,22 @@ func openEngineFile(path string, exclusive bool) (*os.File, bool, error) {
 	return file, err == nil, err
 }
 
+func openPrimaryFile(path string, opts *Options, exclusive bool) (*os.File, bool, error) {
+	if exclusive || opts == nil || !opts.RequireExistingPrimary {
+		return openEngineFile(path, exclusive)
+	}
+	// #nosec G304 -- path is the caller-selected maintenance source.
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	return file, false, err
+}
+
 // openBootstrapPageSize determines the effective page size — either from opts for new files,
 // or from the existing header prefix.
 func openBootstrapPageSize(db *os.File, st os.FileInfo, opts *Options, usePrimaryFdatasync bool) (int, error) {
 	if st.Size() == 0 {
+		if opts != nil && opts.RequireExistingPrimary {
+			return 0, ErrCorruptHeader
+		}
 		return openInitNewDB(db, opts, usePrimaryFdatasync)
 	}
 	ps, err := bootstrapPageSize(db)
