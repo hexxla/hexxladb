@@ -11,17 +11,16 @@ import (
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
-// TestGroupWAL_concurrentUpdatesPreserveWrites verifies that concurrent callers remain
+// TestSerializedCommit_concurrentUpdatesPreserveWrites verifies that concurrent callers remain
 // serialized through durable commit finalization. A second writer must not build on
 // unflushed B+ tree state from the first writer.
-func TestGroupWAL_concurrentUpdatesPreserveWrites(t *testing.T) {
+func TestSerializedCommit_concurrentUpdatesPreserveWrites(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gw.db")
 	db, err := hexxladb.Open(path, &hexxladb.Options{
-		EnableMVCC:           true,
-		GroupWALMaxBatchWait: 50 * time.Millisecond,
-		PageCacheSize:        -1,
+		EnableMVCC:    true,
+		PageCacheSize: -1,
 	})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -83,7 +82,7 @@ func TestGroupWAL_concurrentUpdatesPreserveWrites(t *testing.T) {
 	if overlapped {
 		t.Fatal("second Update callback entered before the first Update returned")
 	}
-	assertGroupWALCells(t, db, firstKey, secondKey, 2)
+	assertSerializedCommitCells(t, db, firstKey, secondKey, 2)
 
 	if err := db.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -93,10 +92,10 @@ func TestGroupWAL_concurrentUpdatesPreserveWrites(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer func() { _ = db.Close() }()
-	assertGroupWALCells(t, db, firstKey, secondKey, 2)
+	assertSerializedCommitCells(t, db, firstKey, secondKey, 2)
 }
 
-func assertGroupWALCells(t *testing.T, db *hexxladb.DB, firstKey, secondKey hexxladb.PackedCoord, wantSeq uint64) {
+func assertSerializedCommitCells(t *testing.T, db *hexxladb.DB, firstKey, secondKey hexxladb.PackedCoord, wantSeq uint64) {
 	t.Helper()
 	stats, err := db.StatsMVCC()
 	if err != nil {
@@ -120,8 +119,8 @@ func assertGroupWALCells(t *testing.T, db *hexxladb.DB, firstKey, secondKey hexx
 	}
 }
 
-// TestGroupWAL_concurrentUpdatesNoRace runs several writers with Group WAL + race detector.
-func TestGroupWAL_concurrentUpdatesNoRace(t *testing.T) {
+// TestSerializedCommit_concurrentUpdatesNoRace runs several writers with the race detector.
+func TestSerializedCommit_concurrentUpdatesNoRace(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gw2.db")
@@ -170,11 +169,10 @@ func TestGroupWAL_concurrentUpdatesNoRace(t *testing.T) {
 	}
 }
 
-func TestGroupWAL_readerWaitsForUpdateFinalization(t *testing.T) {
+func TestSerializedCommit_readerWaitsForUpdateFinalization(t *testing.T) {
 	t.Parallel()
 	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "reader-finalization.db"), &hexxladb.Options{
-		EnableMVCC:           true,
-		GroupWALMaxBatchWait: 50 * time.Millisecond,
+		EnableMVCC: true,
 	})
 	if err != nil {
 		t.Fatal(err)

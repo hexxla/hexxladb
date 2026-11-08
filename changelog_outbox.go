@@ -238,11 +238,7 @@ func (db *DB) cleanupChangelogOutbox(keys [][]byte) error {
 	if err != nil {
 		return err
 	}
-	wait, err := db.eng.CommitWriteTxnBeginAsync()
-	if err != nil {
-		return err
-	}
-	if err := wait(); err != nil {
+	if err := db.eng.CommitWriteTxn(); err != nil {
 		return err
 	}
 	committed = true

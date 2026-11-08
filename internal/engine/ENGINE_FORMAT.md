@@ -62,20 +62,38 @@ Associated data binds the literal format label, database salt/identity, format v
 
 ## WAL file
 
-- Append-only **redo** log. Each **record** is self-contained.
-- **Replay:** on `Open`, records with **seq > last_wal_seq** in the file header are applied. For v3, redo pages are accepted only with a matching authenticated header commit marker. Recovery writes pages, syncs the primary, publishes the authenticated header, syncs again, and only then normalizes the reusable WAL extent.
+The WAL holds redo for one serialized write transaction. Recovery validates the
+entire file with a record-sized buffer before replaying active pages. Only
+records with `seq > last_wal_seq` in the primary header are active.
+
+- **V1 and v2 writes:** The first active record uses `page_id=0`. Its payload
+  contains the final primary header in bytes 0–511 and a big-endian `uint64`
+  page-record count at byte 512. Page records follow in increasing sequence
+  order. The marker and last page record share the final redo sequence.
+  A header-only commit has count zero and its own sequence.
+- **V3 writes:** The existing authenticated header marker follows the page
+  records. Its sequence is the last page sequence, or a newly allocated one
+  for a header-only commit.
+- **Legacy recovery:** Old v1 page-only redo remains readable. Pending v2
+  page-only redo is refused because the final logical commit header cannot be
+  reconstructed. Clean databases retain the existing primary format and can
+  be opened by older versions. Recover a pending new v1/v2 WAL with a binary
+  that understands the leading marker before downgrading.
+
+Recovery writes pages, syncs the primary, publishes and syncs the validated
+header, then clears the WAL.
 
 ### WAL record (v1)
 
 | Field       | Type                    | Notes                                                                                                                                                            |
 | ----------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **seq**     | `uint64`                | Monotonic per database; new records continue after the last applied sequence.                                                                                    |
-| **page_id** | `uint64`                | Target data page (**≥ 1**), or **0** for the v3 authenticated-header commit marker.                                                                               |
+| **page_id** | `uint64`                | Target data page (**≥ 1**), or **0** for a commit header marker.                                                                               |
 | **crc32**   | `uint32`                | IEEE CRC-32 of **payload**.                                                                                                                                      |
-| **payload** | `[physicalPageSize]byte` | Full physical page image. In v3, a page-0 marker stores the authenticated logical header followed by zero padding.                                                |
+| **payload** | `[physicalPageSize]byte` | Full physical page image. A page-zero marker stores the final header and format-specific framing.                                                |
 | **mac**     | `[32]byte` (conditional) | Present when header feature bit 1 is set. HMAC-SHA256 over `seq || page_id || payload`, using key material derived from the configured database encryption secret. |
 
-Records are read sequentially from the start of the WAL file. Partial tail → **`ErrCorruptWAL`**.
+Records are read sequentially from the start of the WAL file. A partial tail returns **`ErrCorruptWAL`** before replay modifies the primary.
 
 ## Value compression
 

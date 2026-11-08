@@ -61,7 +61,9 @@ func (db *DB) storeCachedHeader(commitSeq, btreeRoot uint64) {
 // ErrCorruptDatabase means the database or WAL failed validation on open.
 var ErrCorruptDatabase = errors.New("hexxladb: corrupt database")
 
-// Open opens or creates a database at path. On success, any redo WAL is applied.
+// Open opens or creates a database at path and recovers pending WAL commits
+// before returning a handle. It returns [ErrCorruptDatabase] for a WAL that
+// fails validation, including pending v2 redo without a recoverable commit header.
 func Open(path string, opts *Options) (*DB, error) {
 	return openDB(path, opts, false)
 }
@@ -144,7 +146,6 @@ func openEngineOptions(path string, opts *Options, createExclusive bool) (*engin
 	}
 	eopts = mergeEnginePageSize(eopts, opts)
 	eopts = mergeEnginePrimaryFdatasync(eopts, opts)
-	eopts = mergeEngineGroupWAL(eopts, opts)
 	eopts = mergeEngineMaxValueBytes(eopts, opts)
 	eopts = mergeEnginePageCache(eopts, opts)
 	eopts = mergeEngineEmbedding(eopts, opts)
@@ -319,9 +320,9 @@ func (db *DB) MaxValueBytes() uint32 {
 	return db.eng.MaxValueBytes()
 }
 
-// GroupWALStats returns group-WAL flusher counters when group commit is enabled: total
-// applyGroupBatch invocations, batches that combined two or more user commits, and WAL sync
-// operations. It provides engine counters without requiring callers to import a private package.
+// GroupWALStats reports the number of WAL commit attempts and successful redo
+// syncs. The middle counter is retained for compatibility and always returns zero.
+// Redo syncs exclude the sync used to reset the WAL after a durable commit.
 func (db *DB) GroupWALStats() (applyBatches, batchesWith2PlusJobs, walSynces uint64) {
 	if db == nil {
 		return 0, 0, 0

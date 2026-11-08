@@ -86,8 +86,8 @@ it; use `MigrateToAuthenticated` or offline key rotation.
 | Field           | Type               | Description                                                                                                                                       |
 | --------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CellValidator` | `CellValidator`    | Pre-write validation. Return non-nil error from `ValidateCell(rec)` to reject a `PutCell`. Use for content limits, required tags, business rules. |
-| `AfterPutCell`  | `AfterPutCellHook` | Post-write hook. Called synchronously after each successful `PutCell`. Use for audit logging, metrics, CDC triggers.                              |
-| `AfterPutSeam`  | `AfterPutSeamHook` | Post-write hook. Called after `PutSeam`, `MarkConflict`, `MarkSupersedes`. Use for conflict alerting, review workflows.                           |
+| `AfterPutCell`  | `AfterPutCellHook` | Runs synchronously after a cell is staged and before commit. A hook error aborts the update.                              |
+| `AfterPutSeam`  | `AfterPutSeamHook` | Runs synchronously after staging a seam. Return its error from the update callback to abort.                           |
 
 Convenience adapters: `CellValidatorFunc`, `AfterPutCellHookFunc`, `AfterPutSeamHookFunc` wrap plain functions.
 
@@ -96,7 +96,7 @@ Convenience adapters: `CellValidatorFunc`, `AfterPutCellHookFunc`, `AfterPutSeam
 | Field                  | Type            | Default | Description                                                                                                                  |
 | ---------------------- | --------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `UsePrimaryFdatasync`  | `bool`          | `false` | Use `fdatasync(2)` instead of `fsync(2)` on the primary file (Linux). See `DURABILITY.md`.                                   |
-| `GroupWALMaxBatchWait` | `time.Duration` | `0`     | Immediate flush after already-queued jobs are collected. Positive waits are useful only for direct-engine batching; serialized public updates cannot coalesce. |
+| `GroupWALMaxBatchWait` | `time.Duration` | `0`     | Deprecated and ignored. Batch records in one `DB.Update` to share a commit. |
 
 ### Page hooks (advanced)
 

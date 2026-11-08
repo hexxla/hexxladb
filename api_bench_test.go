@@ -164,7 +164,6 @@ func BenchmarkAPI_WritePath(b *testing.B) {
 	}
 	cases := []writeCase{
 		{name: "single_default", opts: hexxladb.Options{EnableMVCC: true}, cellsPerWrite: 1},
-		{name: "single_wait_10ms", opts: hexxladb.Options{EnableMVCC: true, GroupWALMaxBatchWait: 10 * time.Millisecond}, cellsPerWrite: 1},
 		{name: "single_fdatasync", opts: hexxladb.Options{EnableMVCC: true, UsePrimaryFdatasync: true}, cellsPerWrite: 1},
 		{name: "single_callback_1ms", opts: hexxladb.Options{EnableMVCC: true}, cellsPerWrite: 1, callbackDelay: time.Millisecond},
 		{name: "batch_100", opts: hexxladb.Options{EnableMVCC: true}, cellsPerWrite: 100},

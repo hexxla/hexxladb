@@ -46,6 +46,11 @@ Persistence layout (page size, header fields, WAL records, B+ tree pages) is def
   commit markers. Existing encrypted v1/v2 files remain readable through the
   frozen AES-XTS path and are not auto-upgraded.
 - The optional changelog has its own framing version: plaintext databases use format v1; encrypted databases use authenticated encrypted format v2. Modes are not mixed. Offline encryption rotation converts and re-encrypts the changelog when it remains enabled at the same path; an already encrypted database rejects a legacy plaintext changelog until operators archive/reconcile it.
+- The synchronous WAL writer adds a leading commit header for v1/v2. Existing
+  clean primary files use the same format. An older reader refuses a pending
+  new WAL before replaying its data pages. Recover interrupted writes with the
+  newer binary and use a clean close before downgrade. Old pending v2 WALs
+  without a commit header require a verified recovery set.
 - Changelog-enabled commits store private `__meta/changelog-head` and `__meta/changelog-outbox/` records in both database formats. These keys do not change the engine format version; they make the sidecar a recoverable at-least-once projection. Older libraries can preserve the unknown keys but do not perform outbox recovery, so downgrade while intents are pending is unsupported.
 - A **breaking** on-disk change (e.g. new magic, incompatible page layout) should coincide with a **documented migration path** or a new major product/engine version—not a silent patch.
 

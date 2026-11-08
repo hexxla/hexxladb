@@ -567,7 +567,7 @@ recovery drills are the qualification boundary; elapsed time alone is not a
 release gate. Deployments with different profiles should record their own
 declared limits and evidence.
 
-For write-path diagnosis, sample [`DB.WriteStats`](../../write_stats.go) twice and subtract the cumulative fields. `LockWait` identifies reader/writer contention before an update starts; `Callback`, `Durability`, and `Finalization` divide the time spent holding the exclusive lock. Pair this with [`DB.GroupWALStats`](../../db.go): serialized public writes should report zero multi-job batches, while each authoritative commit still has one WAL sync. A positive `GroupWALMaxBatchWait` adds directly to public write and reader-blocking latency and is intended only for direct engine users that can enqueue jobs concurrently.
+For write-path diagnosis, sample [`DB.WriteStats`](../../write_stats.go) twice and subtract the cumulative fields. `LockWait` identifies reader/writer contention before an update starts; `Callback`, `Durability`, and `Finalization` divide the time spent holding the exclusive lock. Pair this with [`DB.GroupWALStats`](../../db.go) to observe WAL commit attempts and redo syncs. The legacy multi-job counter is always zero.
 
 | Step | Command                    | Pass criteria                                                                                                           |
 | ---- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------- |

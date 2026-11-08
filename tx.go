@@ -117,7 +117,9 @@ func (tx *Tx) checkCurrentData() error {
 }
 
 // Update runs fn inside an exclusive read-write transaction. The database lock remains held
-// through engine commit and finalization; see [docs/hexxladb/TX.md].
+// through synchronous engine commit and finalization. Batch writes inside one callback
+// to share a durability barrier. A transaction that exceeds the WAL size limit returns
+// [ErrInvalidArgument] before writing the WAL. See [docs/hexxladb/TX.md].
 func (db *DB) Update(fn func(*Tx) error) error { //nolint:gocyclo // durability and recovery ordering is intentionally one state machine.
 	if fn == nil {
 		return ErrNilCallback
@@ -154,7 +156,6 @@ func (db *DB) Update(fn func(*Tx) error) error { //nolint:gocyclo // durability 
 
 	ch := db.cachedHdr.Load()
 	writeSeqBefore = ch.commitSeq
-	var metaTimelineKey []byte
 	commitWall := time.Now().UTC().UnixNano()
 	if db.useMVCC {
 		wseq := db.writeSeqNext.Add(1)
@@ -165,13 +166,6 @@ func (db *DB) Update(fn func(*Tx) error) error { //nolint:gocyclo // durability 
 			writeSeq:    wseq,
 			cellOverlay: make(map[lattice.PackedCoord][]byte),
 		}
-		// Insert commit-time row before MVCC physical cells so btree key order matches sorted key
-		// order (__meta/commit-time/… sorts before cell/…). Writing cells first then meta produced a
-		// shape where leaf delete/rebalance could corrupt pages (see internal/engine/btree_test.go).
-		metaTimelineKey = index.CommitTimeKey(commitWall, tx.writeSeq)
-		if err := db.btree.Put(metaTimelineKey, emptySecondaryVal); err != nil {
-			return fmt.Errorf("%w: commit timeline: %w", ErrCommitFinalization, err)
-		}
 	} else {
 		tx = &Tx{db: db, writable: true}
 	}
@@ -179,10 +173,12 @@ func (db *DB) Update(fn func(*Tx) error) error { //nolint:gocyclo // durability 
 	fnErr := fn(tx)
 	db.writeStats.callback.Add(int64(time.Since(callbackStarted)))
 	if err := cmp.Or(fnErr, tx.cellWriteErr); err != nil {
-		if metaTimelineKey != nil {
-			_ = db.btree.Delete(metaTimelineKey)
-		}
 		return err
+	}
+	if db.useMVCC {
+		if err := db.btree.Put(index.CommitTimeKey(commitWall, tx.writeSeq), emptySecondaryVal); err != nil {
+			return fmt.Errorf("%w: commit timeline: %w", ErrCommitFinalization, err)
+		}
 	}
 	if err := db.stageChangelogOutbox(tx, commitWall); err != nil {
 		return fmt.Errorf("%w: durable changelog intent: %w", ErrCommitFinalization, err)
@@ -206,17 +202,13 @@ func (db *DB) Update(fn func(*Tx) error) error { //nolint:gocyclo // durability 
 		}
 	}
 	crashtest.At("db_header_staged")
-	// Keep db.mu held while the group-WAL job is applied. A later writer must not begin from
-	// staged B+ tree pages or a header that has not completed DB-level finalization.
 	durabilityStarted := time.Now()
-	wait, wErr := db.eng.CommitWriteTxnBeginAsync()
-	if wErr != nil {
-		db.writeStats.durability.Add(int64(time.Since(durabilityStarted)))
-		return fmt.Errorf("%w: engine commit: %w", ErrCommitFinalization, wErr)
-	}
-	cErr := wait()
+	cErr := db.eng.CommitWriteTxn()
 	db.writeStats.durability.Add(int64(time.Since(durabilityStarted)))
 	if cErr != nil {
+		if errors.Is(cErr, engine.ErrWALTooLarge) {
+			return fmt.Errorf("%w: %w", ErrInvalidArgument, cErr)
+		}
 		db.recoveryRequired.Store(true)
 		return fmt.Errorf("%w: engine commit: %w", ErrCommitFinalization, cErr)
 	}

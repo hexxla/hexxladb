@@ -1,10 +1,13 @@
 package engine
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"hash/crc32"
+	"io"
 )
 
 // WAL record: seq(8) + page_id(8) + crc32(4) + payload(pageSize).
@@ -33,7 +36,7 @@ func encodeWALRecordWithMAC(seq, pageID uint64, payload []byte, macKey [32]byte,
 	binary.BigEndian.PutUint32(out[16:20], crc32.ChecksumIEEE(payload))
 	copy(out[20:], payload)
 	if useMAC {
-		tag := walMAC(sumMACInput(seq, pageID, payload), macKey)
+		tag := walMAC(out[:16], payload, macKey)
 		copy(out[20+pageSize:], tag[:])
 	}
 	return out
@@ -53,32 +56,42 @@ func parseAndReplayWALWithMAC(
 	useMAC bool,
 	pageSize int,
 ) (maxSeq uint64, err error) {
+	return scanWAL(bytes.NewReader(walData), lastApplied, apply, macKey, useMAC, pageSize)
+}
+
+// scanWAL reuses a record-sized buffer. apply must consume the payload before returning.
+func scanWAL(
+	reader io.Reader, lastApplied uint64, apply func(seq, pageID uint64, payload []byte) error,
+	macKey [32]byte, useMAC bool, pageSize int,
+) (uint64, error) {
 	recSize := walRecordSize(pageSize)
 	if useMAC {
 		recSize += walRecordMACSize
 	}
-	for off := 0; off < len(walData); off += recSize {
-		if len(walData)-off < recSize {
-			return 0, ErrCorruptWAL
+	chunk := make([]byte, recSize)
+	var maxSeq uint64
+	for {
+		if _, err := io.ReadFull(reader, chunk); err != nil {
+			switch {
+			case errors.Is(err, io.EOF):
+				return maxSeq, nil
+			case errors.Is(err, io.ErrUnexpectedEOF):
+				return 0, ErrCorruptWAL
+			default:
+				return 0, err
+			}
 		}
-		chunk := walData[off : off+recSize]
 		seq := binary.BigEndian.Uint64(chunk[0:8])
 		pageID := binary.BigEndian.Uint64(chunk[8:16])
 		wantCRC := binary.BigEndian.Uint32(chunk[16:20])
 		payload := chunk[20:]
 		if useMAC {
-			if len(payload) < pageSize+walRecordMACSize {
+			tag := payload[pageSize:]
+			payload = payload[:pageSize]
+			wantTag := walMAC(chunk[:16], payload, macKey)
+			if !hmac.Equal(tag, wantTag[:]) {
 				return 0, ErrCorruptWAL
 			}
-			tagOff := 20 + pageSize
-			payloadData := payload[:pageSize]
-			var gotTag [walRecordMACSize]byte
-			copy(gotTag[:], chunk[tagOff:tagOff+walRecordMACSize])
-			wantTag := walMAC(sumMACInput(seq, pageID, payloadData), macKey)
-			if !hmac.Equal(gotTag[:], wantTag[:]) {
-				return 0, ErrCorruptWAL
-			}
-			payload = payloadData
 		}
 		if crc32.ChecksumIEEE(payload) != wantCRC {
 			return 0, ErrCorruptWAL
@@ -93,22 +106,14 @@ func parseAndReplayWALWithMAC(
 			return 0, err
 		}
 	}
-	return maxSeq, nil
 }
 
-func sumMACInput(seq, pageID uint64, payload []byte) []byte {
-	in := make([]byte, 16+len(payload))
-	binary.BigEndian.PutUint64(in[0:8], seq)
-	binary.BigEndian.PutUint64(in[8:16], pageID)
-	copy(in[16:], payload)
-	return in
-}
-
-func walMAC(input []byte, key [32]byte) [walRecordMACSize]byte {
+func walMAC(prefix, payload []byte, key [32]byte) [walRecordMACSize]byte {
 	m := hmac.New(sha256.New, key[:])
-	_, _ = m.Write(input)
+	_, _ = m.Write(prefix)
+	_, _ = m.Write(payload)
 	sum := m.Sum(nil)
 	var out [walRecordMACSize]byte
-	copy(out[:], sum[:walRecordMACSize])
+	copy(out[:], sum)
 	return out
 }

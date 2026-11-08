@@ -27,8 +27,7 @@ type Engine struct {
 	pageReuseEnabled bool
 	lastSeq          uint64
 	// nextWALSeq is the high-water for allocating redo [pendingRedo.seq] values; it must stay
-	// monotonic when write transactions can overlap the group-WAL flusher. Initialized from lastSeq
-	// at [Open] (first Add(1) yields lastSeq+1).
+	// monotonic across commits. Initialized from lastSeq at [Open].
 	nextWALSeq         atomic.Uint64
 	walMACEnabled      bool
 	walMACKey          [32]byte
@@ -48,28 +47,14 @@ type Engine struct {
 	pageBufPool sync.Pool
 	// inflatePool retains decoder scratch only within this engine instance.
 	inflatePool sync.Pool
-	// walSize tracks the number of bytes written to the WAL since the last reset.
-	// Used to truncate to the last-written size (not zero) so the kernel retains
-	// the allocated inode blocks, avoiding fallocate on the next write.
-	walSize int64
 	// cache is the optional CLOCK-Pro page cache. Nil when disabled.
 	cache *pageCache
 	// wtxn is set between [Engine.BeginWriteTxn] and commit/abort. Not used concurrently.
 	wtxn *writeTxnState
-	// Group commit (Options.GroupWAL) — set at Open.
-	groupWALCfg       GroupWAL
-	groupJobCh        chan *groupJob
-	groupStop         chan struct{}
-	groupFlusherWG    sync.WaitGroup
-	groupOverlay      map[uint64][]byte
-	groupOverlayMu    sync.RWMutex
-	groupUnflushedMu  sync.RWMutex
-	groupUnflushed    Header
-	groupUnflushedSet bool
-	// groupWALStats* are observability counters for the group flusher (see [Engine.GroupWALStats]).
-	groupWALStatsApplyBatches           atomic.Uint64
-	groupWALStatsBatchesWith2OrMoreJobs atomic.Uint64
-	groupWALStatsWalSynces              atomic.Uint64
+	// commitFailed fences later mutations after an uncertain I/O outcome.
+	commitFailed   bool
+	walCommits     atomic.Uint64
+	walCommitSyncs atomic.Uint64
 	// wastedBytes accumulates legacy extend-only overflow waste. This counter is
 	// in-memory only (resets on Open) and is exposed via WastedBytes().
 	wastedBytes atomic.Uint64
@@ -206,13 +191,9 @@ func open(path string, opts *Options, syncParents func(...string) error) (*Engin
 		return nil, err
 	}
 	if opts != nil {
-		e.groupWALCfg = opts.GroupWAL
 		e.cache = newPageCache(opts.PageCacheSize)
 	}
 	e.nextWALSeq.Store(newLast)
-	if e.groupWALCfg.Enabled {
-		e.startGroupWALFlusher()
-	}
 	exclusiveComplete = true
 	return e, nil
 }
@@ -369,188 +350,6 @@ func physicalPageSizeForHeader(hdr Header, hooks PageHooks, opts *Options) (int,
 	return int(hdr.PageSize) + AuthenticatedPageOverhead, nil
 }
 
-type replayPage struct {
-	pageID  uint64
-	payload []byte
-}
-
-type openWALReplay struct {
-	db               *os.File
-	hdr              *Header
-	opts             *Options
-	pageSize         int
-	physicalPageSize int
-	useFdatasync     bool
-	pending          []replayPage
-	committed        []replayPage
-	replayHeader     *Header
-}
-
-// openReplayWAL reads and replays the WAL, then truncates it.
-// Returns the new last WAL sequence, MAC config, and any error.
-func openReplayWAL(db, wal *os.File, hdr *Header, opts *Options, pageSize, physicalPageSize int, usePrimaryFdatasync bool) (uint64, bool, [32]byte, error) {
-	walData, err := openValidatedWALData(wal)
-	if err != nil {
-		return 0, false, [32]byte{}, err
-	}
-	macEnabled, macKey, err := openWALMACConfig(hdr, opts)
-	if err != nil {
-		return 0, false, macKey, err
-	}
-	replay := &openWALReplay{
-		db: db, hdr: hdr, opts: opts,
-		pageSize: pageSize, physicalPageSize: physicalPageSize,
-		useFdatasync: usePrimaryFdatasync,
-	}
-	maxSeq, err := parseAndReplayWALWithMAC(
-		walData,
-		hdr.LastWALSeq,
-		replay.apply,
-		macKey,
-		macEnabled,
-		physicalPageSize,
-	)
-	if err != nil {
-		return 0, false, macKey, err
-	}
-	lastSeq := max(hdr.LastWALSeq, maxSeq)
-	if lastSeq != hdr.LastWALSeq {
-		if err := replay.publish(lastSeq); err != nil {
-			return 0, false, macKey, err
-		}
-	}
-	if err := openTruncateWAL(wal); err != nil {
-		return 0, false, macKey, err
-	}
-	return lastSeq, macEnabled, macKey, nil
-}
-
-func openValidatedWALData(wal *os.File) ([]byte, error) {
-	const maxWALReplayBytes = 16 << 30
-	info, err := wal.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if info.Size() > maxWALReplayBytes {
-		return nil, fmt.Errorf("%w: WAL size %d exceeds max replay size", ErrCorruptWAL, info.Size())
-	}
-	return openReadWALData(wal, info.Size())
-}
-
-func openWALMACConfig(hdr *Header, opts *Options) (bool, [32]byte, error) {
-	enabled := hdr.Features&FeatureWALKeyedMAC != 0
-	if !enabled {
-		return false, [32]byte{}, nil
-	}
-	if opts == nil || !opts.EnableWALMAC {
-		return false, [32]byte{}, ErrBadEncryptionKey
-	}
-	return true, opts.WALMACKey, nil
-}
-
-func (r *openWALReplay) apply(seq, pageID uint64, payload []byte) error {
-	if pageID == 0 {
-		return r.applyHeaderMarker(seq, payload)
-	}
-	if r.hdr.FormatVersion == formatVersionV3 {
-		if len(payload) < 8 || binary.BigEndian.Uint64(payload[:8]) != seq {
-			return ErrCorruptWAL
-		}
-		r.pending = append(r.pending, replayPage{pageID: pageID, payload: payload})
-		return nil
-	}
-	off, err := pageByteOffset(pageID, r.pageSize, r.physicalPageSize)
-	if err != nil {
-		return err
-	}
-	_, err = r.db.WriteAt(payload, off)
-	return err
-}
-
-func (r *openWALReplay) applyHeaderMarker(seq uint64, payload []byte) error {
-	if r.hdr.FormatVersion != formatVersionV3 || len(payload) < r.pageSize || r.opts == nil {
-		return ErrCorruptWAL
-	}
-	candidate, err := decodeHeaderPage(payload[:r.pageSize])
-	if err != nil || candidate.FormatVersion != formatVersionV3 || candidate.LastWALSeq != seq ||
-		candidate.EncryptionSalt != r.hdr.EncryptionSalt || !verifyHeaderAuthentication(candidate, r.opts.HeaderMACKey) {
-		return ErrCorruptWAL
-	}
-	r.committed = append(r.committed[:0], r.pending...)
-	r.pending = r.pending[:0]
-	r.replayHeader = &candidate
-	return nil
-}
-
-func (r *openWALReplay) publish(lastSeq uint64) error {
-	if r.hdr.FormatVersion == formatVersionV3 {
-		if err := r.publishAuthenticatedPages(lastSeq); err != nil {
-			return err
-		}
-	} else {
-		r.hdr.LastWALSeq = lastSeq
-	}
-	var headerKey [32]byte
-	headerMACEnabled := false
-	if r.opts != nil {
-		headerKey = r.opts.HeaderMACKey
-		headerMACEnabled = r.opts.EnableHeaderMAC && r.hdr.FormatVersion == formatVersionV3
-	}
-	if err := writeHeaderAtAuthenticated(r.db, *r.hdr, headerKey, headerMACEnabled); err != nil {
-		return err
-	}
-	return syncFilePrimary(r.db, r.useFdatasync)
-}
-
-func (r *openWALReplay) publishAuthenticatedPages(lastSeq uint64) error {
-	if r.replayHeader == nil || r.replayHeader.LastWALSeq != lastSeq {
-		return ErrCorruptWAL
-	}
-	for i := range r.committed {
-		page := &r.committed[i]
-		off, err := pageByteOffset(page.pageID, r.pageSize, r.physicalPageSize)
-		if err != nil {
-			return err
-		}
-		if _, err := r.db.WriteAt(page.payload, off); err != nil {
-			return err
-		}
-	}
-	if err := syncFilePrimary(r.db, r.useFdatasync); err != nil {
-		return err
-	}
-	*r.hdr = *r.replayHeader
-	return nil
-}
-
-func (e *Engine) encodeHeaderWALRecord(hdr Header) []byte {
-	authenticated := authenticateHeader(hdr, e.headerMACKey)
-	payload := make([]byte, e.physicalPageSize)
-	copy(payload, encodeHeaderPage(authenticated))
-	return encodeWALRecordWithMAC(
-		hdr.LastWALSeq,
-		0,
-		payload,
-		e.walMACKey,
-		e.walMACEnabled,
-		e.physicalPageSize,
-	)
-}
-
-// openReadWALData reads all WAL bytes from the beginning.
-func openReadWALData(wal *os.File, size int64) ([]byte, error) {
-	if _, err := wal.Seek(0, io.SeekStart); err != nil {
-		return nil, err
-	}
-	walData := make([]byte, size)
-	if len(walData) > 0 {
-		if _, err := io.ReadFull(wal, walData); err != nil {
-			return nil, err
-		}
-	}
-	return walData, nil
-}
-
 // openTruncateWAL truncates and syncs the WAL file after replay.
 func openTruncateWAL(wal *os.File) error {
 	if err := wal.Truncate(0); err != nil {
@@ -599,7 +398,6 @@ func openValidateEmbedding(opts *Options, hdr Header) error {
 func (e *Engine) Close() error {
 	e.wtxn = nil
 	e.cache = nil
-	e.stopGroupWALFlusher()
 	var errs []error
 	if e.wal != nil {
 		errs = append(errs, e.wal.Close())
@@ -638,8 +436,7 @@ func sliceSameBase(a, b []byte) bool {
 	return unsafe.SliceData(a) == unsafe.SliceData(b)
 }
 
-// visibleHeader returns the logical file header: active write-txn state, or disk
-// merged with any group-WAL state not yet applied to the primary.
+// visibleHeader returns the active write transaction header or the durable header.
 func (e *Engine) visibleHeader() (Header, error) {
 	if e.wtxn != nil {
 		return e.wtxn.hdr, nil
@@ -647,18 +444,7 @@ func (e *Engine) visibleHeader() (Header, error) {
 	if e.db == nil {
 		return Header{}, fmt.Errorf("engine: closed")
 	}
-	disk, err := e.readDiskHeader()
-	if err != nil {
-		return Header{}, err
-	}
-	e.groupUnflushedMu.RLock()
-	gset := e.groupUnflushedSet
-	g := e.groupUnflushed
-	e.groupUnflushedMu.RUnlock()
-	if gset && g.LastWALSeq > disk.LastWALSeq {
-		return g, nil
-	}
-	return disk, nil
+	return e.readDiskHeader()
 }
 
 func (e *Engine) readDiskHeader() (Header, error) {
@@ -690,20 +476,7 @@ func (e *Engine) readPagePooled(pageID uint64) (data []byte, release func(), err
 		}
 	}
 
-	// Data pages logically on primary after group commit enqueue but before flusher.
-	// Do not merge overlay while a write txn is active: [readPagePooled] must see the same view
-	// as the in-txn dirty map; overlay can otherwise win over disk for pages this txn has not
-	// dirtied yet and desync rebalance walks (MVCC prune vs group WAL).
-	if pageID >= 1 && e.wtxn == nil {
-		e.groupOverlayMu.RLock()
-		plain, ok := e.groupOverlay[pageID]
-		e.groupOverlayMu.RUnlock()
-		if ok {
-			return e.pooledTransformRead(pageID, plain)
-		}
-	}
-
-	// Page 0: logical header (includes group-WAL staging when ahead of primary).
+	// Page 0 is the logical header.
 	if pageID == 0 {
 		vh, err := e.visibleHeader()
 		if err != nil {
@@ -801,7 +574,7 @@ func (e *Engine) ReadPage(pageID uint64) ([]byte, error) {
 	return slices.Clone(data), nil
 }
 
-// WritePage writes a full data page (pageID >= 1). Logs redo, fsyncs, updates header.
+// WritePage stages a full data page or commits it immediately when no transaction is open.
 func (e *Engine) WritePage(pageID uint64, data []byte) error {
 	_, err := e.writePageWithGeneration(pageID, data)
 	return err
@@ -812,6 +585,9 @@ func (e *Engine) WritePage(pageID uint64, data []byte) error {
 func (e *Engine) writePageWithGeneration(pageID uint64, data []byte) (uint64, error) {
 	if e.db == nil || e.wal == nil {
 		return 0, fmt.Errorf("engine: closed")
+	}
+	if e.commitFailed {
+		return 0, ErrRecoveryRequired
 	}
 	if pageID < 1 {
 		return 0, ErrBadPageID
@@ -849,69 +625,15 @@ func (e *Engine) writePageWithGeneration(pageID uint64, data []byte) (uint64, er
 		return seq, nil
 	}
 
-	rec := encodeWALRecordWithMAC(seq, pageID, plain, e.walMACKey, e.walMACEnabled, e.physicalPageSize)
-	if _, err := e.wal.Write(rec); err != nil {
-		return 0, err
-	}
-	if e.headerMACEnabled {
-		hdr, err := e.readDiskHeader()
-		if err != nil {
-			return 0, err
-		}
-		hdr.LastWALSeq = seq
-		if pageID == hdr.BTreeRoot {
-			hdr.BTreeRootGeneration = seq
-		}
-		if pageID+1 > hdr.NextPageID {
-			hdr.NextPageID = pageID + 1
-		}
-		if _, err := e.wal.Write(e.encodeHeaderWALRecord(hdr)); err != nil {
-			return 0, err
-		}
-	}
-	if err := e.wal.Sync(); err != nil {
-		return 0, err
-	}
-
-	if err := e.persistRedoPage(seq, pageID, plain); err != nil {
-		return 0, err
-	}
-	return seq, nil
-}
-
-// persistRedoPage writes the plaintext page and header after the WAL record for seq
-// is already durable (caller must have synced the WAL). Used by [Engine.WritePage]
-// and by tests exploring batched WAL sync + sequential primary application.
-func (e *Engine) persistRedoPage(seq, pageID uint64, plain []byte) error {
-	if err := e.writePrimaryData(pageID, plain); err != nil {
-		return err
-	}
-	if err := e.syncPrimary(); err != nil {
-		return err
-	}
-
 	hdr, err := e.readDiskHeader()
 	if err != nil {
-		return err
+		return 0, err
 	}
-	hdr.LastWALSeq = seq
 	if pageID == hdr.BTreeRoot {
 		hdr.BTreeRootGeneration = seq
 	}
-	if pageID+1 > hdr.NextPageID {
-		hdr.NextPageID = pageID + 1
-	}
-	if err := e.writeHeader(hdr); err != nil {
-		return err
-	}
-	if err := e.syncPrimary(); err != nil {
-		return err
-	}
-
-	e.lastSeq = seq
-	e.lastPageID = pageID
-	e.lastPageGeneration = seq
-	return nil
+	hdr.NextPageID = max(hdr.NextPageID, pageID+1)
+	return seq, e.commitPages(hdr, []pendingRedo{{seq: seq, pageID: pageID, plain: plain}})
 }
 
 // Path returns the primary database path.
@@ -965,10 +687,11 @@ func (e *Engine) UpdateHeaderGet(mut func(*Header)) (Header, error) {
 	case e.lastPageID:
 		hdr.BTreeRootGeneration = e.lastPageGeneration
 	}
-	if err := e.writeHeader(hdr); err != nil {
+	if err := e.commitPages(hdr, nil); err != nil {
 		return Header{}, err
 	}
-	return hdr, e.syncPrimary()
+	hdr.LastWALSeq = e.lastSeq
+	return hdr, nil
 }
 
 func (e *Engine) writeHeader(hdr Header) error {

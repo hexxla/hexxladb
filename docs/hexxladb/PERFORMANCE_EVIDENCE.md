@@ -107,7 +107,7 @@ one isolated run directory that is removed on exit.
 | Vector search     | Final 500×32d query latency and allocation benchmark versus the recorded pre-change baseline                                                               | Batched graph build, exact-oracle recall@k, query latency/path/breadth, reopen, churn, memory, and file sizes |
 | Lattice placement | Deterministic repeat test for placement, incremental insertion, collision handling, and successor substitution                                           | Neighborhood precision, useful-context ratio, semantic precision, semantic/lattice divergence, and labelled diagnostic grids |
 | MVCC hot keys     | Latest and historical point-read latency and allocations at 10, 100, 1,000, and 6,000 versions                                                           | Not included                                                                                                |
-| Public writes     | Single, batched, callback-delayed, fdatasync, and reader-blocking latency with group-WAL batch/sync counts                                               | Not included                                                                                                |
+| Public writes     | Single, batched, callback-delayed, fdatasync, and reader-blocking latency with WAL commit and redo-sync counts                                               | Not included                                                                                                |
 | Storage churn     | Exact primary/live/reclaimable page bytes after puts, tombstones, pruning, and compaction; bounded progress and interruption tests                      | Final primary, WAL, and changelog sizes                                                                     |
 | Resources         | Go allocation counts per benchmark operation                                                                                                               | total bytes allocated plus final database, WAL, and changelog sizes                                       |
 
@@ -462,13 +462,13 @@ concurrency and the existing serialized writer boundary.
 
 ### Public write-path evidence
 
-`BenchmarkAPI_WritePath` compares default and explicitly delayed single commits, primary `fdatasync`, a controlled one-millisecond callback, and a 100-cell transaction. `BenchmarkAPI_WriteReaderBlocking` measures a view waiting behind that controlled callback and commit. Every case reports apply batches, multi-job batches, and WAL syncs per operation so a latency change cannot be mistaken for successful group coalescing. `BenchmarkAPI_BatchPutCells` uses fresh coordinates in one open MVCC database, keeping database lifecycle work outside the timed bulk-write path.
+`BenchmarkAPI_WritePath` compares default single commits, primary `fdatasync`, a controlled one-millisecond callback, and a 100-cell transaction. `BenchmarkAPI_WriteReaderBlocking` measures a view waiting behind that controlled callback and commit. Every case reports WAL commit attempts and redo syncs per operation. `BenchmarkAPI_BatchPutCells` uses fresh coordinates in one open MVCC database, keeping database lifecycle work outside the timed bulk-write path.
 
 ```bash
 go test -run '^$' -bench '^(BenchmarkAPI_WritePath|BenchmarkAPI_WriteReaderBlocking|BenchmarkAPI_BatchPutCells)$' -benchmem -count=1 .
 ```
 
-The acceptance gate is that zero-wait public writes report no artificial collection delay, an explicit positive window remains measurable, public multi-job batches remain zero under the serialized lock contract, batching retains lower per-cell latency, and race tests prove readers cannot enter before finalization.
+The acceptance gate is one redo sync for each authoritative commit, lower per-cell latency for batch writes, and race tests proving that readers cannot enter before finalization.
 
 For the limitation-reduction programme, `task evidence-write-path` adds bounded
 per-commit distributions and resource measurements for three MVCC workloads:
@@ -512,6 +512,19 @@ unchanged. Every changed run retained one WAL sync per commit, zero multi-job
 batches, bounded heap and file growth, and passed the calibrated gates. The
 result justifies the ownership-copy reduction and caller batching, but not
 Bf-tree buffering or a concurrent commit-pipeline redesign.
+
+The 2026-11-08 synchronous-commit comparison used Go 1.27.3 on the same
+i9-14900HX workstation, with five alternating 120 ms samples of
+`BenchmarkAPI_WritePath` on the same filesystem. Median 100-cell commit
+latency fell from 2.43 ms to 2.19 ms and allocation from 7.08 MB to 5.92 MB per
+commit. Single-cell medians were 65.5 µs and 61.7 µs, with overlapping sample
+ranges. These are local microbenchmark results.
+
+In a separate allocation probe, opening a v1 database with 4 MiB or 32 MiB
+of already-applied plaintext WAL allocated about 10 KiB in both cases.
+The previous reader allocated roughly the WAL's full size. This probe
+isolates WAL scanning. Pending transaction recovery is verified by the
+crash integration suite.
 
 ### Storage-maintenance evidence
 

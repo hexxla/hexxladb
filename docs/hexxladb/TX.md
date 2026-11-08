@@ -5,7 +5,7 @@
 ## Locking
 
 - **`View`** acquires a **read lock**: many concurrent **`View`** calls can run; they block while an **`Update`** or **`Batch`** holds the **database** lock.
-- **`Update`** acquires the **database** lock before beginning the engine write transaction and keeps it through the callback, group-WAL commit wait, changelog projection, and durable-outbox acknowledgement. No concurrent **`View`**, **`Update`**, or **`Batch`** can observe or build on staged engine state. A successful return publishes the complete commit, including its **`CommitSeq`** and changefeed records.
+- **`Update`** acquires the **database** lock before beginning the engine write transaction and keeps it through the callback, synchronous engine commit, changelog projection, and durable-outbox acknowledgement. No concurrent **`View`**, **`Update`**, or **`Batch`** can observe or build on staged engine state. A successful return publishes the complete commit, including its **`CommitSeq`** and changefeed records.
 - **`Batch`** is **equivalent** to **`Update`** (same lock and semantics). It exists for alignment with the spec’s `Batch` name and ecosystem expectations. Each successful **`Update`** / **`Batch`** uses one engine **write transaction**; see **[`DURABILITY.md`](./DURABILITY.md)** for barrier ordering.
 
 [`DB.WriteStats`](../../write_stats.go) returns lock-free cumulative timings for accepted public write calls. `LockWait` measures time waiting to acquire the database lock; `Callback`, `Durability`, and `Finalization` measure work while that lock remains held. Read two samples to calculate interval counts and averages without installing an in-library metrics system.
@@ -21,20 +21,24 @@
 
 ## Nesting and reentrancy
 
-- **`View`** may call **`View`** again (nested read locks are allowed).
-- Do **not** call **`Update`** or **`Batch`** from inside **`View`**, or **`View`** from inside **`Update`** / **`Batch`**, on the **same** `DB`—that can **deadlock**.
-- **`Update`** and **`Batch`** are **not re-entrant**: do not nest **`Update`**, **`Batch`**, or mix them on the same `DB` (same goroutine will deadlock on the mutex).
+Pass the callback's `Tx` to helper functions. Opening another transaction on
+the same `DB` from inside a callback can deadlock, including a nested `View`
+when a writer is waiting.
 
 ## Commit finalization failures
 
 `Update` / `Batch` use an authoritative commit followed by a recoverable projection:
 
-1. For MVCC, stage the commit timeline before invoking the callback.
-2. After a successful callback, stage bounded changefeed intents under private `__meta/changelog-outbox/` keys and stage the new header `CommitSeq`.
+1. Run the callback. Sample the MVCC timeline timestamp at transaction start.
+2. After a successful callback, stage the MVCC timeline row, bounded changefeed intents under private `__meta/changelog-outbox/` keys, and the new header `CommitSeq`.
 3. Commit data pages, the outbox, its head, and `CommitSeq` through one engine/WAL boundary. On authenticated v3, page releases and freelist metadata are part of this same boundary; an abort cannot publish reusable ids from an uncommitted tree mutation.
 4. Project those intents to the external changelog. Once its frames are durable, remove the acknowledged outbox keys in an internal cleanup transaction that does not advance `CommitSeq` or emit events.
 
-If the callback or a pre-commit stage fails, the engine transaction is aborted. If the engine reports an error while committing, **[`ErrCommitFinalization`](../../errors.go)** means the outcome is uncertain; close and reopen before inspecting authoritative state or retrying.
+If the callback or a pre-commit stage fails, the engine transaction aborts.
+A transaction that exceeds the WAL size limit returns `ErrInvalidArgument`
+before writing the WAL. When `ErrCommitFinalization` reports an uncertain
+storage outcome, close and reopen before inspecting authoritative state
+or retrying.
 
 If the engine commit is known durable but changelog append, sync, or outbox cleanup fails, the error matches both **`ErrCommitFinalization`** and **[`ErrCommitDurable`](../../errors.go)**. Do **not** retry the mutation. Further writes on that handle are rejected; close and reopen with the same changelog configuration. `Open` projects remaining durable intents before returning a handle. A crash after changelog append but before outbox cleanup may redeliver the same logical mutation, so consumers must remain idempotent.
 

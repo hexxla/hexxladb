@@ -206,8 +206,7 @@ func TestWriteTxn_BeginWhileActive(t *testing.T) {
 
 func TestWriteTxn_singleWALSyncForTwoPages(t *testing.T) {
 	t.Parallel()
-	// Count wal.Sync by wrapping is invasive; the spike test TestSpike_twoWALRecordsOneSyncThenPersist
-	// already validates ordering. This test ensures a single Update-shaped txn commits both pages.
+	// The redo sync counter excludes post-commit WAL extent cleanup.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "2p.db")
 	e, err := Open(path, nil)
@@ -233,6 +232,9 @@ func TestWriteTxn_singleWALSyncForTwoPages(t *testing.T) {
 	}
 	if e.LastWALSeq() != 2 {
 		t.Fatalf("LastWALSeq = %d", e.LastWALSeq())
+	}
+	if commits, grouped, syncs := e.GroupWALStats(); commits != 1 || grouped != 0 || syncs != 1 {
+		t.Fatalf("WAL counters = %d, %d, %d", commits, grouped, syncs)
 	}
 	_ = e.Close()
 	e2, err := Open(path, nil)

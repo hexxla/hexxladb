@@ -13,6 +13,9 @@ func (e *Engine) ReclaimTail() (uint64, error) {
 	if e == nil || e.db == nil || e.wal == nil {
 		return 0, fmt.Errorf("engine: closed")
 	}
+	if e.commitFailed {
+		return 0, ErrRecoveryRequired
+	}
 	if e.wtxn != nil {
 		return 0, ErrWriteTxnActive
 	}

@@ -49,7 +49,7 @@ Exported entrypoints:
   - DB.View, DB.ViewAt, DB.ViewAtTime, DB.Update, DB.Batch, Tx — Bolt-style
     transactions; DB.Batch is an alias for DB.Update; see docs/hexxladb/TX.md.
     DB.WriteStats and DB.GroupWALStats expose cumulative write-phase timing and
-    batching counters.
+    redo-sync counters.
   - DB.StorageStats — physical, live, reusable, and reclaimable
     storage accounting; DB.ReclaimTail safely truncates a contiguous
     authenticated-freelist suffix.
@@ -851,8 +851,10 @@ type DB struct {
     finalization; see docs/hexxladb/TX.md.
 
 func Open(path string, opts *Options) (*DB, error)
-    Open opens or creates a database at path. On success, any redo WAL is
-    applied.
+    Open opens or creates a database at path and recovers pending WAL commits
+    before returning a handle. It returns ErrCorruptDatabase for a WAL that
+    fails validation, including pending v2 redo without a recoverable commit
+    header.
 
 func (db *DB) AdvanceChangelogConsumer(consumerID string, expectedSeq, nextSeq uint64) error
     AdvanceChangelogConsumer atomically compares the durable cursor with
@@ -936,10 +938,10 @@ func (db *DB) GetChangelogConsumerCursor(consumerID string) (uint64, bool, error
     history; disabled handles expose the primary metadata for administration.
 
 func (db *DB) GroupWALStats() (applyBatches, batchesWith2PlusJobs, walSynces uint64)
-    GroupWALStats returns group-WAL flusher counters when group commit is
-    enabled: total applyGroupBatch invocations, batches that combined two or
-    more user commits, and WAL sync operations. It provides engine counters
-    without requiring callers to import a private package.
+    GroupWALStats reports the number of WAL commit attempts and successful redo
+    syncs. The middle counter is retained for compatibility and always returns
+    zero. Redo syncs exclude the sync used to reset the WAL after a durable
+    commit.
 
 func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthReport, error)
     HealthCheck performs an integrity scan of the database and returns a
@@ -1058,9 +1060,11 @@ func (db *DB) TagSnapshot(label string) error
     DB.ViewAtTag will open a zero-seq snapshot (same as DB.ViewAt(0, fn)).
 
 func (db *DB) Update(fn func(*Tx) error) error
-    Update runs fn inside an exclusive read-write transaction. The
-    database lock remains held through engine commit and finalization;
-    see docs/hexxladb/TX.md.
+    Update runs fn inside an exclusive read-write transaction. The database
+    lock remains held through synchronous engine commit and finalization. Batch
+    writes inside one callback to share a durability barrier. A transaction that
+    exceeds the WAL size limit returns ErrInvalidArgument before writing the
+    WAL. See docs/hexxladb/TX.md.
 
 func (db *DB) View(fn func(*Tx) error) error
     View runs fn inside a read-only transaction. Many concurrent View
@@ -1493,11 +1497,9 @@ type Options struct {
 	// platforms (e.g. Linux) instead of fsync(2) for engine durability barriers. Default false; see
 	// [docs/hexxladb/DURABILITY.md] before enabling in production.
 	UsePrimaryFdatasync bool
-	// GroupWALMaxBatchWait is passed to the engine group-WAL flusher as its collection window.
-	// Zero (default) flushes public writes immediately. Positive values wait for additional
-	// direct-engine jobs, but public [DB.Update] calls are serialized through finalization and
-	// therefore cannot coalesce with each other.
-	// See [docs/hexxladb/DURABILITY.md].
+	// GroupWALMaxBatchWait is retained for source compatibility. It is ignored.
+	//
+	// Deprecated: Batch records in one [DB.Update] to share a durability barrier.
 	GroupWALMaxBatchWait time.Duration
 
 	// EmbeddingDimension optionally pre-sets the fixed vector dimension for new databases.

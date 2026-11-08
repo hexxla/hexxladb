@@ -14,7 +14,7 @@ import (
 
 // TestBTree_hexxladbLatticeChurnPruneShape matches hexxladb integration: WalkRings R=4 (61 coords),
 // one transaction seeds all cells at seq 1, then 249 updates only on the center cell (seq 2..250),
-// each commit writing __meta/commit-time then cell keys (see [Tx] MVCC ordering). Finally delete
+// each commit writes timeline and cell keys. Finally delete
 // stale center versions like [hexxladb.DB.PruneCellVersions] (cell prefix scan, seq < beforeSeq).
 func TestBTree_hexxladbLatticeChurnPruneShape(t *testing.T) {
 	t.Parallel()
@@ -374,7 +374,7 @@ func TestBTree_mvccShapedSequentialDelete(t *testing.T) {
 	}
 }
 
-// MVCC commits write __meta/commit-time before cell/ rows (sorted key order). Matches [DB.Update].
+// Exercise pruning with timeline keys inserted before the corresponding cell keys.
 func TestBTree_mvccPlusCommitTimeAlternatingThenPrune(t *testing.T) {
 	t.Parallel()
 	const n = 273

@@ -262,7 +262,7 @@ Public API guide: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE
 
 | Operation                                               | What it does                                                            |
 | ------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `FindFreeCellPlacement`                                 | Select a collision-safe cell key near a caller-owned semantic anchor    |
+| `FindFreeCellPlacement` / `FindUnusedCellPlacement`      | Allocate near a caller-owned anchor. The MVCC unused variant skips recorded tombstones. |
 | `PutCell` / `GetCell` / `DeleteCell`                    | Store, retrieve, or tombstone a memory                                  |
 | `PutEmbedding` / `SearchByEmbedding`                    | Store a vector; HNSW nearest-neighbor search                            |
 | `PutEmbeddingWithOptions` / `RebuildEmbeddingIndex`     | Defer graph work for bulk ingestion, then validate and publish atomically |
@@ -274,7 +274,7 @@ Public API guide: [`docs/hexxladb/API_REFERENCE.md`](docs/hexxladb/API_REFERENCE
 | `MarkConflict` / `MarkSupersedes` / `FindSeams`         | Record and retrieve contradictions and supersessions                    |
 | `ViewAt` / `ViewAtTime` / `SnapshotDiff`                | MVCC time-travel and change detection                                   |
 | `ReadChangelogSince` / durable consumer cursor methods  | Consume and checkpoint the optional recoverable at-least-once changefeed |
-| `WriteStats` / `GroupWALStats`                          | Observe write contention, phase timing, and WAL batching                |
+| `WriteStats` / `GroupWALStats`                          | Observe write contention, phase timing, and redo syncs                |
 | `BackupTo` / `StorageStats` / `ReclaimTail` / `CompactWithOptions` | Back up an open database and manage physical storage          |
 | `PreflightCompactTo` / migration preflights             | Validate maintenance paths, source state, credentials, and conservative capacity |
 | `MigrateV1ToV2` / `MigrateToAuthenticated`              | Source-preserving offline migration into MVCC v2 or authenticated encrypted v3 |

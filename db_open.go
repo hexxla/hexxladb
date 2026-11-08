@@ -3,7 +3,6 @@ package hexxladb
 import (
 	"crypto/rand"
 	"os"
-	"time"
 
 	"github.com/hexxla/hexxladb/internal/engine"
 )
@@ -325,19 +324,6 @@ func mergeEngineMaxValueBytes(eo *engine.Options, o *Options) *engine.Options {
 		return &engine.Options{MaxValueBytes: o.MaxValueBytes}
 	}
 	eo.MaxValueBytes = o.MaxValueBytes
-	return eo
-}
-
-func mergeEngineGroupWAL(eo *engine.Options, o *Options) *engine.Options {
-	mw := time.Duration(0)
-	if o != nil {
-		mw = max(time.Duration(0), o.GroupWALMaxBatchWait)
-	}
-	gw := engine.GroupWAL{Enabled: true, MaxBatchWait: mw}
-	if eo == nil {
-		return &engine.Options{GroupWAL: gw}
-	}
-	eo.GroupWAL = gw
 	return eo
 }
 

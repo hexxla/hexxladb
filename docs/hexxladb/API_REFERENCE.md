@@ -1,7 +1,7 @@
 # HexxlaDB public API guide
 
 This guide organizes the module-root API by task. During pre-v1 development,
-the commitment and provisional inventory in [`VERSIONING.md`](../../VERSIONING.md#root-api-stability-inventory)
+the API stability inventory in [`VERSIONING.md`](../../VERSIONING.md#root-api-stability-inventory)
 is authoritative. This guide is intentionally not a second copy of every exported declaration. Use [`go doc github.com/hexxla/hexxladb`](https://pkg.go.dev/github.com/hexxla/hexxladb) for the exhaustive, source-derived symbol reference.
 
 All application imports use:
@@ -15,6 +15,9 @@ Packages below `internal/` are private implementation details.
 ## Open and close
 
 [`Open`](../../db.go) creates or opens one database handle. HexxlaDB permits one open handle per database path across processes; competing opens return [`ErrDatabaseLocked`](../../errors.go).
+Open validates pending WAL records and recovers the commit before handing
+control to callers. An invalid WAL, including older pending v2 redo without a
+commit header, returns `ErrCorruptDatabase`. See [recovery compatibility](./DURABILITY.md#recovery-and-version-compatibility).
 
 ```go
 db, err := hexxladb.Open("memory.db", &hexxladb.Options{
@@ -38,7 +41,12 @@ All reads and writes occur through [`Tx`](../../tx.go):
 | [`DB.ViewAt`](../../tx.go), [`DB.ViewAtTime`](../../tx.go), [`DB.ViewAtTag`](../../snapshot_tags.go) | Read an MVCC snapshot.                           |
 | [`DB.Update`](../../tx.go)                                                                           | Run one write transaction.                       |
 
-Callbacks must not mix or nest read and write transactions on the same `DB`. Commit failures match [`ErrCommitFinalization`](../../errors.go); [`ErrCommitDurable`](../../errors.go) additionally identifies a known-durable primary commit whose changefeed recovery requires close and reopen. See [`TX.md`](./TX.md) for locking, snapshots, validity, and failure semantics.
+Use the supplied `Tx` for work inside a callback. Put related writes in the
+same `DB.Update` to share a synchronous durability barrier. A transaction that
+exceeds the WAL size limit returns `ErrInvalidArgument` before writing the WAL.
+For an uncertain commit outcome, close and reopen before retrying.
+`ErrCommitDurable` identifies a known-durable primary commit that requires
+recovery. See [transaction failures](./TX.md#commit-finalization-failures).
 
 `DB.Batch` remains a compatibility spelling of `DB.Update`. For historical graph
 or vector requests, use a separate `DB.View` if current data is acceptable.
@@ -295,7 +303,7 @@ visibility and typed writes for validation, indexes, and changefeed.
 | [`DB.AdvanceChangelogConsumer`, `DB.GetChangelogConsumerCursor`](../../changelog_consumers.go) | Register and compare-and-advance a named durable cursor. |
 | [`DB.ListChangelogConsumers`, `DB.DeleteChangelogConsumer`, `DB.ChangelogRetentionFloor`](../../changelog_consumers.go) | Inspect/delete consumers and compute the advisory minimum acknowledged sequence. |
 | [`DB.HealthCheck`](../../health.go)                                          | Fail closed on malformed visible records and optionally validate orphans and secondary indexes. |
-| [`DB.GroupWALStats`](../../db.go)                                            | Observe group-WAL batching.                                    |
+| [`DB.GroupWALStats`](../../db.go)                                            | Observe WAL commit and redo-sync counters.                                    |
 | [`DB.WriteStats`](../../write_stats.go)                                      | Observe cumulative write contention and phase timing.         |
 | [`DB.BackupTo`](../../backup.go)                                             | Capture a consistent primary/WAL/changelog recovery set.       |
 | [`DB.StorageStats`](../../storage_stats.go)                                  | Measure physical, reachable, and reclaimable storage.         |
@@ -345,7 +353,7 @@ Public sentinel errors are defined in [`errors.go`](../../errors.go). Handle sta
 
 - lifecycle and locking errors such as `ErrDatabaseClosed` and `ErrDatabaseLocked`;
 - argument and transaction errors such as `ErrInvalidArgument` and `ErrTxReadOnly`;
-- MVCC errors such as `ErrReadSeqFuture` and `ErrMVCCRequired`;
+- snapshot errors such as `ErrReadSeqFuture`, `ErrMVCCRequired`, and `ErrHistoricalDataUnavailable`;
 - format and migration errors such as `ErrUnsupportedFormatVersion`, `ErrMigrationIncomplete`, and `ErrMigrationChangelogState`;
 - interrupted candidate refusal through `ErrCompactionIncomplete`;
 - maintenance-capacity refusal through `ErrInsufficientSpace`;

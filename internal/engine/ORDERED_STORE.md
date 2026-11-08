@@ -54,7 +54,14 @@ Keys are sorted in **ascending lexicographic byte order**. Values are opaque to 
 | **ptr0**                                                                         | `uint64` — leftmost child page id |
 | For `i` in `0 .. nkeys-1`: **key_len** `uint16`, **key** bytes, **ptr** `uint64` | separator + right child           |
 
-Invariant: child page **ptr0** contains keys `< key[0]`; **ptr[i+1]** contains keys `>= key[i]` (standard B+ internal routing).
+Separators are lower fences. Child **ptr0** contains keys below `key[0]`.
+Other children contain keys at or above their lower fence and below the next
+fence, when present. Removing a child's minimum can leave a gap above its
+fence. Insertion order does not affect the routing contract.
+
+Deletion merges same-parent leaves when their serialized entries fit on one
+page. It unlinks an empty leaf before returning its page to the allocator.
+Underfull leaves remain valid when neither sibling fits.
 
 ## Capacity and splits
 
@@ -72,8 +79,12 @@ Byte keys are **opaque** to **`BTree`**. Canonical **`cell/`** keys live in **[`
 
 ## WAL / durability
 
-Tree pages are ordinary data pages: **`WritePage`** appends WAL records and updates the header’s **`last_wal_seq`**. No separate WAL format beyond ENGINE_FORMAT.
+Tree pages are ordinary data pages. Writes stage in the active engine
+transaction and become durable with its WAL commit header. Direct page writes
+use the same durability sequence.
 
-## MVCC (formats v2 and v3) and raw `Put`
+## MVCC
 
-The B+ tree remains **byte-key ordered** and opaque to MVCC versioning. Application writers should use **`Tx.PutCell`** / **`Update`** paths so **`cell/`** and **`__meta/`** timeline keys stay consistent. Raw **`Tx.Put`** with **`cell/`** keys inserted before **`__meta/commit-time/`** keys can stress delete/rebalance paths; avoid unless you control ordering end-to-end.
+The B+ tree orders opaque byte keys. The library owns logical versions,
+timeline rows, and secondary indexes. The tree accepts those key families in
+any insertion order.

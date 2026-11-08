@@ -11,6 +11,10 @@ var (
 
 	// ErrCorruptWAL means the WAL is truncated or fails checksum verification.
 	ErrCorruptWAL = errors.New("engine: corrupt WAL")
+	// ErrWALTooLarge means the write transaction exceeds the replayable WAL size.
+	ErrWALTooLarge = errors.New("engine: write transaction exceeds WAL size limit")
+	// ErrRecoveryRequired means a commit failed after starting WAL or primary I/O.
+	ErrRecoveryRequired = errors.New("engine: close and reopen after a failed commit")
 
 	// ErrBadPageID means the page id is out of range for the operation.
 	ErrBadPageID = errors.New("engine: invalid page id")

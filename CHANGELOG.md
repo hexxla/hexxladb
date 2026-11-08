@@ -4,6 +4,9 @@
 
 ### API compatibility
 
+- **WAL compatibility** — v1/v2 writes use a leading commit header. Recover an interrupted write with a current binary before downgrade. Clean database files retain their primary format. Pending v2 WALs from older versions that lack a commit header are refused and left intact.
+- **Write tuning** — deprecated `GroupWALMaxBatchWait` is ignored. Batch records inside `DB.Update` to share a durable commit. The middle counter in `GroupWALStats` is always zero.
+
 - **Historical reads** — typed edge and vector reads on older MVCC views return `ErrHistoricalDataUnavailable` where they previously read current data. Use versioned records for historical retrieval or open a separate `DB.View` for current graph and vector data.
 - **Raw writes** — `Tx.Put` returns `ErrInvalidArgument` for database-owned key families. Use typed methods for database records and move application writes to a prefix such as `app/`. Existing raw values remain readable. The database format and open behavior are unchanged.
 - **Cell batches and hooks** — `ContinueOnError` skips only pre-write rejections. Storage and post-write hook errors abort the current chunk. A cell post-write hook error also aborts direct `DB.Update` calls even when the callback ignores it. Move skippable validation to `CellValidator`.
@@ -21,6 +24,8 @@
 - **MVCC index repair** — `RepairMVCCIndexesTo` and `hexxladb compact --rebuild-mvcc-indexes` rebuild cell and seam secondary indexes from retained versions in a verified, source-preserving copy.
 
 ### Fixed
+
+- **Engine recovery and deletion** — restore plaintext MVCC pages and their logical commit header together. Stream WAL validation and replay with record-sized buffers. Route writes through a synchronous commit path. Delete and merge leaves through the tree path and unlink empty leaves before page reuse.
 
 - **Bounded context and query hits** — graph assembly counts visible results after filtering, streams adjacency until the pack fills, and shares work limits across edge and seam scans. Query hits preserve the primary cell cluster hint.
 

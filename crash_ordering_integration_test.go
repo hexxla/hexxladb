@@ -115,19 +115,19 @@ func TestIntegration_changefeedCommitPhasesAfterSigKill(t *testing.T) {
 	}
 }
 
-// TestIntegration_groupCommitPhasesAfterSigKill spawns a child, waits until it reports reaching a
+// TestIntegration_commitPhasesAfterSigKill spawns a child, waits until it reports reaching a
 // named [internal/engine] barrier, then SIGKILL. Reopen must be non-corrupt; visible key, if any,
 // must be the full committed value.
-func TestIntegration_groupCommitPhasesAfterSigKill(t *testing.T) {
+func TestIntegration_commitPhasesAfterSigKill(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix-only")
 	}
 	phases := []string{
-		"group_wal_appended",
-		"group_wal_synced",
-		"group_primary_written",
-		"group_primary_synced",
-		"group_header_written",
+		"commit_wal_appended",
+		"commit_wal_synced",
+		"commit_primary_written",
+		"commit_primary_synced",
+		"commit_header_written",
 	}
 	// Do not use t.Parallel here: each case execs a subprocess that blocks in crashtest.At until
 	// SIGKILL. Running them concurrently (default go test -parallel) under -race overwhelms the
@@ -159,14 +159,22 @@ func TestIntegration_groupCommitPhasesAfterSigKill(t *testing.T) {
 					}
 					defer func() { _ = db.Close() }()
 					if err := db.View(func(tx *hexxladb.Tx) error {
-						v, ok, e := tx.Get([]byte("crash_key"))
-						if e != nil {
-							return e
+						if mode.authenticated {
+							key, err := hexxladb.Pack(hexxladb.Coord{Q: 4, R: -1})
+							if err != nil {
+								return err
+							}
+							cell, found, err := tx.GetCell(key)
+							if err == nil && ((!found && phase != "commit_wal_appended") || (found && cell.RawContent != "crash-changefeed")) {
+								t.Fatalf("authenticated cell after recovery: %+v, found=%v", cell, found)
+							}
+							return err
 						}
-						if ok && string(v) != "crash_val" {
-							t.Errorf("torn or corrupt value: %q", v)
+						value, found, err := tx.Get([]byte("crash_key"))
+						if err == nil && ((!found && phase != "commit_wal_appended") || (found && string(value) != "crash_val")) {
+							t.Fatalf("plaintext value after recovery: %q, found=%v", value, found)
 						}
-						return nil
+						return err
 					}); err != nil {
 						t.Fatal(err)
 					}
@@ -237,4 +245,69 @@ func waitFileExists(path string, d time.Duration) error {
 		time.Sleep(20 * time.Millisecond)
 	}
 	return errors.New("timeout waiting for child ready file")
+}
+
+func TestIntegration_plaintextMVCCRecoversSequenceWithPages(t *testing.T) {
+	for _, phase := range []string{"commit_wal_synced", "commit_primary_written", "commit_primary_synced", "commit_header_written"} {
+		t.Run(phase, func(t *testing.T) {
+			if runtime.GOOS == "windows" {
+				t.Skip("Unix-only")
+			}
+			dir := t.TempDir()
+			path := filepath.Join(dir, "plaintext-mvcc.db")
+			opts := &hexxladb.Options{EnableMVCC: true, ChangelogEnabled: true}
+			key := mustPackTest(t, hexxladb.Coord{Q: 1})
+			update := func(db *hexxladb.DB, content string) error {
+				return db.Update(func(tx *hexxladb.Tx) error {
+					return tx.PutCell(t.Context(), hexxladb.CellRecord{Key: key, RawContent: content})
+				})
+			}
+			db, err := hexxladb.Open(path, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := update(db, "before"); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := startChangefeedChildAndKill9(t, path, filepath.Join(dir, "ready"), phase); err != nil {
+				t.Fatal(err)
+			}
+			db, err = hexxladb.Open(path, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			interrupted := mustPackTest(t, hexxladb.Coord{Q: 4, R: -1})
+			assertSnapshot := func(seq uint64, want bool) {
+				t.Helper()
+				if err := db.ViewAt(seq, func(tx *hexxladb.Tx) error {
+					cell, found, err := tx.GetCell(interrupted)
+					if err == nil && (found != want || (found && cell.RawContent != "crash-changefeed")) {
+						t.Fatalf("snapshot %d: %+v found=%v, want found=%v", seq, cell, found, want)
+					}
+					return err
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			assertSnapshot(1, false)
+			assertSnapshot(2, true)
+			changes, err := db.ReadChangelogSince(0, 10)
+			if err != nil || len(changes) != 2 {
+				t.Fatalf("recovered changefeed: %d records, err=%v", len(changes), err)
+			}
+			if err := update(db, "after"); err != nil {
+				t.Fatal(err)
+			}
+			stats, err := db.StatsMVCC()
+			if err != nil || stats.CommitSeq != 3 {
+				t.Fatalf("after recovery and update: %+v, err=%v", stats, err)
+			}
+			assertSnapshot(2, true)
+			assertSnapshot(3, true)
+		})
+	}
 }

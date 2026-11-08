@@ -1,117 +1,62 @@
-# Durability and redo (engine)
+# Durability and redo
 
-**Audience:** Engineers changing [`internal/engine`](../../internal/engine), transaction semantics, or evaluating **group commit / fewer `fsync`** trade-offs.
+HexxlaDB uses a redo WAL beside the primary database. The database lock
+serializes writers and excludes readers through commit and changefeed
+finalization. Use one `DB.Update` for a group of records that should share a
+durability boundary. See [transactions](./TX.md).
 
-HexxlaDB’s embedded engine uses a **redo WAL** beside the primary file. This document describes **write transactions** (grouped WAL + dirty pages), the **legacy immediate** `WritePage` path, how **`Open`** recovery works, and how **`DB.Update`** uses the **group WAL** commit pipeline.
+## Commit order
 
----
+1. The engine stages page images and the final header in memory. Reads inside
+   the write transaction see staged changes. Aborting the callback discards
+   the staged state.
+2. The engine writes the redo and commit header to the WAL and syncs it.
+3. It writes the primary pages and syncs the primary, then publishes and syncs
+   the header. The header carries the root, allocator boundary, redo watermark,
+   and logical commit sequence. Header-only changes share the same path.
+4. It resets the WAL for reuse. A later recovery skips records at or below the
+   primary header's redo watermark.
 
-## `DB.Update` and engine write transactions
+Data, version visibility, allocator changes, and changefeed outbox intents share
+this boundary. A failed commit can require close and reopen before writing
+again. With changefeed enabled, projection and acknowledgment follow the
+authoritative commit. A projection failure reports `ErrCommitDurable`.
+See [commit errors](./TX.md#commit-finalization-failures).
 
-[`DB.Update`](../../tx.go) / [`Batch`](../../tx.go) call [`Engine.BeginWriteTxn`](../../internal/engine/writetxn.go) under the `DB` **exclusive** lock and run the callback. On success, logical changefeed intents and the MVCC `CommitSeq` update are staged before the engine commit, so data pages, visibility metadata, and recovery intent share one WAL/header boundary. On callback or pre-commit error, [`Engine.AbortWriteTxn`](../../internal/engine/writetxn.go) discards the in-memory transaction.
+`DB.WriteStats` reports time spent waiting, staging, committing, and finalizing.
+The compatibility method `DB.GroupWALStats` reports commit attempts, zero
+multi-job batches, and successful redo syncs. Its redo counter excludes the
+sync for WAL extent cleanup. `Options.GroupWALMaxBatchWait` is deprecated and
+ignored. `Options.UsePrimaryFdatasync` selects the primary file's data-only
+barrier on platforms that support it.
 
-**Within a write transaction**, [`WritePage`](../../internal/engine/engine.go) does **not** hit the WAL or primary immediately: it enqueues **redo in memory** and records **dirty** page payloads; [`readPagePooled`](../../internal/engine/engine.go) / [`ReadHeader`](../../internal/engine/engine.go) / [`UpdateHeader`](../../internal/engine/engine.go) use an in-memory view so the btree can **read your writes** before commit.
+## Recovery and version compatibility
 
-### Group WAL (default in `hexxladb`)
+`Open` validates the WAL in one streaming pass before writing to the
+primary. A second pass applies pending records and publishes the validated
+commit header. Recovery memory is proportional to a WAL record. Truncated,
+invalid, or incomplete pending frames fail closed and preserve the recovery
+set for inspection. See the [WAL format](../../internal/engine/ENGINE_FORMAT.md#wal-file).
 
-The shared library path uses a **group WAL flusher** (see also [`TX.md`](./TX.md) for lock scope):
+- New v1/v2 WAL transactions begin with a header and a page-record count.
+  Older versions can open a cleanly closed database. For an interrupted write
+  with a pending new WAL, recover with the newer binary before using an older
+  binary. The older reader rejects the pending header record before applying
+  its pages.
+- Old v2 WALs with pending page records and no commit header are refused.
+  They cannot restore the logical sequence reliably. Keep the primary and WAL
+  together and use a verified backup or a separately validated recovery process.
+- V3 uses its existing authenticated trailing header marker. Old v1 page-only
+  redo remains readable under the legacy recovery rules.
 
-1. A successful commit enqueues a **flusher job** via [`Engine.CommitWriteTxnBeginAsync`](../../internal/engine/writetxn.go) (or the synchronous handoff in [`Engine.CommitWriteTxn`](../../internal/engine/writetxn.go) when grouped). The public `DB` serializes write transactions through finalization, so each public `DB.Update` is currently applied as its own flusher batch. Direct internal engine users can enqueue multiple jobs for one batch.
-2. For each **applied batch** of flusher work, ordering is: **all** `wal.Write` for all redo in the batch, then **one** `wal.Sync`, then all primary data `WriteAt`s, then **one** primary `Sync`, then **one** `writeHeaderAt` (merged `LastWALSeq` and header) and a final primary `Sync`.
+Database creation and physical backup also sync destination directory entries.
+See [backup and copy](./OPERATIONS.md#backup-and-copy).
 
-Engine-level coalescing and `MaxBatchWait` (via [`Options.GroupWALMaxBatchWait`](../../options.go)) are documented under **Tuning** below. Redo sequence allocation is **monotonic**; until a batch is on disk, data pages are served from an **overlay** and the post-commit header may be **staged** for consistent engine reads (see [Group WAL invariants](#group-wal-invariants)). If a commit or later finalization fails, the API may return **`ErrCommitFinalization`** (see [`errors.go`](../../errors.go) and [`tx.go`](../../tx.go)).
+## Crash tests
 
-**Direct** use of the engine (tests, internal tooling) can call `WritePage` **without** `BeginWriteTxn`: each call uses the **immediate** path below (one WAL sync per page). Internal tests may open the engine with **group WAL disabled** to exercise the non-group `CommitWriteTxn` path.
-
----
-
-## Group WAL invariants
-
-1. **Ordering:** Redo records and `LastWALSeq` follow a single total order; `seq` is allocated from a monotonic counter when writes overlap the flusher.
-
-2. **Barriers (per applied batch):** `wal.Write` for all records in the batch, then one `wal.Sync`, then all affected primary `WriteAt`s, one primary `Sync`, one `writeHeaderAt` (last job’s header merged, `LastWALSeq` = max redo `seq` in the batch) and final primary `Sync`.
-
-3. **Visibility (engine):** With no active `wtxn`, [`readPagePooled`](../../internal/engine/engine.go) may serve the **overlay**; [`visibleHeader`](../../internal/engine/engine.go) can merge the **staged** header with on-disk for direct internal engine consumers.
-
-4. **Visibility (DB + MVCC):** [`Update`](../../tx.go) stages `CommitSeq` inside the same engine transaction as its versioned pages and durable changefeed outbox. It holds `db.mu` through the async engine wait and external projection. A later `View` or writer cannot begin from staged B+ tree pages or an incompletely finalized header.
-
-5. **Failure:** If a batch operation fails, the flusher signals all jobs, clears staging, and drops overlay state for the failed work. Because the exact durable outcome may be unknown, the root handle rejects another writer until close/reopen. A known post-commit projection failure additionally matches `ErrCommitDurable`.
-
-6. **Strict success = durable:** Each logical commit still **blocks** until the batch that contains it is fully applied to storage (same durability class as a non-group per-update barrier).
-
-7. **Observability / tests:** [`Engine.GroupWALStats`](../../internal/engine/group_wal.go) reports batch counts and `wal.Sync` calls; the root package also exposes [`DB.GroupWALStats`](../../db.go) for the same metrics without importing `internal/engine`. [`DB.WriteStats`](../../write_stats.go) reports cumulative public-write calls, committed transactions, lock wait, callback time, engine durability time, and post-commit finalization time. [`TestGroupWAL_twoJobsOneBatch`](../../internal/engine/group_wal_merge_test.go) checks that two explicitly delayed engine jobs merge into one flusher batch.
-
-8. **Prune batches:** [`PruneCellVersions`](../../mvcc_lifecycle.go) groups at most 64 B+ tree deletes into one engine write transaction, then commits and releases the database lock before the next sub-batch. Each sub-batch therefore has one WAL/primary commit barrier, bounding both lock hold time and recovery work while avoiding one sync per deleted row.
-
-### Tuning
-
-- [`Options.GroupWALMaxBatchWait`](../../options.go) sets the engine flusher’s collection window. Zero (default) immediately flushes after draining jobs already queued; it does not sleep waiting for more work. Public `DB.Update` calls are serialized through finalization and therefore cannot coalesce with each other. A positive value remains an explicit direct-engine tuning option when multiple jobs can actually reach the flusher concurrently.
-
----
-
-## Legacy immediate `WritePage` (no open write transaction)
-
-For each call when **no** write transaction is active, [`WritePage`](../../internal/engine/engine.go) performs:
-
-1. Encrypt/transform plaintext (`Hooks.BeforeWrite`).
-2. Append one **redo record** to the WAL (`wal.Write`).
-3. **`wal.Sync()`** — redo record is durable on storage before primary is trusted.
-4. [`persistRedoPage`](../../internal/engine/engine.go): primary `WriteAt` + `Sync`, header update + `Sync`.
-
-Invariant: **a WAL record for sequence `seq` is fsync’d before** the corresponding primary page for that mutation is fsync’d. Replay on startup ([`parseAndReplayWAL`](../../internal/engine/wal.go)) can therefore treat the WAL as the source of truth if the primary lags.
-
----
-
-## Recovery model
-
-On [`Open`](../../internal/engine/engine.go), the engine reads the WAL and applies records with `seq > LastWALSeq` from the header (handling MAC/CRC as configured). That heals **primary pages** when the WAL contains newer redo than the data file (e.g. crash after WAL sync but before primary write completed).
-
-On Linux, successful creation of a database also syncs the parent directory after
-the initialized primary and WAL are durable. New changelog headers use the same
-directory-entry barrier, including when later changelog appends use lazy syncing.
-Physical backups sync every destination file and then each destination parent
-directory before reporting success. This closes the host-crash window in which
-file contents were durable but their newly created directory entries were not.
-
-Tests: [`TestOpen_replaysPendingWAL`](../../internal/engine/engine_test.go), [`TestReplay_restoresStalePrimaryWhenWALAhead`](../../internal/engine/group_commit_spike_test.go).
-
----
-
-## `DB` commit vs header-only paths
-
-- **With group WAL (API default):** Each serialized `DB.Update` currently uses one flusher batch and is **durable** when `Update` returns success. The engine retains multi-job batching for direct internal use.
-- **Without group WAL (direct engine / tests only):** One `wal.Sync` + primary barriers per committed `CommitWriteTxn` as in the non-group code path in [`CommitWriteTxn`](../../internal/engine/writetxn.go).
-
-**MVCC and changefeed:** `CommitSeq` and bounded `__meta/changelog-outbox/` records are part of the successful engine commit. The external changelog is then projected and its outbox entries acknowledged in a separate internal cleanup commit that preserves `CommitSeq`. See [`TX.md`](./TX.md).
-
----
-
-## Write-path scope
-
-**Write transaction path (non-group or single-job batch):** In-memory **dirty** pages, **`wal.Sync`** for redo, batched primary `Sync` in [`CommitWriteTxn`](../../internal/engine/writetxn.go) for the non-group path, and the group flusher for the `hexxladb` default.
-
-**Still per page (separate code path):** The legacy **immediate** `WritePage` path in [`WritePage`](../../internal/engine/engine.go) + [`persistRedoPage`](../../internal/engine/engine.go) still does one primary `WriteAt`+`Sync` (and header) per operation, by design.
-
-**Not supported:** **SQLite-style** on-disk WAL merge into the read path (reads combine WAL + primary without a dirty cache).
-
-[`TestSpike_twoWALRecordsOneSyncThenPersist`](../../internal/engine/group_commit_spike_test.go) and [`internal/engine/writetxn_test.go`](../../internal/engine/writetxn_test.go) assert write ordering.
-
----
-
-## Primary sync policy
-
-**Write-txn** `CommitWriteTxn` (non-group) does **one** `db.Sync` for all dirty data pages in the transaction. The **legacy** immediate `WritePage` path is unchanged. **Group WAL** can fuse multiple direct engine jobs into one `wal.Sync` and one primary flush batch; serialized public `DB.Update` calls do not currently share a batch.
-
-Supported controls and verification:
-
-- **`fdatasync`** vs full-file **`Sync`** on the primary: [`Options.UsePrimaryFdatasync`](../../options.go) enables a data-only flush (e.g. `fdatasync(2)` on Linux) instead of `fsync(2)` for engine primary barriers. On other platforms the engine falls back to `Sync`. Validate on the **same filesystem** as production before defaulting on.
-- **Integration crash harness** (see [`crash_ordering_integration_test.go`](../../crash_ordering_integration_test.go) with `//go:build integration`): set `HEXXLADB_TEST_CRASH_AT` to a named phase, `HEXXLADB_TEST_CRASH_READY` to a marker file path, spawn a test subprocess, wait for the marker, then **SIGKILL**; reopen and assert a non-torn value or absence. Engine phases are `group_wal_appended`, `group_wal_synced`, `group_primary_written`, `group_primary_synced`, and `group_header_written`; root recovery phases are `db_header_staged`, `db_engine_committed`, and `db_changelog_appended`. Direct engine tests use `classic_*` phases.
-
-Deferring **`db.Sync`** on the primary or header **without** a formal crash model would risk readers seeing **partial** commits or **header `LastWALSeq`** diverging from replay. The write-txn ordering (WAL durable → all primary data writes → one primary `Sync` → header → `Sync`, or the equivalent **per batch** in group WAL) matches **replay idempotency** up to `LastWALSeq` (see [Recovery model](#recovery-model) and [`parseAndReplayWAL`](../../internal/engine/wal.go)).
-
----
-
-## References
-
-- Public transaction semantics: [`TX.md`](./TX.md)
-- Record layout / replay: [`internal/engine/wal.go`](../../internal/engine/wal.go)
+The integration suite stops subprocesses at named phases, including WAL
+append, WAL sync, primary write, primary sync, and header publication. Reopen
+tests check visibility and commit sequences, a subsequent write, and
+changefeed recovery. Separate tests exercise authenticated header-only
+reclamation. Run `task integration`. See [commit crash tests](../../crash_ordering_integration_test.go)
+and [reclamation crash tests](../../internal/engine/reclaim_integration_test.go).

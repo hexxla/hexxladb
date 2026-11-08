@@ -32,7 +32,7 @@
 //     use the logical changelog for complete CDC or audit processing.
 //   - [DB.View], [DB.ViewAt], [DB.ViewAtTime], [DB.Update], [DB.Batch], [Tx] —
 //     Bolt-style transactions; [DB.Batch] is an alias for [DB.Update]; see docs/hexxladb/TX.md.
-//     [DB.WriteStats] and [DB.GroupWALStats] expose cumulative write-phase timing and batching counters.
+//     [DB.WriteStats] and [DB.GroupWALStats] expose cumulative write-phase timing and redo-sync counters.
 //   - [DB.StorageStats] — physical, live, reusable, and reclaimable storage accounting;
 //     [DB.ReclaimTail] safely truncates a contiguous authenticated-freelist suffix.
 //   - [DB.BackupTo] — consistent online physical backup of the primary, WAL, and optional changelog.

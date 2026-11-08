@@ -48,7 +48,7 @@ func TestAuthenticatedWALRecoversPublishedRootAndPages(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := e.wal.Write(e.encodeHeaderWALRecord(final)); err != nil {
+	if _, err := e.wal.Write(e.encodeHeaderWALRecord(final, 0)); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.wal.Sync(); err != nil {
@@ -106,7 +106,7 @@ func TestAuthenticatedWALPageIDTamperFailsClosed(t *testing.T) {
 	)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.wal.Write(e.encodeHeaderWALRecord(final)); err != nil {
+	if _, err := e.wal.Write(e.encodeHeaderWALRecord(final, 0)); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.wal.Sync(); err != nil {
