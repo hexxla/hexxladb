@@ -56,9 +56,12 @@ func (v *analyticsView) loadCmd() tea.Cmd {
 		ctx := context.Background()
 		var d analyticsLoadedMsg
 		var err error
-		d.mvccStats, _ = db.StatsMVCC()
+		d.mvccStats, d.err = db.StatsMVCC()
+		if d.err != nil {
+			return d
+		}
 		d.cellCount = int(d.mvccStats.LogicalCells)
-		_ = db.View(func(tx *hexxladb.Tx) error {
+		d.err = db.View(func(tx *hexxladb.Tx) error {
 			d.tagCounts, err = tx.TagCounts(ctx)
 			if err != nil {
 				return err
@@ -72,8 +75,8 @@ func (v *analyticsView) loadCmd() tea.Cmd {
 			if err != nil {
 				return err
 			}
-			d.seamCount = inspect.CountSeams(tx, 100000)
-			return nil
+			d.seamCount, err = inspect.CountSeams(ctx, tx, 100000)
+			return err
 		})
 		return d
 	}
@@ -84,6 +87,9 @@ func (v *analyticsView) View() string {
 		return styleLoading.Render("  ⟳  Loading analytics…")
 	}
 	d := v.data
+	if d.err != nil {
+		return styleBad.Render(fmt.Sprintf("  ✗  Analytics error: %v", d.err))
+	}
 	w := contentWidth(v.width - 6)
 	leftW, rightW := twoColumnWidths(w)
 

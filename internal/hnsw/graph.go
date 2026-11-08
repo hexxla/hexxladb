@@ -6,7 +6,6 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/hexxla/hexxladb/internal/engine"
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
@@ -32,13 +31,13 @@ const DefaultEfConstruction = 200
 
 // Graph provides HNSW operations over a [Storage] backend.
 type Graph struct {
-	s      Storage
-	metric engine.DistanceMetric
+	s     Storage
+	score func(a, b []float32) float64
 }
 
-// NewGraph creates a graph handle for the given storage and metric.
-func NewGraph(s Storage, metric engine.DistanceMetric) *Graph {
-	return &Graph{s: s, metric: metric}
+// NewGraph creates a graph handle for the given storage and similarity scorer. Higher scores rank first.
+func NewGraph(s Storage, score func(a, b []float32) float64) *Graph {
+	return &Graph{s: s, score: score}
 }
 
 // Insert adds or updates a node in the HNSW graph for the given coord.
@@ -168,7 +167,7 @@ func layerForCoord(coord lattice.PackedCoord, m uint16) uint8 {
 // greedyDescend performs greedy traversal from startLayer down to stopLayer (exclusive).
 // Returns the best entry point and its distance to vec.
 func (g *Graph) greedyDescend(vec []float32, ep lattice.PackedCoord, epVec []float32, startLayer, stopLayer int) (lattice.PackedCoord, float64, error) {
-	epDist := engine.Similarity(vec, epVec, g.metric)
+	epDist := g.score(vec, epVec)
 	for lc := startLayer; lc >= stopLayer; lc-- {
 		changed := true
 		for changed {
@@ -191,7 +190,7 @@ func (g *Graph) greedyDescend(vec []float32, ep lattice.PackedCoord, epVec []flo
 				if !nOk {
 					return ep, epDist, fmt.Errorf("%w: descent neighbor embedding is missing", ErrCorruptGraph)
 				}
-				d := engine.Similarity(vec, nbrVec, g.metric)
+				d := g.score(vec, nbrVec)
 				if d > epDist {
 					ep = nbr
 					epDist = d
@@ -466,7 +465,7 @@ func (g *Graph) searchLayer(vec []float32, ep lattice.PackedCoord, ef, layer int
 	if !ok {
 		return nil, fmt.Errorf("%w: candidate embedding is missing", ErrCorruptGraph)
 	}
-	epDist := engine.Similarity(vec, epVec, g.metric)
+	epDist := g.score(vec, epVec)
 
 	visited := map[lattice.PackedCoord]bool{ep: true}
 	candidates := []scored{{coord: ep, dist: epDist}} // sorted descending
@@ -529,7 +528,7 @@ func (g *Graph) expandSearchNeighbors(
 		if !ok {
 			return nil, nil, fmt.Errorf("%w: neighbor embedding is missing", ErrCorruptGraph)
 		}
-		distance := engine.Similarity(vec, nbrVec, g.metric)
+		distance := g.score(vec, nbrVec)
 
 		if len(results) < ef || distance > results[len(results)-1].dist {
 			result := scored{coord: nbr, dist: distance}
@@ -572,7 +571,7 @@ func (g *Graph) pruneNeighbors(owner lattice.PackedCoord, neighbors []lattice.Pa
 		if nErr != nil || !nOk {
 			continue
 		}
-		scored = append(scored, nbrScore{coord: nbr, score: engine.Similarity(ownerVec, nbrVec, g.metric)})
+		scored = append(scored, nbrScore{coord: nbr, score: g.score(ownerVec, nbrVec)})
 	}
 	sort.Slice(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
 	if len(scored) > limit {

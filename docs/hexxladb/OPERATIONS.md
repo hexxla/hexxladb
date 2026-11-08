@@ -58,7 +58,7 @@ Without **prune + compact**, expect similar **file** size; [`StatsMVCC`](../../m
 - **`VersionedRows`** — total versioned primary rows (grows with puts **and** deletes).
 - **`LogicalCells`** — number of distinct coordinates that still have at least one version row. A deleted coordinate remains counted because its latest tombstone is retained indefinitely by the current pruning contract, unless a later cell value supersedes it.
 
-**Visible** cells (non-tombstone latest value) are what [`DB.HealthCheck`](../../health.go) **CellCount** reflects, or what you get from [`GetCell`](../../primitives.go) / query APIs. Do not equate **`logical_cells`** with “rows the user can see.”
+**Visible** cells (non-tombstone latest value) are what [`DB.HealthCheck`](../../health.go) **CellCount** reflects, or what you get from [`GetCell`](../../cells.go) / query APIs. Do not equate **`logical_cells`** with “rows the user can see.”
 
 `HealthCheck` always decodes and validates every visible cell and seam primary
 record and returns `ErrCorruptDatabase` for malformed keys, encodings, or

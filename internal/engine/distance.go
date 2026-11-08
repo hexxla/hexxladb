@@ -22,16 +22,23 @@ func IsValidDistanceMetric(m DistanceMetric) bool {
 // Similarity returns a score where higher = more similar for any metric.
 // For [DistanceL2] the result is -distance (so sorting descending still works).
 func Similarity(a, b []float32, m DistanceMetric) float64 {
+	return SimilarityFunc(m)(a, b)
+}
+
+// SimilarityFunc selects the scorer once for a retrieval operation.
+func SimilarityFunc(m DistanceMetric) func(a, b []float32) float64 {
 	switch m {
-	case DistanceCosine:
-		return cosineSimilarity(a, b)
 	case DistanceDotProduct:
-		return dotProduct(a, b)
+		return dotProduct
 	case DistanceL2:
-		return -euclideanDistance(a, b)
+		return l2Similarity
 	default:
-		return cosineSimilarity(a, b)
+		return cosineSimilarity
 	}
+}
+
+func l2Similarity(a, b []float32) float64 {
+	return -euclideanDistance(a, b)
 }
 
 // cosineSimilarity computes dot(a,b) / (‖a‖ × ‖b‖).

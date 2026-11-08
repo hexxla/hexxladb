@@ -176,7 +176,7 @@ drift; it does not by itself authorize a breaking change.
 
 | Status | Owning root files | Policy before v1 |
 | --- | --- | --- |
-| v1 candidate: core storage and records | `db.go`, `tx.go`, `options.go`, `errors.go`, `export.go`, `primitives.go`, `facets_edges.go`, `delete_cell.go`, `batch.go`, `cell_secondary.go`, `seam_secondary.go`, `hooks.go` | Breaking changes require an `[Unreleased]` migration note now; compatibility is mandatory at v1. |
+| v1 candidate: core storage and records | `db.go`, `tx.go`, `options.go`, `errors.go`, `export.go`, `cells.go`, `seams.go`, `seam_scan.go`, `spatial_reads.go`, `facets_edges.go`, `delete_cell.go`, `batch.go`, `cell_secondary.go`, `seam_secondary.go`, `hooks.go` | Breaking changes require an `[Unreleased]` migration note now; compatibility is mandatory at v1. |
 | v1 candidate: durability and operations | `backup.go`, `compact.go`, `reclaim.go`, `maintenance_preflight.go`, `migration.go`, `rotation.go`, `encryption.go`, `health.go`, `storage_stats.go`, `write_stats.go`, `mvcc_lifecycle.go`, `snapshot_tags.go`, `db_changelog.go`, `changelog_consumers.go` | Operational failure and recovery semantics are compatibility commitments. |
 | v1 candidate: embeddings and views | `embedding.go`, `tx_embedding.go`, `embedding_index_rebuild.go`, `views.go` | Stored encodings and documented root signatures are candidates for v1 commitment. |
 | v1 candidate: retrieval and query | `context_load.go`, `search.go`, `query.go`, `query_exec.go`, `embedding_search.go`, `embedding_reindex.go` | Result bounds, ordering, exact/approximate path selection, and error behavior are candidate commitments. |

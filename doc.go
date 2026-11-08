@@ -43,7 +43,7 @@
 //     checks paths, source storage, and capacity (see docs/hexxladb/OPERATIONS.md).
 //   - [Tx.Get], [Tx.Put], [Tx.AscendRange] — byte-key ordered store.
 //     Lattice primitives: [Tx.FindFreeCellPlacement], [Tx.PutCell], [Tx.GetCell], [Tx.DeleteCell], [Tx.DeleteCellWithOutcome], [Tx.WalkRing], [Tx.PutSeam],
-//     [Tx.FindSeams], [Tx.FindSeamsAt], [Tx.LoadContext], [Tx.ResolveSeam] (see [primitives.go]);
+//     [Tx.FindSeams], [Tx.FindSeamsAt], [Tx.AscendSeams], [Tx.LoadContext], [Tx.ResolveSeam];
 //     public context, raw-spatial, seam, and candidate constants bound enumeration
 //     work and return [ErrSpatialScanLimit] when a seam scan exhausts its budget;
 //     facets/edges: [Tx.PutFacet], [Tx.GetFacet], [Tx.AscendFacetsForCell],

@@ -1,5 +1,18 @@
-# Ports and adapters example
+# Contradiction workflow
 
-This reference application shows how to build use cases over HexxlaDB. The application calls the storage interface in `internal/domain`. The outbound adapter in `internal/adapters/out/hexxladb` implements that interface using the public database API. The example uses public HexxlaDB value types to illustrate the storage contract.
+This reference application records two conflicting observations, links them
+with a seam, and saves an operator's resolution note.
 
-Run `go test ./examples/ports_adapters/...` from the module root for the application and adapter contract tests.
+```bash
+go run ./examples/ports_adapters
+go test ./examples/ports_adapters/...
+```
+
+The demo opens and removes its own temporary MVCC database. Its entry point
+constructs the [service](internal/app/app.go) and [HexxlaDB adapter](internal/adapters/out/hexxladb/storage.go).
+The service validates positions, text, and resolution notes using
+[application types and a two-operation port](internal/domain/storage.go).
+The adapter translates those types and uses one transaction to record both
+cells and their seam. The real-adapter test injects a rejected seam write and
+checks that both cells are rolled back. Resolving a contradiction is a later,
+separate transaction.

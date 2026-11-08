@@ -8,9 +8,13 @@
 
 ### Added
 
+- **Snapshot seam iteration** — `Tx.AscendSeams` visits one visible seam version per ID and supports early stopping.
+
 - **MVCC index repair** — `RepairMVCCIndexesTo` and `hexxladb compact --rebuild-mvcc-indexes` rebuild cell and seam secondary indexes from retained versions in a verified, source-preserving copy.
 
 ### Fixed
+
+- **Operator diagnostics** — the TUI counts and displays logical seams from its snapshot, surfaces diagnostic read failures, and marks occluded positions in the hex grid.
 
 - **MVCC snapshots and indexes** — preserve secondary entries until their committed versions are pruned, replace entries for same-transaction edits, and recheck source and week against visible cell and seam records. Time-based snapshots resolve timestamps on both sides of the Unix epoch.
 
@@ -25,6 +29,8 @@
 - **Dependency security** — upgrade the Go crypto and text modules to versions that address the high-severity advisories reported by the dependency inventory scan.
 
 ### Changed
+
+- **Architecture and reference example** — consolidate MVCC key encoding, supply the HNSW scorer through its boundary, and organize transaction and migration files by responsibility. The ports-and-adapters example now demonstrates one atomic contradiction workflow.
 
 - **Architecture** — keep the reference application under examples and route TUI storage inspection through typed diagnostics.
 

@@ -59,8 +59,9 @@ func (v *embeddingsView) loadCmd() tea.Cmd {
 		}
 
 		msg.err = db.View(func(tx *hexxladb.Tx) error {
-			msg.embedCount, msg.hnswEnabled = inspect.Embeddings(tx, 1000000)
-			return nil
+			var err error
+			msg.embedCount, msg.hnswEnabled, err = inspect.Embeddings(tx, 1000000)
+			return err
 		})
 
 		return msg

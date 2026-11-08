@@ -75,7 +75,7 @@ func (db *DB) RebuildEmbeddingIndex(ctx context.Context, opts *EmbeddingIndexReb
 
 	storage := newMemoryHNSWStorage(candidates)
 	buildStarted := time.Now()
-	graph := hnsw.NewGraph(storage, engine.DistanceMetric(db.EmbeddingMetric()))
+	graph := hnsw.NewGraph(storage, engine.SimilarityFunc(db.EmbeddingMetric()))
 	for _, candidate := range candidates {
 		if err := ctx.Err(); err != nil {
 			return stats, err

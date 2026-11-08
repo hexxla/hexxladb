@@ -20,7 +20,8 @@ type cellsView struct {
 	searching  bool   // search bar is open (typing)
 	query      string // last executed query (shown when results are displayed)
 	searchMode string // "lexical", "embedding", or "hybrid"
-	searchErr  error  // error from last search
+	loadErr    error
+	searchErr  error // error from last search
 	width      int
 	height     int
 }
@@ -54,10 +55,11 @@ func (v *cellsView) Update(msg tea.Msg) (view, tea.Cmd) {
 	case tabActivatedMsg:
 		if v.loading && v.totalRows() == 0 {
 			db := v.db
-			return v, func() tea.Msg { return cellsLoadedMsg{cells: loadCells(db, 200)} }
+			return v, func() tea.Msg { return loadCells(db, 200) }
 		}
 		return v, nil
 	case cellsLoadedMsg:
+		v.loadErr = msg.err
 		v.cells = msg.cells
 		v.searchHits = nil
 		v.loading = false
@@ -96,7 +98,7 @@ func (v *cellsView) handleSearchKeyMsg(msg tea.KeyMsg) (view, tea.Cmd) {
 		v.loading = true
 		v.cells = nil
 		db := v.db
-		return v, func() tea.Msg { return cellsLoadedMsg{cells: loadCells(db, 200)} }
+		return v, func() tea.Msg { return loadCells(db, 200) }
 	case tea.KeyEnter:
 		return v.executeSearch()
 	case tea.KeyBackspace, tea.KeyDelete:
@@ -182,12 +184,16 @@ func (v *cellsView) resetToBrowse() (view, tea.Cmd) {
 	v.query = ""
 	v.searching = false
 	db := v.db
-	return v, func() tea.Msg { return cellsLoadedMsg{cells: loadCells(db, 200)} }
+	return v, func() tea.Msg { return loadCells(db, 200) }
 }
 
 func (v *cellsView) View() string {
 	if v.loading {
 		return styleLoading.Render("  ⟳  Loading cells…")
+	}
+
+	if v.loadErr != nil && v.query == "" {
+		return styleBad.Render(fmt.Sprintf("  ✗  Cells error: %v", v.loadErr))
 	}
 
 	total := v.totalRows()

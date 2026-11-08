@@ -330,6 +330,7 @@ expectations.
 | [LLM Context Engine](examples/llm_context_engine/)                         | `task demo-llm`                   | Ollama embeddings, semantic search, supersession, FOV                 |
 | [Spatial Algorithms](examples/spatial_algorithms/)                         | `task demo-spatial`               | FOV, radial context, Voronoi, Dijkstra, BFS — side-by-side            |
 | [Remote Access Owner Service](examples/remote_access/)                     | `task demo-remote`                | Loopback service, authentication, admission, and single file owner   |
+| [Ports and Adapters](examples/ports_adapters/)                            | `go run ./examples/ports_adapters` | Record and resolve a contradiction through an application-owned port  |
 | [Performance Evidence](examples/performance_evidence/)                     | `task evidence-observe`           | Dijkstra, FOV, super-hex sync, allocation, and storage observations   |
 | [Write-path Evidence](examples/write_path_evidence/)                       | `task evidence-write-path`        | Bounded write latency, throughput, allocation, and file growth       |
 | [Vector Scale Evidence](examples/vector_scale_evidence/)                   | `task evidence-vector-scale`      | Synchronous/deferred HNSW build, recall, reopen, churn, memory, and disk |

@@ -120,9 +120,10 @@ func (tx *Tx) searchByEmbedding(ctx context.Context, vec []float32, cfg Embeddin
 func (tx *Tx) flatScanEmbeddings(ctx context.Context, vec []float32, maxResults int, minScore float64, metric engine.DistanceMetric) ([]EmbeddingSearchResult, error) {
 	var hits searchMinHeap
 	var haveCandidates bool
+	similarity := engine.SimilarityFunc(metric)
 	err := tx.scanEmbeddings(ctx, func(coord lattice.PackedCoord, candidate []float32) error {
 		haveCandidates = true
-		score := engine.Similarity(vec, candidate, metric)
+		score := similarity(vec, candidate)
 		if minScore != 0 && score < minScore {
 			return nil
 		}
@@ -206,7 +207,7 @@ func (tx *Tx) searchHNSW(vec []float32, maxResults int, minScore float64, efSear
 	if !hasMeta {
 		return nil, false, nil // no graph — fall back to flat scan
 	}
-	g := hnsw.NewGraph(stor, metric)
+	g := hnsw.NewGraph(stor, engine.SimilarityFunc(metric))
 	hnswResults, err := g.Search(vec, maxResults, efSearch)
 	if err != nil {
 		if errors.Is(err, hnsw.ErrCorruptGraph) {

@@ -1,7 +1,6 @@
 package hexxladb
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"slices"
@@ -9,7 +8,6 @@ import (
 
 	"github.com/hexxla/hexxladb/internal/index"
 	"github.com/hexxla/hexxladb/internal/lattice"
-	"github.com/hexxla/hexxladb/internal/mvcc"
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
@@ -93,17 +91,20 @@ func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthRep
 		report.CellCount = cellCount
 		report.MVCCStats = mvccStats
 
-		seams, err := healthScanSeams(ctx, tx, db.useMVCC)
-		if err != nil {
-			return err
-		}
-		report.SeamCount = len(seams)
-		for _, s := range seams {
+		var seams []SeamRecord
+		if err := tx.AscendSeams(ctx, func(s SeamRecord) bool {
+			report.SeamCount++
+			if cfg.CheckOrphans {
+				seams = append(seams, s)
+			}
 			if s.ResolutionStatus == "resolved" {
 				report.SeamsResolved++
 			} else {
 				report.SeamsUnresolved++
 			}
+			return true
+		}); err != nil {
+			return fmt.Errorf("hexxladb: health seam scan: %w", err)
 		}
 
 		if cfg.CheckOrphans {
@@ -240,126 +241,6 @@ func validateHealthCell(key lattice.PackedCoord, value []byte) error {
 		return fmt.Errorf("%w: invalid visible cell: %w", ErrCorruptDatabase, err)
 	}
 	return nil
-}
-
-// healthScanSeams scans seam/ primary keys and returns decoded visible seams.
-func healthScanSeams(ctx context.Context, tx *Tx, isMVCC bool) ([]record.SeamRecord, error) {
-	var seams []record.SeamRecord
-	var scanErr error
-
-	if isMVCC {
-		seams, scanErr = healthScanSeamsMVCC(ctx, tx)
-	} else {
-		seams, scanErr = healthScanSeamsV1(ctx, tx)
-	}
-	return seams, scanErr
-}
-
-// healthScanSeamsMVCC scans seams with MVCC version grouping.
-func healthScanSeamsMVCC(ctx context.Context, tx *Tx) ([]record.SeamRecord, error) {
-	var seams []record.SeamRecord
-	var grouped []mvcc.VersionKV
-	var curULID string
-	var scanErr error
-
-	flushGrouped := func() error {
-		if len(grouped) == 0 {
-			return nil
-		}
-		val, _, ok := mvcc.SelectVisible(grouped, tx.readSeq)
-		grouped = grouped[:0]
-		if !ok || len(val) == 0 {
-			return nil
-		}
-		s, err := record.DecodeSeam(val)
-		if err != nil {
-			return fmt.Errorf("%w: decode visible seam %q: %w", ErrCorruptDatabase, curULID, err)
-		}
-		if s.ID != curULID {
-			return fmt.Errorf("%w: seam primary key does not match encoded record ID", ErrCorruptDatabase)
-		}
-		if err := validateSeamInvariants(s); err != nil {
-			return fmt.Errorf("%w: invalid visible seam: %w", ErrCorruptDatabase, err)
-		}
-		seams = append(seams, s)
-		return nil
-	}
-
-	if err := tx.AscendRange(
-		[]byte(index.SeamPrefix),
-		index.SeamScanUpperBound(),
-		func(k, v []byte) bool {
-			if err := ctx.Err(); err != nil {
-				scanErr = err
-				return false
-			}
-			ulidStr, seq, err := index.ParseSeamVersionKey(k)
-			if err != nil {
-				scanErr = fmt.Errorf("%w: parse seam primary key: %w", ErrCorruptDatabase, err)
-				return false
-			}
-			if ulidStr != curULID {
-				if err := flushGrouped(); err != nil {
-					scanErr = err
-					return false
-				}
-				curULID = ulidStr
-			}
-			grouped = append(grouped, mvcc.VersionKV{
-				CommitSeq: seq,
-				Value:     slices.Clone(v),
-			})
-			return true
-		},
-	); err != nil {
-		return nil, fmt.Errorf("hexxladb: health seam scan: %w", err)
-	}
-	if scanErr != nil {
-		return nil, scanErr
-	}
-	if err := flushGrouped(); err != nil {
-		return nil, err
-	}
-	return seams, nil
-}
-
-// healthScanSeamsV1 scans seams in v1 format (one key per seam ULID).
-func healthScanSeamsV1(ctx context.Context, tx *Tx) ([]record.SeamRecord, error) {
-	var seams []record.SeamRecord
-	var scanErr error
-
-	if err := tx.AscendRange(
-		[]byte(index.SeamPrefix),
-		index.SeamScanUpperBound(),
-		func(k, v []byte) bool {
-			if err := ctx.Err(); err != nil {
-				scanErr = err
-				return false
-			}
-			s, err := record.DecodeSeam(v)
-			if err != nil {
-				scanErr = fmt.Errorf("%w: decode visible seam: %w", ErrCorruptDatabase, err)
-				return false
-			}
-			expectedKey, err := index.SeamKey(s.ID)
-			if err != nil || !bytes.Equal(k, expectedKey) {
-				scanErr = fmt.Errorf("%w: seam primary key does not match encoded record ID", ErrCorruptDatabase)
-				return false
-			}
-			if err := validateSeamInvariants(s); err != nil {
-				scanErr = fmt.Errorf("%w: invalid visible seam: %w", ErrCorruptDatabase, err)
-				return false
-			}
-			seams = append(seams, s)
-			return true
-		},
-	); err != nil {
-		return nil, fmt.Errorf("hexxladb: health seam scan: %w", err)
-	}
-	if scanErr != nil {
-		return nil, scanErr
-	}
-	return seams, nil
 }
 
 // healthCheckOrphans detects seams whose CellA or CellB are not in liveCells.

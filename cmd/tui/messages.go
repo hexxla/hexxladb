@@ -16,6 +16,7 @@ import (
 
 type cellsLoadedMsg struct {
 	cells []hexxladb.CellView
+	err   error
 }
 
 type inspectCellMsg struct {
@@ -52,6 +53,7 @@ type snapshotDiffMsg struct {
 }
 
 type analyticsLoadedMsg struct {
+	err         error
 	tagCounts   []hexxladb.TagCount
 	tagPairs    []hexxladb.TagPair
 	ringDensity []hexxladb.RingDensity
@@ -198,8 +200,9 @@ func loadContextFOV(db *hexxladb.DB, center hexxladb.Coord) fovContextLoadedMsg 
 	return fovContextLoadedMsg{cells: cells, err: err}
 }
 
-func loadCells(db *hexxladb.DB, limit int) []hexxladb.CellView {
-	return inspect.Cells(db, limit)
+func loadCells(db *hexxladb.DB, limit int) cellsLoadedMsg {
+	cells, err := inspect.Cells(context.Background(), db, limit)
+	return cellsLoadedMsg{cells: cells, err: err}
 }
 
 // ── Ollama embedding helpers ────────────────────────────────────────────────

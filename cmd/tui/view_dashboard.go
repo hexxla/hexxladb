@@ -30,7 +30,10 @@ func (v *dashboardView) Update(_ tea.Msg) (view, tea.Cmd) { return v, nil }
 func (v *dashboardView) View() string {
 	ctx := context.Background()
 
-	stats, _ := v.db.StatsMVCC()
+	stats, err := v.db.StatsMVCC()
+	if err != nil {
+		return styleBad.Render(fmt.Sprintf("  ✗  Dashboard error: %v", err))
+	}
 	cellCount := int(stats.LogicalCells)
 	pageSize := v.db.PageSize()
 	maxVal := v.db.MaxValueBytes()
@@ -38,12 +41,17 @@ func (v *dashboardView) View() string {
 
 	var seamCount int
 	var tags []hexxladb.TagCount
-	_ = v.db.View(func(tx *hexxladb.Tx) error {
-		seamCount = inspect.CountSeams(tx, 100000)
+	if err := v.db.View(func(tx *hexxladb.Tx) error {
 		var err error
+		seamCount, err = inspect.CountSeams(ctx, tx, 100000)
+		if err != nil {
+			return err
+		}
 		tags, err = tx.TagCounts(ctx)
 		return err
-	})
+	}); err != nil {
+		return styleBad.Render(fmt.Sprintf("  ✗  Dashboard error: %v", err))
+	}
 	w := contentWidth(v.width - 6)
 	leftW, rightW := twoColumnWidths(w)
 

@@ -362,7 +362,7 @@ func (tx *Tx) queryCellsByFlatEmbedding(ctx context.Context, q CellQuery, queryL
 	if len(q.Embedding) != int(dim) {
 		return nil, fmt.Errorf("%w: want %d, got %d", ErrEmbeddingDimension, dim, len(q.Embedding))
 	}
-	metric := tx.db.eng.EmbeddingMetric()
+	similarity := engine.SimilarityFunc(tx.db.eng.EmbeddingMetric())
 	err := tx.scanEmbeddings(ctx, func(coord lattice.PackedCoord, vec []float32) error {
 		rec, ok, err := tx.GetCell(coord)
 		if err != nil {
@@ -371,7 +371,7 @@ func (tx *Tx) queryCellsByFlatEmbedding(ctx context.Context, q CellQuery, queryL
 		if !ok {
 			return nil
 		}
-		if result, matched := scoreRecord(q, rec, queryLow, engine.Similarity(q.Embedding, vec, metric)); matched {
+		if result, matched := scoreRecord(q, rec, queryLow, similarity(q.Embedding, vec)); matched {
 			results = append(results, result)
 		}
 		return nil

@@ -71,7 +71,7 @@ func (tx *Tx) PutEmbeddingWithOptions(coord PackedCoord, vec []float32, opts Emb
 		return nil
 	}
 	// Update HNSW graph.
-	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.DistanceMetric(tx.db.eng.EmbeddingMetric()))
+	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.SimilarityFunc(tx.db.eng.EmbeddingMetric()))
 	return g.Insert(coord, vec)
 }
 
@@ -137,7 +137,7 @@ func (tx *Tx) DeleteEmbedding(coord PackedCoord) error {
 	if !maintainGraph {
 		return nil
 	}
-	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.DistanceMetric(tx.db.eng.EmbeddingMetric()))
+	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.SimilarityFunc(tx.db.eng.EmbeddingMetric()))
 	return g.Delete(coord)
 }
 
@@ -158,7 +158,7 @@ func (tx *Tx) deleteEmbeddingIfEnabled(coord lattice.PackedCoord) error {
 	if !maintainGraph {
 		return nil
 	}
-	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.DistanceMetric(tx.db.eng.EmbeddingMetric()))
+	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.SimilarityFunc(tx.db.eng.EmbeddingMetric()))
 	return g.Delete(coord)
 }
 

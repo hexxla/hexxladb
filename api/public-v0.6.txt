@@ -65,8 +65,8 @@ Exported entrypoints:
   - Tx.Get, Tx.Put, Tx.AscendRange — byte-key ordered store. Lattice primitives:
     Tx.FindFreeCellPlacement, Tx.PutCell, Tx.GetCell, Tx.DeleteCell,
     Tx.DeleteCellWithOutcome, Tx.WalkRing, Tx.PutSeam, Tx.FindSeams,
-    Tx.FindSeamsAt, Tx.LoadContext, Tx.ResolveSeam (see [primitives.go]);
-    public context, raw-spatial, seam, and candidate constants bound enumeration
+    Tx.FindSeamsAt, Tx.AscendSeams, Tx.LoadContext, Tx.ResolveSeam; public
+    context, raw-spatial, seam, and candidate constants bound enumeration
     work and return ErrSpatialScanLimit when a seam scan exhausts its budget;
     facets/edges: Tx.PutFacet, Tx.GetFacet, Tx.AscendFacetsForCell, Tx.PutEdge,
     Tx.GetEdge, Tx.AscendEdgesFrom ([facets_edges.go]); stable record aliases:
@@ -1735,6 +1735,11 @@ func (tx *Tx) AscendFacetsForCell(key PackedCoord, fn func(FacetWalkRecord) bool
 func (tx *Tx) AscendRange(from, to []byte, fn func(k, v []byte) bool) error
     AscendRange calls fn for keys in [from, to] inclusive (byte order). If from
     is nil, starts at the smallest key.
+
+func (tx *Tx) AscendSeams(ctx context.Context, visit func(SeamRecord) bool) error
+    AscendSeams visits the seam records visible to this transaction in ID order.
+    The callback can stop the scan by returning false. MVCC scans visit one
+    version per seam ID. ctx is checked between physical rows.
 
 func (tx *Tx) AscendSeamsBySource(ctx context.Context, sourceID string, fn func(SeamRecord) bool) error
     AscendSeamsBySource scans the seam-source/ secondary index for sourceID and

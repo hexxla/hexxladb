@@ -51,7 +51,7 @@ The root package re-exports the stable geometry and wire types applications need
 | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
 | [`Coord`, `PackedCoord`, `Cube`, `Pack`, `Unpack`, `Ring`, `WalkRings`](../../export.go)                     | Hex coordinates, packing, and deterministic ring enumeration. |
 | [`CellRecord`, `SeamRecord`, `ProvenanceWire`, `ValidityWire`](../../export.go)                              | Persistent cell/seam wire representations and metadata.       |
-| [`CellPlacement`, `MaxCellPlacementRadius`](../../primitives.go)                                             | Bounded deterministic free-coordinate selection result/limit. |
+| [`CellPlacement`, `MaxCellPlacementRadius`](../../cells.go)                                             | Bounded deterministic free-coordinate selection result/limit. |
 | [`FacetWalkRecord`, `EdgeWalkRecord`](../../export.go)                                                       | Callback record types for facet and edge walks.               |
 | [`NewProvenanceWire`, `NewFacetDerived`](../../templates.go)                                                 | Helpers for constructing common records.                      |
 | [`NewUserMessageCell`, `NewAssistantResponseCell`, `NewSystemPromptCell`, `NewFactCell`](../../templates.go) | Optional conversational-memory templates.                     |
@@ -64,7 +64,7 @@ edge weight, and seam confidence delta must be finite. Confidence remains an
 application-defined signal and is not restricted to a database-defined range.
 Violations return `ErrInvalidArgument` before serialization or index updates.
 
-HexxlaDB does not infer semantic anchors or enforce clustering. [`Tx.FindFreeCellPlacement`](../../primitives.go) searches from a caller-supplied anchor in deterministic ring order and returns the first coordinate without a visible cell, its packed key, and the number of occupied positions probed. Call it inside the same `DB.Update` as `PutCell`; the writable transaction prevents another writer from claiming the result, while `PutCell` remains the explicit canonical write. The helper does not reserve a result from repeated calls in the same transaction, so write the returned key before searching again. It accepts radii from zero through `MaxCellPlacementRadius`, requires the complete search disk to fit within the packable coordinate range, and returns `ErrNoFreeCellPlacement` on bounded exhaustion. A current MVCC tombstone is free for placement; writing there creates a new version while retained snapshots continue to expose the earlier cell.
+HexxlaDB does not infer semantic anchors or enforce clustering. [`Tx.FindFreeCellPlacement`](../../cells.go) searches from a caller-supplied anchor in deterministic ring order and returns the first coordinate without a visible cell, its packed key, and the number of occupied positions probed. Call it inside the same `DB.Update` as `PutCell`; the writable transaction prevents another writer from claiming the result, while `PutCell` remains the explicit canonical write. The helper does not reserve a result from repeated calls in the same transaction, so write the returned key before searching again. It accepts radii from zero through `MaxCellPlacementRadius`, requires the complete search disk to fit within the packable coordinate range, and returns `ErrNoFreeCellPlacement` on bounded exhaustion. A current MVCC tombstone is free for placement; writing there creates a new version while retained snapshots continue to expose the earlier cell.
 
 Preserve existing coordinates during incremental insertion; represent an intentional move by creating a successor and calling `MarkSupersedes` rather than deleting or rewriting history. `ClusterHint` is stored metadata only. Applications continue to own anchor selection, semantic grouping, relocation policy, and placement-quality thresholds.
 
@@ -76,14 +76,15 @@ Use these methods inside `View` or `Update` callbacks:
 
 | Task                                    | API                                                                                                           |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Select a bounded free cell placement    | [`Tx.FindFreeCellPlacement`](../../primitives.go)                                                            |
-| Store and retrieve a cell               | [`Tx.PutCell`, `Tx.GetCell`](../../primitives.go)                                                             |
+| Select a bounded free cell placement    | [`Tx.FindFreeCellPlacement`](../../cells.go)                                                            |
+| Store and retrieve a cell               | [`Tx.PutCell`, `Tx.GetCell`](../../cells.go)                                                             |
 | Delete a cell                           | [`Tx.DeleteCell`, `Tx.DeleteCellWithOutcome`](../../delete_cell.go)                                           |
-| Stream a ring or validity-filtered ring | [`Tx.WalkRing`, `Tx.WalkRingAt`, `Tx.WalkRingFacets`](../../primitives.go)                                    |
+| Stream a ring or validity-filtered ring | [`Tx.WalkRing`, `Tx.WalkRingAt`, `Tx.WalkRingFacets`](../../spatial_reads.go)                                    |
 | Store and retrieve facets               | [`Tx.PutFacet`, `Tx.UpdateFacet`, `Tx.GetFacet`, `Tx.AscendFacetsForCell`](../../facets_edges.go)             |
 | Store and retrieve edges                | [`Tx.PutEdge`, `Tx.LinkCells`, `Tx.GetEdge`, `Tx.AscendEdgesFrom`](../../facets_edges.go)                     |
-| Create and query seams                  | [`Tx.PutSeam`, `Tx.MarkConflict`, `Tx.MarkSupersedes`, `Tx.FindSeams`, `Tx.FindSeamsAt`](../../primitives.go) |
-| Resolve a seam                          | [`Tx.ResolveSeam`](../../primitives.go)                                                                       |
+| Create and query seams                  | [`Tx.PutSeam`, `Tx.MarkConflict`, `Tx.MarkSupersedes`, `Tx.FindSeams`, `Tx.FindSeamsAt`](../../seams.go) |
+| Stream snapshot-visible seams           | [`Tx.AscendSeams`](../../seam_scan.go)                                                               |
+| Resolve a seam                          | [`Tx.ResolveSeam`](../../seams.go)                                                                       |
 
 [`DB.BatchPutCells`](../../batch.go) writes large cell collections in bounded transactions with progress and optional per-cell error collection.
 
@@ -115,7 +116,7 @@ The canonical record families and key encodings are in [`HEXXLA_DB.md`](./HEXXLA
 | [`Tx.LoadContextVoronoi`](../../voronoi_context.go) | Partition cells among multiple seeds.                                                |
 | [`Tx.FindEdgePath`](../../pathfind_api.go)          | Dijkstra shortest path over stored weighted edges.                                   |
 | [`Tx.WalkEdges`](../../pathfind_api.go)             | Bounded breadth-first traversal over stored edges.                                   |
-| [`Tx.ScanContextRaw`, `Tx.ScanContextAtRaw`](../../primitives.go) | Compatibility primitives for bounded nearest-first raw cell scans. Prefer `LoadContext` for new retrieval code. |
+| [`Tx.ScanContextRaw`, `Tx.ScanContextAtRaw`](../../spatial_reads.go) | Compatibility primitives for bounded nearest-first raw cell scans. Prefer `LoadContext` for new retrieval code. |
 
 [`LoadContextConfig`](../../context_load.go) controls seeds, ring bounds, validity time, edge expansion, the `MaxCells` result limit, and assembly; validity, supersession, explanations, and requested seams apply across dispatch strategies. A single-seed ring load is nearest-first; multi-seed loads merge candidates round-robin in caller-supplied seed order and deduplicate coordinates and seams. Public constants bound radius, seeds, results, hops, and combined coordinate probes. HexxlaDB does not rank by confidence or count LLM tokens during context assembly. Applications own product ranking, complete-request rendering, provider/model token accounting, and output-token reservation. `ViewAt` snapshot time and record validity time are independent; see [`TX.md`](./TX.md).
 

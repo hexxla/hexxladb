@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/hexxla/hexxladb"
-	"github.com/hexxla/hexxladb/internal/lattice"
+	"github.com/hexxla/hexxladb/internal/inspect"
 )
 
 type hexGridView struct {
@@ -62,69 +62,63 @@ func (v *hexGridView) Update(msg tea.Msg) (view, tea.Cmd) {
 func (v *hexGridView) View() string {
 	w := max(40, v.width-6)
 
-	// ── grid ─────────────────────────────────────────────────────────────────
-	var gridStr string
-	_ = v.db.View(func(tx *hexxladb.Tx) error {
-		g, err := tx.RenderHexGridFromDB(context.Background(), v.center, v.radius)
-		if err == nil {
-			gridStr = g
+	ctx := context.Background()
+	occupied := make(map[hexxladb.Coord]bool)
+	ringDensity := make([]hexxladb.RingDensity, v.radius+1)
+	if err := v.db.View(func(tx *hexxladb.Tx) error {
+		for ring := range ringDensity {
+			density := &ringDensity[ring]
+			density.Ring = ring
+			coords := hexxladb.Ring(v.center, ring)
+			density.Total = len(coords)
+			for _, c := range coords {
+				key, err := hexxladb.Pack(c)
+				if err != nil {
+					return err
+				}
+				_, exists, err := tx.GetCell(key)
+				if err != nil {
+					return err
+				}
+				if exists {
+					occupied[c] = true
+					density.Occupied++
+				}
+			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return styleBad.Render(fmt.Sprintf("  ✗  Hex grid error: %v", err))
+	}
 
-	// Build FOV visible set if overlay is on
-	visibleSet := map[hexxladb.Coord]struct{}{}
+	var visible map[hexxladb.Coord]bool
 	if v.showFOV {
-		_ = v.db.View(func(tx *hexxladb.Tx) error {
-			opaque := func(c hexxladb.Coord) bool {
-				p, err := hexxladb.Pack(c)
-				if err != nil {
-					return true
-				}
-				_, ok, _ := tx.GetCell(p)
-				return !ok
-			}
-			for _, c := range lattice.FieldOfView(v.center, v.radius, opaque) {
-				visibleSet[c] = struct{}{}
-			}
-			return nil
-		})
+		visible = inspect.VisibleHexes(v.center, v.radius, occupied)
 	}
-
-	// Color the grid lines
-	var coloredGrid strings.Builder
-	for line := range strings.SplitSeq(gridStr, "\n") {
-		coloredLine := line
-		// Dim empty cells, highlight filled
-		coloredLine = strings.ReplaceAll(coloredLine, "·",
-			lipgloss.NewStyle().Foreground(colorText2).Background(colorBg1).Render("·"))
-		coloredLine = strings.ReplaceAll(coloredLine, "●",
-			lipgloss.NewStyle().Foreground(colorCyan).Background(colorBg1).Bold(true).Render("●"))
-		coloredLine = strings.ReplaceAll(coloredLine, "○",
-			lipgloss.NewStyle().Foreground(colorPurple).Background(colorBg1).Render("○"))
-		coloredGrid.WriteString(coloredLine + "\n")
-	}
+	grid := hexxladb.RenderHexGrid(ctx, v.center, v.radius, func(c hexxladb.Coord) string {
+		return hexGridMarker(occupied[c], v.showFOV && !visible[c])
+	})
+	coloredGrid := strings.NewReplacer(
+		"·", styleDim.Render("·"),
+		"●", lipgloss.NewStyle().Foreground(colorCyan).Background(colorBg1).Bold(true).Render("●"),
+		"○", styleDim.Render("○"),
+		"×", styleDim.Render("×"),
+	).Replace(grid)
 
 	fovLabel := ""
 	if v.showFOV {
 		fovLabel = lipgloss.NewStyle().Foreground(colorGreen).Background(colorBg1).Render("  FOV ON") +
-			styleDim.Render(fmt.Sprintf(" (%d visible)", len(visibleSet)))
+			styleDim.Render(fmt.Sprintf(" (%d visible)", len(visible)))
 	}
 
 	gridPanel := styleBorder.Background(colorBg1).Padding(0, 2).
 		Render(
 			styleSectionHeader.Render(fmt.Sprintf("Hex Grid — center (%d,%d) radius %d", v.center.Q, v.center.R, v.radius)) + fovLabel + "\n\n" +
-				coloredGrid.String(),
+				coloredGrid,
 		)
 
 	// ── ring stats ────────────────────────────────────────────────────────────
 	var ringLines strings.Builder
-	var ringDensity []hexxladb.RingDensity
-	_ = v.db.View(func(tx *hexxladb.Tx) error {
-		var err error
-		ringDensity, err = tx.RingDensityMap(context.Background(), v.center, v.radius)
-		return err
-	})
 	for _, rd := range ringDensity {
 		pct := 0
 		if rd.Total > 0 {
@@ -145,7 +139,7 @@ func (v *hexGridView) View() string {
 	help := strings.Join([]string{
 		helpItem("↑↓←→/hjkl", "move center"),
 		helpItem("+/-", "zoom"),
-		helpItem("v", "toggle FOV"),
+		helpItem("v", "toggle FOV (○ hidden cell, × hidden space)"),
 		helpItem("0", "origin"),
 		helpItem("Enter", "inspect center"),
 	}, "  ")
@@ -157,4 +151,17 @@ func (v *hexGridView) View() string {
 		"",
 		styleHelp.Render("  "+help),
 	)
+}
+
+func hexGridMarker(occupied, hidden bool) string {
+	switch {
+	case occupied && hidden:
+		return "○"
+	case occupied:
+		return "●"
+	case hidden:
+		return "×"
+	default:
+		return "·"
+	}
 }

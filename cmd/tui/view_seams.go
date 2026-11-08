@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -8,13 +9,13 @@ import (
 	"github.com/charmbracelet/lipgloss/table"
 
 	"github.com/hexxla/hexxladb"
-	"github.com/hexxla/hexxladb/internal/inspect"
 )
 
 type seamsView struct {
 	noConsume
 	db     *hexxladb.DB
 	seams  []seamRow
+	err    error
 	cursor int
 	loaded bool
 	width  int
@@ -30,6 +31,7 @@ func (v *seamsView) SetSize(w, h int) { v.width = w; v.height = h }
 func (v *seamsView) Update(msg tea.Msg) (view, tea.Cmd) {
 	switch msg := msg.(type) {
 	case seamsLoadedMsg:
+		v.err = msg.err
 		if msg.err == nil {
 			v.seams = msg.seams
 		}
@@ -67,7 +69,7 @@ func (v *seamsView) loadCmd() tea.Cmd {
 	return func() tea.Msg {
 		var rows []seamRow
 		err := db.View(func(tx *hexxladb.Tx) error {
-			return inspect.WalkSeams(tx, func(r hexxladb.SeamRecord) bool {
+			return tx.AscendSeams(context.Background(), func(r hexxladb.SeamRecord) bool {
 				aCoord, err1 := hexxladb.Unpack(r.CellA)
 				bCoord, err2 := hexxladb.Unpack(r.CellB)
 				if err1 != nil || err2 != nil {
@@ -95,6 +97,9 @@ func (v *seamsView) loadCmd() tea.Cmd {
 func (v *seamsView) View() string {
 	if !v.loaded {
 		return styleLoading.Render("  ⟳  Loading seams…")
+	}
+	if v.err != nil {
+		return styleBad.Render(fmt.Sprintf("  ✗  Seams error: %v", v.err))
 	}
 	if len(v.seams) == 0 {
 		return lipgloss.JoinVertical(lipgloss.Left,

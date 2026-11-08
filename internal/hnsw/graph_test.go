@@ -5,7 +5,6 @@ import (
 	"math"
 	"testing"
 
-	"github.com/hexxla/hexxladb/internal/engine"
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
@@ -98,7 +97,7 @@ func coord(i uint64) lattice.PackedCoord { return lattice.PackedCoord{i, 0} }
 func TestGraph_InsertSingle(t *testing.T) {
 	t.Parallel()
 	s := newMemStorage()
-	g := NewGraph(s, engine.DistanceCosine)
+	g := NewGraph(s, testSimilarity)
 
 	c := coord(1)
 	s.SetVec(c, []float32{1, 0, 0})
@@ -136,7 +135,7 @@ func TestLayerForCoordIsDeterministicAndDistributed(t *testing.T) {
 func TestGraph_InsertMultiple_SearchRecall(t *testing.T) {
 	t.Parallel()
 	s := newMemStorage()
-	g := NewGraph(s, engine.DistanceCosine)
+	g := NewGraph(s, testSimilarity)
 
 	// Insert 20 vectors in 3D.
 	n := 20
@@ -187,7 +186,7 @@ func TestGraph_InsertMultiple_SearchRecall(t *testing.T) {
 func TestGraph_Delete(t *testing.T) {
 	t.Parallel()
 	s := newMemStorage()
-	g := NewGraph(s, engine.DistanceCosine)
+	g := NewGraph(s, testSimilarity)
 
 	// Insert 5 nodes.
 	vecs := [][]float32{
@@ -238,7 +237,7 @@ func TestGraph_Delete(t *testing.T) {
 func TestGraph_DeleteAll(t *testing.T) {
 	t.Parallel()
 	s := newMemStorage()
-	g := NewGraph(s, engine.DistanceCosine)
+	g := NewGraph(s, testSimilarity)
 
 	for i := range 3 {
 		c := coord(uint64(i + 1))
@@ -266,7 +265,7 @@ func TestGraph_DeleteAll(t *testing.T) {
 func TestGraph_DeleteEntryPoint(t *testing.T) {
 	t.Parallel()
 	s := newMemStorage()
-	g := NewGraph(s, engine.DistanceCosine)
+	g := NewGraph(s, testSimilarity)
 
 	// Insert 3 nodes.
 	for i := range 3 {
@@ -295,7 +294,7 @@ func TestGraph_DeleteEntryPoint(t *testing.T) {
 func TestGraph_UpdateExisting(t *testing.T) {
 	t.Parallel()
 	s := newMemStorage()
-	g := NewGraph(s, engine.DistanceCosine)
+	g := NewGraph(s, testSimilarity)
 
 	c := coord(1)
 	s.SetVec(c, []float32{1, 0, 0})
@@ -327,7 +326,7 @@ func TestGraph_UpdateExisting(t *testing.T) {
 func TestGraph_SearchEmpty(t *testing.T) {
 	t.Parallel()
 	s := newMemStorage()
-	g := NewGraph(s, engine.DistanceCosine)
+	g := NewGraph(s, testSimilarity)
 
 	results, err := g.Search([]float32{1, 0, 0}, 5, 50)
 	if err != nil {
@@ -355,10 +354,20 @@ func TestGraph_SearchRejectsIncompleteGraph(t *testing.T) {
 			s.nodes[entry] = &Node{Coord: entry, Neighbors: [][]lattice.PackedCoord{{}}}
 			removePart(s)
 
-			_, err := NewGraph(s, engine.DistanceCosine).Search([]float32{1, 0}, 1, 10)
+			_, err := NewGraph(s, testSimilarity).Search([]float32{1, 0}, 1, 10)
 			if !errors.Is(err, ErrCorruptGraph) {
 				t.Fatalf("Search error = %v, want ErrCorruptGraph", err)
 			}
 		})
 	}
+}
+
+// testSimilarity uses negative squared distance shifted so identical vectors score 1.
+func testSimilarity(a, b []float32) float64 {
+	score := 1.0
+	for i, value := range a {
+		delta := float64(value) - float64(b[i])
+		score -= delta * delta
+	}
+	return score
 }

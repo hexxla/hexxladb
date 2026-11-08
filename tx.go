@@ -392,3 +392,16 @@ func (db *DB) resolveCommitTimePartition(unixNano int64) (uint64, error) {
 	}
 	return readSeq, nil
 }
+
+func (tx *Tx) requireWritable() error {
+	if tx == nil || tx.db == nil {
+		return ErrClosed
+	}
+	if !tx.writable {
+		return ErrTxReadOnly
+	}
+	if tx.db.activeEng() == nil {
+		return ErrDatabaseClosed
+	}
+	return nil
+}

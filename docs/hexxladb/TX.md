@@ -42,15 +42,15 @@ If the engine commit is known durable but changelog append, sync, or outbox clea
 
 **[`Tx.Get`](../../tx.go)**, **`Put`**, **`AscendRange`** operate on raw **`[]byte`** keys/values backed by the engine B+ tree.
 
-The lattice API adds **`PutCell`**, **`GetCell`**, **`WalkRing`**, **`PutSeam`**, **`FindSeams`**, **`LoadContext`**, and **`ResolveSeam`** on **`Tx`** (see [`primitives.go`](../../primitives.go)). Writes require **`Update`**; reads use **`View`** (or **`Update`**).
+The lattice API adds **`PutCell`**, **`GetCell`**, **`WalkRing`**, **`PutSeam`**, **`FindSeams`**, **`LoadContext`**, and **`ResolveSeam`** on **`Tx`**. Writes require **`Update`**; reads use **`View`** (or **`Update`**).
 
-- **`PutSeam`** writes **`seam/<ulid>`** plus a **`seam-by-cells/<lo>/<hi>/<ulid>`** secondary (empty value). Changing endpoints for an existing ULID returns **`ErrSeamEndpointMismatch`**. **`FindSeams`** uses the secondary index over cells in the query ball and loads primaries by ULID.
+- **`PutSeam`** writes **`seam/<ulid>`** plus a **`seam-by-cells/<lo>/<hi>/<ulid>`** secondary (empty value). Changing endpoints for an existing ULID returns **`ErrSeamEndpointMismatch`**. [`AscendSeams`](../../seam_scan.go) streams one version visible to the transaction per seam, in ID order. **`FindSeams`** uses the secondary index over cells in the query ball and loads primaries by ULID.
 
 ## Spec-named helpers
 
 Mapping to [`HEXXLA_DB.md`](./HEXXLA_DB.md) Native Query Primitives:
 
-- `mark_conflict`: **[`Tx.MarkConflict`](../../primitives.go)** — new ULID seam, canonical endpoints, **`SeamType`** `"mark_conflict"`, then **`PutSeam`**.
+- `mark_conflict`: **[`Tx.MarkConflict`](../../seams.go)** — new ULID seam, canonical endpoints, **`SeamType`** `"mark_conflict"`, then **`PutSeam`**.
 - `update_facet` (derivation rule): **[`Tx.UpdateFacet`](../../facets_edges.go)** — requires **`DerivationHash`** = SHA-256 of the cell’s current **`RawContent`**; otherwise **`ErrFacetDerivationMismatch`**. Missing cell: **`ErrCellNotFound`**. Unconstrained writes still use **`PutFacet`**.
 - `link_cells`: **[`Tx.LinkCells`](../../facets_edges.go)** — packs coords and **`PutEdge`**.
 
@@ -59,10 +59,10 @@ Mapping to [`HEXXLA_DB.md`](./HEXXLA_DB.md) Native Query Primitives:
 Single-version **read filters** on the current committed cell and seam (not MVCC; for **`ViewAt`** / **`ViewAtTime`** see **Snapshot semantics** and **MVCC temporal semantics** above):
 
 - **[`ValidityWire`](../../export.go)** — half-open validity window **`[ValidFrom, ValidTo)`** in Unix nanoseconds UTC (`nil` bound = open on that side), applied by validity-aware typed reads.
-- **[`Tx.WalkRingAt`](../../primitives.go)** — same ring order as **`WalkRing`**, but invokes the callback only for cells whose **`Validity`** contains **`asOf`** (missing or out-of-window cells are skipped).
+- **[`Tx.WalkRingAt`](../../spatial_reads.go)** — same ring order as **`WalkRing`**, but invokes the callback only for cells whose **`Validity`** contains **`asOf`** (missing or out-of-window cells are skipped).
 - **[`Tx.LoadContext`](../../context_load.go)** with **`LoadContextConfig.AsOf`** — assembles only cells whose validity contains **`asOf`**; `MaxCells` remains the upper bound on returned cells.
-- **[`Tx.FindSeamsAt`](../../primitives.go)** — like **`FindSeams`**, but only includes seams whose **[`SeamRecord.Validity`](../../export.go)** contains **`asOf`**. Seams stored without a validity suffix decode as an open window (always included when **`asOf`** is used).
-- **[`Tx.WalkRingFacets`](../../primitives.go)** — for each ring coordinate with an existing cell (and optional **`asOf`** filter on the cell’s validity), loads facet records for **`facet_id`** bits **`0..5`** set in the 6-bit **`facetMask`** (bits outside **`0x3f`** → **`ErrInvalidArgument`**). Typical cost **O(ring_cells × popcount(mask))** btree **`GetFacet`** operations; facets are returned in ascending **`facet_id`** order (missing keys omitted).
+- **[`Tx.FindSeamsAt`](../../seams.go)** — like **`FindSeams`**, but only includes seams whose **[`SeamRecord.Validity`](../../export.go)** contains **`asOf`**. Seams stored without a validity suffix decode as an open window (always included when **`asOf`** is used).
+- **[`Tx.WalkRingFacets`](../../spatial_reads.go)** — for each ring coordinate with an existing cell (and optional **`asOf`** filter on the cell’s validity), loads facet records for **`facet_id`** bits **`0..5`** set in the 6-bit **`facetMask`** (bits outside **`0x3f`** → **`ErrInvalidArgument`**). Typical cost **O(ring_cells × popcount(mask))** btree **`GetFacet`** operations; facets are returned in ascending **`facet_id`** order (missing keys omitted).
 
 ## MVCC temporal semantics
 
@@ -71,7 +71,7 @@ For MVCC formats v2 and v3 the authoritative visibility clock is **`CommitSeq`**
 - **[`DB.ViewAt(readSeq)`](../../tx.go)** pins `read_seq` for the callback. Cell, facet, and seam point reads use the version suffix's byte ordering to seek directly to the largest stored `commit_seq <= read_seq`, then stop after one valid version. [`ErrReadSeqFuture`](../../errors.go) is returned if `read_seq` exceeds the header's `CommitSeq`.
 - **[`DB.ViewAtTime(asOf)`](../../tx.go)** maps UTC wall time to a `read_seq` using the commit timeline: during each MVCC `Update`, an `__meta/commit-time/` btree key records `(wall_unix_nano, writeSeq)` (wall timestamp sampled at transaction start). The resolver seeks to the latest signed timestamp at or before `asOf`, breaking ties by commit sequence. Determinism requires stable UTC clock usage; the same `asOf` yields the same snapshot for a given database history.
 - **Secondary indexes (`tag/`, `source/`, `time/`, seam secondaries):** version-suffixed entries are retained alongside committed primary versions. Readers deduplicate by logical ID and check that the snapshot-visible record matches the requested tag, source, or week. Deleting a cell preserves the previous committed index entries until its old version is pruned. For databases written by an affected release, see [repairing MVCC secondary indexes](./OPERATIONS.md#repairing-mvcc-secondary-indexes).
-- **Validity vs snapshot:** [`WalkRingAt`](../../primitives.go), [`FindSeamsAt`](../../primitives.go), and [`LoadContextConfig.AsOf`](../../context_load.go) filter by record validity windows — orthogonal to `read_seq` (snapshot time vs. domain validity interval).
+- **Validity vs snapshot:** [`WalkRingAt`](../../spatial_reads.go), [`FindSeamsAt`](../../seams.go), and [`LoadContextConfig.AsOf`](../../context_load.go) filter by record validity windows — orthogonal to `read_seq` (snapshot time vs. domain validity interval).
 
 ## Secondary indexes — `source/` and `time/`
 

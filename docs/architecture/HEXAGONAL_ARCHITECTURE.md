@@ -9,16 +9,30 @@ HexxlaDB is an embedded Go library. Consumers import `github.com/hexxla/hexxladb
 | Module root | Stable API and transaction coordination across the engine, logical records, indexes and changefeed |
 | `internal/engine` | Pages, B+ tree, locking, WAL and durable publication |
 | `internal/index`, `internal/record` | Physical key and record encoding |
-| `internal/lattice`, `internal/views`, `internal/hnsw`, `internal/pathfind`, `internal/mvcc` | Private geometry, retrieval and versioning algorithms |
-| `internal/inspect` | Typed, bounded operator diagnostics over the public transaction API and private encodings |
+| `internal/lattice`, `internal/views`, `internal/hnsw`, `internal/pathfind` | Private geometry, view assembly and retrieval algorithms |
+| `internal/inspect` | Typed operator diagnostics over the public transaction API and private diagnostic encodings |
 | `cmd/hexxladb`, `cmd/tui` | Operator commands, process lifecycle and presentation |
-| `examples/ports_adapters` | Reference application with application ports, an outbound adapter and contract tests. Its storage types use the public HexxlaDB types. |
+| `examples/ports_adapters` | Runnable contradiction workflow with application-owned values, a two-operation port and a public-API-backed adapter |
 
 ## Dependency direction
 
-An embedding application drives the public API. The public package coordinates the engine and private algorithms. The engine owns physical commit ordering. The operator commands use the public package or the typed diagnostic boundary for storage inspection. Keep physical key scanning and decoding in the diagnostic adapter.
+An embedding application drives the public API. The root package owns logical
+snapshot semantics, including the seam scan shared by health checks and
+operator views. `internal/index` owns physical key encoding, including MVCC
+version keys. The engine owns physical commit ordering. HNSW receives its
+storage port and scorer from its caller. Operator commands use the public API
+and typed diagnostics, with private key decoding confined to the diagnostic
+adapter where it is still needed.
 
-In the reference application, use cases depend on domain-owned ports and the outbound adapter implements them using the public HexxlaDB API. Production transports belong to their embedding applications. The reference app and diagnostic package are outside the library's dependency graph.
+In the reference application, the service validates the contradiction, the
+domain port describes one atomic record operation, and the outbound adapter
+writes both observations and the seam in one database transaction. The example
+entry point owns wiring and database lifetime. Production transports belong
+to their embedding applications. The reference app and diagnostic package are
+outside the library's dependency graph.
+
+Root files group cell writes, seam lifecycle, spatial reads, and migration
+stages by responsibility. They share the existing transaction boundary.
 
 Public API compatibility follows [VERSIONING.md](../../VERSIONING.md). Use root aliases deliberately for shared data types. Preserve transaction ordering, changefeed and recovery guarantees when changing a storage boundary.
 

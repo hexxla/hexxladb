@@ -1,3 +1,5 @@
-# HexxlaDB storage adapter
+# HexxlaDB contradiction adapter
 
-[Storage](storage.go) implements the [example storage port](../../../domain/storage.go) using public HexxlaDB database and transaction operations.
+[Storage](storage.go) translates [application observations](../../../domain/storage.go)
+to cell records and a conflict seam in one HexxlaDB transaction. A separate
+transaction records the resolution.

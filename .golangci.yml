@@ -37,6 +37,21 @@ linters:
               desc: Use the public API or typed operator diagnostics.
             - pkg: "github.com/hexxla/hexxladb/internal/hnsw"
               desc: Use typed operator diagnostics.
+            - pkg: "github.com/hexxla/hexxladb/internal/lattice"
+              desc: Use the public lattice API or typed operator diagnostics.
+        hnsw_engine_boundary:
+          files:
+            - "**/internal/hnsw/**.go"
+          deny:
+            - pkg: "github.com/hexxla/hexxladb/internal/engine"
+              desc: HNSW receives a scorer and storage port from its caller.
+        example_policy_boundary:
+          files:
+            - "**/examples/ports_adapters/internal/app/**.go"
+            - "**/examples/ports_adapters/internal/domain/**.go"
+          deny:
+            - pkg: "github.com/hexxla/hexxladb$"
+              desc: The reference application's policies use domain types and ports.
     gocyclo:
       # Threshold set to baseline max (2026-05-09); tighten after reducing offenders.
       # Layer-specific metrics are available through task complexity.
