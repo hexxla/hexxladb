@@ -3,7 +3,6 @@
 package hexxladb_test
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -41,10 +40,7 @@ func TestIntegration_putManyCells_survivesReopen(t *testing.T) {
 
 	const batch = 500
 	for base := 0; base < nCells; base += batch {
-		end := base + batch
-		if end > nCells {
-			end = nCells
-		}
+		end := min(base+batch, nCells)
 		err = db.Update(func(tx *hexxladb.Tx) error {
 			for i := base; i < end; i++ {
 				q := i % nq
@@ -64,7 +60,7 @@ func TestIntegration_putManyCells_survivesReopen(t *testing.T) {
 					},
 					Validity: record.ValidityWire{ValidFrom: &vf},
 				}
-				if err := tx.PutCell(context.Background(), rec); err != nil {
+				if err := tx.PutCell(t.Context(), rec); err != nil {
 					return err
 				}
 			}
@@ -75,7 +71,7 @@ func TestIntegration_putManyCells_survivesReopen(t *testing.T) {
 		}
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	var bySource int
 	err = db.View(func(tx *hexxladb.Tx) error {
 		return tx.AscendCellsBySource(ctx, src, func(record.CellRecord) bool {

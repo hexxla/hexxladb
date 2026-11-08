@@ -8,9 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss/table"
 
 	"github.com/hexxla/hexxladb"
-	"github.com/hexxla/hexxladb/internal/index"
-	"github.com/hexxla/hexxladb/internal/lattice"
-	"github.com/hexxla/hexxladb/internal/record"
+	"github.com/hexxla/hexxladb/internal/inspect"
 )
 
 type seamsView struct {
@@ -69,34 +67,26 @@ func (v *seamsView) loadCmd() tea.Cmd {
 	return func() tea.Msg {
 		var rows []seamRow
 		err := db.View(func(tx *hexxladb.Tx) error {
-			return tx.AscendRange(
-				[]byte(index.SeamPrefix),
-				index.SeamScanUpperBound(),
-				func(_, v []byte) bool {
-					r, err := record.DecodeSeam(v)
-					if err != nil {
-						return true
-					}
-					aCoord, err1 := lattice.Unpack(r.CellA)
-					bCoord, err2 := lattice.Unpack(r.CellB)
-					if err1 != nil || err2 != nil {
-						return true
-					}
-					status := r.ResolutionStatus
-					if status == "" {
-						status = "unresolved"
-					}
-					rows = append(rows, seamRow{
-						id:     r.ID,
-						coordA: aCoord,
-						coordB: bCoord,
-						stype:  r.SeamType,
-						reason: r.Reason,
-						status: status,
-					})
-					return len(rows) < 10000
-				},
-			)
+			return inspect.WalkSeams(tx, func(r hexxladb.SeamRecord) bool {
+				aCoord, err1 := hexxladb.Unpack(r.CellA)
+				bCoord, err2 := hexxladb.Unpack(r.CellB)
+				if err1 != nil || err2 != nil {
+					return true
+				}
+				status := r.ResolutionStatus
+				if status == "" {
+					status = "unresolved"
+				}
+				rows = append(rows, seamRow{
+					id:     r.ID,
+					coordA: aCoord,
+					coordB: bCoord,
+					stype:  r.SeamType,
+					reason: r.Reason,
+					status: status,
+				})
+				return len(rows) < 10000
+			})
 		})
 		return seamsLoadedMsg{seams: rows, err: err}
 	}

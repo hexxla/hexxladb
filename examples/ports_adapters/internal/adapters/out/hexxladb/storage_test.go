@@ -6,8 +6,6 @@ import (
 	"testing"
 
 	"github.com/hexxla/hexxladb"
-	"github.com/hexxla/hexxladb/internal/lattice"
-	"github.com/hexxla/hexxladb/internal/record"
 )
 
 // Smoke-test that the outbound adapter still satisfies [domain.Storage] forwarding to the public API.
@@ -21,12 +19,12 @@ func TestStorage_PutGetRoundTrip(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	s := NewStorage(db)
-	key, err := lattice.Pack(lattice.Coord{Q: 16, R: 32})
+	key, err := hexxladb.Pack(hexxladb.Coord{Q: 16, R: 32})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	want := record.CellRecord{Key: key, RawContent: "storage-smoke"}
+	want := hexxladb.CellRecord{Key: key, RawContent: "storage-smoke"}
 	if err := s.PutCell(ctx, want); err != nil {
 		t.Fatal(err)
 	}

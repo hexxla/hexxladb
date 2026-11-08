@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/hexxla/hexxladb"
-	"github.com/hexxla/hexxladb/internal/index"
+	"github.com/hexxla/hexxladb/internal/inspect"
 )
 
 type analyticsView struct {
@@ -72,10 +72,7 @@ func (v *analyticsView) loadCmd() tea.Cmd {
 			if err != nil {
 				return err
 			}
-			_ = tx.AscendRange([]byte(index.SeamPrefix), index.SeamScanUpperBound(), func(_, _ []byte) bool {
-				d.seamCount++
-				return d.seamCount < 100000
-			})
+			d.seamCount = inspect.CountSeams(tx, 100000)
 			return nil
 		})
 		return d

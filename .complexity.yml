@@ -25,25 +25,25 @@ complexity:
   thresholds:
     domain:
       # Pure business logic - should be simple and focused
-      path_prefix: "internal/domain/"
+      path_prefix: "examples/ports_adapters/internal/domain/"
       cyclomatic: 5
       cognitive: 10
 
     app:
       # Use case orchestration - moderate complexity allowed
-      path_prefix: "internal/app/"
+      path_prefix: "examples/ports_adapters/internal/app/"
       cyclomatic: 10
       cognitive: 15
 
     adapters_in:
       # Inbound adapters (MCP) - external concerns
-      path_prefix: "internal/adapters/in/"
+      path_prefix: "examples/ports_adapters/internal/adapters/in/"
       cyclomatic: 15
       cognitive: 20
 
     adapters_out:
       # Outbound adapters (hexxladb storage) - external integrations
-      path_prefix: "internal/adapters/out/"
+      path_prefix: "examples/ports_adapters/internal/adapters/out/"
       cyclomatic: 12
       cognitive: 18
 

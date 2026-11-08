@@ -10,9 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hexxla/hexxladb/internal/domain"
-	"github.com/hexxla/hexxladb/internal/lattice"
-	"github.com/hexxla/hexxladb/internal/record"
+	"github.com/hexxla/hexxladb"
+	"github.com/hexxla/hexxladb/examples/ports_adapters/internal/domain"
 )
 
 // Factory creates a fresh, empty Storage for each sub-test.
@@ -28,11 +27,11 @@ func RunAll(t *testing.T, factory Factory) {
 		s := factory(t)
 		ctx := context.Background()
 		key := mustPack(t, 1, 2)
-		want := record.CellRecord{
+		want := hexxladb.CellRecord{
 			Key:        key,
 			RawContent: "hello",
 			Tags:       []string{"go", "test"},
-			Provenance: record.ProvenanceWire{SourceID: "src-1", Confidence: 0.9},
+			Provenance: hexxladb.ProvenanceWire{SourceID: "src-1", Confidence: 0.9},
 		}
 		if err := s.PutCell(ctx, want); err != nil {
 			t.Fatal(err)
@@ -71,8 +70,8 @@ func RunAll(t *testing.T, factory Factory) {
 		s := factory(t)
 		ctx := context.Background()
 		key := mustPack(t, 3, 4)
-		rec1 := record.CellRecord{Key: key, RawContent: "v1"}
-		rec2 := record.CellRecord{Key: key, RawContent: "v2"}
+		rec1 := hexxladb.CellRecord{Key: key, RawContent: "v1"}
+		rec2 := hexxladb.CellRecord{Key: key, RawContent: "v2"}
 		if err := s.PutCell(ctx, rec1); err != nil {
 			t.Fatal(err)
 		}
@@ -93,7 +92,7 @@ func RunAll(t *testing.T, factory Factory) {
 		s := factory(t)
 		ctx := context.Background()
 		key := mustPack(t, 5, 6)
-		rec := record.CellRecord{Key: key, RawContent: "to-delete", Tags: []string{"del"}}
+		rec := hexxladb.CellRecord{Key: key, RawContent: "to-delete", Tags: []string{"del"}}
 		if err := s.PutCell(ctx, rec); err != nil {
 			t.Fatal(err)
 		}
@@ -119,16 +118,16 @@ func RunAll(t *testing.T, factory Factory) {
 		ctx := context.Background()
 		for i, src := range []string{"alpha", "beta", "alpha"} {
 			key := mustPack(t, i+10, 0)
-			if err := s.PutCell(ctx, record.CellRecord{
+			if err := s.PutCell(ctx, hexxladb.CellRecord{
 				Key:        key,
 				RawContent: src + "-content",
-				Provenance: record.ProvenanceWire{SourceID: src},
+				Provenance: hexxladb.ProvenanceWire{SourceID: src},
 			}); err != nil {
 				t.Fatal(err)
 			}
 		}
 		var found []string
-		if err := s.AscendCellsBySource(ctx, "alpha", func(r record.CellRecord) bool {
+		if err := s.AscendCellsBySource(ctx, "alpha", func(r hexxladb.CellRecord) bool {
 			found = append(found, r.RawContent)
 			return true
 		}); err != nil {
@@ -145,14 +144,14 @@ func RunAll(t *testing.T, factory Factory) {
 		ctx := context.Background()
 		for i, tags := range [][]string{{"go", "db"}, {"rust"}, {"go", "api"}} {
 			key := mustPack(t, i+20, 0)
-			if err := s.PutCell(ctx, record.CellRecord{
+			if err := s.PutCell(ctx, hexxladb.CellRecord{
 				Key: key, RawContent: "c", Tags: tags,
 			}); err != nil {
 				t.Fatal(err)
 			}
 		}
 		var count int
-		if err := s.AscendCellsByTag(ctx, "go", func(_ record.CellRecord) bool {
+		if err := s.AscendCellsByTag(ctx, "go", func(_ hexxladb.CellRecord) bool {
 			count++
 			return true
 		}); err != nil {
@@ -169,7 +168,7 @@ func RunAll(t *testing.T, factory Factory) {
 		ctx := context.Background()
 		for i, tags := range [][]string{{"go", "db"}, {"rust", "db"}, {"go"}} {
 			key := mustPack(t, i+30, 0)
-			if err := s.PutCell(ctx, record.CellRecord{
+			if err := s.PutCell(ctx, hexxladb.CellRecord{
 				Key: key, RawContent: "c", Tags: tags,
 			}); err != nil {
 				t.Fatal(err)
@@ -194,7 +193,7 @@ func RunAll(t *testing.T, factory Factory) {
 		ctx := context.Background()
 		for i, tags := range [][]string{{"x", "y"}, {"y", "z"}} {
 			key := mustPack(t, i+40, 0)
-			if err := s.PutCell(ctx, record.CellRecord{
+			if err := s.PutCell(ctx, hexxladb.CellRecord{
 				Key: key, RawContent: "c", Tags: tags,
 			}); err != nil {
 				t.Fatal(err)
@@ -220,13 +219,13 @@ func RunAll(t *testing.T, factory Factory) {
 		cellA := mustPack(t, 0, 0)
 		cellB := mustPack(t, 1, 0)
 		// Put cells first so FindSeams has something to scan.
-		if err := s.PutCell(ctx, record.CellRecord{Key: cellA, RawContent: "a"}); err != nil {
+		if err := s.PutCell(ctx, hexxladb.CellRecord{Key: cellA, RawContent: "a"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.PutCell(ctx, record.CellRecord{Key: cellB, RawContent: "b"}); err != nil {
+		if err := s.PutCell(ctx, hexxladb.CellRecord{Key: cellB, RawContent: "b"}); err != nil {
 			t.Fatal(err)
 		}
-		seam := record.SeamRecord{
+		seam := hexxladb.SeamRecord{
 			ID:    "01ARZ3NDEKTSV4RRFFQ69G5FAV",
 			CellA: cellA, CellB: cellB,
 			SeamType: "contradiction", Reason: "test",
@@ -234,7 +233,7 @@ func RunAll(t *testing.T, factory Factory) {
 		if err := s.PutSeam(ctx, seam); err != nil {
 			t.Fatal(err)
 		}
-		center := lattice.Coord{Q: 0, R: 0}
+		center := hexxladb.Coord{Q: 0, R: 0}
 		found, err := s.FindSeams(ctx, center, 3, false)
 		if err != nil {
 			t.Fatal(err)
@@ -250,14 +249,14 @@ func RunAll(t *testing.T, factory Factory) {
 		ctx := context.Background()
 		cellA := mustPack(t, 50, 0)
 		cellB := mustPack(t, 50, 1)
-		if err := s.PutCell(ctx, record.CellRecord{Key: cellA, RawContent: "a"}); err != nil {
+		if err := s.PutCell(ctx, hexxladb.CellRecord{Key: cellA, RawContent: "a"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.PutCell(ctx, record.CellRecord{Key: cellB, RawContent: "b"}); err != nil {
+		if err := s.PutCell(ctx, hexxladb.CellRecord{Key: cellB, RawContent: "b"}); err != nil {
 			t.Fatal(err)
 		}
 		seamID := "01ARZ3NDEKTSV4RRFFQ69G5FA2"
-		seam := record.SeamRecord{
+		seam := hexxladb.SeamRecord{
 			ID: seamID, CellA: cellA, CellB: cellB,
 			SeamType: "contradiction", Reason: "resolve-test",
 		}
@@ -273,14 +272,14 @@ func RunAll(t *testing.T, factory Factory) {
 		t.Parallel()
 		s := factory(t)
 		ctx := context.Background()
-		a := lattice.Coord{Q: 60, R: 0}
-		b := lattice.Coord{Q: 60, R: 1}
+		a := hexxladb.Coord{Q: 60, R: 0}
+		b := hexxladb.Coord{Q: 60, R: 1}
 		keyA := mustPack(t, 60, 0)
 		keyB := mustPack(t, 60, 1)
-		if err := s.PutCell(ctx, record.CellRecord{Key: keyA, RawContent: "a"}); err != nil {
+		if err := s.PutCell(ctx, hexxladb.CellRecord{Key: keyA, RawContent: "a"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.PutCell(ctx, record.CellRecord{Key: keyB, RawContent: "b"}); err != nil {
+		if err := s.PutCell(ctx, hexxladb.CellRecord{Key: keyB, RawContent: "b"}); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.MarkConflict(ctx, a, b, "disagreement"); err != nil {
@@ -293,10 +292,10 @@ func RunAll(t *testing.T, factory Factory) {
 		s := factory(t)
 		ctx := context.Background()
 		key := mustPack(t, 70, 0)
-		if err := s.PutCell(ctx, record.CellRecord{Key: key, RawContent: "cell"}); err != nil {
+		if err := s.PutCell(ctx, hexxladb.CellRecord{Key: key, RawContent: "cell"}); err != nil {
 			t.Fatal(err)
 		}
-		facet := record.FacetRecord{Key: key, FacetID: 0, DerivedContent: "facet-0"}
+		facet := hexxladb.FacetWalkRecord{Key: key, FacetID: 0, DerivedContent: "facet-0"}
 		if err := s.PutFacet(ctx, facet); err != nil {
 			t.Fatal(err)
 		}
@@ -331,16 +330,16 @@ func RunAll(t *testing.T, factory Factory) {
 		s := factory(t)
 		ctx := context.Background()
 		key := mustPack(t, 72, 0)
-		if err := s.PutCell(ctx, record.CellRecord{Key: key, RawContent: "cell"}); err != nil {
+		if err := s.PutCell(ctx, hexxladb.CellRecord{Key: key, RawContent: "cell"}); err != nil {
 			t.Fatal(err)
 		}
 		for i := range 3 {
-			if err := s.PutFacet(ctx, record.FacetRecord{Key: key, FacetID: byte(i), DerivedContent: "f"}); err != nil {
+			if err := s.PutFacet(ctx, hexxladb.FacetWalkRecord{Key: key, FacetID: byte(i), DerivedContent: "f"}); err != nil {
 				t.Fatal(err)
 			}
 		}
 		var count int
-		if err := s.AscendFacetsForCell(ctx, key, func(_ record.FacetRecord) bool {
+		if err := s.AscendFacetsForCell(ctx, key, func(_ hexxladb.FacetWalkRecord) bool {
 			count++
 			return true
 		}); err != nil {
@@ -357,9 +356,9 @@ func RunAll(t *testing.T, factory Factory) {
 		ctx := context.Background()
 		from := mustPack(t, 80, 0)
 		to := mustPack(t, 80, 1)
-		edge := record.EdgeRecord{
+		edge := hexxladb.EdgeWalkRecord{
 			From: from, To: to, RelationType: "related", Weight: 1.0,
-			Provenance: record.ProvenanceWire{SourceID: "edge-src"},
+			Provenance: hexxladb.ProvenanceWire{SourceID: "edge-src"},
 		}
 		if err := s.PutEdge(ctx, edge); err != nil {
 			t.Fatal(err)
@@ -395,17 +394,17 @@ func RunAll(t *testing.T, factory Factory) {
 		t.Parallel()
 		s := factory(t)
 		ctx := context.Background()
-		from := lattice.Coord{Q: 90, R: 0}
-		to := lattice.Coord{Q: 90, R: 1}
+		from := hexxladb.Coord{Q: 90, R: 0}
+		to := hexxladb.Coord{Q: 90, R: 1}
 		fromKey := mustPack(t, 90, 0)
 		toKey := mustPack(t, 90, 1)
-		if err := s.PutCell(ctx, record.CellRecord{Key: fromKey, RawContent: "f"}); err != nil {
+		if err := s.PutCell(ctx, hexxladb.CellRecord{Key: fromKey, RawContent: "f"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.PutCell(ctx, record.CellRecord{Key: toKey, RawContent: "t"}); err != nil {
+		if err := s.PutCell(ctx, hexxladb.CellRecord{Key: toKey, RawContent: "t"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.LinkCells(ctx, from, to, "link", 0.5, record.ProvenanceWire{SourceID: "lnk"}); err != nil {
+		if err := s.LinkCells(ctx, from, to, "link", 0.5, hexxladb.ProvenanceWire{SourceID: "lnk"}); err != nil {
 			t.Fatal(err)
 		}
 		got, ok, err := s.GetEdge(ctx, fromKey, toKey, "link")
@@ -424,14 +423,14 @@ func RunAll(t *testing.T, factory Factory) {
 		from := mustPack(t, 100, 0)
 		for i := range 3 {
 			to := mustPack(t, 100, i+1)
-			if err := s.PutEdge(ctx, record.EdgeRecord{
+			if err := s.PutEdge(ctx, hexxladb.EdgeWalkRecord{
 				From: from, To: to, RelationType: "r", Weight: float64(i),
 			}); err != nil {
 				t.Fatal(err)
 			}
 		}
 		var count int
-		if err := s.AscendEdgesFrom(ctx, from, func(_ record.EdgeRecord) bool {
+		if err := s.AscendEdgesFrom(ctx, from, func(_ hexxladb.EdgeWalkRecord) bool {
 			count++
 			return true
 		}); err != nil {
@@ -446,13 +445,13 @@ func RunAll(t *testing.T, factory Factory) {
 		t.Parallel()
 		s := factory(t)
 		ctx := context.Background()
-		center := lattice.Coord{Q: 0, R: 0}
+		center := hexxladb.Coord{Q: 0, R: 0}
 		key := mustPack(t, 0, 0)
-		if err := s.PutCell(ctx, record.CellRecord{Key: key, RawContent: "center"}); err != nil {
+		if err := s.PutCell(ctx, hexxladb.CellRecord{Key: key, RawContent: "center"}); err != nil {
 			t.Fatal(err)
 		}
 		var visited int
-		if err := s.WalkRing(ctx, center, 0, func(_ lattice.Coord, data []byte, ok bool) bool {
+		if err := s.WalkRing(ctx, center, 0, func(_ hexxladb.Coord, data []byte, ok bool) bool {
 			visited++
 			if !ok {
 				t.Fatal("WalkRing ring=0: center cell should be present")
@@ -471,10 +470,10 @@ func RunAll(t *testing.T, factory Factory) {
 		s := factory(t)
 		ctx := context.Background()
 		key := mustPack(t, 0, 0)
-		if err := s.PutCell(ctx, record.CellRecord{Key: key, RawContent: "ctx-cell"}); err != nil {
+		if err := s.PutCell(ctx, hexxladb.CellRecord{Key: key, RawContent: "ctx-cell"}); err != nil {
 			t.Fatal(err)
 		}
-		center := lattice.Coord{Q: 0, R: 0}
+		center := hexxladb.Coord{Q: 0, R: 0}
 		cells, err := s.ScanContextRaw(ctx, center, 1, 10)
 		if err != nil {
 			t.Fatal(err)
@@ -491,14 +490,14 @@ func RunAll(t *testing.T, factory Factory) {
 		nowNano := time.Now().UnixNano()
 		bucket := nowNano / int64(time.Second) / (7 * 24 * 3600)
 		key := mustPack(t, 110, 0)
-		if err := s.PutCell(ctx, record.CellRecord{
+		if err := s.PutCell(ctx, hexxladb.CellRecord{
 			Key: key, RawContent: "time-cell",
-			Validity: record.ValidityWire{ValidFrom: &nowNano},
+			Validity: hexxladb.ValidityWire{ValidFrom: &nowNano},
 		}); err != nil {
 			t.Fatal(err)
 		}
 		var count int
-		if err := s.AscendCellsInTimeBucket(ctx, bucket, func(_ record.CellRecord) bool {
+		if err := s.AscendCellsInTimeBucket(ctx, bucket, func(_ hexxladb.CellRecord) bool {
 			count++
 			return true
 		}); err != nil {
@@ -515,15 +514,15 @@ func RunAll(t *testing.T, factory Factory) {
 		ctx := context.Background()
 		key := mustPack(t, 120, 0)
 		cellContent := "update-facet-cell"
-		if err := s.PutCell(ctx, record.CellRecord{Key: key, RawContent: cellContent}); err != nil {
+		if err := s.PutCell(ctx, hexxladb.CellRecord{Key: key, RawContent: cellContent}); err != nil {
 			t.Fatal(err)
 		}
 		// DerivationHash must be SHA-256 of the cell's RawContent for UpdateFacet to succeed.
 		hash := sha256.Sum256([]byte(cellContent))
-		if err := s.PutFacet(ctx, record.FacetRecord{Key: key, FacetID: 1, DerivedContent: "old", DerivationHash: hash}); err != nil {
+		if err := s.PutFacet(ctx, hexxladb.FacetWalkRecord{Key: key, FacetID: 1, DerivedContent: "old", DerivationHash: hash}); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.UpdateFacet(ctx, record.FacetRecord{Key: key, FacetID: 1, DerivedContent: "new", DerivationHash: hash}); err != nil {
+		if err := s.UpdateFacet(ctx, hexxladb.FacetWalkRecord{Key: key, FacetID: 1, DerivedContent: "new", DerivationHash: hash}); err != nil {
 			t.Fatal(err)
 		}
 		got, ok, err := s.GetFacet(ctx, key, 1)
@@ -541,22 +540,22 @@ func RunAll(t *testing.T, factory Factory) {
 		ctx := context.Background()
 		cellA := mustPack(t, 130, 0)
 		cellB := mustPack(t, 130, 1)
-		if err := s.PutCell(ctx, record.CellRecord{Key: cellA, RawContent: "a"}); err != nil {
+		if err := s.PutCell(ctx, hexxladb.CellRecord{Key: cellA, RawContent: "a"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.PutCell(ctx, record.CellRecord{Key: cellB, RawContent: "b"}); err != nil {
+		if err := s.PutCell(ctx, hexxladb.CellRecord{Key: cellB, RawContent: "b"}); err != nil {
 			t.Fatal(err)
 		}
-		seam := record.SeamRecord{
+		seam := hexxladb.SeamRecord{
 			ID: "01ARZ3NDEKTSV4RRFFQ69G5FA3", CellA: cellA, CellB: cellB,
 			SeamType: "contradiction", Reason: "src-test",
-			Provenance: record.ProvenanceWire{SourceID: "seam-src"},
+			Provenance: hexxladb.ProvenanceWire{SourceID: "seam-src"},
 		}
 		if err := s.PutSeam(ctx, seam); err != nil {
 			t.Fatal(err)
 		}
 		var count int
-		if err := s.AscendSeamsBySource(ctx, "seam-src", func(_ record.SeamRecord) bool {
+		if err := s.AscendSeamsBySource(ctx, "seam-src", func(_ hexxladb.SeamRecord) bool {
 			count++
 			return true
 		}); err != nil {
@@ -569,9 +568,9 @@ func RunAll(t *testing.T, factory Factory) {
 }
 
 // mustPack packs a coordinate or fails the test.
-func mustPack(t *testing.T, q, r int) lattice.PackedCoord {
+func mustPack(t *testing.T, q, r int) hexxladb.PackedCoord {
 	t.Helper()
-	p, err := lattice.Pack(lattice.Coord{Q: q, R: r})
+	p, err := hexxladb.Pack(hexxladb.Coord{Q: q, R: r})
 	if err != nil {
 		t.Fatalf("Pack(%d,%d): %v", q, r, err)
 	}

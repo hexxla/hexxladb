@@ -7,8 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/hexxla/hexxladb"
-	"github.com/hexxla/hexxladb/internal/hnsw"
-	"github.com/hexxla/hexxladb/internal/index"
+	"github.com/hexxla/hexxladb/internal/inspect"
 )
 
 type embeddingsView struct {
@@ -59,28 +58,10 @@ func (v *embeddingsView) loadCmd() tea.Cmd {
 			return msg // not an error — just not configured
 		}
 
-		// Check HNSW graph existence via storage adapter
-		var hnswEnabled bool
-		_ = db.View(func(tx *hexxladb.Tx) error {
-			stor := &txHNSWStorage{tx: tx}
-			_, hasMeta, err := stor.GetHNSWMeta()
-			if err == nil && hasMeta {
-				hnswEnabled = true
-			}
+		msg.err = db.View(func(tx *hexxladb.Tx) error {
+			msg.embedCount, msg.hnswEnabled = inspect.Embeddings(tx, 1000000)
 			return nil
 		})
-		msg.hnswEnabled = hnswEnabled
-
-		// Count embeddings by scanning embed/ keyspace
-		var count int
-		_ = db.View(func(tx *hexxladb.Tx) error {
-			_ = tx.AscendRange([]byte(index.EmbedPrefix), index.EmbedKeyEnd(), func(_, _ []byte) bool {
-				count++
-				return count < 1000000 // reasonable upper bound
-			})
-			return nil
-		})
-		msg.embedCount = count
 
 		return msg
 	}
@@ -188,25 +169,4 @@ func (v *embeddingsView) View() string {
 	clippedContent := lipgloss.NewStyle().MaxHeight(maxContentH).Render(fullContent)
 
 	return clippedContent
-}
-
-// txHNSWStorage is a minimal storage adapter for checking HNSW meta existence.
-type txHNSWStorage struct {
-	tx *hexxladb.Tx
-}
-
-func (s *txHNSWStorage) GetHNSWMeta() (hnsw.Meta, bool, error) {
-	k := []byte(index.HNSWMetaKey)
-	v, ok, err := s.tx.Get(k)
-	if err != nil {
-		return hnsw.Meta{}, false, err
-	}
-	if !ok {
-		return hnsw.Meta{}, false, nil
-	}
-	meta, err := hnsw.DecodeMeta(v)
-	if err != nil {
-		return hnsw.Meta{}, false, err
-	}
-	return *meta, true, nil
 }

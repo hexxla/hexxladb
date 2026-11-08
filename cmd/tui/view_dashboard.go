@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/hexxla/hexxladb"
-	"github.com/hexxla/hexxladb/internal/index"
+	"github.com/hexxla/hexxladb/internal/inspect"
 )
 
 type dashboardView struct {
@@ -39,10 +39,7 @@ func (v *dashboardView) View() string {
 	var seamCount int
 	var tags []hexxladb.TagCount
 	_ = v.db.View(func(tx *hexxladb.Tx) error {
-		_ = tx.AscendRange([]byte(index.SeamPrefix), index.SeamScanUpperBound(), func(_, _ []byte) bool {
-			seamCount++
-			return seamCount < 100000
-		})
+		seamCount = inspect.CountSeams(tx, 100000)
 		var err error
 		tags, err = tx.TagCounts(ctx)
 		return err

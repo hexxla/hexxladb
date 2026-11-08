@@ -77,7 +77,7 @@ func (v *hexGridView) View() string {
 	if v.showFOV {
 		_ = v.db.View(func(tx *hexxladb.Tx) error {
 			opaque := func(c hexxladb.Coord) bool {
-				p, err := lattice.Pack(c)
+				p, err := hexxladb.Pack(c)
 				if err != nil {
 					return true
 				}

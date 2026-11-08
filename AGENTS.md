@@ -5,9 +5,8 @@
 Read [`docs/architecture/HEXAGONAL_ARCHITECTURE.md`](docs/architecture/HEXAGONAL_ARCHITECTURE.md) before adding or moving code under `internal/` or `cmd/`. It is the canonical boundary contract; do not duplicate it here.
 
 - The stable import is `github.com/hexxla/hexxladb` at the module root. `internal/...` is module-private.
-- `internal/domain` and `internal/app` own ports and must not import adapters, `internal/engine`, or `internal/index`.
-- Port types must not reference adapter implementation types.
-- Outbound adapters call only the public root package. Business rules stay in domain/app; `cmd/...` only constructs, injects, and runs.
+- The reference application under `examples/ports_adapters` owns its own ports and uses the public HexxlaDB API.
+- Operator commands compose public API calls and typed diagnostics. Keep physical storage decoding out of commands.
 
 ## Go and verification
 

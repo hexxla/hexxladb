@@ -1,3 +1,5 @@
+//go:build integration
+
 // Package crashtest is used by the engine for opt-in integration tests that send SIGKILL to a
 // child after a named barrier. Set HEXXLADB_TEST_CRASH_AT to a phase and HEXXLADB_TEST_CRASH_READY
 // to a file path; the file is written, then the process blocks until killed.

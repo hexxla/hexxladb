@@ -310,7 +310,7 @@ credentials and securely remove any reported `.rotate.bak` artifact.
 
 ## Observability
 
-The [`examples/remote_access`](../../examples/remote_access) owner-service boundary and [`cmd/tui`](../../cmd/tui) use structured `log/slog` logging at their composition roots. Long-running services should follow that pattern and own their log-level configuration; the `hexxladb` inspection CLI prints directly to stdout/stderr. Do not add logging to [`internal/domain`](../../internal/domain).
+The [`examples/remote_access`](../../examples/remote_access) owner-service boundary and [`cmd/tui`](../../cmd/tui) use structured `log/slog` logging at their composition roots. Long-running services should follow that pattern and own their log-level configuration; the `hexxladb` inspection CLI prints directly to stdout/stderr. Keep logging at the application and operator boundaries.
 
 ## MVCC retention and pruning
 

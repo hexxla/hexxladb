@@ -78,11 +78,7 @@ Technical backlog, explicit non-goals, and **documented vs implemented** audit n
 
 ## Where tests live
 
-| Package                                  | Role                                                                                                                                              |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`internal/domain`](internal/domain)     | Pure logic; table-driven tests, no I/O.                                                                                                           |
-| [`internal/app`](internal/app)           | Use cases + ports; tests use fakes or stub implementations until adapters exist.                                                                  |
-| [`internal/adapters`](internal/adapters) | Add **`in/`** / **`out/`** packages when you add transports or infrastructure (see [`internal/adapters/README.md`](internal/adapters/README.md)). |
+Keep unit tests alongside their packages. The storage contract tests live with the [ports and adapters example](examples/ports_adapters).
 
 Prefer **table-driven** tests and **`t.Parallel()`** where data is independent. **Durability / heavier tests** use **`//go:build integration`** (see [`db_durability_test.go`](db_durability_test.go) vs [`durability_integration_test.go`](durability_integration_test.go)); run them with **`task integration`**. Default **`task ci`** does **not** include the integration tag so PRs stay fast.
 
@@ -94,7 +90,7 @@ Prefer **table-driven** tests and **`t.Parallel()`** where data is independent. 
 
 ## Architecture
 
-Follow **[`docs/architecture/HEXAGONAL_ARCHITECTURE.md`](docs/architecture/HEXAGONAL_ARCHITECTURE.md)** — dependency direction is **`cmd` → `internal/adapters` → `internal/app` / `internal/domain`**. Adapters must not define business rules. **`golangci-lint`** enables **`depguard`**: **`internal/domain`** and **`internal/app`** must not import **`internal/adapters`** (see [`.golangci.yml`](.golangci.yml)).
+Follow the [architecture guide](docs/architecture/HEXAGONAL_ARCHITECTURE.md). The module root owns the public API and transaction coordination. Operator commands use the public API and typed diagnostics. CI enforces the storage boundary through [depguard](.golangci.yml).
 
 ## Supply chain (repo automation)
 

@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	hxdb "github.com/hexxla/hexxladb"
-	hexxladbout "github.com/hexxla/hexxladb/internal/adapters/out/hexxladb"
-	"github.com/hexxla/hexxladb/internal/domain"
+	hexxladbout "github.com/hexxla/hexxladb/examples/ports_adapters/internal/adapters/out/hexxladb"
+	"github.com/hexxla/hexxladb/examples/ports_adapters/internal/domain"
 )
 
 // TestAdapterContract runs the full contract suite against the real

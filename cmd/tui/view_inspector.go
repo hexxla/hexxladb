@@ -9,8 +9,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/hexxla/hexxladb"
-	"github.com/hexxla/hexxladb/internal/lattice"
-	"github.com/hexxla/hexxladb/internal/record"
 )
 
 type inspectorView struct {
@@ -19,7 +17,7 @@ type inspectorView struct {
 	cell        hexxladb.Coord
 	data        *hexxladb.CellView
 	pack        *hexxladb.ContextPack
-	fovCells    []record.CellRecord // FOV-filtered context results
+	fovCells    []hexxladb.CellRecord // FOV-filtered context results
 	packLoading bool
 	packMode    string // "radial" or "fov"
 	width       int
@@ -124,7 +122,7 @@ func (v *inspectorView) View() string {
 
 	// ── load cell data lazily ────────────────────────────────────────────────
 	if v.data == nil {
-		pk, err := lattice.Pack(v.cell)
+		pk, err := hexxladb.Pack(v.cell)
 		if err == nil {
 			_ = v.db.View(func(tx *hexxladb.Tx) error {
 				rec, ok, _ := tx.GetCell(pk)
@@ -327,7 +325,7 @@ func (v *inspectorView) renderFOV(w int) string {
 	}
 
 	for _, c := range cells {
-		coord, _ := lattice.Unpack(c.Key)
+		coord, _ := hexxladb.Unpack(c.Key)
 		dist := v.cell.Distance(coord)
 		bar := barGraphBg(int(c.Provenance.Confidence*100), int(maxConf*100), 8, colorGreen, colorBg2)
 		line := lipgloss.JoinHorizontal(lipgloss.Left,

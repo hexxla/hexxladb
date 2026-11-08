@@ -4,9 +4,13 @@
 
 ### Fixed
 
+- **Crash testing** — ordinary builds ignore the crash-barrier environment variables. Blocking barriers compile only with the integration tag.
+
 - **Dependency security** — upgrade the Go crypto and text modules to versions that address the high-severity advisories reported by the dependency inventory scan.
 
 ### Changed
+
+- **Architecture** — keep the reference application under examples and route TUI storage inspection through typed diagnostics.
 
 - **Go toolchain** — require Go 1.27.3 or newer. GitHub Actions uses the version in `go.mod`.
 

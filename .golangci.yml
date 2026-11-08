@@ -21,45 +21,22 @@ linters:
   settings:
     depguard:
       rules:
-        domain_boundaries:
+        example_public_api:
           files:
-            - "**/internal/domain/**.go"
-            - "!**/internal/domain/storagecontract/adapter_test.go"
+            - "**/examples/ports_adapters/**.go"
           deny:
-            - pkg: "github.com/hexxla/hexxladb/internal/adapters"
-              desc: Dependencies must point toward the core.
-            - pkg: "github.com/hexxla/hexxladb/internal/engine"
-              desc: Dependencies must point toward the core.
-            - pkg: "github.com/hexxla/hexxladb/internal/index"
-              desc: Dependencies must point toward the core.
-            - pkg: "github.com/hexxla/hexxladb/internal/app"
-              desc: Dependencies must point toward the core.
-            - pkg: "github.com/hexxla/hexxladb/internal/config"
-              desc: Dependencies must point toward the core.
-            - pkg: "github.com/hexxla/hexxladb/internal/changelog"
-              desc: Dependencies must point toward the core.
-            - pkg: "github.com/hexxla/hexxladb/internal/mvcc"
-              desc: Dependencies must point toward the core.
-
-        app_boundaries:
+            - pkg: "github.com/hexxla/hexxladb/internal"
+              desc: The embedding example uses the public HexxlaDB API.
+        commands_storage_boundary:
           files:
-            - "**/internal/app/**.go"
-          deny:
-            - pkg: "github.com/hexxla/hexxladb/internal/adapters"
-              desc: Dependencies must point toward the core.
-            - pkg: "github.com/hexxla/hexxladb/internal/engine"
-              desc: Dependencies must point toward the core.
-            - pkg: "github.com/hexxla/hexxladb/internal/index"
-              desc: Dependencies must point toward the core.
-
-        outbound_storage_boundary:
-          files:
-            - "**/internal/adapters/out/**.go"
+            - "**/cmd/**.go"
           deny:
             - pkg: "github.com/hexxla/hexxladb/internal/engine"
-              desc: Use the public HexxlaDB API for storage.
+              desc: Use the public API or typed operator diagnostics.
             - pkg: "github.com/hexxla/hexxladb/internal/index"
-              desc: Use the public HexxlaDB API for storage.
+              desc: Use the public API or typed operator diagnostics.
+            - pkg: "github.com/hexxla/hexxladb/internal/hnsw"
+              desc: Use typed operator diagnostics.
     gocyclo:
       # Threshold set to baseline max (2026-05-09); tighten after reducing offenders.
       # Layer-specific metrics are available through task complexity.

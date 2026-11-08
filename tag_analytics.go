@@ -1,8 +1,9 @@
 package hexxladb
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
@@ -35,11 +36,11 @@ func (tx *Tx) TagCounts(ctx context.Context) ([]TagCount, error) {
 		}
 		out = append(out, TagCount{Tag: tag, Count: n})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Count != out[j].Count {
-			return out[i].Count > out[j].Count
+	slices.SortFunc(out, func(a, b TagCount) int {
+		if byCount := cmp.Compare(b.Count, a.Count); byCount != 0 {
+			return byCount
 		}
-		return out[i].Tag < out[j].Tag
+		return cmp.Compare(a.Tag, b.Tag)
 	})
 	return out, nil
 }
@@ -85,7 +86,7 @@ func (tx *Tx) TagCooccurrences(ctx context.Context, minCount int) ([]TagPair, er
 			out = append(out, TagPair{A: pair[0], B: pair[1], Count: n})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Count > out[j].Count })
+	slices.SortFunc(out, func(a, b TagPair) int { return cmp.Compare(b.Count, a.Count) })
 	return out, nil
 }
 

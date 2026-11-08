@@ -9,9 +9,7 @@ import (
 	"time"
 
 	"github.com/hexxla/hexxladb"
-	"github.com/hexxla/hexxladb/internal/index"
-	"github.com/hexxla/hexxladb/internal/lattice"
-	"github.com/hexxla/hexxladb/internal/record"
+	"github.com/hexxla/hexxladb/internal/inspect"
 )
 
 // ─── message types ──────────────────────────────────────────────────────────
@@ -71,7 +69,7 @@ type embeddingsLoadedMsg struct {
 }
 
 type fovContextLoadedMsg struct {
-	cells []record.CellRecord
+	cells []hexxladb.CellRecord
 	err   error
 }
 
@@ -162,7 +160,7 @@ func searchByEmbedding(db *hexxladb.DB, query string, limit int) embeddingSearch
 		}
 		for _, r := range results {
 			// Convert EmbeddingSearchResult to CellView
-			coord, _ := lattice.Unpack(r.Coord)
+			coord, _ := hexxladb.Unpack(r.Coord)
 			cv, err := tx.AssembleCellView(context.Background(), coord, nil, hexxladb.DefaultAssembleCellViewOpts())
 			if err == nil {
 				out = append(out, searchResult{cell: cv, score: r.Score})
@@ -180,11 +178,11 @@ func searchByEmbedding(db *hexxladb.DB, query string, limit int) embeddingSearch
 // Empty cells act as opaque barriers — only cells visible through populated
 // neighborhoods are returned.
 func loadContextFOV(db *hexxladb.DB, center hexxladb.Coord) fovContextLoadedMsg {
-	var cells []record.CellRecord
+	var cells []hexxladb.CellRecord
 	err := db.View(func(tx *hexxladb.Tx) error {
 		// Build an opaque function: a cell is opaque if it doesn't exist.
 		opaque := func(c hexxladb.Coord) bool {
-			p, err := lattice.Pack(c)
+			p, err := hexxladb.Pack(c)
 			if err != nil {
 				return true
 			}
@@ -200,46 +198,8 @@ func loadContextFOV(db *hexxladb.DB, center hexxladb.Coord) fovContextLoadedMsg 
 	return fovContextLoadedMsg{cells: cells, err: err}
 }
 
-// loadCells scans the cell/ primary key range, collecting up to limit cells.
-// Works for both v1 and MVCC databases; covers all cells regardless of coordinate.
 func loadCells(db *hexxladb.DB, limit int) []hexxladb.CellView {
-	var out []hexxladb.CellView
-	seen := map[lattice.PackedCoord]struct{}{}
-	v1Len := len(index.CellPrefix) + index.PackedCoordKeyLen
-	mvccLen := v1Len + index.VersionSuffixLen
-	opts := hexxladb.DefaultAssembleCellViewOpts()
-	_ = db.View(func(tx *hexxladb.Tx) error {
-		return tx.AscendRange(
-			[]byte(index.CellPrefix),
-			[]byte("cell0"),
-			func(k, _ []byte) bool {
-				if len(out) >= limit {
-					return false
-				}
-				if len(k) != v1Len && len(k) != mvccLen {
-					return true
-				}
-				p, err := index.ParseCellKey(k[:v1Len])
-				if err != nil {
-					return true
-				}
-				if _, ok := seen[p]; ok {
-					return true // already added latest version
-				}
-				seen[p] = struct{}{}
-				coord, err := lattice.Unpack(p)
-				if err != nil {
-					return true
-				}
-				cv, err := tx.AssembleCellView(context.Background(), coord, nil, opts)
-				if err == nil {
-					out = append(out, cv)
-				}
-				return len(out) < limit
-			},
-		)
-	})
-	return out
+	return inspect.Cells(db, limit)
 }
 
 // ── Ollama embedding helpers ────────────────────────────────────────────────

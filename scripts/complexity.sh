@@ -54,13 +54,13 @@ detect_layer() {
         echo "views"
     elif [[ "$file" == internal/lattice/* ]]; then
         echo "lattice"
-    elif [[ "$file" == internal/domain/* ]]; then
+    elif [[ "$file" == examples/ports_adapters/internal/domain/* ]]; then
         echo "domain"
-    elif [[ "$file" == internal/app/* ]]; then
+    elif [[ "$file" == examples/ports_adapters/internal/app/* ]]; then
         echo "app"
-    elif [[ "$file" == internal/adapters/in/* ]]; then
+    elif [[ "$file" == examples/ports_adapters/internal/adapters/in/* ]]; then
         echo "adapters_in"
-    elif [[ "$file" == internal/adapters/out/* ]]; then
+    elif [[ "$file" == examples/ports_adapters/internal/adapters/out/* ]]; then
         echo "adapters_out"
     elif [[ "$file" == internal/* ]]; then
         echo "default"

@@ -251,8 +251,7 @@ func BenchmarkCascadingSplit(b *testing.B) {
 		vals[i] = make([]byte, 500)
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := cascadingLeafSplit(keys, vals, 4096)
 		if err != nil {
 			b.Fatal(err)
