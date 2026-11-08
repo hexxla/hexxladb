@@ -4,7 +4,7 @@
 
 ### Changed
 
-- **Codex Go skill** — focus the guidance on compatibility and resolve the Go baseline from the nearest module when working below the repository root.
+- **Codex Go guidance** — use the JetBrains Modern Go Guidelines plugin for version-specific idioms. The repository instructions define the compatibility requirements.
 
 - **Quick-start insertion and retrieval guidance** — demonstrate atomic bounded free-cell placement around a caller-owned semantic anchor, return the selected coordinate, keep embeddings optional, add provider-neutral lexical retrieval, and explain intentional exact-coordinate replacement behavior.
 

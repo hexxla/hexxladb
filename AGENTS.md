@@ -11,7 +11,7 @@ Read [`docs/architecture/HEXAGONAL_ARCHITECTURE.md`](docs/architecture/HEXAGONAL
 
 ## Go and verification
 
-Honor the minimum Go version in `go.mod` and use the matching project skill when its description applies. Prefer `errors.Is` / `errors.As`, wrap public error causes with `%w`, use `log/slog` in commands and adapters, and use `testing.B.Loop` for ordinary benchmarks.
+Honor the target module's `go.mod` and any file-specific build constraints. In Codex, use the [JetBrains Modern Go Guidelines plugin](https://github.com/JetBrains/go-modern-guidelines#codex) when available. Preserve public error, JSON, and storage contracts when applying modern idioms. Prefer `errors.Is` / `errors.As`, wrap public error causes with `%w`, use `log/slog` in commands and adapters, and use `testing.B.Loop` for ordinary benchmarks.
 
 Run the narrowest relevant checks first, then `task ci` before pushing. Fix lint root causes; use a specific `//nolint` only with a one-line justification.
 
