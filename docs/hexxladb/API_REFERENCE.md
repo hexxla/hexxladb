@@ -162,16 +162,21 @@ or complete primary scanning. It does not maintain persistent cardinality
 statistics.
 
 `CellQuery.MaxScanRows` bounds physical cell/tag/source rows or spatial
-coordinate probes. If additional work exists beyond the budget, the query
-returns sorted partial results together with `ErrQueryScanLimit`; it is rejected
-for embedding queries because candidate counts cannot bound HNSW graph reads.
-Filtered embedding queries instead widen the ANN window progressively.
-`CellQuery.EmbeddingCandidateLimit` bounds post-filter candidates through
-`MaxEmbeddingFilterCandidates`, including when the result count is unlimited.
-If both limits are unset, the query scores all stored embeddings exactly.
-With text and an embedding supplied, at least one lexical token must match and
-embedding similarity contributes to ranking. A bounded window may underfill
-results, so measure recall with representative filter selectivity.
+coordinate probes. The query returns sorted partial results with
+`ErrQueryScanLimit` if it has work left at that budget. When combined with an
+embedding and a required tag, source, or radius, `MaxScanRows` selects exact
+scoring over the bounded filter scan. Leave `EmbeddingCandidateLimit` unset
+in this mode.
+
+With a positive result limit or a candidate budget, the default vector route
+widens the search window before applying filters.
+[`QueryCellsWithStats`](../../query_exec.go) reports the path, distinct
+candidates examined, and whether the candidate ceiling stopped widening
+before the result quota was filled. The ceiling is at most
+`MaxEmbeddingFilterCandidates`. With an unlimited result count and both
+budgets unset, the query scores stored embeddings exactly.
+With text and an embedding supplied, a lexical token must match and embedding
+similarity contributes to ranking.
 
 Typical retrieval flow:
 
@@ -319,11 +324,16 @@ format; ordinary `Open` never converts them.
 | ---------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | [`DB.StatsMVCC`, `DB.SuggestedPruneBeforeSeq`, `DB.MVCCPrunePlan`](../../mvcc_lifecycle.go) | Inspect history and derive a retention watermark and bounded pass size. |
 | [`DB.PruneCellVersions`, `DB.PruneCellVersionsByProfile`](../../mvcc_lifecycle.go) | Remove eligible old versions in bounded passes.       |
+| [`DB.OldestSnapshotSeq`](../../mvcc_snapshot_floor.go) | Inspect the earliest guaranteed point-in-time snapshot. |
 | [`PruneScheduler`](../../mvcc_lifecycle.go)                                        | Drive pruning from an application-owned timer.        |
 | [`DB.TagSnapshot`, `DB.ListSnapshotTags`, `DB.ViewAtTag`, `DB.DeleteSnapshotTag`](../../snapshot_tags.go) | Name, enumerate, revisit, and delete commit snapshots. |
 | [`DB.SnapshotDiff`](../../snapshot_diff.go)                                        | Inspect retained cell and seam versions across commit sequences. |
 
-Pruning does not shrink the primary file. Use compaction after pruning when disk reclamation is required.
+Pruning preserves the cell state visible at the cutoff and can advance the
+earliest guaranteed snapshot. Historical views below it return
+`ErrSnapshotExpired`. Tags name sequences and expire with the history they
+reference. See [transaction semantics](./TX.md#retained-snapshots) for the
+upgrade rule. Use tail reclaim or compaction when disk reclamation is needed.
 
 `SnapshotDiff` is a deterministic retained-history diagnostic. Pruned versions
 and mutations outside the cell/seam families are absent; use the optional

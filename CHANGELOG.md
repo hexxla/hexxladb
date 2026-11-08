@@ -4,6 +4,8 @@
 
 ### API compatibility
 
+- **Historical retention** — `ViewAt`, `ViewAtTime`, and `ViewAtTag` return `ErrSnapshotExpired` below the recorded MVCC boundary. Existing MVCC files without retention metadata start at the upgrade-time head. Use a pre-upgrade backup to roll back to an older writer or pruner.
+
 - **WAL compatibility** — v1/v2 writes use a leading commit header. Recover an interrupted write with a current binary before downgrade. Clean database files retain their primary format. Pending v2 WALs from older versions that lack a commit header are refused and left intact.
 - **Write tuning** — deprecated `GroupWALMaxBatchWait` is ignored. Batch records inside `DB.Update` to share a durable commit. The middle counter in `GroupWALStats` is always zero.
 
@@ -17,6 +19,9 @@
 
 ### Added
 
+- **Filtered vector queries** — `QueryCellsWithStats` reports candidate-budget exhaustion. A row budget with a required tag, source, or radius enables bounded exact scoring.
+- **Storage maintenance CLI** — `hexxladb prune` removes a bounded batch of historical versions, `hexxladb reclaim-tail` reclaims the free file suffix, and `hexxladb stats` shows the earliest snapshot and reusable page count.
+
 - **Existing database access** — `OpenExisting` opens and recovers an existing primary without creating a missing one. The explorer and CLI diagnostics accept `HEXXLA_PASSPHRASE` or `HEXXLA_ENCRYPTION_KEY`.
 
 - **Identity-preserving placement** — `FindUnusedCellPlacement` skips recorded MVCC tombstones for new logical cells. `FindFreeCellPlacement` retains its documented reuse behavior.
@@ -26,6 +31,8 @@
 - **MVCC index repair** — `RepairMVCCIndexesTo` and `hexxladb compact --rebuild-mvcc-indexes` rebuild cell and seam secondary indexes from retained versions in a verified, source-preserving copy.
 
 ### Fixed
+
+- **Snapshot pruning** — preserve the cell or tombstone visible at the cutoff and atomically publish the retention boundary with deleted versions.
 
 - **HNSW replacement and deletion** — repair incoming links left by directional neighbor pruning and promote a surviving entry point. Existing index encodings are preserved.
 - **Remote example validation** — return HTTP 400 for invalid typed cell writes and HTTP 413 when a request exceeds the body limit.
@@ -51,6 +58,8 @@
 ### Changed
 
 - **README** — explain topic neighborhoods, separate released installation from the checkout quickstart, and document the current explorer controls.
+
+- **Terminal explorer context** — the Inspector opens radial context with `c`. Use `v` on the Hex Grid to explore visibility.
 
 - **Terminal explorer layout** — compact tabs and lists, adaptive column widths, contextual keyboard help, and a scrollable Inspector.
 

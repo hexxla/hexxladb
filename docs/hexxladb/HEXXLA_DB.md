@@ -115,7 +115,11 @@ Timeline keys map wall time to commit snapshots:
 __meta/commit-time/<wall_nanos>/<commit_seq>
 ```
 
-Named snapshot metadata is stored under private `__meta/` keys. Snapshot and validity semantics are documented in [`TX.md`](./TX.md); retention and compaction procedures are in [`OPERATIONS.md`](./OPERATIONS.md).
+Named snapshot metadata is stored under private `__meta/` keys. The
+`__meta/mvcc-snapshot-floor` key stores the earliest guaranteed MVCC
+sequence as a big-endian uint64. Prune commits publish it with the affected
+primary and secondary rows. Copy maintenance preserves the metadata.
+Snapshot and validity semantics are documented in [`TX.md`](./TX.md); retention and compaction procedures are in [`OPERATIONS.md`](./OPERATIONS.md).
 
 ## Embedding and HNSW storage
 

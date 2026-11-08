@@ -7,11 +7,10 @@ import (
 // MVCCRetention configures optional defaults for [DB.SuggestedPruneBeforeSeq] and [DB.MVCCPrunePlan].
 // Zero values mean automatic prune suggestions are disabled (operators pass explicit beforeSeq to [DB.PruneCellVersions]).
 type MVCCRetention struct {
-	// RetainCommitsBehindHead keeps at least this much commit history: only cell versions with
-	// commit_seq strictly less than (current CommitSeq - RetainCommitsBehindHead) are eligible
-	// for pruning (the latest version per logical cell is always kept). For example, with
-	// RetainCommitsBehindHead=1000 and CommitSeq=5000, [SuggestedPruneBeforeSeq] returns 4000,
-	// so [PruneCellVersions](4000, ...) may delete stale rows with seq < 4000.
+	// RetainCommitsBehindHead sets the suggested history cutoff relative to the
+	// current commit. Pruning preserves the cell state visible at the cutoff.
+	// For example, at commit 5000, a value of 1000 suggests cutoff 4000.
+	// This policy cannot restore history already removed by earlier pruning.
 	RetainCommitsBehindHead uint64
 }
 

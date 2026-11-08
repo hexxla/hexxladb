@@ -67,7 +67,8 @@ current checkout.
 
 - **Find seeds.** `QueryCells` supports lexical search, structured filters, and
   optional vector similarity. A lexical scan can return partial hits with
-  `ErrQueryScanLimit`. Filtered vector search uses an embedding candidate budget.
+  `ErrQueryScanLimit`. Filtered vector queries can report candidate-budget
+  exhaustion or score exactly within a bounded tag, source, or radius scan.
   [Query guide](docs/hexxladb/API_REFERENCE.md#query-and-content-search)
 - **Expand from a seed.** `LoadContext` scans neighboring rings or follows
   selected edge types. It can include facets and seams and resolve supersession.
@@ -89,9 +90,8 @@ task tui
 ```
 
 - **Cells.** Press `/` to search, then Enter on a result to inspect it.
-- **Inspector.** Press `c` for a three-ring radial context pack, `f` for
-  visibility-filtered cells, or `d` for cell details. Scroll with the arrows
-  or Page Up and Page Down. Press Esc to return.
+- **Inspector.** Press `c` for a three-ring radial context pack or `d` for
+  cell details. Scroll with the arrows or Page Up and Page Down. Press Esc to return.
 - **Hex Grid.** Press `2` to open the grid and `v` to show visibility from
   its center. The explorer treats empty hexes as obstacles.
 
@@ -121,10 +121,9 @@ fixture paths, and diagnostics.
 ## Caveats
 
 Commits are serialized. Batch related writes in `DB.Update` to share one
-durable commit. MVCC snapshots expose retained history, and pruning can remove
-older versions. The lattice is sparse and placement policy belongs to the
-application. Filtered HNSW search is approximate and its rebuild has documented
-bounds. Authenticated format v3 supports page reuse and tail reclaim. Physical
+durable commit. MVCC snapshots have an explicit retention boundary. Reads
+before it return `ErrSnapshotExpired`. Filtered HNSW search is approximate
+and its rebuild has documented bounds. Authenticated format v3 supports page reuse and tail reclaim. Physical
 compaction and format migrations are explicit operations.
 [Compatibility policy](VERSIONING.md) · [Roadmap](docs/ROADMAP.md)
 

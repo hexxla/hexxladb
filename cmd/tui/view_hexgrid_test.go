@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/hexxla/hexxladb"
 )
 
@@ -33,7 +35,7 @@ func TestHexGridFOVRendersOccludedCell(t *testing.T) {
 	if got := ansi.ReplaceAllString(view.View(), ""); !strings.Contains(got, "●") {
 		t.Fatalf("regular grid does not show the occupied marker: %q", got)
 	}
-	view.showFOV = true
+	view.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
 	if got := ansi.ReplaceAllString(view.View(), ""); !strings.Contains(got, "○") || strings.Contains(got, "●") {
 		t.Fatalf("FOV grid did not mark the occluded cell: %q", got)
 	}

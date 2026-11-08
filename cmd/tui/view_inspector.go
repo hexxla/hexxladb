@@ -16,8 +16,7 @@ type inspectorView struct {
 	db          *hexxladb.DB
 	cell        hexxladb.Coord
 	data        *hexxladb.CellView
-	pack        *hexxladb.ContextPack
-	fovCells    []hexxladb.CellRecord // FOV-filtered context results
+	pack        hexxladb.ContextPack
 	packLoading bool
 	selected    bool
 	cellLoading bool
@@ -59,14 +58,13 @@ func (v *inspectorView) Update(msg tea.Msg) (view, tea.Cmd) {
 			v.packLoading = false
 			v.packErr = msg.err
 			v.pack = msg.pack
-			v.fovCells = msg.visible
 			v.reflow()
 		}
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "c", "f":
+		case "c":
 			if v.data != nil {
-				cmd := v.loadContext(msg.String() == "f")
+				cmd := v.loadContext()
 				return v, cmd
 			}
 		case "d":
@@ -119,13 +117,12 @@ func (v *inspectorView) selectCell(coord hexxladb.Coord) tea.Cmd {
 
 func (v *inspectorView) clearContext() {
 	v.request++
-	v.pack = nil
-	v.fovCells = nil
+	v.pack = hexxladb.ContextPack{}
 	v.packErr = nil
 	v.packLoading = false
 }
 
-func (v *inspectorView) loadContext(fov bool) tea.Cmd {
+func (v *inspectorView) loadContext() tea.Cmd {
 	v.clearContext()
 	v.packLoading = true
 	v.contextMode = true
@@ -133,15 +130,8 @@ func (v *inspectorView) loadContext(fov bool) tea.Cmd {
 	v.reflow()
 	db, coord, request := v.db, v.cell, v.request
 	return func() tea.Msg {
-		if fov {
-			cells, err := loadContextFOV(db, coord)
-			if cells == nil && err == nil {
-				cells = []hexxladb.CellRecord{}
-			}
-			return contextLoadedMsg{request: request, visible: cells, err: err}
-		}
 		pack, err := loadContextPack(db, coord)
-		return contextLoadedMsg{request: request, pack: &pack, err: err}
+		return contextLoadedMsg{request: request, pack: pack, err: err}
 	}
 }
 
@@ -171,7 +161,7 @@ func loadContextPack(db *hexxladb.DB, coord hexxladb.Coord) (hexxladb.ContextPac
 
 func (v *inspectorView) Help() []string {
 	return []string{helpItem("Esc", "back"), helpItem("↑↓", "scroll"), helpItem("d", "details"),
-		helpItem("c", "context"), helpItem("f", "FOV"), helpItem("r", "reload"), helpItem("PgUp/PgDn", "page")}
+		helpItem("c", "context"), helpItem("r", "reload"), helpItem("PgUp/PgDn", "page")}
 }
 
 func (v *inspectorView) View() string {
@@ -239,15 +229,8 @@ func (v *inspectorView) contextContent() string {
 		return styleDim.Render("Loading context…")
 	case v.packErr != nil:
 		return styleBad.Render("Context error: " + terminalText(v.packErr.Error()))
-	case v.pack != nil:
-		return renderContextPack(*v.pack, v.width)
 	}
-	lines := []string{styleAccent.Render(fmt.Sprintf("FOV context · %d visible cells · radius 3", len(v.fovCells)))}
-	for _, cell := range v.fovCells {
-		coord, _ := hexxladb.Unpack(cell.Key)
-		lines = append(lines, contextRow(coord, cell.Provenance.Confidence, cell.RawContent, v.width))
-	}
-	return strings.Join(lines, "\n")
+	return renderContextPack(v.pack, v.width)
 }
 
 func renderContextPack(pack hexxladb.ContextPack, width int) string {

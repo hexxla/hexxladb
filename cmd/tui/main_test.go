@@ -75,15 +75,23 @@ func TestInspectorIgnoresStaleContextAndDisplaysErrors(t *testing.T) {
 	v.SetSize(80, 20)
 	v.selectCell(hexxladb.Coord{})
 	v.Update(cellDetailMsg{request: v.request, cell: hexxladb.CellView{RawContent: "first"}})
-	v.loadContext(true)
+	if _, cmd := v.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}}); cmd != nil || v.contextMode {
+		t.Fatal("Inspector accepted the removed FOV key")
+	}
+	pressContext := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}}
+	if _, cmd := v.Update(pressContext); cmd == nil || !v.contextMode {
+		t.Fatal("c did not start radial context loading")
+	}
 	stale := v.request
 	v.selectCell(hexxladb.Coord{Q: 1})
 	v.Update(cellDetailMsg{request: v.request, cell: hexxladb.CellView{RawContent: "second"}})
-	v.Update(contextLoadedMsg{request: stale, visible: []hexxladb.CellRecord{{RawContent: "stale"}}})
-	if v.fovCells != nil {
-		t.Fatal("stale FOV was accepted")
+	v.Update(contextLoadedMsg{request: stale, pack: hexxladb.ContextPack{
+		Cells: []hexxladb.CellView{{RawContent: "stale"}},
+	}})
+	if len(v.pack.Cells) != 0 {
+		t.Fatal("stale radial context was accepted")
 	}
-	v.loadContext(false)
+	v.Update(pressContext)
 	v.Update(contextLoadedMsg{request: v.request, err: hexxladb.ErrSpatialScanLimit})
 	if got := v.View(); !strings.Contains(got, "Context error") {
 		t.Fatalf("view hid context load error: %q", got)

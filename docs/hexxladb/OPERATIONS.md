@@ -45,7 +45,7 @@ On **MVCC formats v2 and v3**, [`DeleteCell`](../../delete_cell.go) does **not**
 
 So a pattern like “82 cells → delete 10 → file still **576 KiB**” is **normal**: obsolete pages remain allocated until compaction. To **reduce bytes on disk**:
 
-1. Optionally [**`PruneCellVersions`**](../../mvcc_lifecycle.go) to drop **old** non-latest versions (cannot remove the latest tombstone for a coord while that key still exists).
+1. Optionally [**`PruneCellVersions`**](../../mvcc_lifecycle.go) to drop versions superseded by the cutoff while preserving the state visible at that cutoff.
 2. On authenticated v3, call [**`ReclaimTail`**](../../reclaim.go) for cheap contiguous-tail truncation when `ReusablePages` is non-zero.
 3. Use [**`Compact`**](../../compact.go) when you need to rewrite into a tight file and reclaim fragmented or low-fill pages.
 
@@ -107,9 +107,8 @@ The footer shows the main actions for the active view.
   move, `+` or `-` to zoom, `v` to toggle the visibility overlay, and
   Enter to inspect the center.
 - **Inspector** shows typed cell details, including facets and cluster hints.
-  Use `c` for a radial context pack, `f` for visibility-filtered context,
-  or `d` for cell details. Scroll with the arrow keys or Page Up and Page
-  Down. Esc returns to the originating view.
+  Use `c` for a radial context pack or `d` for cell details. Scroll with
+  the arrow keys or Page Up and Page Down. Esc returns to the originating view.
 - **Seams** lists visible seams. **Diff** shows retained MVCC cell and seam
   history over the last ten commit sequences. The diff lists cell changes and
   summarizes the number of seam changes.
@@ -358,10 +357,32 @@ The [`examples/remote_access`](../../examples/remote_access) owner-service bound
 
 For MVCC formats v2 and v3 (`EnableMVCC` selects v2 for new plaintext files; official encryption creates v3):
 
-- [`Options.MVCCRetention.RetainCommitsBehindHead`](../../options.go) configures how much commit history to retain when deriving a suggested prune watermark. Only versions with strictly lower `commit_seq` than `(header.CommitSeq - RetainCommitsBehindHead)` may be reclaimed, and never the latest visible version per logical cell.
-- While **`CommitSeq ≤ RetainCommitsBehindHead`**, [`SuggestedPruneBeforeSeq`](../../mvcc_lifecycle.go) yields **`beforeSeq = 0`**, so [`PruneCellVersions`](../../mvcc_lifecycle.go) **`seq < beforeSeq`** matches **no** rows — **automatic prune ticks become a no-op** until commits accumulate beyond the retention depth. Embedders with short-lived MCP sessions therefore need a retention value **below** typical peak `CommitSeq` (inspect [`StatsMVCC`](../../mvcc_lifecycle.go) `.CommitSeq`) or explicit `beforeSeq`.
-- Zero (default) disables automatic suggestions; operators supply `beforeSeq` explicitly to [`PruneCellVersions`](../../mvcc_lifecycle.go).
-- Retention is in **commits**, not wall-clock. Map product SLAs to `RetainCommitsBehindHead` using your observed commits-per-interval.
+- [`Options.MVCCRetention.RetainCommitsBehindHead`](../../options.go) suggests
+  a cutoff of `max(0, CommitSeq - RetainCommitsBehindHead)`. A zero policy
+  disables suggestions. A suggested cutoff of zero leaves all versions in place.
+- [`PruneCellVersions`](../../mvcc_lifecycle.go) keeps the version or
+  tombstone visible at the cutoff and removes older superseded versions in
+  bounded passes. It clamps the cutoff to the current head.
+- [`OldestSnapshotSeq`](../../mvcc_snapshot_floor.go) reports the earliest
+  guaranteed snapshot. Older sequence, time, and tagged reads return
+  `ErrSnapshotExpired`. Tags expire with history.
+- Retention uses commit sequences. Use your observed commits per interval to
+  translate a time-based requirement into a suggested cutoff.
+
+The CLI exposes the same operations. Choose the cutoff from your retention
+policy and inspect the reported boundary before doing more maintenance.
+
+```sh
+hexxladb stats memory.db
+hexxladb prune --before-seq 4000 --max-delete 2048 memory.db
+hexxladb reclaim-tail memory.db
+hexxladb compact --dry-run -o memory.compacted.db memory.db
+```
+
+Prune runs one bounded pass. On authenticated v3, tail reclaim returns only
+a contiguous free suffix to the filesystem. Use the compaction workflow below
+to repack a fragmented database. These commands take the exclusive file lock
+and accept the same encryption environment variables as `stats`.
 
 Quick API reference:
 

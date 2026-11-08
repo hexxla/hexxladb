@@ -96,12 +96,34 @@ func TestQueryCells_FilteredEmbeddingWidensCandidates(t *testing.T) {
 
 	query.EmbeddingCandidateLimit = 40
 	err = db.View(func(tx *hexxladb.Tx) error {
-		results, err := tx.QueryCells(t.Context(), query)
+		results, stats, err := tx.QueryCellsWithStats(t.Context(), query)
 		if err != nil {
 			return err
 		}
-		if len(results) != 0 {
-			t.Fatalf("limited results = %+v, want no match within first 40 candidates", results)
+		if len(results) != 0 || !stats.EmbeddingCandidateLimitReached || stats.EmbeddingCandidates != 40 {
+			t.Fatalf("limited query = %+v, %+v, want no match and a reported 40-candidate limit", results, stats)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	query.EmbeddingCandidateLimit = 0
+	query.MaxScanRows = 1
+	err = db.View(func(tx *hexxladb.Tx) error {
+		results, stats, err := tx.QueryCellsWithStats(t.Context(), query)
+		if err != nil {
+			return err
+		}
+		if len(results) != 1 || results[0].Cell.Coord.Q != 50 || stats.EmbeddingPath != hexxladb.EmbeddingSearchPathFlat ||
+			stats.EmbeddingCandidates != 1 || stats.EmbeddingCandidateLimitReached {
+			t.Fatalf("exact selective query = %+v, %+v", results, stats)
+		}
+		query.RequireTags = []string{"skip"}
+		results, stats, err = tx.QueryCellsWithStats(t.Context(), query)
+		if !errors.Is(err, hexxladb.ErrQueryScanLimit) || len(results) != 1 || stats.EmbeddingCandidates != 1 {
+			t.Fatalf("exact partial query = %+v, %+v, %v", results, stats, err)
 		}
 		return nil
 	})

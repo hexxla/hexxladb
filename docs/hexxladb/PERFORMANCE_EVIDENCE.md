@@ -577,6 +577,46 @@ for every sample so changelog history is held constant. Its supported invocation
 uses `-benchtime=1x`; repeating it inside one benchmark process would make setup
 cost dominate and would no longer represent a fixed-history sample.
 
+## November 8, 2026 write and HNSW churn baseline
+
+These local measurements used Go 1.27.3 on Linux/amd64 with an Intel Core
+i9-14900HX. Each workload used a fresh temporary database. They were collected
+to decide where to focus further engine work.
+
+- A contention probe committed 600 distinct tagged cells, one `DB.Update`
+  per cell, on plaintext MVCC. Across three runs, one writer produced
+  7,553–8,772 commits/s with p95 latency of 0.47–0.56 ms. Four writers sharing
+  the handle produced 2,647–2,978 commits/s with p95 latency of 3.36–4.28 ms.
+  Mean lock wait rose from 35–37 ns to 0.86–0.97 ms per call.
+- The single-writer evidence run spent about 70 µs per ordinary commit in
+  durability and 46 µs in the callback on average. With 100-cell batches,
+  callback work averaged 2.06 ms and durability averaged 0.93 ms. A
+  cell-plus-embedding commit averaged 3.99 ms in the callback and 0.17 ms in
+  durability. The reader-blocking benchmark, which deliberately sleeps for
+  1 ms inside each writer callback, took 1.36–1.39 ms per operation.
+- The vector runner used 32 dimensions, 4 KiB pages, and a 64 MiB cache.
+  It updated ten vectors and deleted ten in batches of five. At 500 vectors,
+  the two update batches took 47–48 ms and deletes took 30–33 ms. At 1,500
+  vectors, updates took 73–76 ms and deletes took 63–67 ms. Recall@10
+  was 1.0 on the 20 sampled queries after churn and reopen at both sizes.
+
+Reproduce the runner measurements with these commands:
+
+```sh
+go run ./tools/evidence/write_path_evidence -samples 100 -batch-samples 30 -batch-size 100 -embedding-samples 50
+go test -run '^$' -bench '^BenchmarkAPI_WriteReaderBlocking$' -benchmem -count=3 -benchtime=200ms .
+for cells in 500 1500; do
+  go run ./tools/evidence/vector_scale_evidence -cells "$cells" -samples 20 -top-k 10 -churn 10 -batch-size 5 -build-mode deferred-rebuild
+done
+```
+
+For a comparable contention probe, prepack 600 coordinates, release one or
+four writers on a common start signal, and distribute the coordinates evenly
+across writers. Record per-call latency and the `WriteStats` delta for the
+completed batch. This workload shows where the queue forms. A representative
+mixed workload and a graph-mutation profile should determine whether a future
+change to callback work, graph repair, or commit scheduling pays off.
+
 ## Collect comparable evidence
 
 For a decision-quality series:

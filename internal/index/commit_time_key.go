@@ -45,3 +45,6 @@ func ParseCommitTimeKey(key []byte) (unixNanos int64, commitSeq uint64, ok bool)
 	commitSeq = binary.BigEndian.Uint64(key[len(commitTimePrefix)+8:])
 	return unixNanos, commitSeq, true
 }
+
+// MVCCSnapshotFloorKey stores the earliest guaranteed historical sequence.
+const MVCCSnapshotFloorKey = "__meta/mvcc-snapshot-floor"

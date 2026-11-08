@@ -60,6 +60,7 @@ func (db *DB) View(fn func(*Tx) error) error {
 
 // ViewAt runs fn inside a read-only transaction pinned to read_seq (commit sequence).
 // read_seq must not exceed the database header's CommitSeq or [ErrReadSeqFuture] is returned.
+// Sequences before [DB.OldestSnapshotSeq] return [ErrSnapshotExpired].
 // On MVCC databases, typed edge and embedding reads on older sequences return
 // [ErrHistoricalDataUnavailable].
 func (db *DB) ViewAt(readSeq uint64, fn func(*Tx) error) error {
@@ -78,11 +79,15 @@ func (db *DB) ViewAt(readSeq uint64, fn func(*Tx) error) error {
 	if readSeq > ch.commitSeq {
 		return ErrReadSeqFuture
 	}
+	if err := db.checkSnapshotFloor(readSeq); err != nil {
+		return err
+	}
 	tx := &Tx{db: db, writable: false, readSeq: readSeq, cachedBTreeRoot: ch.btreeRoot}
 	return fn(tx)
 }
 
 // ViewAtTime runs fn inside a read-only transaction pinned to the most recent commit at or before asOf.
+// A resolved sequence before [DB.OldestSnapshotSeq] returns [ErrSnapshotExpired].
 // For format-v1 databases this resolves to the latest committed snapshot.
 func (db *DB) ViewAtTime(asOf time.Time, fn func(*Tx) error) error {
 	if fn == nil {
@@ -104,6 +109,9 @@ func (db *DB) ViewAtTime(asOf time.Time, fn func(*Tx) error) error {
 		if err != nil {
 			return err
 		}
+	}
+	if err := db.checkSnapshotFloor(readSeq); err != nil {
+		return err
 	}
 	tx := &Tx{db: db, writable: false, readSeq: readSeq, cachedBTreeRoot: ch.btreeRoot}
 	return fn(tx)
@@ -176,6 +184,11 @@ func (db *DB) Update(fn func(*Tx) error) error { //nolint:gocyclo // durability 
 		return err
 	}
 	if db.useMVCC {
+		if !db.snapshotFloorStored {
+			if err := tx.stageSnapshotFloor(db.snapshotFloor); err != nil {
+				return err
+			}
+		}
 		if err := db.btree.Put(index.CommitTimeKey(commitWall, tx.writeSeq), emptySecondaryVal); err != nil {
 			return fmt.Errorf("%w: commit timeline: %w", ErrCommitFinalization, err)
 		}
@@ -214,6 +227,7 @@ func (db *DB) Update(fn func(*Tx) error) error { //nolint:gocyclo // durability 
 	}
 	committed = true
 	db.writeStats.commits.Add(1)
+	db.snapshotFloorStored = db.useMVCC
 	db.storeCachedHeader(finalHeader.CommitSeq, finalHeader.BTreeRoot)
 	crashtest.At("db_engine_committed")
 	finalizationStarted := time.Now()

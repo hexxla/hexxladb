@@ -164,17 +164,11 @@ func (db *DB) StatsMVCC() (MVCCStats, error) {
 	}, nil
 }
 
-// PruneCellVersions removes up to maxDelete stale versioned rows with commit_seq < beforeSeq.
-// It always keeps the latest version for each logical cell key.
-//
-// Implementation notes:
-//   - Single-pass scan: because cell/<packed>/<seq> keys are sorted with seq ascending within
-//     each coordinate group, the last row seen per coordinate is always the latest version.
-//     We buffer the previous row and emit it as a delete candidate when the coordinate changes,
-//     never emitting the final row of each group. This replaces the previous two-pass approach
-//     and requires O(1) extra memory instead of a full latest-version map.
-//   - Batched commits: deletes are committed in sub-batches of [pruneSubBatchSize] to cap WAL
-//     burst size and release db.mu between sub-batches so concurrent readers are not starved.
+// PruneCellVersions removes up to maxDelete cell versions superseded at or
+// before beforeSeq. It preserves each coordinate's state at that cutoff,
+// including tombstones, and clamps the cutoff to the current commit.
+// The first committed deletion advances [DB.OldestSnapshotSeq] to at least
+// that cutoff. Named snapshots below it expire.
 func (db *DB) PruneCellVersions(beforeSeq uint64, maxDelete int) (deleted int, err error) {
 	if db == nil {
 		return 0, ErrDatabaseClosed
@@ -191,10 +185,13 @@ func (db *DB) PruneCellVersions(beforeSeq uint64, maxDelete int) (deleted int, e
 		return 0, nil
 	}
 
-	// Single-pass scan: walk cell/ keys left-to-right. Within each coordinate group,
-	// keys are ordered by seq ascending, so the last key seen per coordinate is the
-	// latest version. We buffer prevKey/prevSeq/prevCoord and emit the buffered row
-	// as a delete candidate when we advance to a new coordinate.
+	beforeSeq = min(beforeSeq, db.cachedHdr.Load().commitSeq)
+	if beforeSeq == 0 {
+		return 0, nil
+	}
+	// A row can be dropped only if the same coordinate has a successor
+	// already visible at the cutoff. Keep the last version at or below it.
+
 	toDelete := make([][]byte, 0, min(maxDelete, pruneSubBatchSize*4))
 	var (
 		prevKey   []byte
@@ -211,12 +208,12 @@ func (db *DB) PruneCellVersions(beforeSeq uint64, maxDelete int) (deleted int, e
 			return true
 		}
 		coordChanged := !hasPrev || p != prevCoord
-		if hasPrev && !coordChanged && prevSeq < beforeSeq {
+		if hasPrev && !coordChanged && prevSeq < beforeSeq && seq <= beforeSeq {
 			// prevKey is a non-latest version of the current coordinate group — prunable.
-			toDelete = append(toDelete, prevKey)
+			toDelete = append(toDelete, bytes.Clone(prevKey))
 		}
 		// When coordChanged, prevKey was the latest version of the previous group — skip it.
-		prevKey = append([]byte(nil), k...)
+		prevKey = append(prevKey[:0], k...)
 		prevSeq = seq
 		prevCoord = p
 		hasPrev = true
@@ -241,7 +238,7 @@ func (db *DB) PruneCellVersions(beforeSeq uint64, maxDelete int) (deleted int, e
 		}
 		toDelete = toDelete[len(batch):]
 
-		count, err := db.pruneCellVersionBatch(batch)
+		count, err := db.pruneCellVersionBatch(batch, beforeSeq)
 		deleted += count
 		if err != nil {
 			return deleted, err
@@ -261,7 +258,7 @@ func (db *DB) PruneCellVersions(beforeSeq uint64, maxDelete int) (deleted int, e
 
 // pruneCellVersionBatch removes each obsolete primary and its indexes in the
 // same engine transaction. The caller holds db.mu.
-func (db *DB) pruneCellVersionBatch(batch [][]byte) (int, error) {
+func (db *DB) pruneCellVersionBatch(batch [][]byte, beforeSeq uint64) (int, error) {
 	if db.recoveryRequired.Load() {
 		return 0, fmt.Errorf("%w: close and reopen required", ErrCommitFinalization)
 	}
@@ -293,12 +290,25 @@ func (db *DB) pruneCellVersionBatch(batch [][]byte) (int, error) {
 		}
 		deleted++
 	}
+	if deleted == 0 {
+		return 0, nil
+	}
+	floor := max(beforeSeq, db.snapshotFloor)
+	if !db.snapshotFloorStored || floor != db.snapshotFloor {
+		if err := tx.stageSnapshotFloor(floor); err != nil {
+			return 0, err
+		}
+	}
 	if err := db.eng.CommitWriteTxn(); err != nil {
+		db.snapshotFloorUncertain = true
 		db.recoveryRequired.Store(true)
 		return 0, fmt.Errorf("%w: prune cell versions: %w", ErrCommitFinalization, err)
 	}
+	db.snapshotFloor = floor
+	db.snapshotFloorStored = true
 	header, err := db.eng.ReadHeader()
 	if err != nil {
+		db.snapshotFloorUncertain = true
 		db.recoveryRequired.Store(true)
 		return deleted, durableCommitError("read header after pruning cell versions", err)
 	}

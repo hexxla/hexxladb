@@ -43,6 +43,10 @@ func run(args []string) int {
 		return cmdMigrateToAuthenticated(rest)
 	case "stats":
 		return cmdStats(rest)
+	case "prune":
+		return cmdPrune(rest)
+	case "reclaim-tail":
+		return cmdReclaimTail(rest)
 	case "keys":
 		return cmdKeys(rest)
 	case "cells":
@@ -73,6 +77,9 @@ Commands:
   migrate-to-authenticated
             Migrate v1/v2 src to encrypted v3: hexxladb migrate-to-authenticated -o <dest> <src>
   stats     Print MVCC and reclaimable-storage statistics
+  prune     Prune a bounded batch of cell versions before a cutoff
+  reclaim-tail
+            Return the contiguous free tail of an authenticated database to disk
   keys      Dump raw B+ tree keys (optional -prefix filter)
   cells     List visible cells: coord, source, tags, confidence
   get       Print a single cell by coordinate: hexxladb get -q <Q> -r <R> <db>

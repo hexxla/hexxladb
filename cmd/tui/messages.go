@@ -33,8 +33,7 @@ type cellDetailMsg struct {
 
 type contextLoadedMsg struct {
 	request uint64
-	pack    *hexxladb.ContextPack
-	visible []hexxladb.CellRecord
+	pack    hexxladb.ContextPack
 	err     error
 }
 
@@ -83,43 +82,17 @@ func searchCells(db *hexxladb.DB, query, mode string) ([]searchResult, error) {
 	}
 	var hits []searchResult
 	err := db.View(func(tx *hexxladb.Tx) error {
-		results, err := tx.QueryCells(context.Background(), cfg)
+		results, stats, err := tx.QueryCellsWithStats(context.Background(), cfg)
 		hits = make([]searchResult, 0, len(results))
 		for _, result := range results {
 			hits = append(hits, searchResult{cell: result.Cell, score: result.Score})
 		}
+		if err == nil && stats.EmbeddingCandidateLimitReached {
+			return fmt.Errorf("embedding candidate limit reached after %d candidates", stats.EmbeddingCandidates)
+		}
 		return err
 	})
 	return hits, err
-}
-
-// loadContextFOV treats empty cells as opaque barriers.
-func loadContextFOV(db *hexxladb.DB, center hexxladb.Coord) ([]hexxladb.CellRecord, error) {
-	var cells []hexxladb.CellRecord
-	err := db.View(func(tx *hexxladb.Tx) error {
-		var opacityErr error
-		opaque := func(c hexxladb.Coord) bool {
-			if opacityErr != nil {
-				return true
-			}
-			p, err := hexxladb.Pack(c)
-			if err != nil {
-				return true
-			}
-			_, ok, err := tx.GetCell(p)
-			opacityErr = err
-			return !ok
-		}
-		var err error
-		cells, err = tx.LoadContextFOV(context.Background(), center, 3, opaque, hexxladb.FOVContextConfig{
-			MaxCells: 128,
-		})
-		if opacityErr != nil {
-			return opacityErr
-		}
-		return err
-	})
-	return cells, err
 }
 
 func loadCells(db *hexxladb.DB, request uint64) cellsLoadedMsg {

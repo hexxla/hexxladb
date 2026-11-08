@@ -37,40 +37,39 @@ const preferredSpatialPlanProbeLimit = 4096
 // are applied as in-memory filters. Results are scored and sorted according to
 // [CellQuery.SortBy] then capped to [CellQuery.MaxResults].
 func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, error) {
+	results, _, err := tx.QueryCellsWithStats(ctx, q)
+	return results, err
+}
+
+// QueryCellsWithStats runs [Tx.QueryCells] and reports the vector search path
+// and whether widening stopped at its candidate budget.
+func (tx *Tx) QueryCellsWithStats(ctx context.Context, q CellQuery) ([]CellQueryResult, CellQueryStats, error) {
+	var stats CellQueryStats
 	if err := tx.validateCellQuery(ctx, q); err != nil {
-		return nil, err
+		return nil, stats, err
 	}
-
-	maxResults := q.MaxResults
 	queryLow := strings.ToLower(strings.TrimSpace(q.Query))
-
 	var results []CellQueryResult
-	var scanLimitErr error
-
-	if len(q.Embedding) > 0 {
-		var err error
-		results, err = tx.queryCellsByEmbedding(ctx, q, queryLow, maxResults)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		results, scanLimitErr = tx.queryCellsByIndex(ctx, q, queryLow)
-		if scanLimitErr != nil && !errors.Is(scanLimitErr, ErrQueryScanLimit) {
-			return nil, scanLimitErr
-		}
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
+	var err error
+	switch {
+	case len(q.Embedding) == 0:
+		results, err = tx.queryCellsByIndex(ctx, q, queryLow)
+	case q.MaxScanRows > 0:
+		results, err = tx.queryCellsByExactFilter(ctx, q, queryLow, &stats)
+	default:
+		results, err = tx.queryCellsByEmbedding(ctx, q, queryLow, &stats)
 	}
-
-	// ── sort (required: caller expects ordered results) ────────────────────────
+	if err != nil && !errors.Is(err, ErrQueryScanLimit) {
+		return nil, stats, err
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, stats, ctxErr
+	}
 	sortResults(results, q.SortBy)
-
-	// ── limit ─────────────────────────────────────────────────────────────────
-	if maxResults > 0 && len(results) > maxResults {
-		results = results[:maxResults]
+	if q.MaxResults > 0 && len(results) > q.MaxResults {
+		results = results[:q.MaxResults]
 	}
-	return results, scanLimitErr
+	return results, stats, err
 }
 
 func (tx *Tx) validateCellQuery(ctx context.Context, q CellQuery) error {
@@ -91,8 +90,9 @@ func (tx *Tx) validateCellQuery(ctx context.Context, q CellQuery) error {
 			return err
 		}
 	}
-	if len(q.Embedding) > 0 && q.MaxScanRows > 0 {
-		return fmt.Errorf("%w: MaxScanRows cannot bound embedding graph reads", ErrInvalidArgument)
+	if len(q.Embedding) > 0 && q.MaxScanRows > 0 &&
+		(q.EmbeddingCandidateLimit != 0 || (q.Radius == 0 && len(q.RequireTags) == 0 && strings.TrimSpace(q.SourceID) == "")) {
+		return fmt.Errorf("%w: MaxScanRows with an embedding requires a required tag, source, or radius and no embedding candidate limit", ErrInvalidArgument)
 	}
 	if q.EmbeddingCandidateLimit < 0 || q.EmbeddingCandidateLimit > MaxEmbeddingFilterCandidates {
 		return fmt.Errorf("%w: EmbeddingCandidateLimit must be between 0 and %d", ErrInvalidArgument, MaxEmbeddingFilterCandidates)
@@ -120,26 +120,29 @@ func (tx *Tx) queryCellsByIndex(ctx context.Context, q CellQuery, queryLow strin
 		return true
 	}
 
-	var err error
+	err := tx.scanQueryCells(ctx, q, yield)
+	return results, err
+}
+
+func (tx *Tx) scanQueryCells(ctx context.Context, q CellQuery, yield func(record.CellRecord) bool) error {
 	indexSourceID := strings.TrimSpace(q.SourceID)
 	switch {
 	case preferSpatialPlan(q):
-		err = tx.scanByRadiusFused(ctx, q.Center, q.Radius, q.MaxScanRows, yield)
+		return tx.scanByRadiusFused(ctx, q.Center, q.Radius, q.MaxScanRows, yield)
 	case len(q.RequireTags) > 0:
-		err = tx.scanByTagFused(ctx, q.RequireTags[0], q.MaxScanRows, yield)
+		return tx.scanByTagFused(ctx, q.RequireTags[0], q.MaxScanRows, yield)
 	case indexSourceID != "":
-		err = tx.scanBySourceFused(ctx, indexSourceID, q.MaxScanRows, yield)
-	case !q.After.IsZero() || !q.Before.IsZero():
+		return tx.scanBySourceFused(ctx, indexSourceID, q.MaxScanRows, yield)
+	case len(q.Embedding) == 0 && (!q.After.IsZero() || !q.Before.IsZero()):
 		// A signed week bucket is not lexicographically ordered by its
 		// on-disk uint64 representation. Scan primary cells so ranges that
 		// cross the Unix epoch remain complete without changing the format.
-		err = tx.scanAllCellsFused(ctx, q.MaxScanRows, yield)
+		return tx.scanAllCellsFused(ctx, q.MaxScanRows, yield)
 	case q.Radius > 0:
-		err = tx.scanByRadiusFused(ctx, q.Center, q.Radius, q.MaxScanRows, yield)
+		return tx.scanByRadiusFused(ctx, q.Center, q.Radius, q.MaxScanRows, yield)
 	default:
-		err = tx.scanAllCellsFused(ctx, q.MaxScanRows, yield)
+		return tx.scanAllCellsFused(ctx, q.MaxScanRows, yield)
 	}
-	return results, err
 }
 
 func preferSpatialPlan(q CellQuery) bool {
@@ -301,9 +304,10 @@ func (tx *Tx) scanByRadiusFused(ctx context.Context, center Coord, radius, maxSc
 	return nil
 }
 
-func (tx *Tx) queryCellsByEmbedding(ctx context.Context, q CellQuery, queryLow string, maxResults int) ([]CellQueryResult, error) {
+func (tx *Tx) queryCellsByEmbedding(ctx context.Context, q CellQuery, queryLow string, stats *CellQueryStats) ([]CellQueryResult, error) {
+	maxResults := q.MaxResults
 	if maxResults <= 0 && q.EmbeddingCandidateLimit == 0 {
-		return tx.queryCellsByFlatEmbedding(ctx, q, queryLow)
+		return tx.queryCellsByFlatEmbedding(ctx, q, queryLow, stats)
 	}
 
 	candidateLimit := q.EmbeddingCandidateLimit
@@ -317,10 +321,11 @@ func (tx *Tx) queryCellsByEmbedding(ctx context.Context, q CellQuery, queryLow s
 	seen := make(map[lattice.PackedCoord]struct{}, fetchK)
 	results := make([]CellQueryResult, 0, min(fetchK, max(maxResults, 0)))
 	for {
-		hits, _, err := tx.searchByEmbedding(ctx, q.Embedding, EmbeddingSearchConfig{MaxResults: fetchK})
+		hits, searchStats, err := tx.searchByEmbedding(ctx, q.Embedding, EmbeddingSearchConfig{MaxResults: fetchK})
 		if err != nil {
 			return nil, err
 		}
+		stats.EmbeddingPath = searchStats.Path
 		for _, hit := range hits {
 			if err := ctx.Err(); err != nil {
 				return nil, err
@@ -344,7 +349,12 @@ func (tx *Tx) queryCellsByEmbedding(ctx context.Context, q CellQuery, queryLow s
 				results = append(results, result)
 			}
 		}
-		if (maxResults > 0 && len(results) >= maxResults) || len(hits) < fetchK || len(seen) == candidateLimit || fetchK == candidateLimit {
+		stats.EmbeddingCandidates = len(seen)
+		if (maxResults > 0 && len(results) >= maxResults) || len(hits) < fetchK {
+			return results, nil
+		}
+		if len(seen) == candidateLimit || fetchK == candidateLimit {
+			stats.EmbeddingCandidateLimitReached = true
 			return results, nil
 		}
 		fetchK = min(candidateLimit, fetchK*2)
@@ -358,20 +368,17 @@ func multiplyCapped(value, factor, limit int) int {
 	return value * factor
 }
 
-func (tx *Tx) queryCellsByFlatEmbedding(ctx context.Context, q CellQuery, queryLow string) ([]CellQueryResult, error) {
-	if err := validateEmbeddingVector(q.Embedding); err != nil {
+func (tx *Tx) queryCellsByFlatEmbedding(ctx context.Context, q CellQuery, queryLow string, stats *CellQueryStats) ([]CellQueryResult, error) {
+	similarity, err := tx.exactEmbeddingScorer(q.Embedding, stats)
+	if err != nil {
 		return nil, err
 	}
-	dim := tx.db.eng.EmbeddingDim()
 	results := []CellQueryResult{}
-	if dim == 0 {
+	if similarity == nil {
 		return results, nil
 	}
-	if len(q.Embedding) != int(dim) {
-		return nil, fmt.Errorf("%w: want %d, got %d", ErrEmbeddingDimension, dim, len(q.Embedding))
-	}
-	similarity := engine.SimilarityFunc(tx.db.eng.EmbeddingMetric())
-	err := tx.scanEmbeddings(ctx, func(coord lattice.PackedCoord, vec []float32) error {
+	err = tx.scanEmbeddings(ctx, func(coord lattice.PackedCoord, vec []float32) error {
+		stats.EmbeddingCandidates++
 		rec, ok, err := tx.GetCell(coord)
 		if err != nil {
 			return err
@@ -379,7 +386,7 @@ func (tx *Tx) queryCellsByFlatEmbedding(ctx context.Context, q CellQuery, queryL
 		if !ok {
 			return nil
 		}
-		if result, matched := scoreRecord(q, rec, queryLow, similarity(q.Embedding, vec)); matched {
+		if result, matched := scoreRecord(q, rec, queryLow, similarity(vec)); matched {
 			results = append(results, result)
 		}
 		return nil
@@ -388,6 +395,52 @@ func (tx *Tx) queryCellsByFlatEmbedding(ctx context.Context, q CellQuery, queryL
 		return nil, err
 	}
 	return results, nil
+}
+
+// queryCellsByExactFilter scores only vectors reached by the bounded filter
+// scan, bypassing the graph even when one is available.
+func (tx *Tx) queryCellsByExactFilter(ctx context.Context, q CellQuery, queryLow string, stats *CellQueryStats) ([]CellQueryResult, error) {
+	similarity, err := tx.exactEmbeddingScorer(q.Embedding, stats)
+	if err != nil || similarity == nil {
+		return nil, err
+	}
+	var results []CellQueryResult
+	var lookupErr error
+	err = tx.scanQueryCells(ctx, q, func(rec record.CellRecord) bool {
+		vec, found, err := tx.GetEmbedding(rec.Key)
+		if err != nil {
+			lookupErr = err
+			return false
+		}
+		if found {
+			stats.EmbeddingCandidates++
+			if result, matched := scoreRecord(q, rec, queryLow, similarity(vec)); matched {
+				results = append(results, result)
+			}
+		}
+		return true
+	})
+	if lookupErr != nil {
+		return nil, lookupErr
+	}
+	return results, err
+}
+
+func (tx *Tx) exactEmbeddingScorer(query []float32, stats *CellQueryStats) (func([]float32) float64, error) {
+	if err := validateEmbeddingVector(query); err != nil {
+		return nil, err
+	}
+	dim := tx.db.eng.EmbeddingDim()
+	if dim == 0 {
+		stats.EmbeddingPath = EmbeddingSearchPathNone
+		return nil, nil
+	}
+	if len(query) != int(dim) {
+		return nil, fmt.Errorf("%w: want %d, got %d", ErrEmbeddingDimension, dim, len(query))
+	}
+	stats.EmbeddingPath = EmbeddingSearchPathFlat
+	similarity := engine.SimilarityFunc(tx.db.eng.EmbeddingMetric())
+	return func(vector []float32) float64 { return similarity(query, vector) }, nil
 }
 
 // ── predicate pipeline ────────────────────────────────────────────────────────

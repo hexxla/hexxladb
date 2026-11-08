@@ -32,6 +32,10 @@ type DB struct {
 	afterPutCell  AfterPutCellHook // optional post-write hook from [Options.AfterPutCell].
 	afterPutSeam  AfterPutSeamHook // optional post-write hook from [Options.AfterPutSeam].
 	writeSeqNext  atomic.Uint64
+	// Snapshot retention state is guarded by mu after Open publishes the handle.
+	snapshotFloor          uint64
+	snapshotFloorStored    bool
+	snapshotFloorUncertain bool
 	// changefeedSeqNext allocates durable primary-outbox commit identifiers independently
 	// of external changelog record sequences. Its value is persisted under the outbox head key.
 	changefeedSeqNext atomic.Uint64
@@ -132,6 +136,10 @@ func openDBWithMigration(path string, opts *Options, createExclusive, allowIncom
 	db := &DB{eng: eng, btree: bt, useMVCC: hdr.FormatVersion >= 2}
 	db.writeSeqNext.Store(hdr.CommitSeq)
 	db.storeCachedHeader(hdr.CommitSeq, hdr.BTreeRoot)
+	if err := db.loadSnapshotFloor(hdr.CommitSeq); err != nil {
+		_ = eng.Close()
+		return nil, err
+	}
 	if err := db.initializeChangefeedHead(); err != nil {
 		_ = eng.Close()
 		return nil, mapEngineDataError(err)

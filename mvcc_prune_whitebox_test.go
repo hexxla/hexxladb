@@ -45,10 +45,14 @@ func TestMVCC_whiteboxBtreeKeyShapeAfterRepeatedPutCell(t *testing.T) {
 	var total int
 	var cellVer int
 	var metaKeys int
+	var floorKeys int
 	prefixes := make(map[string]int)
 	err = db.btree.AscendRange(nil, nil, func(k, _ []byte) bool {
 		total++
 		s := string(k)
+		if s == index.MVCCSnapshotFloorKey {
+			floorKeys++
+		}
 		i := strings.IndexByte(s, '/')
 		if i >= 0 {
 			prefixes[s[:i+1]]++
@@ -66,8 +70,8 @@ func TestMVCC_whiteboxBtreeKeyShapeAfterRepeatedPutCell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cellVer != iterations || metaKeys != iterations || total != cellVer+metaKeys {
-		t.Fatalf("btree keys total=%d cellVer=%d meta=%d want %d+%d; prefixes=%v",
-			total, cellVer, metaKeys, iterations, iterations, prefixes)
+	if cellVer != iterations || metaKeys != iterations || floorKeys != 1 || total != cellVer+metaKeys+floorKeys {
+		t.Fatalf("btree keys total=%d cellVer=%d commitTime=%d floor=%d want %d+%d+1; prefixes=%v",
+			total, cellVer, metaKeys, floorKeys, iterations, iterations, prefixes)
 	}
 }

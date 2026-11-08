@@ -102,8 +102,9 @@ type CellQuery struct {
 	// MaxScanRows caps physical rows examined by cell/tag/source scans or coordinate
 	// probes attempted by a radius scan. Zero means unlimited. If additional work
 	// exists beyond the budget, QueryCells returns the partial sorted results and
-	// [ErrQueryScanLimit]. MaxScanRows is rejected for embedding queries because it
-	// cannot bound HNSW graph reads.
+	// [ErrQueryScanLimit]. With an embedding and a required tag, source, or
+	// radius, a positive MaxScanRows selects exact scoring over the bounded
+	// filter scan. It cannot be combined with EmbeddingCandidateLimit.
 	MaxScanRows int
 
 	// --- Embedding / vector ---
@@ -141,4 +142,16 @@ type CellQueryResult struct {
 	// Explanation is a human-readable breakdown of the score and filter decisions.
 	// Only populated when CellQuery.Explain is true.
 	Explanation string
+}
+
+// CellQueryStats reports how an embedding query was evaluated.
+type CellQueryStats struct {
+	// EmbeddingPath is empty for non-vector queries. Flat means exact scoring,
+	// which can still be limited by a row or candidate budget.
+	EmbeddingPath EmbeddingSearchPath
+	// EmbeddingCandidates is the number of distinct vector candidates examined.
+	EmbeddingCandidates int
+	// EmbeddingCandidateLimitReached means the candidate ceiling stopped
+	// widening before the result quota was filled or the search was exhausted.
+	EmbeddingCandidateLimitReached bool
 }

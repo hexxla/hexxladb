@@ -58,7 +58,8 @@ func (db *DB) TagSnapshot(label string) error {
 }
 
 // ViewAtTag opens a read-only transaction pinned to the commit sequence recorded by [DB.TagSnapshot]
-// for label. Returns [ErrSnapshotTagNotFound] if label has not been tagged.
+// for label. Returns [ErrSnapshotTagNotFound] if label has not been tagged,
+// or [ErrSnapshotExpired] if it predates the retention boundary.
 func (db *DB) ViewAtTag(label string, fn func(*Tx) error) error {
 	if fn == nil {
 		return ErrNilCallback

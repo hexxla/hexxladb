@@ -13,7 +13,24 @@
 ## Snapshot semantics and MVCC
 
 - **Format v1:** A **`View`** sees the **ordered store** (B+ tree) as it was when the read lock was acquired—i.e. **last committed state** at that moment.
-- **MVCC formats v2 and v3:** **[`Options.EnableMVCC`](../../options.go)** selects format v2 when creating a plaintext database; official encryption creates authenticated format v3 with MVCC regardless of that flag. **`View`** pins **`read_seq = header.CommitSeq`** at transaction start (last committed snapshot). **`ViewAt(read_seq uint64)`** pins an **older** committed snapshot; **`read_seq`** must not exceed **`CommitSeq`** or **[`ErrReadSeqFuture`](../../errors.go)** is returned. **`ViewAtTime(time.Time)`** maps wall-clock to the most recent commit with `commit_time <= as_of` and pins that snapshot. If no commit exists at/before `as_of`, it resolves to `read_seq=0` (empty snapshot). Each successful **`Update`** / **`Batch`** records an **`__meta/commit-time/`** entry (wall time sampled at **transaction start**, before the callback) and advances **`CommitSeq`** in the same engine transaction as the versioned data and durable changefeed intents.
+- **MVCC formats v2 and v3:** **[`Options.EnableMVCC`](../../options.go)** selects format v2 when creating a plaintext database; official encryption creates authenticated format v3 with MVCC regardless of that flag. **`View`** pins **`read_seq = header.CommitSeq`** at transaction start (last committed snapshot). **`ViewAt(read_seq uint64)`** pins an **older** committed snapshot; **`read_seq`** must not exceed **`CommitSeq`** or **[`ErrReadSeqFuture`](../../errors.go)** is returned. **`ViewAtTime(time.Time)`** maps wall-clock to the most recent commit with `commit_time <= as_of` and pins that snapshot. If no commit exists at/before `as_of`, it resolves to `read_seq=0`, which is empty when the retention boundary still permits it. Each successful **`Update`** / **`Batch`** records an **`__meta/commit-time/`** entry (wall time sampled at **transaction start**, before the callback) and advances **`CommitSeq`** in the same engine transaction as the versioned data and durable changefeed intents.
+
+### Retained snapshots
+
+[`OldestSnapshotSeq`](../../mvcc_snapshot_floor.go) is the earliest guaranteed
+MVCC sequence. `ViewAt`, `ViewAtTime`, and `ViewAtTag` return
+`ErrSnapshotExpired` below it before calling the callback. Pruning preserves
+the cell version or tombstone visible at the cutoff. The first deletion batch
+records the new boundary in the same engine transaction as its deletions.
+If that transaction needs recovery, historical reads return
+`ErrCommitFinalization` until the database is reopened.
+A snapshot tag names a sequence and expires when the retention boundary
+passes it.
+
+An existing MVCC database without retention metadata uses its current head
+as the baseline at upgrade. The first versioned write or effective prune
+persists the boundary. Older binaries cannot maintain it. Use a pre-upgrade
+backup for a downgrade that needs to write or prune.
 
 ## `Close`
 

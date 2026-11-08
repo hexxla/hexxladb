@@ -99,6 +99,8 @@ var (
 
 	// ErrReadSeqFuture means [DB.ViewAt] was called with a read_seq greater than the database's committed [engine.Header.CommitSeq].
 	ErrReadSeqFuture = errors.New("hexxladb: read_seq beyond last commit")
+	// ErrSnapshotExpired means a snapshot predates the verified MVCC retention boundary.
+	ErrSnapshotExpired = errors.New("hexxladb: snapshot predates retained history")
 
 	// ErrCommitFinalization means callback writes may have reached storage but post-callback finalization failed.
 	ErrCommitFinalization = errors.New("hexxladb: commit finalization failed")

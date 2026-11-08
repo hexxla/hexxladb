@@ -34,7 +34,7 @@ const (
 	EmbeddingSearchPathNone EmbeddingSearchPath = "none"
 	// EmbeddingSearchPathHNSW means the persisted approximate graph served the query.
 	EmbeddingSearchPathHNSW EmbeddingSearchPath = "hnsw"
-	// EmbeddingSearchPathFlat means no graph existed and the exact flat scan served the query.
+	// EmbeddingSearchPathFlat means the query used exact vector scoring.
 	EmbeddingSearchPathFlat EmbeddingSearchPath = "flat"
 )
 

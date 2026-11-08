@@ -310,6 +310,8 @@ var (
 
 	// ErrReadSeqFuture means [DB.ViewAt] was called with a read_seq greater than the database's committed [engine.Header.CommitSeq].
 	ErrReadSeqFuture = errors.New("hexxladb: read_seq beyond last commit")
+	// ErrSnapshotExpired means a snapshot predates the verified MVCC retention boundary.
+	ErrSnapshotExpired = errors.New("hexxladb: snapshot predates retained history")
 
 	// ErrCommitFinalization means callback writes may have reached storage but post-callback finalization failed.
 	ErrCommitFinalization = errors.New("hexxladb: commit finalization failed")
@@ -610,8 +612,9 @@ type CellQuery struct {
 	// MaxScanRows caps physical rows examined by cell/tag/source scans or coordinate
 	// probes attempted by a radius scan. Zero means unlimited. If additional work
 	// exists beyond the budget, QueryCells returns the partial sorted results and
-	// [ErrQueryScanLimit]. MaxScanRows is rejected for embedding queries because it
-	// cannot bound HNSW graph reads.
+	// [ErrQueryScanLimit]. With an embedding and a required tag, source, or
+	// radius, a positive MaxScanRows selects exact scoring over the bounded
+	// filter scan. It cannot be combined with EmbeddingCandidateLimit.
 	MaxScanRows int
 
 	// Embedding selects candidates and adds embedding similarity to their scores.
@@ -662,6 +665,18 @@ type CellQueryResult struct {
 	Explanation string
 }
     CellQueryResult is one result from Tx.QueryCells.
+
+type CellQueryStats struct {
+	// EmbeddingPath is empty for non-vector queries. Flat means exact scoring,
+	// which can still be limited by a row or candidate budget.
+	EmbeddingPath EmbeddingSearchPath
+	// EmbeddingCandidates is the number of distinct vector candidates examined.
+	EmbeddingCandidates int
+	// EmbeddingCandidateLimitReached means the candidate ceiling stopped
+	// widening before the result quota was filled or the search was exhausted.
+	EmbeddingCandidateLimitReached bool
+}
+    CellQueryStats reports how an embedding query was evaluated.
 
 type CellRecord = record.CellRecord
     CellRecord is the v1 wire shape for cell/<packed_coord> blobs. Re-exported
@@ -975,6 +990,12 @@ func (db *DB) MaxValueBytes() uint32
     in bytes. This is the limit persisted in the file header; the default is
     8192 (8 KB). Returns 0 if the database is closed.
 
+func (db *DB) OldestSnapshotSeq() (uint64, error)
+    OldestSnapshotSeq returns the earliest guaranteed point-in-time sequence.
+    On a database written by an older release without a recorded retention
+    boundary, the head at first open with this release is the baseline. Returns
+    ErrMVCCRequired on single-version databases.
+
 func (db *DB) PageSize() uint32
     PageSize returns the page size of the database in bytes. For new databases,
     this is the value from Options.PageSize (or the default 4096). For existing
@@ -982,20 +1003,11 @@ func (db *DB) PageSize() uint32
     closed.
 
 func (db *DB) PruneCellVersions(beforeSeq uint64, maxDelete int) (deleted int, err error)
-    PruneCellVersions removes up to maxDelete stale versioned rows with
-    commit_seq < beforeSeq. It always keeps the latest version for each logical
-    cell key.
-
-    Implementation notes:
-      - Single-pass scan: because cell/<packed>/<seq> keys are sorted with seq
-        ascending within each coordinate group, the last row seen per coordinate
-        is always the latest version. We buffer the previous row and emit it as
-        a delete candidate when the coordinate changes, never emitting the final
-        row of each group. This replaces the previous two-pass approach and
-        requires O(1) extra memory instead of a full latest-version map.
-      - Batched commits: deletes are committed in sub-batches of
-        [pruneSubBatchSize] to cap WAL burst size and release db.mu between
-        sub-batches so concurrent readers are not starved.
+    PruneCellVersions removes up to maxDelete cell versions superseded at or
+    before beforeSeq. It preserves each coordinate's state at that cutoff,
+    including tombstones, and clamps the cutoff to the current commit. The first
+    committed deletion advances DB.OldestSnapshotSeq to at least that cutoff.
+    Named snapshots below it expire.
 
 func (db *DB) PruneCellVersionsByProfile(beforeSeq uint64, profile MVCCPruneProfile) (int, error)
     PruneCellVersionsByProfile applies one prune pass using profile-driven
@@ -1079,17 +1091,20 @@ func (db *DB) View(fn func(*Tx) error) error
 func (db *DB) ViewAt(readSeq uint64, fn func(*Tx) error) error
     ViewAt runs fn inside a read-only transaction pinned to read_seq (commit
     sequence). read_seq must not exceed the database header's CommitSeq or
-    ErrReadSeqFuture is returned. On MVCC databases, typed edge and embedding
-    reads on older sequences return ErrHistoricalDataUnavailable.
+    ErrReadSeqFuture is returned. Sequences before DB.OldestSnapshotSeq return
+    ErrSnapshotExpired. On MVCC databases, typed edge and embedding reads on
+    older sequences return ErrHistoricalDataUnavailable.
 
 func (db *DB) ViewAtTag(label string, fn func(*Tx) error) error
     ViewAtTag opens a read-only transaction pinned to the commit sequence
-    recorded by DB.TagSnapshot for label. Returns ErrSnapshotTagNotFound if
-    label has not been tagged.
+    recorded by DB.TagSnapshot for label. Returns ErrSnapshotTagNotFound
+    if label has not been tagged, or ErrSnapshotExpired if it predates the
+    retention boundary.
 
 func (db *DB) ViewAtTime(asOf time.Time, fn func(*Tx) error) error
     ViewAtTime runs fn inside a read-only transaction pinned to the most recent
-    commit at or before asOf. For format-v1 databases this resolves to the
+    commit at or before asOf. A resolved sequence before DB.OldestSnapshotSeq
+    returns ErrSnapshotExpired. For format-v1 databases this resolves to the
     latest committed snapshot.
 
 func (db *DB) WriteStats() WriteStats
@@ -1167,7 +1182,7 @@ const (
 	EmbeddingSearchPathNone EmbeddingSearchPath = "none"
 	// EmbeddingSearchPathHNSW means the persisted approximate graph served the query.
 	EmbeddingSearchPathHNSW EmbeddingSearchPath = "hnsw"
-	// EmbeddingSearchPathFlat means no graph existed and the exact flat scan served the query.
+	// EmbeddingSearchPathFlat means the query used exact vector scoring.
 	EmbeddingSearchPathFlat EmbeddingSearchPath = "flat"
 )
 type EmbeddingSearchResult struct {
@@ -1325,11 +1340,10 @@ const (
 	MVCCPruneLongHistory MVCCPruneProfile = "long-history"
 )
 type MVCCRetention struct {
-	// RetainCommitsBehindHead keeps at least this much commit history: only cell versions with
-	// commit_seq strictly less than (current CommitSeq - RetainCommitsBehindHead) are eligible
-	// for pruning (the latest version per logical cell is always kept). For example, with
-	// RetainCommitsBehindHead=1000 and CommitSeq=5000, [SuggestedPruneBeforeSeq] returns 4000,
-	// so [PruneCellVersions](4000, ...) may delete stale rows with seq < 4000.
+	// RetainCommitsBehindHead sets the suggested history cutoff relative to the
+	// current commit. Pruning preserves the cell state visible at the cutoff.
+	// For example, at commit 5000, a value of 1000 suggests cutoff 4000.
+	// This policy cannot restore history already removed by earlier pruning.
 	RetainCommitsBehindHead uint64
 }
     MVCCRetention configures optional defaults for DB.SuggestedPruneBeforeSeq
@@ -2002,6 +2016,10 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
     After the primary index narrows the candidate set, all remaining predicates
     are applied as in-memory filters. Results are scored and sorted according to
     CellQuery.SortBy then capped to CellQuery.MaxResults.
+
+func (tx *Tx) QueryCellsWithStats(ctx context.Context, q CellQuery) ([]CellQueryResult, CellQueryStats, error)
+    QueryCellsWithStats runs Tx.QueryCells and reports the vector search path
+    and whether widening stopped at its candidate budget.
 
 func (tx *Tx) ReindexEmbeddings(ctx context.Context, fn EmbeddingFunc) error
     ReindexEmbeddings recomputes embeddings for all cells by calling fn for
