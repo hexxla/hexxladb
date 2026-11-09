@@ -41,7 +41,7 @@ func (tx *Tx) FindFreeCellPlacement(ctx context.Context, anchor Coord, maxRadius
 // FindUnusedCellPlacement is like [Tx.FindFreeCellPlacement] but skips coordinates
 // with a recorded MVCC cell or tombstone, including deletions in the current update.
 // Use it for new logical identities that must stay distinct from deleted cells.
-// Returns [ErrMVCCRequired] on single-version databases. Only recorded cell
+// Only recorded cell
 // history is checked; callers own references to coordinates that never had a cell.
 func (tx *Tx) FindUnusedCellPlacement(ctx context.Context, anchor Coord, maxRadius int) (CellPlacement, error) {
 	return tx.findCellPlacement(ctx, anchor, maxRadius, true)
@@ -53,9 +53,6 @@ func (tx *Tx) findCellPlacement(ctx context.Context, anchor Coord, maxRadius int
 	}
 	if err := tx.requireWritable(); err != nil {
 		return CellPlacement{}, err
-	}
-	if skipTombstones && !tx.db.useMVCC {
-		return CellPlacement{}, ErrMVCCRequired
 	}
 	if maxRadius < 0 || maxRadius > MaxCellPlacementRadius {
 		return CellPlacement{}, fmt.Errorf(
@@ -101,7 +98,7 @@ func (tx *Tx) findCellPlacement(ctx context.Context, anchor Coord, maxRadius int
 	)
 }
 
-// PutCell writes a cell record at cell/<packed> for rec.Key (v1) or version-suffixed keys (MVCC).
+// PutCell writes a versioned cell record for rec.Key.
 // It maintains source/, time/, and tag/ secondary indexes (see [Tx.AscendCellsBySource],
 // [Tx.AscendCellsInTimeBucket], [Tx.AscendCellsByTag]).
 // Only allowed inside [DB.Update]. A storage or post-write hook error aborts
@@ -158,10 +155,7 @@ func (tx *Tx) stageCell(ctx context.Context, rec CellRecord, data []byte, second
 		return err
 	}
 	logicalKey := index.CellKey(rec.Key)
-	key := logicalKey
-	if tx.db.useMVCC {
-		key = index.CellKeyWithVersion(rec.Key, tx.writeSeq)
-	}
+	key := index.CellKeyWithVersion(rec.Key, tx.writeSeq)
 	if err := tx.putDirect(key, data); err != nil {
 		return err
 	}
@@ -176,10 +170,8 @@ func (tx *Tx) stageCell(ctx context.Context, rec CellRecord, data []byte, second
 			return err
 		}
 	}
-	if tx.db.useMVCC {
-		tx.cellOverlay[rec.Key] = data
-		delete(tx.cellDeleted, rec.Key)
-	}
+	tx.cellOverlay[rec.Key] = data
+	delete(tx.cellDeleted, rec.Key)
 	tx.noteChangelog(changelog.OpPutCell, logicalKey, data)
 	if h := tx.db.afterPutCell; h != nil {
 		return h.AfterPutCell(ctx, rec)

@@ -45,7 +45,7 @@ func TestIntegration_MVCC_latticeAndHighChurnPrune(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lattice_prune.db")
 	db, err := hexxladb.Open(path, &hexxladb.Options{
-		EnableMVCC: true,
+
 		MVCCRetention: hexxladb.MVCCRetention{
 			RetainCommitsBehindHead: retainBehind,
 		},

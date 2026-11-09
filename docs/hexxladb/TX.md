@@ -12,8 +12,7 @@
 
 ## Snapshot semantics and MVCC
 
-- **Format v1:** A **`View`** sees the **ordered store** (B+ tree) as it was when the read lock was acquired—i.e. **last committed state** at that moment.
-- **MVCC formats v2 and v3:** **[`Options.EnableMVCC`](../../options.go)** selects format v2 when creating a plaintext database; official encryption creates authenticated format v3 with MVCC regardless of that flag. **`View`** pins **`read_seq = header.CommitSeq`** at transaction start (last committed snapshot). **`ViewAt(read_seq uint64)`** pins an **older** committed snapshot; **`read_seq`** must not exceed **`CommitSeq`** or **[`ErrReadSeqFuture`](../../errors.go)** is returned. **`ViewAtTime(time.Time)`** maps wall-clock to the most recent commit with `commit_time <= as_of` and pins that snapshot. If no commit exists at/before `as_of`, it resolves to `read_seq=0`, which is empty when the retention boundary still permits it. Each successful **`Update`** / **`Batch`** records an **`__meta/commit-time/`** entry (wall time sampled at **transaction start**, before the callback) and advances **`CommitSeq`** in the same engine transaction as the versioned data and durable changefeed intents.
+- **MVCC formats v2 and v3:** Plaintext creation uses v2. Creation with encryption uses authenticated v3. **`View`** pins **`read_seq = header.CommitSeq`** at transaction start (last committed snapshot). **`ViewAt(read_seq uint64)`** pins an **older** committed snapshot; **`read_seq`** must not exceed **`CommitSeq`** or **[`ErrReadSeqFuture`](../../errors.go)** is returned. **`ViewAtTime(time.Time)`** maps wall-clock to the most recent commit with `commit_time <= as_of` and pins that snapshot. If no commit exists at/before `as_of`, it resolves to `read_seq=0`, which is empty when the retention boundary still permits it. Each successful **`Update`** / **`Batch`** records an **`__meta/commit-time/`** entry (wall time sampled at **transaction start**, before the callback) and advances **`CommitSeq`** in the same engine transaction as the versioned data and durable changefeed intents.
 
 ### Retained snapshots
 
@@ -134,4 +133,4 @@ Semantics, cursors, at-least-once delivery, and durability modes are documented 
 
 ## Encryption
 
-Official at-rest encryption is configured via **[`Options`](../../options.go)** on **[`Open`](../../db.go)** (`EncryptionKey` or `Passphrase`). Transactions see plaintext; new encrypted databases use authenticated engine format v3, while existing v1/v2 AES-XTS files remain readable through the legacy path. Threat model, WAL publication, migration, and residual rollback limits are documented in **[`ENCRYPTION.md`](./ENCRYPTION.md)**.
+Official at-rest encryption is configured via **[`Options`](../../options.go)** on **[`Open`](../../db.go)** (`EncryptionKey` or `Passphrase`). Transactions see plaintext; new encrypted databases use authenticated engine format v3. Threat model, WAL publication, migration, and residual rollback limits are documented in **[`ENCRYPTION.md`](./ENCRYPTION.md)**.

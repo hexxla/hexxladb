@@ -12,10 +12,13 @@ import (
 
 func TestHealthCheckRejectsCorruptVisibleCell(t *testing.T) {
 	t.Parallel()
-	for _, mvccEnabled := range []bool{false, true} {
-		t.Run(map[bool]string{false: "v1", true: "mvcc"}[mvccEnabled], func(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  []byte
+	}{{"plaintext", nil}, {"authenticated", []byte("test-encryption-key")}} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			db, err := Open(filepath.Join(t.TempDir(), "health.db"), &Options{EnableMVCC: mvccEnabled})
+			db, err := Open(filepath.Join(t.TempDir(), "health.db"), &Options{EncryptionKey: tc.key})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -26,10 +29,7 @@ func TestHealthCheckRejectsCorruptVisibleCell(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := db.Update(func(tx *Tx) error {
-				key := index.CellKey(coord)
-				if mvccEnabled {
-					key = index.CellKeyWithVersion(coord, tx.writeSeq)
-				}
+				key := index.CellKeyWithVersion(coord, tx.writeSeq)
 				return tx.putDirect(key, []byte("not-a-cell-record"))
 			}); err != nil {
 				t.Fatal(err)
@@ -58,7 +58,7 @@ func TestHealthCheckRejectsCellKeyRecordMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.Update(func(tx *Tx) error {
-		return tx.putDirect(index.CellKey(keyCoord), encoded)
+		return tx.putDirect(index.CellKeyWithVersion(keyCoord, tx.writeSeq), encoded)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -72,20 +72,20 @@ func TestHealthCheckRejectsCellKeyRecordMismatch(t *testing.T) {
 func TestHealthCheckRejectsCorruptVisibleSeam(t *testing.T) {
 	t.Parallel()
 	const seamID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-	for _, mvccEnabled := range []bool{false, true} {
-		t.Run(map[bool]string{false: "v1", true: "mvcc"}[mvccEnabled], func(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  []byte
+	}{{"plaintext", nil}, {"authenticated", []byte("test-encryption-key")}} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			db, err := Open(filepath.Join(t.TempDir(), "health.db"), &Options{EnableMVCC: mvccEnabled})
+			db, err := Open(filepath.Join(t.TempDir(), "health.db"), &Options{EncryptionKey: tc.key})
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = db.Close() })
 
 			if err := db.Update(func(tx *Tx) error {
-				key, err := index.SeamKey(seamID)
-				if mvccEnabled {
-					key, err = index.SeamKeyWithVersion(seamID, tx.writeSeq)
-				}
+				key, err := index.SeamKeyWithVersion(seamID, tx.writeSeq)
 				if err != nil {
 					return err
 				}

@@ -10,7 +10,7 @@ import (
 
 func TestAscendSeamsUsesTransactionSnapshot(t *testing.T) {
 	t.Parallel()
-	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "seams.db"), &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "seams.db"), &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

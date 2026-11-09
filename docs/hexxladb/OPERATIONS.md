@@ -37,7 +37,7 @@ page, freelist, and WAL layout.
 - **`LiveBytes`** is the physical page-rounded size of the header, tree, overflow, and allocator pages. It includes unused capacity inside reachable pages; it is not logical payload size.
 - **`ReclaimableBytes`** is exact whole-page space outside the tree and allocator metadata, including `ReusablePages`. Compaction may recover more by repacking low-fill reachable pages.
 
-The walk is proportional to reachable pages and blocks writers, so sample it during a maintenance or low-traffic window rather than on every request. The older [`MVCCStats.WastedBytes`](../../mvcc_lifecycle.go) field counts only overflow payload freed since open and is deprecated for capacity decisions.
+The walk is proportional to reachable pages and blocks writers, so sample it during a maintenance or low-traffic window rather than on every request.
 
 ### Deletes, tombstones, and why the file size barely moves
 
@@ -183,161 +183,35 @@ When changelog is enabled, the primary may contain unacknowledged `__meta/change
 
 Durable named consumer cursors and their logical-history checkpoint live in the primary, so `BackupTo` preserves them with the matching sidecar. Restore with changelog enabled to validate the binding before resuming. `ErrChangelogConsumerInvalidated` means the primary and retained logical history do not match; do not reset the cursor or delete the sidecar until the correct backup set has been sought. See [`CHANGEFEED.md`](./CHANGEFEED.md#durable-consumer-cursors) for compare-and-advance and explicit re-bootstrap rules.
 
-## Format v1 to v2 migration
+## Offline conversion of retired files
 
-[`MigrateV1ToV2`](../../migration.go) is the supported offline path from a
-single-version format-v1 database to an MVCC-capable format-v2 database. It is
-a logical copy, not an in-place header edit: cells, facets, and seams are decoded
-and rewritten through typed primitives so versioned primary and secondary keys
-are rebuilt. Edges, embeddings/HNSW, and application-owned raw rows are copied
-without changing their logical values.
+The current library opens plaintext engine v2 and authenticated engine v3. A
+single-version v1 primary or legacy AES-XTS primary returns
+`ErrUnsupportedFormatVersion`. An unfinished offline conversion candidate
+returns `ErrMigrationIncomplete`.
 
-```go
-err := hexxladb.MigrateV1ToV2(ctx, "memory-v1.db", "memory-v2.db",
-    &hexxladb.MigrationOptions{
-        SourceOptions: &hexxladb.Options{Passphrase: oldPassphrase},
-        DestinationOptions: &hexxladb.Options{Passphrase: newPassphrase},
-        BatchSize: 1024,
-        SnapshotDirectory: "/srv/hexxladb-maintenance",
-        OnPreflight: func(p hexxladb.MigrationPreflight) {
-            log.Printf("capacity checks: %+v", p.Space)
-        },
-        OnProgress: func(p hexxladb.MigrationProgress) {
-            log.Printf("processed %d source keys", p.ProcessedKeys)
-        },
-    })
-if err != nil {
-    return err
-}
-```
+Preserve a verified copy of the primary, WAL, and optional changelog before
+conversion. Use the matching released HexxlaDB binary to recover any pending
+WAL on a copy. The [v0.6.0 conversion runbook](https://github.com/hexxla/hexxladb/blob/v0.6.0/docs/hexxladb/OPERATIONS.md#format-v1-to-v2-migration)
+documents its `migrate-v1-to-v2` and `migrate-to-authenticated` commands. Use
+the former with a plaintext v1 source and plaintext destination, or the latter
+to convert a v1/v2 source to authenticated v3.
 
-Operational contract:
-
-- Call `PreflightMigrateV1ToV2` for an exact dry run. It validates the v1
-  format, credentials, changelog policy, matching resume state, path identity,
-  destination components, and conservative filesystem capacity. It creates and
-  removes a locked source snapshot, so the dry-run cost is proportional to the
-  recovery set. Inspecting a partial destination may perform normal WAL
-  recovery but copies no new migration batch.
-- Close the source everywhere first. Migration obtains the normal exclusive
-  database lock and never replaces, truncates, or deletes the source or its WAL.
-- The destination must be absent on the first call. It is created exclusively;
-  an unrelated existing database or sidecar is refused and preserved.
-- The locked temporary source snapshot defaults to the destination directory,
-  avoiding an unbounded copy into a small system temporary filesystem. Set
-  `SnapshotDirectory` to another existing volume only after reviewing the
-  separately reported capacity. Normal return and cancellation remove the
-  snapshot. A host/process failure can leave a private
-  `.hexxladb-migrate-v1-*` directory; after confirming no migration process is
-  active, it is safe to remove that temporary directory without touching the
-  resumable destination.
-- Each batch and its resume checkpoint share one destination transaction.
-  Cancellation or failure keeps the partial destination for a later call with
-  the same source content and destination credentials. `Open` returns
-  `ErrMigrationIncomplete` until verification removes the checkpoint.
-- The resume identity is a SHA-256 digest over source rows. It contains no key,
-  passphrase, or decoded content. A changed source or unrelated destination is
-  refused rather than merged.
-- Source page size, value limit, embedding dimension, and distance metric are
-  retained. Destination encryption is independently selected, so migration can
-  preserve, add, remove, or rotate encryption without retaining credentials.
-  Destination cell validators and post-write hooks are intentionally ignored so
-  retries neither reject legacy truth nor repeat application side effects.
-- Changelog sidecars are not copied into the new MVCC timeline. Disable the
-  changelog during migration. If the source contains head, outbox, checkpoint,
-  or named-consumer state, the default is refusal with
-  `ErrMigrationChangelogState`. Set `ResetChangelog: true` only after archiving
-  required history and arranging downstream rebuild/re-bootstrap.
-- After all rows are copied, migration rereads the source and destination and
-  verifies every logical row before making the destination ordinarily openable.
-  Then open the destination, run `HealthCheck` plus application probes, take a
-  backup, and only then publish it as the replacement.
-
-Do not open a partial destination with an older library that predates
-`ErrMigrationIncomplete`; only the current `MigrateV1ToV2` call owns that file.
-Migration creates a new commit timeline rather than manufacturing v1 history.
-Retain the complete v1 recovery set until the replacement and its backup have
-passed restore validation.
-
-The operator equivalent is:
-
-```bash
-hexxladb migrate-v1-to-v2 --dry-run -o memory-v2.db memory-v1.db
-hexxladb migrate-v1-to-v2 --batch-size 1024 -o memory-v2.db memory-v1.db
-```
-
-The CLI handles interruption signals, prints only durable progress, reopens the
-completed candidate, and runs `HealthCheck` before success. It never performs
-replacement. Passphrases are read from `HEXXLA_SOURCE_PASSPHRASE` and
-`HEXXLA_DESTINATION_PASSPHRASE`; raw keys use standard-base64 values in
-`HEXXLA_SOURCE_ENCRYPTION_KEY` and `HEXXLA_DESTINATION_ENCRYPTION_KEY`. Override
-only the environment-variable *names* with the CLI flags. Never place a secret
-value in a command argument, log, shell history, or checked-in environment file.
-
-## Authenticated format v3 migration
-
-[`MigrateToAuthenticated`](../../migration.go) is the source-preserving path
-from a closed format-v1 or format-v2 database to authenticated encrypted format
-v3. It requires a raw destination key or passphrase and creates a distinct
-candidate; it never edits, replaces, or deletes the source.
-
-```go
-plan, err := hexxladb.PreflightMigrateToAuthenticated(
-    ctx,
-    "memory.db",
-    "memory-v3.db",
-    &hexxladb.MigrationOptions{
-        SourceOptions: &hexxladb.Options{Passphrase: oldPassphrase},
-        DestinationOptions: &hexxladb.Options{Passphrase: newPassphrase},
-    },
-)
-if err != nil {
-    return err
-}
-log.Printf("capacity checks: %+v", plan.Space)
-
-err = hexxladb.MigrateToAuthenticated(ctx, "memory.db", "memory-v3.db",
-    &hexxladb.MigrationOptions{
-        SourceOptions: &hexxladb.Options{Passphrase: oldPassphrase},
-        DestinationOptions: &hexxladb.Options{Passphrase: newPassphrase},
-    })
-```
-
-Operational contract:
-
-- close every source handle; the normal exclusive lock is held for the copy;
-- run the preflight first and inspect its conservative destination capacity;
-- destination encryption credentials are mandatory and independent of source credentials;
-- a v1 source uses the bounded resumable migration and derived-index rebuild described above;
-- a v2 source is copied with its complete MVCC history and commit sequence; cancellation removes the incomplete candidate, so retry from the source;
-- changelog frames are not transplanted; authorize `ResetChangelog` only after archiving required history and planning consumer re-bootstrap;
-- after success, reopen with destination credentials, run `HealthCheck` and application probes, perform a backup/restore drill, then explicitly publish; and
-- keep the full source recovery set because older libraries refuse v3 and no downgrade writer exists.
-
-Operator equivalent:
-
-```bash
-HEXXLA_DESTINATION_PASSPHRASE='...' \
-  hexxladb migrate-to-authenticated --dry-run -o memory-v3.db memory.db
-HEXXLA_DESTINATION_PASSPHRASE='...' \
-  hexxladb migrate-to-authenticated -o memory-v3.db memory.db
-```
-
-For an encrypted source, also set `HEXXLA_SOURCE_PASSPHRASE` or the
-standard-base64 `HEXXLA_SOURCE_ENCRYPTION_KEY`. The destination raw-key variable
-is `HEXXLA_DESTINATION_ENCRYPTION_KEY`. The CLI prints durable progress and
-verifies the candidate but never performs replacement.
+The pinned converter does not carry changelog history or consumer cursors into
+the destination. If it reports existing changelog state, reconcile or archive
+that state and explicitly authorize a reset before converting. Verify the
+candidate with the current library and retain the original recovery set until
+the candidate and its backup have passed a restore drill.
 
 ## Encryption
 
 Official encryption on a new database creates authenticated engine format v3
 with XChaCha20-Poly1305 data pages, an authenticated header, keyed WAL, and—when
-enabled—authenticated encrypted changelog format v2. Existing AES-256-XTS v1/v2
-files remain readable but confidentiality-only until migrated. See
+enabled—authenticated encrypted changelog format v2. See
 [`ENCRYPTION.md`](./ENCRYPTION.md) for the exact threat model, physical overhead,
-legacy compatibility, and residual same-slot/whole-set rollback limits.
+and residual same-slot/whole-set rollback limits.
 
-Wrong key/passphrase fails deterministically at open with [`ErrEncryptionKeyMismatch`](../../errors.go) once the database has an encryption verifier (new encrypted databases and upgraded legacy encrypted databases).
+Wrong key/passphrase fails deterministically at open with [`ErrEncryptionKeyMismatch`](../../errors.go).
 
 Use [`RotateEncryption`](../../rotation.go) for offline key rotation/re-encryption. For large databases, prefer [`RotateEncryptionWithOptions`](../../rotation.go) to stream rows in batches and emit progress callbacks. If the changelog is enabled, it must remain enabled at the same effective path in both option sets; rotation preserves its logical records and re-encrypts its frames.
 
@@ -355,7 +229,7 @@ The [`examples/remote_access`](../../examples/remote_access) owner-service bound
 
 ## MVCC retention and pruning
 
-For MVCC formats v2 and v3 (`EnableMVCC` selects v2 for new plaintext files; official encryption creates v3):
+For both storage profiles:
 
 - [`Options.MVCCRetention.RetainCommitsBehindHead`](../../options.go) suggests
   a cutoff of `max(0, CommitSeq - RetainCommitsBehindHead)`. A zero policy
@@ -630,7 +504,7 @@ recovery drills are the qualification boundary; elapsed time alone is not a
 release gate. Deployments with different profiles should record their own
 declared limits and evidence.
 
-For write-path diagnosis, sample [`DB.WriteStats`](../../write_stats.go) twice and subtract the cumulative fields. `LockWait` identifies reader/writer contention before an update starts; `Callback`, `Durability`, and `Finalization` divide the time spent holding the exclusive lock. Pair this with [`DB.GroupWALStats`](../../db.go) to observe WAL commit attempts and redo syncs. The legacy multi-job counter is always zero.
+For write-path diagnosis, sample [`DB.WriteStats`](../../write_stats.go) twice and subtract the cumulative fields. `LockWait` identifies reader/writer contention before an update starts; `Callback`, `Durability`, and `Finalization` divide the time spent holding the exclusive lock. Pair this with [`DB.WALStats`](../../db.go) to observe WAL commit attempts and redo syncs.
 
 | Step | Command                    | Pass criteria                                                                                                           |
 | ---- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------- |

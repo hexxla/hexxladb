@@ -20,7 +20,7 @@ func openDiffDB(t *testing.T, mvcc bool) *hexxladb.DB {
 	t.Helper()
 	var opts *hexxladb.Options
 	if mvcc {
-		opts = &hexxladb.Options{EnableMVCC: true}
+		opts = &hexxladb.Options{}
 	}
 	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "diff.db"), opts)
 	if err != nil {
@@ -62,16 +62,6 @@ func putDiffSeam(t *testing.T, db *hexxladb.DB, q0, r0, q1, r1 int) string {
 		t.Fatalf("PutSeam: %v", err)
 	}
 	return id
-}
-
-// TestSnapshotDiff_ErrMVCCRequired ensures v1 databases return ErrMVCCRequired.
-func TestSnapshotDiff_ErrMVCCRequired(t *testing.T) {
-	t.Parallel()
-	db := openDiffDB(t, false)
-	_, err := db.SnapshotDiff(t.Context(), 0, 0, hexxladb.SnapshotDiffConfig{})
-	if !errors.Is(err, hexxladb.ErrMVCCRequired) {
-		t.Fatalf("expected ErrMVCCRequired, got %v", err)
-	}
 }
 
 // TestSnapshotDiff_ErrReadSeqFuture rejects toSeq beyond head.

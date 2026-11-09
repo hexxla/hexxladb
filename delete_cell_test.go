@@ -16,7 +16,7 @@ func openDeleteTestDB(t *testing.T, mvcc bool) *hexxladb.DB {
 	t.Helper()
 	var opts *hexxladb.Options
 	if mvcc {
-		opts = &hexxladb.Options{EnableMVCC: true}
+		opts = &hexxladb.Options{}
 	}
 	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "del.db"), opts)
 	if err != nil {
@@ -46,63 +46,6 @@ func seedCellForDelete(t *testing.T, db *hexxladb.DB, c lattice.Coord, content s
 		t.Fatal(err)
 	}
 	return p
-}
-
-// TestDeleteCell_v1_primaryAndSecondaries verifies primary key and all
-// secondary indexes are removed after deletion on a format-v1 database.
-func TestDeleteCell_v1_primaryAndSecondaries(t *testing.T) {
-	t.Parallel()
-	db := openDeleteTestDB(t, false)
-	ctx := context.Background()
-	p := seedCellForDelete(t, db, lattice.Coord{Q: 1, R: 2}, "hello", []string{"tag-a"}, "src-a")
-
-	if err := db.Update(func(tx *hexxladb.Tx) error {
-		return tx.DeleteCell(ctx, p)
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Primary gone.
-	if err := db.View(func(tx *hexxladb.Tx) error {
-		_, ok, err := tx.GetCell(p)
-		if err != nil {
-			return err
-		}
-		if ok {
-			t.Error("cell should be gone after delete")
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Source index gone.
-	var srcCount int
-	if err := db.View(func(tx *hexxladb.Tx) error {
-		return tx.AscendCellsBySource(ctx, "src-a", func(_ record.CellRecord) bool {
-			srcCount++
-			return true
-		})
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if srcCount != 0 {
-		t.Errorf("source index count=%d, want 0", srcCount)
-	}
-
-	// Tag index gone.
-	var tagCount int
-	if err := db.View(func(tx *hexxladb.Tx) error {
-		return tx.AscendCellsByTag(ctx, "tag-a", func(_ record.CellRecord) bool {
-			tagCount++
-			return true
-		})
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if tagCount != 0 {
-		t.Errorf("tag index count=%d, want 0", tagCount)
-	}
 }
 
 // TestDeleteCell_idempotent verifies deleting a non-existent cell is a no-op.
@@ -211,7 +154,7 @@ func TestDeleteCell_readOnlyTx(t *testing.T) {
 	}
 }
 
-// TestDeleteCell_withFacets verifies facets are removed on delete (v1).
+// TestDeleteCell_withFacets verifies facets are removed on delete.
 func TestDeleteCell_withFacets(t *testing.T) {
 	t.Parallel()
 	db := openDeleteTestDB(t, false)
@@ -254,7 +197,7 @@ func TestDeleteCell_withFacets(t *testing.T) {
 	}
 }
 
-// TestDeleteCell_withEdges verifies outbound edges are removed on delete (v1).
+// TestDeleteCell_withEdges verifies outbound edges are removed on delete.
 func TestDeleteCell_withEdges(t *testing.T) {
 	t.Parallel()
 	db := openDeleteTestDB(t, false)

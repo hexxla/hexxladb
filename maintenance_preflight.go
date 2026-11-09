@@ -2,7 +2,6 @@ package hexxladb
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math"
@@ -31,17 +30,6 @@ type CompactPreflight struct {
 	Space         []MaintenanceSpaceRequirement
 }
 
-// MigrationPreflight reports the source state, resume state, and capacity
-// checked by [PreflightMigrateV1ToV2] or [PreflightMigrateToAuthenticated].
-type MigrationPreflight struct {
-	SourceStorage      StorageStats
-	SourcePrimaryBytes uint64
-	SourceWALBytes     uint64
-	Resumable          bool
-	ProcessedKeys      uint64
-	Space              []MaintenanceSpaceRequirement
-}
-
 type maintenanceSpacePart struct {
 	directory string
 	purpose   string
@@ -56,7 +44,7 @@ func PreflightCompactTo(ctx context.Context, srcPath, destPath string, opts *Opt
 	if err := ctx.Err(); err != nil {
 		return CompactPreflight{}, err
 	}
-	destDirectory, err := validateMaintenancePaths(srcPath, destPath, false)
+	destDirectory, err := validateMaintenancePaths(srcPath, destPath)
 	if err != nil {
 		return CompactPreflight{}, fmt.Errorf("compact preflight: %w", err)
 	}
@@ -89,160 +77,7 @@ func PreflightCompactTo(ctx context.Context, srcPath, destPath string, opts *Opt
 	return plan, nil
 }
 
-// PreflightMigrateV1ToV2 performs the same source-format, credential,
-// changelog-state, resume-identity, path, and conservative capacity checks as
-// [MigrateV1ToV2] without creating a destination or copying a new migration
-// batch. Inspecting an existing partial destination may perform normal WAL
-// recovery. The exact source check creates and removes a temporary locked
-// snapshot, so its cost is proportional to the source recovery set.
-func PreflightMigrateV1ToV2(ctx context.Context, srcPath, destPath string, opts *MigrationOptions) (MigrationPreflight, error) {
-	return preflightMigrateV1ToTarget(ctx, srcPath, destPath, opts)
-}
-
-// PreflightMigrateToAuthenticated performs the same source-format, credential,
-// changelog-state, path, and capacity checks as [MigrateToAuthenticated]
-// without creating or advancing the destination.
-func PreflightMigrateToAuthenticated(ctx context.Context, srcPath, destPath string, opts *MigrationOptions) (MigrationPreflight, error) {
-	if err := validateAuthenticatedMigrationOptions(opts); err != nil {
-		return MigrationPreflight{}, err
-	}
-	hdr, err := engine.ReadHeaderFile(srcPath)
-	if err != nil {
-		return MigrationPreflight{}, fmt.Errorf("authenticated migration preflight: read source header: %w", err)
-	}
-	cloned := *opts
-	cloned.targetAuthenticated = true
-	switch hdr.FormatVersion {
-	case 1:
-		return preflightMigrateV1ToTarget(ctx, srcPath, destPath, &cloned)
-	case 2:
-		_, _, plan, cleanup, err := prepareV2AuthenticatedMigration(ctx, srcPath, destPath, &cloned)
-		if cleanup != nil {
-			cleanup()
-		}
-		return plan, err
-	default:
-		return MigrationPreflight{}, fmt.Errorf(
-			"%w: authenticated migration source format is %d, want 1 or 2",
-			ErrInvalidArgument,
-			hdr.FormatVersion,
-		)
-	}
-}
-
-func preflightMigrateV1ToTarget(ctx context.Context, srcPath, destPath string, opts *MigrationOptions) (MigrationPreflight, error) {
-	if err := validateMigrationInputs(ctx, srcPath, destPath, opts); err != nil {
-		return MigrationPreflight{}, err
-	}
-	snapshotDirectory, err := migrationSnapshotDirectory(destPath, opts)
-	if err != nil {
-		return MigrationPreflight{}, err
-	}
-	plan, err := migrationCapacityPreflight(srcPath, destPath, snapshotDirectory)
-	if err != nil {
-		return plan, err
-	}
-
-	src, header, digest, cleanup, err := openMigrationSource(ctx, srcPath, opts, snapshotDirectory)
-	if err != nil {
-		return plan, err
-	}
-	defer cleanup()
-	storage, statsErr := src.StorageStats()
-	closeErr := src.Close()
-	if statsErr != nil {
-		return plan, fmt.Errorf("migrate v1 to v2 preflight: source storage: %w", statsErr)
-	}
-	if closeErr != nil {
-		return plan, fmt.Errorf("migrate v1 to v2 preflight: close source: %w", closeErr)
-	}
-	plan.SourceStorage = storage
-
-	resumable, processed, err := inspectMigrationDestination(destPath, header, digest, opts)
-	if err != nil {
-		return plan, err
-	}
-	plan.Resumable = resumable
-	plan.ProcessedKeys = processed
-	return plan, nil
-}
-
-func migrationCapacityPreflight(srcPath, destPath, snapshotDirectory string) (MigrationPreflight, error) {
-	destDirectory, err := validateMaintenancePaths(srcPath, destPath, true)
-	if err != nil {
-		return MigrationPreflight{}, fmt.Errorf("migrate v1 to v2 preflight: %w", err)
-	}
-	primaryBytes, err := maintenanceFileBytes(srcPath)
-	if err != nil {
-		return MigrationPreflight{}, fmt.Errorf("migrate v1 to v2 preflight: source: %w", err)
-	}
-	walBytes, err := optionalMaintenanceFileBytes(engine.WalPath(srcPath))
-	if err != nil {
-		return MigrationPreflight{}, fmt.Errorf("migrate v1 to v2 preflight: source WAL: %w", err)
-	}
-	snapshotBytes := saturatingAdd(primaryBytes, walBytes)
-	destinationBytes := saturatingAdd(saturatingMultiply(primaryBytes, 2), walBytes)
-	space, spaceErr := inspectMaintenanceSpace([]maintenanceSpacePart{
-		{directory: snapshotDirectory, purpose: "migration source snapshot", required: snapshotBytes},
-		{directory: destDirectory, purpose: "migration destination", required: destinationBytes},
-	})
-	plan := MigrationPreflight{
-		SourcePrimaryBytes: primaryBytes,
-		SourceWALBytes:     walBytes,
-		Space:              space,
-	}
-	if spaceErr != nil {
-		return plan, fmt.Errorf("migrate v1 to v2 preflight: %w", spaceErr)
-	}
-	return plan, nil
-}
-
-func inspectMigrationDestination(
-	path string,
-	sourceHeader engine.Header,
-	digest [sha256.Size]byte,
-	opts *MigrationOptions,
-) (bool, uint64, error) {
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return false, 0, nil
-	} else if err != nil {
-		return false, 0, fmt.Errorf("migrate v1 to v2 preflight: destination: %w", err)
-	}
-
-	dest, err := openDBWithMigration(path, migrationDestinationOptions(sourceHeader, opts), false, true)
-	if err != nil {
-		return false, 0, fmt.Errorf("migrate v1 to v2 preflight: open destination: %w", err)
-	}
-	state, found, stateErr := loadMigrationState(dest.btree)
-	closeErr := dest.Close()
-	if stateErr != nil {
-		return false, 0, fmt.Errorf("migrate v1 to v2 preflight: read destination resume state: %w", stateErr)
-	}
-	if closeErr != nil {
-		return false, 0, fmt.Errorf("migrate v1 to v2 preflight: close destination: %w", closeErr)
-	}
-	if !found || state.sourceDigest != digest {
-		return false, 0, fmt.Errorf("%w: destination is not a matching resumable migration", ErrInvalidArgument)
-	}
-	return true, state.processedKeys, nil
-}
-
-func migrationSnapshotDirectory(destPath string, opts *MigrationOptions) (string, error) {
-	directory := ""
-	if opts != nil {
-		directory = opts.SnapshotDirectory
-	}
-	if directory == "" {
-		directory = filepath.Dir(destPath)
-	}
-	resolved, err := existingMaintenanceDirectory(directory)
-	if err != nil {
-		return "", fmt.Errorf("migrate v1 to v2 preflight: snapshot directory: %w", err)
-	}
-	return resolved, nil
-}
-
-func validateMaintenancePaths(srcPath, destPath string, allowExistingDestination bool) (string, error) {
+func validateMaintenancePaths(srcPath, destPath string) (string, error) {
 	if srcPath == "" || destPath == "" {
 		return "", fmt.Errorf("%w: source and destination paths must be non-empty", ErrInvalidArgument)
 	}
@@ -271,32 +106,16 @@ func validateMaintenancePaths(srcPath, destPath string, allowExistingDestination
 		if os.SameFile(sourceInfo, destinationInfo) {
 			return "", fmt.Errorf("%w: source and destination identify the same file", ErrInvalidArgument)
 		}
-		if !allowExistingDestination {
-			return "", fmt.Errorf("destination %q: %w", destPath, os.ErrExist)
-		}
+		return "", fmt.Errorf("destination %q: %w", destPath, os.ErrExist)
 	case !errors.Is(destinationErr, os.ErrNotExist):
 		return "", fmt.Errorf("destination: %w", destinationErr)
 	}
-	if destinationErr != nil && allowExistingDestination {
-		if _, err := os.Stat(engine.WalPath(destinationAbsolute)); err == nil {
-			return "", fmt.Errorf("destination WAL %q exists without a primary: %w", engine.WalPath(destPath), os.ErrExist)
+	for _, component := range []string{engine.WalPath(destinationAbsolute), destinationAbsolute + "-changelog"} {
+		if _, err := os.Stat(component); err == nil {
+			return "", fmt.Errorf("destination component %q: %w", component, os.ErrExist)
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("destination WAL: %w", err)
+			return "", fmt.Errorf("destination component %q: %w", component, err)
 		}
-	}
-	if !allowExistingDestination {
-		for _, component := range []string{engine.WalPath(destinationAbsolute), destinationAbsolute + "-changelog"} {
-			if _, err := os.Stat(component); err == nil {
-				return "", fmt.Errorf("destination component %q: %w", component, os.ErrExist)
-			} else if !errors.Is(err, os.ErrNotExist) {
-				return "", fmt.Errorf("destination component %q: %w", component, err)
-			}
-		}
-	}
-	if _, err := os.Stat(destinationAbsolute + "-changelog"); err == nil {
-		return "", fmt.Errorf("destination changelog %q: %w", destPath+"-changelog", os.ErrExist)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("destination changelog: %w", err)
 	}
 	return existingMaintenanceDirectory(filepath.Dir(destinationAbsolute))
 }
@@ -330,25 +149,6 @@ func maintenanceSourceOptions(opts *Options) *Options {
 	cloned.ChangelogPath = ""
 	cloned.ChangelogLazy = false
 	return &cloned
-}
-
-func maintenanceFileBytes(path string) (uint64, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0, err
-	}
-	if !info.Mode().IsRegular() || info.Size() < 0 {
-		return 0, fmt.Errorf("%w: %q is not a regular file with a valid size", ErrInvalidArgument, path)
-	}
-	return uint64(info.Size()), nil //nolint:gosec // size is checked non-negative above.
-}
-
-func optionalMaintenanceFileBytes(path string) (uint64, error) {
-	bytes, err := maintenanceFileBytes(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return 0, nil
-	}
-	return bytes, err
 }
 
 func inspectMaintenanceSpace(parts []maintenanceSpacePart) ([]MaintenanceSpaceRequirement, error) {

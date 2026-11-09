@@ -893,7 +893,7 @@ func TestQueryCells_MaxScanRowsReturnsPartialResultsAndSignal(t *testing.T) {
 
 func TestQueryCells_MaxScanRowsCountsPhysicalMVCCRows(t *testing.T) {
 	t.Parallel()
-	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "query-mvcc.db"), &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "query-mvcc.db"), &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

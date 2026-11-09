@@ -16,17 +16,16 @@ Workstream numbers remain stable when completed items are removed.
 | Measured HNSW envelope | Retain the measured 20,000×32d and 10,000×384d limits; rerun bounded vector evidence before raising them. |
 | Sparse coordinates | Retain sparsity as a logical property; use authenticated page reuse, bounded tail reclaim, and explicit compaction for physical storage. |
 | Caller-owned semantic placement | Retain this as a product boundary: applications own meaning and anchor selection; the database must not infer either. |
-| Extend-only storage | Authenticated v3 reuses generation-safe pages and supports explicit tail reclaim; plaintext/legacy formats retain documented compaction. |
-| Pre-v1 API stability | Preserve the candidate baseline while collecting the graduation evidence below. |
+| Extend-only storage | Authenticated v3 reuses generation-safe pages and supports explicit tail reclaim; plaintext v2 uses documented compaction. |
+| Pre-v1 API stability | Record intentional pre-v1 changes and guard against accidental API drift. |
 
 ### 7. Eventual v1 graduation evidence
 
 **Outcome:** Graduate only after production and release evidence supports the
 already classified candidate API, without accelerating the version number.
 
-- Preserve the exact exported-API baseline, migration notes, and at least one
-  minor-release deprecation window except for urgent correctness or security
-  failures.
+- Keep the exported API baseline current and document deliberate pre-v1
+  breaks and any required offline conversion.
 - Complete a named limited-production adoption, recovery drill,
   deployment-specific supported-scale evidence, and signed release rehearsal on
   the eventual candidate commit.

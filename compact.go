@@ -85,7 +85,7 @@ func compactTo(ctx context.Context, srcPath, destPath string, opts *Options, com
 		return err
 	}
 	if rebuildMVCCIndexes {
-		if _, err := validateMaintenancePaths(srcPath, destPath, false); err != nil {
+		if _, err := validateMaintenancePaths(srcPath, destPath); err != nil {
 			return fmt.Errorf("repair MVCC indexes: %w", err)
 		}
 	}
@@ -118,7 +118,7 @@ func compactTo(ctx context.Context, srcPath, destPath string, opts *Options, com
 	}
 	ch := src.cachedHdr.Load()
 	srcTx := &Tx{db: src, readSeq: ch.commitSeq, cachedBTreeRoot: ch.btreeRoot}
-	return compactFromTx(ctx, srcTx, destPath, compactDestOpts(srcHdr, opts), srcHdr, copyOpts, nil, rebuildMVCCIndexes)
+	return compactFromTx(ctx, srcTx, destPath, compactDestOpts(srcHdr, opts), srcHdr, copyOpts, rebuildMVCCIndexes)
 }
 
 // Compact creates a compacted copy of the open database at destPath. The source
@@ -159,7 +159,7 @@ func (db *DB) CompactWithOptions(ctx context.Context, destPath string, compactOp
 	}
 	ch := db.cachedHdr.Load()
 	srcTx := &Tx{db: db, readSeq: ch.commitSeq, cachedBTreeRoot: ch.btreeRoot}
-	return compactFromTx(ctx, srcTx, destPath, compactDestOpts(srcHdr, nil), srcHdr, copyOpts, nil, false)
+	return compactFromTx(ctx, srcTx, destPath, compactDestOpts(srcHdr, nil), srcHdr, copyOpts, false)
 }
 
 func resolveCompactOptions(opts *CompactOptions) (CompactOptions, error) {
@@ -180,8 +180,6 @@ func resolveCompactOptions(opts *CompactOptions) (CompactOptions, error) {
 func compactDestOpts(hdr engine.Header, srcOpts *Options) *Options {
 	o := &Options{
 		newIncompleteCompaction: true,
-		newLegacyEncryption:     hdr.FormatVersion != engine.AuthenticatedFormatVersion,
-		EnableMVCC:              hdr.FormatVersion >= 2,
 		PageSize:                hdr.PageSize,
 		MaxValueBytes:           hdr.MaxValueBytes,
 		EmbeddingDimension:      hdr.EmbeddingDim,
@@ -205,12 +203,8 @@ func compactFromTx(
 	destOpts *Options,
 	srcHdr engine.Header,
 	copyOpts CompactOptions,
-	skipKey func([]byte) bool,
 	rebuildMVCCIndexes bool,
 ) (retErr error) {
-	if rebuildMVCCIndexes && !srcTx.db.useMVCC {
-		return ErrMVCCRequired
-	}
 	dest, err := openDB(destPath, destOpts, true)
 	if err != nil {
 		return fmt.Errorf("compact: create dest: %w", err)
@@ -224,22 +218,11 @@ func compactFromTx(
 			removeDBFiles(destPath)
 		}
 	}()
-	if err := compactCopyTx(ctx, srcTx, dest, copyOpts, skipKey, rebuildMVCCIndexes); err != nil {
-		return err
+	if err := copyPhysicalRows(ctx, srcTx, dest, copyOpts, rebuildMVCCIndexes); err != nil {
+		return fmt.Errorf("compact: %w", err)
 	}
-	if srcHdr.FormatVersion >= 2 {
-		dest.mu.Lock()
-		err = dest.eng.UpdateHeader(func(h *engine.Header) {
-			h.CommitSeq = srcHdr.CommitSeq
-		})
-		if err == nil {
-			dest.writeSeqNext.Store(srcHdr.CommitSeq)
-			dest.storeCachedHeader(srcHdr.CommitSeq, dest.cachedHdr.Load().btreeRoot)
-		}
-		dest.mu.Unlock()
-		if err != nil {
-			return fmt.Errorf("compact: update dest header: %w", err)
-		}
+	if err := restorePhysicalCopyHead(dest, srcHdr.CommitSeq); err != nil {
+		return fmt.Errorf("compact: update dest header: %w", err)
 	}
 	if copyOpts.VerifyDestination || rebuildMVCCIndexes {
 		healthConfig := DefaultHealthCheckConfig()
@@ -271,7 +254,19 @@ func healthReportHasErrors(report HealthReport) bool {
 	return len(report.OrphanedSeams) > 0 || report.TagIndexErrors > 0 || report.SourceIndexErrors > 0
 }
 
-func compactCopyTx(ctx context.Context, srcTx *Tx, dest *DB, opts CompactOptions, skipKey func([]byte) bool, rebuildMVCCIndexes bool) error {
+func restorePhysicalCopyHead(dest *DB, seq uint64) error {
+	dest.mu.Lock()
+	defer dest.mu.Unlock()
+	header, err := dest.eng.UpdateHeaderGet(func(h *engine.Header) { h.CommitSeq = seq })
+	if err != nil {
+		return err
+	}
+	dest.writeSeqNext.Store(seq)
+	dest.storeCachedHeader(seq, header.BTreeRoot)
+	return nil
+}
+
+func copyPhysicalRows(ctx context.Context, srcTx *Tx, dest *DB, opts CompactOptions, rebuildMVCCIndexes bool) error {
 	batch := make([]compactPair, 0, opts.BatchSize)
 	var copiedKeys uint64
 	var copyErr error
@@ -279,10 +274,10 @@ func compactCopyTx(ctx context.Context, srcTx *Tx, dest *DB, opts CompactOptions
 		if len(batch) == 0 {
 			return nil
 		}
-		if err := writeCompactBatch(ctx, dest, batch); err != nil {
+		if err := writePhysicalCopyBatch(ctx, dest, batch); err != nil {
 			return err
 		}
-		copiedKeys += uint64(len(batch)) //nolint:gosec // batch length is non-negative and bounded to 4096.
+		copiedKeys += uint64(len(batch)) //nolint:gosec // batch length is non-negative.
 		if opts.OnProgress != nil {
 			opts.OnProgress(CompactProgress{CopiedKeys: copiedKeys})
 		}
@@ -304,9 +299,6 @@ func compactCopyTx(ctx context.Context, srcTx *Tx, dest *DB, opts CompactOptions
 		if copyErr = ctx.Err(); copyErr != nil {
 			return false
 		}
-		if skipKey != nil && skipKey(k) {
-			return true
-		}
 		if rebuildMVCCIndexes && isRebuiltSecondaryKey(k) {
 			if len(v) != 0 {
 				copyErr = fmt.Errorf("%w: secondary key %x has a nonempty value", ErrCorruptDatabase, k)
@@ -321,13 +313,13 @@ func compactCopyTx(ctx context.Context, srcTx *Tx, dest *DB, opts CompactOptions
 		return copyErr == nil
 	})
 	if err != nil {
-		return fmt.Errorf("compact: scan src: %w", err)
+		return fmt.Errorf("scan source: %w", err)
 	}
 	if copyErr != nil {
-		return fmt.Errorf("compact: copy: %w", copyErr)
+		return fmt.Errorf("copy rows: %w", copyErr)
 	}
 	if err := flush(); err != nil {
-		return fmt.Errorf("compact: copy: %w", err)
+		return fmt.Errorf("copy rows: %w", err)
 	}
 	return nil
 }
@@ -402,12 +394,12 @@ func updateCompactIncompleteMarker(ctx context.Context, dest *DB, present bool) 
 	return nil
 }
 
-func writeCompactBatch(ctx context.Context, dest *DB, batch []compactPair) error {
+func writePhysicalCopyBatch(ctx context.Context, dest *DB, batch []compactPair) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	// Compaction copies physical records verbatim. Using DB.Update here would
+	// A physical copy preserves versioned records verbatim. Using DB.Update here would
 	// synthesize an MVCC commit-time row for every batch, making the destination
 	// observably different from the source and potentially advancing its history.
 	dest.mu.Lock()

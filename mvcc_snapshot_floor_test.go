@@ -12,7 +12,7 @@ import (
 func TestMVCCPrunePreservesCutoffStateAndPersistsFloor(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "history.db")
-	db, err := Open(path, &Options{EnableMVCC: true})
+	db, err := Open(path, &Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestMVCCPrunePreservesCutoffStateAndPersistsFloor(t *testing.T) {
 func TestMVCCUnmarkedFileAdoptsCurrentHead(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "legacy-history.db")
-	db, err := Open(path, &Options{EnableMVCC: true})
+	db, err := Open(path, &Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

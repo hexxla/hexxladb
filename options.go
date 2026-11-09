@@ -1,9 +1,5 @@
 package hexxladb
 
-import (
-	"time"
-)
-
 // MVCCRetention configures optional defaults for [DB.SuggestedPruneBeforeSeq] and [DB.MVCCPrunePlan].
 // Zero values mean automatic prune suggestions are disabled (operators pass explicit beforeSeq to [DB.PruneCellVersions]).
 type MVCCRetention struct {
@@ -21,14 +17,7 @@ type Options struct {
 	// newIncompleteCompaction is set only for an exclusively created internal
 	// compaction destination so its first durable header is fail-closed.
 	newIncompleteCompaction bool
-	// newLegacyEncryption is used only by source-preserving maintenance that
-	// must retain an existing format-v1/v2 AES-XTS destination layout.
-	newLegacyEncryption bool
-	// EnableMVCC, when true, creates new databases at engine format v2 with MVCC versioned keys
-	// (see [docs/hexxladb/TX.md] for snapshot semantics and [docs/hexxladb/OPERATIONS.md] for retention/pruning).
-	// Existing v1 files are never auto-upgraded; they keep single-version behavior until migrated.
-	EnableMVCC bool
-	// MVCCRetention is optional policy for [DB.SuggestedPruneBeforeSeq] / [DB.MVCCPrunePlan] (ignored for v1 files).
+	// MVCCRetention is optional policy for [DB.SuggestedPruneBeforeSeq] / [DB.MVCCPrunePlan].
 	MVCCRetention MVCCRetention
 	// ChangelogEnabled, when true, maintains an append-only logical changefeed file (see [docs/hexxladb/CHANGEFEED.md]).
 	// With [EncryptionKey] or [Passphrase], new changelogs use authenticated encryption automatically;
@@ -40,20 +29,12 @@ type Options struct {
 	// until 256 records are pending or [DB.Close]. A crash may redeliver intents after reopen but
 	// cannot permanently lose a committed event while the primary database remains recoverable.
 	ChangelogLazy bool
-	// BeforeWritePage optional transform before a data page is logged and written.
-	// If [EncryptionKey] or [Passphrase] is set, custom hooks must not be used.
-	BeforeWritePage func(pageID uint64, plain []byte) (out []byte, err error)
-	// AfterReadPage optional transform after reading a data page from disk.
-	AfterReadPage func(pageID uint64, data []byte) (out []byte, err error)
-
-	// EncryptionKey is an optional secret for authenticated at-rest encryption
-	// of new databases. Existing legacy AES-XTS databases remain readable with
-	// the same credential; see [docs/hexxladb/ENCRYPTION.md].
+	// EncryptionKey is an optional secret for authenticated at-rest encryption.
 	// Stretched with HKDF-SHA256; use a key with at least 128 bits of entropy.
-	// Mutually exclusive with [Passphrase] and with custom page hooks.
+	// Mutually exclusive with [Passphrase].
 	EncryptionKey []byte
 	// Passphrase optional user passphrase; combined with Argon2id and the per-database salt in the file header.
-	// Mutually exclusive with [EncryptionKey] and custom page hooks.
+	// Mutually exclusive with [EncryptionKey].
 	Passphrase string
 
 	// CellValidator optional pre-write validation hook. When set, [Tx.PutCell] calls
@@ -93,11 +74,6 @@ type Options struct {
 	// platforms (e.g. Linux) instead of fsync(2) for engine durability barriers. Default false; see
 	// [docs/hexxladb/DURABILITY.md] before enabling in production.
 	UsePrimaryFdatasync bool
-	// GroupWALMaxBatchWait is retained for source compatibility. It is ignored.
-	//
-	// Deprecated: Batch records in one [DB.Update] to share a durability barrier.
-	GroupWALMaxBatchWait time.Duration
-
 	// EmbeddingDimension optionally pre-sets the fixed vector dimension for new databases.
 	// When 0 (default), the dimension is auto-detected from the first [Tx.PutEmbedding] call
 	// and persisted in the file header. When non-zero, the dimension is set at creation time.

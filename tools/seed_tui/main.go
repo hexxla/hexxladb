@@ -28,7 +28,7 @@ func seed(ctx context.Context, dir string) error {
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		return err
 	}
-	db, err := hexxladb.Open(filepath.Join(dir, "fixture.db"), &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(filepath.Join(dir, "fixture.db"), &hexxladb.Options{})
 	if err != nil {
 		return err
 	}

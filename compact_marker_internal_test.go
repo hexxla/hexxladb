@@ -49,3 +49,24 @@ func TestIncompleteCompactionHeaderFailsClosedUntilFinalized(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestOpenRefusesUnfinishedOfflineConversion(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "candidate.db")
+	db, err := Open(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Update(func(tx *Tx) error {
+		return tx.putDirect([]byte("__meta/migration/v1-to-v2/checkpoint"), []byte{1})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenExisting(path, nil); !errors.Is(err, ErrMigrationIncomplete) {
+		t.Fatalf("OpenExisting = %v, want ErrMigrationIncomplete", err)
+	}
+}

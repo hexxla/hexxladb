@@ -1,7 +1,6 @@
 package hexxladb
 
 import (
-	"crypto/aes"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -12,54 +11,15 @@ import (
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/hkdf"
-	"golang.org/x/crypto/xts"
 
 	"github.com/hexxla/hexxladb/internal/engine"
 )
-
-const xtsKeyBytes = 64 // AES-256-XTS: two 256-bit keys
 
 const (
 	authenticatedMasterBytes = 32
 	hkdfInfoAuthenticatedV3  = "hexxladb-authenticated-master-v3"
 	pageEnvelopePrefixBytes  = 8 + chacha20poly1305.NonceSizeX
 )
-
-// buildEncryptionHooks returns AES-XTS page transforms for data pages (pageID >= 1).
-// Page 0 (file header) is never encrypted.
-func buildEncryptionHooks(xtsKey []byte) (*engine.PageHooks, error) {
-	if len(xtsKey) != xtsKeyBytes {
-		return nil, fmt.Errorf("hexxladb: internal xts key length %d", len(xtsKey))
-	}
-	cipher, err := xts.NewCipher(aes.NewCipher, xtsKey)
-	if err != nil {
-		return nil, err
-	}
-	return &engine.PageHooks{
-		BeforeWrite: func(pageID uint64, plain []byte) ([]byte, error) {
-			if pageID == 0 {
-				return plain, nil
-			}
-			if !engine.IsValidPageSize(uint32(len(plain))) || len(plain)%16 != 0 { //nolint:gosec // len is positive
-				return nil, engine.ErrBadPageSize
-			}
-			out := make([]byte, len(plain))
-			cipher.Encrypt(out, plain, pageID)
-			return out, nil
-		},
-		AfterRead: func(pageID uint64, data []byte) ([]byte, error) {
-			if pageID == 0 {
-				return data, nil
-			}
-			if !engine.IsValidPageSize(uint32(len(data))) || len(data)%16 != 0 { //nolint:gosec // len is positive
-				return nil, engine.ErrBadPageSize
-			}
-			out := make([]byte, len(data))
-			cipher.Decrypt(out, data, pageID)
-			return out, nil
-		},
-	}, nil
-}
 
 // buildAuthenticatedEncryptionHooks returns format-v3 page transforms. The
 // physical envelope is generation(8) || random nonce(24) || ciphertext || tag(16).
@@ -139,19 +99,6 @@ func deriveHeaderMACKey(master []byte, salt [16]byte) [32]byte {
 	return deriveEncryptionSubkey(master, salt, "hexxladb-header-mac-v3")
 }
 
-// deriveXTSKeyMaterial derives a 64-byte AES-XTS key from an arbitrary-length secret using HKDF-SHA256.
-func deriveXTSKeyMaterial(secret, salt, info []byte) ([]byte, error) {
-	if len(secret) == 0 {
-		return nil, errors.New("hexxladb: empty encryption secret")
-	}
-	r := hkdf.New(sha256.New, secret, salt, info)
-	out := make([]byte, xtsKeyBytes)
-	if _, err := r.Read(out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // DeriveKeyFromPassphrase derives raw key material using Argon2id (for use with [Open] passphrase mode).
 func DeriveKeyFromPassphrase(passphrase string, salt []byte) ([]byte, error) {
 	if passphrase == "" {
@@ -168,8 +115,8 @@ func DeriveKeyFromPassphrase(passphrase string, salt []byte) ([]byte, error) {
 	return argon2.IDKey([]byte(passphrase), salt, time, memory, threads, keyLen), nil
 }
 
-func deriveEncryptionKeyCheck(xtsKey []byte, salt [16]byte) [engine.HeaderEncryptionKeyCheckLen]byte {
-	mac := hmac.New(sha256.New, xtsKey)
+func deriveEncryptionKeyCheck(master []byte, salt [16]byte) [engine.HeaderEncryptionKeyCheckLen]byte {
+	mac := hmac.New(sha256.New, master)
 	_, _ = mac.Write([]byte("hexxladb-m9-key-check-v1"))
 	_, _ = mac.Write(salt[:])
 	sum := mac.Sum(nil)
@@ -178,8 +125,8 @@ func deriveEncryptionKeyCheck(xtsKey []byte, salt [16]byte) [engine.HeaderEncryp
 	return out
 }
 
-func deriveWALMACKey(xtsKey []byte) [32]byte {
-	mac := hmac.New(sha256.New, xtsKey)
+func deriveWALMACKey(master []byte) [32]byte {
+	mac := hmac.New(sha256.New, master)
 	_, _ = mac.Write([]byte("hexxladb-m9-wal-mac-v1"))
 	sum := mac.Sum(nil)
 	var out [32]byte
@@ -187,8 +134,8 @@ func deriveWALMACKey(xtsKey []byte) [32]byte {
 	return out
 }
 
-func deriveChangelogKey(xtsKey []byte, salt [16]byte) [32]byte {
-	mac := hmac.New(sha256.New, xtsKey)
+func deriveChangelogKey(master []byte, salt [16]byte) [32]byte {
+	mac := hmac.New(sha256.New, master)
 	_, _ = mac.Write([]byte("hexxladb-changelog-master-v2"))
 	_, _ = mac.Write(salt[:])
 	sum := mac.Sum(nil)

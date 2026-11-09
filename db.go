@@ -1,6 +1,7 @@
 package hexxladb
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"sync"
@@ -26,7 +27,6 @@ type DB struct {
 	eng           *engine.Engine
 	btree         *engine.BTree
 	changelog     *changelog.Log
-	useMVCC       bool             // true when on-disk format is v2+ (MVCC physical keys; see [Options.EnableMVCC]).
 	mvccRetention MVCCRetention    // copy of [Options.MVCCRetention] at [Open] for [SuggestedPruneBeforeSeq].
 	cellValidator CellValidator    // optional pre-write hook from [Options.CellValidator].
 	afterPutCell  AfterPutCellHook // optional post-write hook from [Options.AfterPutCell].
@@ -85,10 +85,6 @@ func OpenExisting(path string, opts *Options) (*DB, error) {
 }
 
 func openDB(path string, opts *Options, createExclusive bool) (*DB, error) {
-	return openDBWithMigration(path, opts, createExclusive, false)
-}
-
-func openDBWithMigration(path string, opts *Options, createExclusive, allowIncompleteMigration bool) (*DB, error) {
 	pendingRotation, err := rotationPending(path)
 	if err != nil {
 		return nil, err
@@ -96,11 +92,11 @@ func openDBWithMigration(path string, opts *Options, createExclusive, allowIncom
 	if pendingRotation {
 		return nil, ErrRotationIncomplete
 	}
-	eopts, xtsKey, err := openEngineOptions(path, opts, createExclusive)
+	eopts, master, err := openEngineOptions(path, opts, createExclusive)
 	if err != nil {
-		return nil, err
+		return nil, mapEngineOpenError(path, err)
 	}
-	defer clear(xtsKey)
+	defer clear(master)
 	eng, err := engine.Open(path, eopts)
 	if err != nil {
 		return nil, mapEngineOpenError(path, err)
@@ -114,26 +110,12 @@ func openDBWithMigration(path string, opts *Options, createExclusive, allowIncom
 		_ = eng.Close()
 		return nil, ErrCompactionIncomplete
 	}
-	if err := openValidateEncryption(opts, hdr); err != nil {
-		_ = eng.Close()
-		return nil, err
-	}
-	if eopts.ExpectEncryptionKeyCheck &&
-		hdr.Features&engine.FeatureEncryptedDataPages != 0 &&
-		hdr.EncryptionKeyCheck == ([engine.HeaderEncryptionKeyCheckLen]byte{}) {
-		if err := eng.UpdateHeader(func(h *engine.Header) {
-			h.EncryptionKeyCheck = eopts.EncryptionKeyCheck
-		}); err != nil {
-			_ = eng.Close()
-			return nil, err
-		}
-	}
 	bt := engine.OpenBTree(eng)
-	if err := rejectIncompleteMigration(bt, allowIncompleteMigration); err != nil {
+	if err := rejectIncompleteMigration(bt); err != nil {
 		_ = eng.Close()
 		return nil, mapEngineDataError(err)
 	}
-	db := &DB{eng: eng, btree: bt, useMVCC: hdr.FormatVersion >= 2}
+	db := &DB{eng: eng, btree: bt}
 	db.writeSeqNext.Store(hdr.CommitSeq)
 	db.storeCachedHeader(hdr.CommitSeq, hdr.BTreeRoot)
 	if err := db.loadSnapshotFloor(hdr.CommitSeq); err != nil {
@@ -151,7 +133,7 @@ func openDBWithMigration(path string, opts *Options, createExclusive, allowIncom
 		db.afterPutSeam = opts.AfterPutSeam
 	}
 	if opts != nil && opts.ChangelogEnabled {
-		if err := db.openChangelog(path, opts, hdr, xtsKey); err != nil {
+		if err := db.openChangelog(path, opts, hdr, master); err != nil {
 			_ = eng.Close()
 			return nil, err
 		}
@@ -160,7 +142,7 @@ func openDBWithMigration(path string, opts *Options, createExclusive, allowIncom
 }
 
 func openEngineOptions(path string, opts *Options, createExclusive bool) (*engine.Options, []byte, error) {
-	eopts, xtsKey, err := buildEngineOptions(path, opts)
+	eopts, master, err := buildEngineOptions(path, opts)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -177,10 +159,10 @@ func openEngineOptions(path string, opts *Options, createExclusive bool) (*engin
 		eopts.NewIncompleteCompaction = opts.newIncompleteCompaction
 		eopts.RequireExistingPrimary = opts.requireExistingPrimary
 	}
-	return eopts, xtsKey, nil
+	return eopts, master, nil
 }
 
-func (db *DB) openChangelog(path string, opts *Options, hdr engine.Header, xtsKey []byte) error {
+func (db *DB) openChangelog(path string, opts *Options, hdr engine.Header, master []byte) error {
 	db.changelogLazy = opts.ChangelogLazy
 	pendingOutbox, err := db.readPendingChangelogIntents()
 	if err != nil {
@@ -194,12 +176,12 @@ func (db *DB) openChangelog(path string, opts *Options, hdr engine.Header, xtsKe
 	syncWrites := !opts.ChangelogLazy
 	var cl *changelog.Log
 	switch {
-	case len(xtsKey) > 0 && recoverableTail:
-		changelogKey := deriveChangelogKey(xtsKey, hdr.EncryptionSalt)
+	case len(master) > 0 && recoverableTail:
+		changelogKey := deriveChangelogKey(master, hdr.EncryptionSalt)
 		cl, err = changelog.OpenEncryptedRecoverable(clPath, syncWrites, changelogKey[:])
 		clear(changelogKey[:])
-	case len(xtsKey) > 0:
-		changelogKey := deriveChangelogKey(xtsKey, hdr.EncryptionSalt)
+	case len(master) > 0:
+		changelogKey := deriveChangelogKey(master, hdr.EncryptionSalt)
 		cl, err = changelog.OpenEncrypted(clPath, syncWrites, changelogKey[:])
 		clear(changelogKey[:])
 	case recoverableTail:
@@ -245,11 +227,14 @@ func mapEngineOpenError(path string, err error) error {
 	}
 }
 
-func rejectIncompleteMigration(bt *engine.BTree, allow bool) error {
-	if allow {
-		return nil
-	}
-	incomplete, err := hasIncompleteMigration(bt)
+// Refuse unpublished candidates left by the offline pre-v1 converter.
+func rejectIncompleteMigration(bt *engine.BTree) error {
+	prefix := []byte("__meta/migration/v1-to-v2/")
+	incomplete := false
+	err := bt.AscendRange(prefix, []byte("__meta/migration/v1-to-v20"), func(key, _ []byte) bool {
+		incomplete = bytes.HasPrefix(key, prefix)
+		return false
+	})
 	if err != nil {
 		return err
 	}
@@ -340,17 +325,17 @@ func (db *DB) MaxValueBytes() uint32 {
 	return db.eng.MaxValueBytes()
 }
 
-// GroupWALStats reports the number of WAL commit attempts and successful redo
-// syncs. The middle counter is retained for compatibility and always returns zero.
+// WALStats reports the number of WAL commit attempts and successful redo
+// syncs.
 // Redo syncs exclude the sync used to reset the WAL after a durable commit.
-func (db *DB) GroupWALStats() (applyBatches, batchesWith2PlusJobs, walSynces uint64) {
+func (db *DB) WALStats() (commitAttempts, redoSyncs uint64) {
 	if db == nil {
-		return 0, 0, 0
+		return 0, 0
 	}
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	if db.eng == nil {
-		return 0, 0, 0
+		return 0, 0
 	}
-	return db.eng.GroupWALStats()
+	return db.eng.WALStats()
 }

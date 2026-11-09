@@ -37,10 +37,6 @@ func run(args []string) int {
 		return cmdCheck(rest)
 	case "compact":
 		return cmdCompact(rest)
-	case "migrate-v1-to-v2":
-		return cmdMigrateV1ToV2(rest)
-	case "migrate-to-authenticated":
-		return cmdMigrateToAuthenticated(rest)
 	case "stats":
 		return cmdStats(rest)
 	case "prune":
@@ -72,10 +68,6 @@ Commands:
   info      Print database info: page size, value limit, commit seq, file size
   check     Run full integrity check; exits non-zero if errors are found
   compact   Copy-compact src to dest: hexxladb compact -o <dest> <src>
-  migrate-v1-to-v2
-            Migrate v1 src to a distinct v2 dest: hexxladb migrate-v1-to-v2 -o <dest> <src>
-  migrate-to-authenticated
-            Migrate v1/v2 src to encrypted v3: hexxladb migrate-to-authenticated -o <dest> <src>
   stats     Print MVCC and reclaimable-storage statistics
   prune     Prune a bounded batch of cell versions before a cutoff
   reclaim-tail

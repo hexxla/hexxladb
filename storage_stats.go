@@ -18,7 +18,7 @@ import (
 type StorageStats struct {
 	PageSize uint64
 	// PhysicalPageSize includes any authenticated-page envelope. It equals
-	// PageSize for plaintext and legacy XTS databases.
+	// PageSize for plaintext databases.
 	PhysicalPageSize uint64
 	PrimaryBytes     uint64
 	WALBytes         uint64

@@ -18,7 +18,7 @@ var (
 
 func TestContradictionRoundTrip(t *testing.T) {
 	t.Parallel()
-	db := openTestDB(t, &hxdb.Options{EnableMVCC: true})
+	db := openTestDB(t, &hxdb.Options{})
 	service := app.New(New(db))
 	id, err := service.Record(t.Context(), left, right, "conflicting inspections")
 	if err != nil {
@@ -60,7 +60,7 @@ func TestRecordConflictRollsBackWhenSeamWriteFails(t *testing.T) {
 	t.Parallel()
 	rejected := errors.New("seam rejected")
 	db := openTestDB(t, &hxdb.Options{
-		EnableMVCC: true,
+
 		AfterPutSeam: hxdb.AfterPutSeamHookFunc(func(context.Context, hxdb.SeamRecord) error {
 			return rejected
 		}),

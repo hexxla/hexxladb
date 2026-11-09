@@ -2,19 +2,16 @@ package hexxladb
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"fmt"
 	"math"
 	"path/filepath"
-	"slices"
 	"time"
 
 	"github.com/hexxla/hexxladb/internal/engine"
 	"github.com/hexxla/hexxladb/internal/fsutil"
 	"github.com/hexxla/hexxladb/internal/hnsw"
 	"github.com/hexxla/hexxladb/internal/index"
-	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
 const (
@@ -73,21 +70,12 @@ func (db *DB) RebuildEmbeddingIndex(ctx context.Context, opts *EmbeddingIndexReb
 	stats.Vectors = len(candidates)
 	stats.Revision = revision
 
-	storage := newMemoryHNSWStorage(candidates)
 	buildStarted := time.Now()
-	graph := hnsw.NewGraph(storage, engine.SimilarityFunc(db.EmbeddingMetric()))
-	for _, candidate := range candidates {
-		if err := ctx.Err(); err != nil {
-			return stats, err
-		}
-		if err := graph.Insert(candidate.coord, candidate.vec); err != nil {
-			return stats, fmt.Errorf("build embedding graph: %w", err)
-		}
+	graph, err := hnsw.Build(ctx, candidates, engine.SimilarityFunc(db.EmbeddingMetric()))
+	if err != nil {
+		return stats, err
 	}
 	stats.BuildDuration = time.Since(buildStarted)
-	if err := storage.validate(); err != nil {
-		return stats, fmt.Errorf("validate embedding graph: %w", err)
-	}
 	if hook := db.embeddingRebuildFaults; hook != nil && hook.beforePublish != nil {
 		hook.beforePublish()
 	}
@@ -104,7 +92,7 @@ func (db *DB) RebuildEmbeddingIndex(ctx context.Context, opts *EmbeddingIndexReb
 		if !found || !state.dirty || state.revision != revision {
 			return ErrEmbeddingIndexChanged
 		}
-		if err := tx.replaceEmbeddingGraph(ctx, storage); err != nil {
+		if err := tx.replaceEmbeddingGraph(ctx, graph); err != nil {
 			return err
 		}
 		state.dirty = false
@@ -219,13 +207,8 @@ func (db *DB) markEmbeddingIndexDirty() error {
 	})
 }
 
-type embeddingRebuildCandidate struct {
-	coord lattice.PackedCoord
-	vec   []float32
-}
-
-func (db *DB) snapshotEmbeddingsForRebuild(ctx context.Context, maxVectors int) ([]embeddingRebuildCandidate, uint64, error) {
-	var candidates []embeddingRebuildCandidate
+func (db *DB) snapshotEmbeddingsForRebuild(ctx context.Context, maxVectors int) ([]hnsw.Embedding, uint64, error) {
+	var candidates []hnsw.Embedding
 	var revision uint64
 	err := db.View(func(tx *Tx) error {
 		state, found, err := tx.loadEmbeddingIndexState()
@@ -260,7 +243,7 @@ func (db *DB) snapshotEmbeddingsForRebuild(ctx context.Context, maxVectors int) 
 				scanErr = decodeErr
 				return false
 			}
-			candidates = append(candidates, embeddingRebuildCandidate{coord: coord, vec: vector})
+			candidates = append(candidates, hnsw.Embedding{Coord: coord, Vector: vector})
 			return true
 		})
 		if err != nil {
@@ -271,7 +254,7 @@ func (db *DB) snapshotEmbeddingsForRebuild(ctx context.Context, maxVectors int) 
 	return candidates, revision, err
 }
 
-func (tx *Tx) replaceEmbeddingGraph(ctx context.Context, storage *memoryHNSWStorage) error {
+func (tx *Tx) replaceEmbeddingGraph(ctx context.Context, graph hnsw.BuiltGraph) error {
 	var nodeKeys [][]byte
 	if err := tx.AscendRange([]byte(index.HNSWNodePrefix), index.HNSWNodeKeyEnd(), func(key, _ []byte) bool {
 		if err := ctx.Err(); err != nil {
@@ -302,146 +285,20 @@ func (tx *Tx) replaceEmbeddingGraph(ctx context.Context, storage *memoryHNSWStor
 	if err := tx.deleteDirect([]byte(index.HNSWEntryKey)); err != nil {
 		return err
 	}
-	if storage.meta == nil {
+	if graph.Meta == nil {
 		return nil
 	}
 	persisted := &txHNSWStorage{tx: tx}
-	for _, coord := range storage.sortedNodeCoords() {
+	for _, node := range graph.Nodes {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := persisted.PutHNSWNode(storage.nodes[coord]); err != nil {
+		if err := persisted.PutHNSWNode(node); err != nil {
 			return err
 		}
 	}
-	if err := persisted.PutHNSWEntry(storage.entry); err != nil {
+	if err := persisted.PutHNSWEntry(graph.Entry); err != nil {
 		return err
 	}
-	return persisted.PutHNSWMeta(storage.meta)
-}
-
-type memoryHNSWStorage struct {
-	embeddings map[lattice.PackedCoord][]float32
-	meta       *hnsw.Meta
-	entry      lattice.PackedCoord
-	entryFound bool
-	nodes      map[lattice.PackedCoord]*hnsw.Node
-}
-
-func newMemoryHNSWStorage(candidates []embeddingRebuildCandidate) *memoryHNSWStorage {
-	embeddings := make(map[lattice.PackedCoord][]float32, len(candidates))
-	for _, candidate := range candidates {
-		embeddings[candidate.coord] = candidate.vec
-	}
-	return &memoryHNSWStorage{
-		embeddings: embeddings,
-		nodes:      make(map[lattice.PackedCoord]*hnsw.Node, len(candidates)),
-	}
-}
-
-func (s *memoryHNSWStorage) GetHNSWMeta() (*hnsw.Meta, bool, error) {
-	return s.meta, s.meta != nil, nil
-}
-
-func (s *memoryHNSWStorage) PutHNSWMeta(meta *hnsw.Meta) error {
-	s.meta = meta
-	return nil
-}
-
-func (s *memoryHNSWStorage) GetHNSWEntry() (lattice.PackedCoord, bool, error) {
-	return s.entry, s.entryFound, nil
-}
-
-func (s *memoryHNSWStorage) PutHNSWEntry(entry lattice.PackedCoord) error {
-	s.entry = entry
-	s.entryFound = true
-	return nil
-}
-
-func (s *memoryHNSWStorage) DeleteHNSWEntry() error {
-	s.entry = lattice.PackedCoord{}
-	s.entryFound = false
-	return nil
-}
-
-func (s *memoryHNSWStorage) GetHNSWNode(coord lattice.PackedCoord) (*hnsw.Node, bool, error) {
-	node, found := s.nodes[coord]
-	return node, found, nil
-}
-
-func (s *memoryHNSWStorage) PutHNSWNode(node *hnsw.Node) error {
-	s.nodes[node.Coord] = node
-	return nil
-}
-
-func (s *memoryHNSWStorage) DeleteHNSWNode(coord lattice.PackedCoord) error {
-	delete(s.nodes, coord)
-	return nil
-}
-
-func (s *memoryHNSWStorage) WalkHNSWNodes(visit func(*hnsw.Node)) error {
-	for _, node := range s.nodes {
-		visit(node)
-	}
-	return nil
-}
-
-func (s *memoryHNSWStorage) GetEmbeddingVec(coord lattice.PackedCoord) ([]float32, bool, error) {
-	vector, found := s.embeddings[coord]
-	return vector, found, nil
-}
-
-func (s *memoryHNSWStorage) sortedNodeCoords() []lattice.PackedCoord {
-	coords := make([]lattice.PackedCoord, 0, len(s.nodes))
-	for coord := range s.nodes {
-		coords = append(coords, coord)
-	}
-	slices.SortFunc(coords, func(a, b lattice.PackedCoord) int {
-		if order := cmp.Compare(a[1], b[1]); order != 0 {
-			return order
-		}
-		return cmp.Compare(a[0], b[0])
-	})
-	return coords
-}
-
-func (s *memoryHNSWStorage) validate() error {
-	if len(s.embeddings) == 0 {
-		if s.meta != nil || s.entryFound || len(s.nodes) != 0 {
-			return fmt.Errorf("empty embedding set produced graph records")
-		}
-		return nil
-	}
-	if s.meta == nil || !s.entryFound {
-		return fmt.Errorf("non-empty graph has no meta or entry point")
-	}
-	if s.meta.Count != uint64(len(s.embeddings)) { //nolint:gosec // rebuild vector count is bounded to 20000.
-		return fmt.Errorf("meta count %d does not match embeddings %d", s.meta.Count, len(s.embeddings))
-	}
-	if len(s.nodes) != len(s.embeddings) {
-		return fmt.Errorf("node count %d does not match embeddings %d", len(s.nodes), len(s.embeddings))
-	}
-	if _, found := s.nodes[s.entry]; !found {
-		return fmt.Errorf("entry point has no node")
-	}
-	for coord, node := range s.nodes {
-		if node == nil || node.Coord != coord || len(node.Neighbors) != int(node.MaxLayer)+1 {
-			return fmt.Errorf("invalid node structure")
-		}
-		for layer, neighbors := range node.Neighbors {
-			limit := int(s.meta.M)
-			if layer == 0 {
-				limit *= 2
-			}
-			if len(neighbors) > limit {
-				return fmt.Errorf("node degree exceeds layer limit")
-			}
-			for _, neighbor := range neighbors {
-				if _, found := s.nodes[neighbor]; !found {
-					return fmt.Errorf("node references missing neighbor")
-				}
-			}
-		}
-	}
-	return nil
+	return persisted.PutHNSWMeta(graph.Meta)
 }

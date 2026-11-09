@@ -237,8 +237,12 @@ func TestFilterSuperseded_OriginSuccessor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	stats, err := db.StatsMVCC()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		return hexxladb.PutRawFixture(tx, index.CellKey(packed), []byte{1})
+		return hexxladb.PutRawFixture(tx, index.CellKeyWithVersion(packed, stats.CommitSeq+1), []byte{1})
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -16,7 +16,7 @@ if err != nil {
 defer db.Close()
 ```
 
-`Open` creates the file if it doesn't exist, or opens an existing one. On open it replays any pending WAL entries. Passing `nil` for options uses defaults (no MVCC, embedding dimension auto-detected on first write, 4 KiB pages).
+`Open` creates the file if it doesn't exist, or opens an existing one. On open it replays any pending WAL entries. Passing `nil` for options uses defaults (plaintext MVCC, embedding dimension auto-detected on first write, 4 KiB pages).
 
 ---
 
@@ -28,7 +28,6 @@ All fields on `hexxladb.Options`. Fields marked **immutable** are persisted in t
 
 | Field           | Type            | Default | Immutable | Description                                                                                                                                           |
 | --------------- | --------------- | ------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `EnableMVCC`    | `bool`          | `false` | yes       | Plaintext creation uses format v2 with snapshot isolation, time-travel, and version history. Official encryption creates authenticated MVCC format v3 regardless of this flag. |
 | `MVCCRetention` | `MVCCRetention` | zero    | no        | Policy for `SuggestedPruneBeforeSeq`. `RetainCommitsBehindHead` keeps N commits of history.                                                           |
 | `PageSize`      | `uint32`        | `4096`  | yes       | B+ tree page size. Accepted: `4096`, `8192`, `16384`, `65536`. Larger pages = fewer I/O ops for big values; smaller = less waste for small DBs.       |
 | `MaxValueBytes` | `uint32`        | `8192`  | no        | Max encoded value size per B+ tree entry. Accepted: 512 to 1048576 (powers of 2). A non-zero value on reopen updates the persisted limit for subsequent writes; existing values are unchanged. |
@@ -65,13 +64,12 @@ evidence.
 
 | Field           | Type     | Default | Description                                                                                                                                                  |
 | --------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `EncryptionKey` | `[]byte` | `nil`   | Creates new databases with authenticated XChaCha20-Poly1305 format v3; opens legacy AES-XTS files through their frozen derivation. Use ≥128 bits of entropy. Mutually exclusive with `Passphrase` and custom page hooks. |
-| `Passphrase`    | `string` | `""`    | Argon2id plus the per-database salt feeds the same authenticated v3 key hierarchy. Existing legacy passphrase files remain readable. Mutually exclusive with `EncryptionKey` and custom page hooks. |
+| `EncryptionKey` | `[]byte` | `nil`   | Creates new databases with authenticated XChaCha20-Poly1305 format v3. Use ≥128 bits of entropy. Mutually exclusive with `Passphrase`. |
+| `Passphrase`    | `string` | `""`    | Argon2id plus the per-database salt feeds the same authenticated v3 key hierarchy. Existing legacy passphrase files remain readable. Mutually exclusive with `EncryptionKey`. |
 
 Authenticated v3 adds 48 physical bytes per logical data page. `PageSize`
 remains the logical B+ tree capacity; inspect `StorageStats.PhysicalPageSize`
-for the on-disk stride. Opening an encrypted v1/v2 file does not auto-upgrade
-it; use `MigrateToAuthenticated` or offline key rotation.
+for the on-disk stride. Engine v1 and AES-XTS files require [offline conversion](./OPERATIONS.md#offline-conversion-of-retired-files).
 
 ### Changelog
 
@@ -96,16 +94,6 @@ Convenience adapters: `CellValidatorFunc`, `AfterPutCellHookFunc`, `AfterPutSeam
 | Field                  | Type            | Default | Description                                                                                                                  |
 | ---------------------- | --------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `UsePrimaryFdatasync`  | `bool`          | `false` | Use `fdatasync(2)` instead of `fsync(2)` on the primary file (Linux). See `DURABILITY.md`.                                   |
-| `GroupWALMaxBatchWait` | `time.Duration` | `0`     | Deprecated and ignored. Batch records in one `DB.Update` to share a commit. |
-
-### Page hooks (advanced)
-
-| Field             | Type                                                | Description                                                               |
-| ----------------- | --------------------------------------------------- | ------------------------------------------------------------------------- |
-| `BeforeWritePage` | `func(pageID uint64, plain []byte) ([]byte, error)` | Transform before page is logged/written. Cannot be used with encryption.  |
-| `AfterReadPage`   | `func(pageID uint64, data []byte) ([]byte, error)`  | Transform after reading a page from disk. Cannot be used with encryption. |
-
----
 
 ## Common configurations
 
@@ -121,7 +109,6 @@ No MVCC, embedding dimension auto-detected on first vector write, 4 KiB pages, 8
 
 ```go
 db, _ := hexxladb.Open("memory.db", &hexxladb.Options{
-    EnableMVCC:         true,
     EmbeddingDimension: 384,
     DistanceMetric:     hexxladb.DistanceCosine,
     PageSize:           4096,
@@ -135,7 +122,6 @@ MVCC for time-travel and snapshot diffing. For the measured deferred HNSW envelo
 
 ```go
 db, _ := hexxladb.Open("prod.db", &hexxladb.Options{
-    EnableMVCC:         true,
     EmbeddingDimension: 384,
     DistanceMetric:     hexxladb.DistanceCosine,
     PageSize:           4096,
@@ -165,7 +151,6 @@ if _, err := rand.Read(key); err != nil {
     log.Fatal(err)
 }
 db, _ := hexxladb.Open("encrypted.db", &hexxladb.Options{
-    EnableMVCC:    true,
     EncryptionKey: key,
 })
 ```
@@ -174,10 +159,10 @@ db, _ := hexxladb.Open("encrypted.db", &hexxladb.Options{
 
 ## Persisted and per-open fields
 
-- **Engine format and page size** are fixed when the database is created. `EnableMVCC`, encryption credentials, and `PageSize` do not convert an existing file; use the documented migration workflow when a new format is required. Compaction preserves the source format.
+- **Engine format and page size** are fixed when the database is created. Use [offline conversion](./OPERATIONS.md#offline-conversion-of-retired-files) for retired formats. Compaction preserves the source format.
 - **Embedding dimension and metric** become fixed together when configured at creation or detected on the first `PutEmbedding`. A conflicting non-zero embedding configuration on reopen returns `ErrInvalidArgument`.
 - **`MaxValueBytes` is persisted but mutable.** Passing a supported non-zero value on reopen updates the stored limit for subsequent writes. Existing values are not rewritten, and lowering the limit does not remove them.
-- **Encryption mode and credentials** cannot be changed through ordinary `Open`; use `MigrateToAuthenticated` when the legacy source must be preserved or `RotateEncryption` for an offline replacement.
+- **Encryption mode and credentials** cannot be changed through ordinary `Open`; use `RotateEncryption` for an offline replacement.
 - **Per-open fields** such as hooks, changelog selection, MVCC retention, page-cache budget, and durability tuning take effect for that handle and can change between opens subject to their documented compatibility checks.
 
 ---

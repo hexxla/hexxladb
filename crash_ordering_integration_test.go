@@ -32,7 +32,7 @@ func TestIntegration_crashChild(t *testing.T) {
 	if os.Getenv("HEXXLADB_TEST_AUTHENTICATED") == "1" {
 		opts = &hexxladb.Options{EncryptionKey: []byte("authenticated crash barrier key")}
 	} else if os.Getenv("HEXXLADB_TEST_CHANGEFEED") == "1" {
-		opts = &hexxladb.Options{EnableMVCC: true, ChangelogEnabled: true}
+		opts = &hexxladb.Options{ChangelogEnabled: true}
 	}
 	db, err := hexxladb.Open(path, opts)
 	if err != nil {
@@ -69,7 +69,7 @@ func TestIntegration_changefeedCommitPhasesAfterSigKill(t *testing.T) {
 			if err := startChangefeedChildAndKill9(t, path, ready, phase); err != nil {
 				t.Fatal(err)
 			}
-			opts := &hexxladb.Options{EnableMVCC: true, ChangelogEnabled: true}
+			opts := &hexxladb.Options{ChangelogEnabled: true}
 			db, err := hexxladb.Open(path, opts)
 			if err != nil {
 				t.Fatalf("reopen: %v", err)
@@ -255,7 +255,7 @@ func TestIntegration_plaintextMVCCRecoversSequenceWithPages(t *testing.T) {
 			}
 			dir := t.TempDir()
 			path := filepath.Join(dir, "plaintext-mvcc.db")
-			opts := &hexxladb.Options{EnableMVCC: true, ChangelogEnabled: true}
+			opts := &hexxladb.Options{ChangelogEnabled: true}
 			key := mustPackTest(t, hexxladb.Coord{Q: 1})
 			update := func(db *hexxladb.DB, content string) error {
 				return db.Update(func(tx *hexxladb.Tx) error {

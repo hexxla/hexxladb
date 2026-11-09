@@ -13,7 +13,7 @@ func createTestEngine(t *testing.T) (eng *Engine, cleanup func()) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.db")
 	var err error
-	eng, err = Open(path, &Options{PageSize: 4096, UseFormatV2: true})
+	eng, err = Open(path, &Options{PageSize: 4096})
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
 	}

@@ -122,7 +122,7 @@ func TestEstimateEmbeddingIndexRebuildBytes(t *testing.T) {
 
 func openInternalRebuildDB(t *testing.T) (*DB, lattice.PackedCoord) {
 	t.Helper()
-	db, err := Open(filepath.Join(t.TempDir(), "internal-rebuild.db"), &Options{EnableMVCC: true, EmbeddingDimension: 3})
+	db, err := Open(filepath.Join(t.TempDir(), "internal-rebuild.db"), &Options{EmbeddingDimension: 3})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -223,7 +223,7 @@ func TestHealthCheck_ResolvedSeamCounting(t *testing.T) {
 
 func TestHealthCheck_MVCC(t *testing.T) {
 	t.Parallel()
-	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "health_mvcc.db"), &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "health_mvcc.db"), &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestHealthCheck_MVCC(t *testing.T) {
 // both the initial PutSeam and a later ResolveSeam as two seams.
 func TestHealthCheck_MVCC_seam_resolve_not_double_counted(t *testing.T) {
 	t.Parallel()
-	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "health_mvcc_seam.db"), &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "health_mvcc_seam.db"), &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestHealthCheck_MVCC_seam_resolve_not_double_counted(t *testing.T) {
 // not only “visible head cell exists”.
 func TestHealthCheck_MVCC_churn_then_delete_cleanSecondaries(t *testing.T) {
 	t.Parallel()
-	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "health_mvcc_churn.db"), &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "health_mvcc_churn.db"), &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

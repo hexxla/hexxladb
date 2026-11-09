@@ -28,7 +28,7 @@ func TestIntegration_MVCC_sustainedPutCellSameKey(t *testing.T) {
 	const iterations = 6000
 	const retainBehind uint64 = 400
 	db, err := hexxladb.Open(path, &hexxladb.Options{
-		EnableMVCC: true,
+
 		MVCCRetention: hexxladb.MVCCRetention{
 			RetainCommitsBehindHead: retainBehind,
 		},
@@ -120,7 +120,7 @@ func TestIntegration_MVCC_sustainedPutCellSameKey(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	db, err = hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+	db, err = hexxladb.Open(path, &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

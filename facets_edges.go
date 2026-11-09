@@ -23,12 +23,7 @@ func (tx *Tx) PutFacet(rec FacetWalkRecord) error {
 	if err != nil {
 		return err
 	}
-	var key []byte
-	if tx.db.useMVCC {
-		key, err = index.FacetKeyWithVersion(rec.Key, rec.FacetID, tx.writeSeq)
-	} else {
-		key, err = index.FacetKey(rec.Key, rec.FacetID)
-	}
+	key, err := index.FacetKeyWithVersion(rec.Key, rec.FacetID, tx.writeSeq)
 	if err != nil {
 		return err
 	}
@@ -90,23 +85,6 @@ func (tx *Tx) AscendFacetsForCell(key PackedCoord, fn func(FacetWalkRecord) bool
 	}
 	if tx.db.activeEng() == nil {
 		return ErrDatabaseClosed
-	}
-	if !tx.db.useMVCC {
-		lo, err := index.FacetRangeLower(key)
-		if err != nil {
-			return err
-		}
-		hi, err := index.FacetRangeUpper(key)
-		if err != nil {
-			return err
-		}
-		return tx.AscendRange(lo, hi, func(_, v []byte) bool {
-			rec, err := record.DecodeFacet(v)
-			if err != nil {
-				return false
-			}
-			return fn(rec)
-		})
 	}
 	for facetID := byte(0); facetID <= index.MaxFacetID; facetID++ {
 		raw, ok, err := tx.getFacetVisibleRaw(key, facetID)

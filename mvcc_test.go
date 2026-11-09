@@ -14,36 +14,11 @@ import (
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
-func TestMVCC_existingV1_notUpgradedByFlag(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "v1.db")
-	db, err := hexxladb.Open(path, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	db2, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db2.Close() })
-	hdr, err := engine.ReadHeaderFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if hdr.FormatVersion != 1 {
-		t.Fatalf("existing file should stay v1: got %d", hdr.FormatVersion)
-	}
-}
-
 func TestMVCC_newFile_formatV2(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mvcc.db")
-	db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(path, &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +36,7 @@ func TestMVCC_ViewAt_visibility(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "v.db")
-	db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(path, &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +86,7 @@ func TestMVCC_ViewAt_rejectsFutureSeq(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "f.db")
-	db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(path, &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +106,7 @@ func TestMVCC_reopen_seesHistory(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "r.db")
 	{
-		db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+		db, err := hexxladb.Open(path, &hexxladb.Options{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -145,7 +120,7 @@ func TestMVCC_reopen_seesHistory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(path, &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +145,7 @@ func TestMVCC_StatsAndPruneCellVersions(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "prune.db")
-	db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(path, &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +198,7 @@ func TestMVCC_SuggestedPruneBeforeSeq_andPlan(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "retention.db")
 	db, err := hexxladb.Open(path, &hexxladb.Options{
-		EnableMVCC:    true,
+
 		MVCCRetention: hexxladb.MVCCRetention{RetainCommitsBehindHead: 50},
 	})
 	if err != nil {
@@ -270,7 +245,7 @@ func TestMVCC_PruneCellVersionsByProfile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "prune_profile.db")
-	db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(path, &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +273,7 @@ func TestMVCC_ViewAtTime_visibility(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "view_at_time.db")
-	db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(path, &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

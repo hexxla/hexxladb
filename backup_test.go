@@ -31,7 +31,7 @@ func putBackupCell(t *testing.T, db *hexxladb.DB, coord hexxladb.Coord, content 
 func TestBackupToActiveMVCCRestoresCapturedSnapshot(t *testing.T) {
 	t.Parallel()
 	sourcePath := filepath.Join(t.TempDir(), "source.db")
-	db, err := hexxladb.Open(sourcePath, &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(sourcePath, &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestBackupToEncryptedChangelogUsesDestinationSidecar(t *testing.T) {
 	}
 	key := bytes.Repeat([]byte{0x42}, 32)
 	db, err := hexxladb.Open(sourcePath, &hexxladb.Options{
-		EnableMVCC:       true,
+
 		ChangelogEnabled: true,
 		ChangelogPath:    customChangelogPath,
 		ChangelogLazy:    true,

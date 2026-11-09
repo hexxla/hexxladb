@@ -198,8 +198,8 @@ func TestUpdate_lazyChangelogSyncsAndCleansOutboxOnClose(t *testing.T) {
 	}
 }
 
-func TestUpdate_formatV1ChangelogFailureRecoversAfterReopen(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "format-v1.db")
+func TestUpdate_plaintextChangelogFailureRecoversAfterReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "plaintext-v2.db")
 	opts := &Options{ChangelogEnabled: true}
 	db, err := Open(path, opts)
 	if err != nil {
@@ -212,9 +212,9 @@ func TestUpdate_formatV1ChangelogFailureRecoversAfterReopen(t *testing.T) {
 	db.commitFaults = &commitFaultHooks{
 		beforeChangelogAppend: func() error { return errInjectedCommitBoundary },
 	}
-	err = putRecoveryCell(t, db, coord, "format-v1")
+	err = putRecoveryCell(t, db, coord, "plaintext-v2")
 	if !errors.Is(err, ErrCommitDurable) {
-		t.Fatalf("format-v1 durable classification: %v", err)
+		t.Fatalf("plaintext-v2 durable classification: %v", err)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
@@ -225,10 +225,10 @@ func TestUpdate_formatV1ChangelogFailureRecoversAfterReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	assertRecoveryCell(t, db, coord, "format-v1", true)
+	assertRecoveryCell(t, db, coord, "plaintext-v2", true)
 	changes, err := db.ReadChangelogSince(0, 10)
 	if err != nil || len(changes) != 1 {
-		t.Fatalf("format-v1 recovered changes: records=%#v err=%v", changes, err)
+		t.Fatalf("plaintext-v2 recovered changes: records=%#v err=%v", changes, err)
 	}
 }
 
@@ -268,7 +268,7 @@ func TestOpen_recoversIncompleteProjectedTailFromPrimaryOutbox(t *testing.T) {
 func TestOpen_encryptedPrimaryOutboxRecoversEncryptedChangelog(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "encrypted-outbox.db")
 	opts := &Options{
-		EnableMVCC:       true,
+
 		ChangelogEnabled: true,
 		EncryptionKey:    bytes.Repeat([]byte{0x39}, 32),
 	}
@@ -316,7 +316,7 @@ func openCommitRecoveryDB(t *testing.T, path string, lazy bool) (*DB, lattice.Pa
 }
 
 func commitRecoveryOptions(lazy bool) *Options {
-	return &Options{EnableMVCC: true, ChangelogEnabled: true, ChangelogLazy: lazy}
+	return &Options{ChangelogEnabled: true, ChangelogLazy: lazy}
 }
 
 func putRecoveryCell(t *testing.T, db *DB, coord lattice.PackedCoord, content string) error {

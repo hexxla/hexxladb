@@ -129,9 +129,17 @@ func TestDB_openReplaysPendingWAL(t *testing.T) {
 	}
 
 	payload := bytes.Repeat([]byte{0x99}, engine.DefaultPageSize)
+	header, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary.BigEndian.PutUint64(header[16:24], 1)   // final WAL sequence
+	binary.BigEndian.PutUint64(header[24:32], 2)   // next page ID
+	binary.BigEndian.PutUint64(header[512:520], 1) // number of redo frames
+	marker := encodeTestWALRecord(1, 0, header)
 	rec := encodeTestWALRecord(1, 1, payload)
 	wal := walPathForDB(path)
-	if err := os.WriteFile(wal, rec, 0o600); err != nil {
+	if err := os.WriteFile(wal, append(marker, rec...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

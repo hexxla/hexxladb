@@ -44,7 +44,7 @@ func TestStorageMaintenanceRepresentativeChurn(t *testing.T) {
 	ctx := t.Context()
 	srcPath := filepath.Join(t.TempDir(), "churn.db")
 	db, err := hexxladb.Open(srcPath, &hexxladb.Options{
-		EnableMVCC:       true,
+
 		ChangelogEnabled: true,
 	})
 	if err != nil {
@@ -157,7 +157,7 @@ func TestStorageMaintenanceRepresentativeChurn(t *testing.T) {
 		}
 	}
 
-	dest, err := hexxladb.Open(destPath, &hexxladb.Options{EnableMVCC: true})
+	dest, err := hexxladb.Open(destPath, &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestStorageMaintenanceRepresentativeChurn(t *testing.T) {
 
 func TestCompactWithOptionsCancellationCanRetry(t *testing.T) {
 	t.Parallel()
-	db, _ := openCompactDB(t, &hexxladb.Options{EnableMVCC: true})
+	db, _ := openCompactDB(t, &hexxladb.Options{})
 	if err := db.Update(func(tx *hexxladb.Tx) error {
 		for i := range 24 {
 			key, err := hexxladb.Pack(hexxladb.Coord{Q: i, R: 0})

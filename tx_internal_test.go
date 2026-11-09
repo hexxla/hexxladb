@@ -12,7 +12,7 @@ import (
 
 func TestUpdate_changelogFailureRecoversCommittedStateAndEventAfterReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "recover-finalization.db")
-	opts := &Options{EnableMVCC: true, ChangelogEnabled: true}
+	opts := &Options{ChangelogEnabled: true}
 	db, err := Open(path, opts)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestUpdate_wrapsFinalizationError_changelog(t *testing.T) {
 func TestUpdate_wrapsFinalizationError_header(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "hdr_fail.db")
-	db, err := Open(path, &Options{EnableMVCC: true})
+	db, err := Open(path, &Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

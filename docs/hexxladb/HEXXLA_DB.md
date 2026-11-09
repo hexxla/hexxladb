@@ -9,7 +9,7 @@ HexxlaDB is an embedded, hex-native database implemented by this module. The sta
 The engine uses one B+ tree over byte-ordered key families, backed by fixed-size pages and a redo WAL. Coordinates are Morton-packed so spatial addresses have a stable ordered representation. Lattice operations, records, and secondary indexes are part of the database implementation rather than adapters over a third-party SQL or key-value engine.
 
 `PageSize` is the logical B+ tree page capacity. Plaintext and legacy encrypted
-v1/v2 files use the same physical stride. Authenticated encrypted v3 adds a
+v2 files use the logical page size as their physical stride. Authenticated encrypted v3 adds a
 48-byte generation/nonce/tag envelope to every data page while leaving page 0
 at one logical page. The exact byte layout belongs to
 [`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md).
@@ -87,12 +87,7 @@ ordering non-total. Raw application key/value rows remain application-owned.
 
 ## MVCC physical keys
 
-Format v1 stores one physical value for each logical key and overwrites it in place.
-
-When a new plaintext database is created with `Options.EnableMVCC`, format v2
-appends a commit-sequence suffix to versioned cell, facet, edge, seam, and
-secondary keys. New encrypted databases use authenticated format v3 and the
-same MVCC physical-key rules regardless of `EnableMVCC`. Multiple committed
+Plaintext v2 and authenticated encrypted v3 use the same MVCC physical-key rules. Multiple committed
 versions then coexist. Cell, facet, and seam point reads seek backward from the
 transaction's `read_seq` bound and stop at the newest visible version; they do
 not scan the logical key's full history.
@@ -144,18 +139,7 @@ The measured deferred-rebuild envelope uses 4 KiB B+ tree pages for 20,000 vecto
 
 The query and content-search APIs can use embedding similarity for seed selection, but spatial expansion after seed selection remains deterministic and does not require vectors.
 
-Format v1 cannot become v2 by changing the header: cell, facet, seam, and
-secondary physical keys differ. `MigrateV1ToV2` therefore performs a
-source-preserving logical rewrite and verification into a distinct file. It
-retains the visible records, immutable indexes, embedding configuration, and raw
-application key/value rows while starting a new MVCC commit timeline. Incomplete
-destinations carry private `__meta/migration/v1-to-v2/` resume state and are
-refused by ordinary `Open`.
-
-`MigrateToAuthenticated` creates a distinct encrypted v3 candidate from v1 or
-v2. It preserves the source and rebuilds v1 versioned/derived keys or retains
-the full v2 MVCC keyspace as appropriate. Older libraries refuse v3; the source
-or a pre-upgrade backup is the downgrade path.
+Retired single-version and AES-XTS files require [offline conversion](./OPERATIONS.md#offline-conversion-of-retired-files).
 
 ## Logical changefeed
 

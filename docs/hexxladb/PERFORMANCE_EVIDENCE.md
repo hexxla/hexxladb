@@ -194,7 +194,8 @@ go test -run '^$' \
 The preselected acceptance budgets were no more than 30% median regression in
 the page transform, no additional transform allocation count, and no more than
 2% primary-file overhead at the default 4 KiB logical page size. Median direct
-transform results were:
+transform results were recorded before the AES-XTS path was retired. The
+current benchmark measures the authenticated transform:
 
 | Logical page | Transform | Legacy AES-XTS | V3 XChaCha20-Poly1305 |
 | --- | --- | ---: | ---: |

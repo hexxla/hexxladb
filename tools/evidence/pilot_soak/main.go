@@ -357,7 +357,7 @@ func newWorkload(cfg config) (*workload, error) {
 		return nil, fmt.Errorf("generate encryption key: %w", err)
 	}
 	opts := &hexxladb.Options{
-		EnableMVCC:         true,
+
 		ChangelogEnabled:   true,
 		EncryptionKey:      key,
 		PageSize:           pageSize,

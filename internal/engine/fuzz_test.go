@@ -8,7 +8,7 @@ import (
 
 func FuzzDecodeHeaderPage(f *testing.F) {
 	h := Header{
-		FormatVersion:  formatVersionV1,
+		FormatVersion:  formatVersionV2,
 		PageSize:       uint32(DefaultPageSize),
 		LastWALSeq:     1,
 		NextPageID:     2,

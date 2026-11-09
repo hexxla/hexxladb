@@ -20,10 +20,7 @@ func (tx *Tx) seamSourceSecondaryKey(rec record.SeamRecord, commitSeq uint64) ([
 	if sid == "" {
 		return nil, nil
 	}
-	if tx.db.useMVCC {
-		return index.SeamSourceKeyWithVersion(sid, rec.ID, commitSeq)
-	}
-	return index.SeamSourceKey(sid, rec.ID)
+	return index.SeamSourceKeyWithVersion(sid, rec.ID, commitSeq)
 }
 
 // seamTimeSecondaryKey returns the seam-time/ index key or (nil, nil) when validity has no week bucket.
@@ -32,10 +29,7 @@ func (tx *Tx) seamTimeSecondaryKey(rec record.SeamRecord, commitSeq uint64) ([]b
 	if !ok {
 		return nil, nil
 	}
-	if tx.db.useMVCC {
-		return index.SeamTimeKeyWithVersion(b, rec.ID, commitSeq)
-	}
-	return index.SeamTimeKey(b, rec.ID)
+	return index.SeamTimeKeyWithVersion(b, rec.ID, commitSeq)
 }
 
 func (tx *Tx) visitSeamSecondaryKeys(rec record.SeamRecord, commitSeq uint64, visit func([]byte) error) error {
@@ -72,17 +66,11 @@ func (tx *Tx) putSeamSecondaryIndex(rec record.SeamRecord, commitSeq uint64) err
 }
 
 func (tx *Tx) seamSourceScanBounds(sourceID string) (from, to []byte, err error) {
-	if tx.db.useMVCC {
-		return index.SeamSourceRangePrefixAllVersions(sourceID)
-	}
-	return index.SeamSourceRangePrefix(sourceID)
+	return index.SeamSourceRangePrefixAllVersions(sourceID)
 }
 
 func (tx *Tx) seamTimeScanBounds(bucket int64) (from, to []byte) {
-	if tx.db.useMVCC {
-		return index.SeamTimeRangePrefixAllVersions(bucket)
-	}
-	return index.SeamTimeRangePrefix(bucket)
+	return index.SeamTimeRangePrefixAllVersions(bucket)
 }
 
 // AscendSeamsBySource scans the seam-source/ secondary index for sourceID and loads each seam primary by ULID.

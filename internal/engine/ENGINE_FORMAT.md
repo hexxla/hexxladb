@@ -1,6 +1,6 @@
 # Engine on-disk format
 
-HexxlaDB uses a **configurable logical page size** (4/8/16/64 KiB; default **4 KiB**), one **primary database file**, and one **WAL file**. Engine format v1 stores unversioned logical rows; format v2 adds MVCC commit sequencing; encrypted format v3 adds authenticated headers, data-page envelopes, and WAL header publication. Numeric fields are **big-endian** unless noted. Bump **`format_version`** or the relevant magic for an incompatible layout change.
+HexxlaDB uses a **configurable logical page size** (4/8/16/64 KiB; default **4 KiB**), one **primary database file**, and one **WAL file**. Plaintext format v2 and encrypted format v3 share MVCC commit sequencing. V3 adds authenticated headers and data-page envelopes. Numeric fields are **big-endian** unless noted. Bump **`format_version`** or the relevant magic for an incompatible layout change.
 
 ## Paths
 
@@ -18,23 +18,23 @@ HexxlaDB uses a **configurable logical page size** (4/8/16/64 KiB; default **4 K
 
 - **Page 0** is the **meta/header page**: the first **512 bytes** hold a fixed **file header**; the remainder of page 0 is reserved (zeros).
 - **Page IDs:** logical **`uint64`**. **Page 0** is header-only. **Pages with id ≥ 1** are data pages.
-- **Formats v1/v2:** physical data-page size equals `PageSize`; page `p` starts at `p * PageSize`.
+- **Plaintext format v2:** physical data-page size equals `PageSize`; page `p` starts at `p * PageSize`.
 - **Authenticated format v3:** each data page has a 48-byte envelope, so `PhysicalPageSize = PageSize + 48`. Page 0 remains exactly `PageSize`; data page `p ≥ 1` starts at `PageSize + (p-1) * PhysicalPageSize`.
-- **Allocation:** authenticated v3 reuses transactionally persisted free pages before extension; v1/v2 remain extend-only. Explicit compaction still repacks fragmented and partially filled pages.
+- **Allocation:** authenticated v3 reuses transactionally persisted free pages before extension; v2 remains extend-only. Explicit compaction still repacks fragmented and partially filled pages.
 
 ## File header (first 512 bytes of page 0)
 
 | Offset | Size | Field                                                                                                                                               |
 | ------ | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0      | 8    | **Magic** ASCII `HEXXLADB` + NUL                                                                                                                    |
-| 8      | 4    | **format_version** `uint32` (**1** = single-version; **2** = MVCC; **3** = MVCC plus authenticated encrypted pages)                              |
+| 8      | 4    | **format_version** `uint32` (**2** = plaintext MVCC; **3** = MVCC plus authenticated encrypted pages)                              |
 | 12     | 4    | **page_size** `uint32` — one of 4096, 8192, 16384, or 65536                                                                                         |
 | 16     | 8    | **last_wal_seq** `uint64` — last WAL sequence applied to the primary file                                                                           |
 | 24     | 8    | **next_page_id** `uint64` — exclusive logical allocation boundary / next extension page id                                                           |
 | 32     | 8    | **btree_root_page** `uint64` — B+ tree root (**0** = empty); see [ORDERED_STORE.md](./ORDERED_STORE.md)                                             |
 | 40     | 4    | **features** `uint32` — bit **0** = encrypted pages; bit **1** = keyed WAL MAC; bit **2** = incomplete compaction candidate; bit **3** = authenticated v3 pages |
 | 44     | 16   | **encryption_salt** — used with Argon2id passphrase mode and keyed encryption verifier derivation                                                   |
-| 60     | 8    | **commit_seq** `uint64` — last committed logical sequence (**format_version ≥ 2**); **zero** when **format_version == 1** (treated as unused)       |
+| 60     | 8    | **commit_seq** `uint64` — last committed logical sequence       |
 | 68     | 32   | **encryption_key_check** — keyed verifier for deterministic wrong-key detection on encrypted DBs                                                    |
 | 100    | 4    | **max_value_bytes** `uint32` — per-database max B+ tree value size; **0** = default (8192)                                                          |
 | 104    | 2    | **embedding_dimension** `uint16` — zero until configured or detected on first vector write                                                          |
@@ -47,7 +47,7 @@ HexxlaDB uses a **configurable logical page size** (4/8/16/64 KiB; default **4 K
 | 171    | 320  | **inline_freelist** — forty `uint64` free page ids; unused slots are zero                                                                             |
 | 491    | 21   | **reserved** (zero)                                                                                                                                   |
 
-An unrecognized **format_version** fails open with `ErrUnsupportedFormatVersion`; the engine never guesses or auto-upgrades. `MigrateV1ToV2` creates a distinct v2 destination. `MigrateToAuthenticated` creates a distinct encrypted v3 destination from v1 or v2. Older libraries refuse v3; there is no in-place downgrade.
+Retired and unknown engine formats fail with `ErrUnsupportedFormatVersion` before WAL replay. See [offline conversion](../../docs/hexxladb/OPERATIONS.md#offline-conversion-of-retired-files) for engine v1 and AES-XTS files.
 
 ## Authenticated data-page envelope (format v3)
 
@@ -66,24 +66,20 @@ The WAL holds redo for one serialized write transaction. Recovery validates the
 entire file with a record-sized buffer before replaying active pages. Only
 records with `seq > last_wal_seq` in the primary header are active.
 
-- **V1 and v2 writes:** The first active record uses `page_id=0`. Its payload
+- **V2 writes:** The first active record uses `page_id=0`. Its payload
   contains the final primary header in bytes 0–511 and a big-endian `uint64`
   page-record count at byte 512. Page records follow in increasing sequence
   order. The marker and last page record share the final redo sequence.
   A header-only commit has count zero and its own sequence.
-- **V3 writes:** The existing authenticated header marker follows the page
+- **V3 writes:** The authenticated header marker follows the page
   records. Its sequence is the last page sequence, or a newly allocated one
   for a header-only commit.
-- **Legacy recovery:** Old v1 page-only redo remains readable. Pending v2
-  page-only redo is refused because the final logical commit header cannot be
-  reconstructed. Clean databases retain the existing primary format and can
-  be opened by older versions. Recover a pending new v1/v2 WAL with a binary
-  that understands the leading marker before downgrading.
+- **Unmarked WAL:** A pending WAL without a commit header is refused.
 
 Recovery writes pages, syncs the primary, publishes and syncs the validated
 header, then clears the WAL.
 
-### WAL record (v1)
+### WAL record
 
 | Field       | Type                    | Notes                                                                                                                                                            |
 | ----------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -156,10 +152,10 @@ publication boundary. Allocation consumes the lowest free id before incrementing
 free or allocator-metadata pages. The lowered authenticated header is durable
 before the primary is truncated. A crash in between leaves excess physical
 bytes beyond `next_page_id`; a retry truncates those bytes. Reachable pages are
-never truncated, and non-tail ranges are never hole-punched. V1/v2 continue to
+never truncated, and non-tail ranges are never hole-punched. Plaintext v2 continues to
 advance `next_page_id`; copy-compaction remains the way to reclaim their dead
 pages and to repack low-fill or fragmented v3 layouts.
 
-## Page I/O hooks (encryption seam)
+## Page I/O
 
-- Optional **BeforeWrite** / **AfterRead** transforms on page bytes (plaintext default). New databases created with official encryption use authenticated v3 XChaCha20-Poly1305 pages. Legacy encrypted v1/v2 files retain their AES-256-XTS transform and physical size. See [ENCRYPTION.md](../../docs/hexxladb/ENCRYPTION.md).
+Plaintext v2 stores logical page bytes directly. Encrypted v3 uses the authenticated page transform at the engine boundary. See [ENCRYPTION.md](../../docs/hexxladb/ENCRYPTION.md).

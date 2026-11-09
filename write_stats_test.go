@@ -10,7 +10,7 @@ import (
 
 func TestDB_WriteStats(t *testing.T) {
 	t.Parallel()
-	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "write-stats.db"), &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "write-stats.db"), &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

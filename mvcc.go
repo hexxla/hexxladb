@@ -30,13 +30,6 @@ func (tx *Tx) getCellVisibleRaw(key lattice.PackedCoord) (raw []byte, commitSeq 
 	if tx.db.activeEng() == nil {
 		return nil, 0, false, ErrDatabaseClosed
 	}
-	if !tx.db.useMVCC {
-		raw, ok, err = tx.Get(index.CellKey(key))
-		if err != nil || !ok {
-			return nil, 0, ok, err
-		}
-		return raw, 0, true, nil
-	}
 	// Same-tx delete takes priority over overlay and btree.
 	if tx.cellDeleted[key] {
 		return nil, 0, false, nil
@@ -79,13 +72,6 @@ func (tx *Tx) getFacetVisibleRaw(p lattice.PackedCoord, facetID byte) (raw []byt
 	if tx.db.activeEng() == nil {
 		return nil, false, ErrDatabaseClosed
 	}
-	if !tx.db.useMVCC {
-		k, err := index.FacetKey(p, facetID)
-		if err != nil {
-			return nil, false, err
-		}
-		return tx.Get(k)
-	}
 	from, err := index.FacetKeyWithVersion(p, facetID, 0)
 	if err != nil {
 		return nil, false, err
@@ -114,17 +100,6 @@ func (tx *Tx) getSeamVisibleRaw(id string) (raw []byte, commitSeq uint64, ok boo
 	}
 	if tx.db.activeEng() == nil {
 		return nil, 0, false, ErrDatabaseClosed
-	}
-	if !tx.db.useMVCC {
-		k, err := index.SeamKey(id)
-		if err != nil {
-			return nil, 0, false, err
-		}
-		raw, ok, err = tx.Get(k)
-		if err != nil || !ok {
-			return nil, 0, ok, err
-		}
-		return raw, 0, true, nil
 	}
 	from, err := index.SeamKeyWithVersion(id, 0)
 	if err != nil {

@@ -86,17 +86,13 @@ func decodeHeaderPage(page []byte) (Header, error) {
 		off := HeaderInlineFreelistOffset + i*8
 		h.InlineFreelist[i] = binary.BigEndian.Uint64(page[off : off+8])
 	}
-	switch h.FormatVersion {
-	case formatVersionV1:
-		h.CommitSeq = 0
-	case formatVersionV2, formatVersionV3:
-		h.CommitSeq = binary.BigEndian.Uint64(page[HeaderCommitSeqOffset : HeaderCommitSeqOffset+8])
-	default:
-		if h.FormatVersion > formatVersionV3 {
-			return Header{}, fmt.Errorf("%w: version %d", ErrUnsupportedFormatVersion, h.FormatVersion)
-		}
-		return Header{}, fmt.Errorf("%w: version %d", ErrCorruptHeader, h.FormatVersion)
+	if h.FormatVersion != formatVersionV2 && h.FormatVersion != formatVersionV3 {
+		return Header{}, fmt.Errorf("%w: version %d", ErrUnsupportedFormatVersion, h.FormatVersion)
 	}
+	if h.FormatVersion == formatVersionV2 && h.Features&FeatureEncryptedDataPages != 0 {
+		return Header{}, fmt.Errorf("%w: legacy encrypted version %d", ErrUnsupportedFormatVersion, h.FormatVersion)
+	}
+	h.CommitSeq = binary.BigEndian.Uint64(page[HeaderCommitSeqOffset : HeaderCommitSeqOffset+8])
 	if !IsValidPageSize(h.PageSize) {
 		return Header{}, fmt.Errorf("%w: unsupported page size %d", ErrCorruptHeader, h.PageSize)
 	}
@@ -113,11 +109,7 @@ func encodeHeaderPage(h Header) []byte {
 	binary.BigEndian.PutUint64(page[32:40], h.BTreeRoot)
 	binary.BigEndian.PutUint32(page[40:44], h.Features)
 	copy(page[44:60], h.EncryptionSalt[:])
-	if h.FormatVersion >= formatVersionV2 {
-		binary.BigEndian.PutUint64(page[HeaderCommitSeqOffset:HeaderCommitSeqOffset+8], h.CommitSeq)
-	} else {
-		binary.BigEndian.PutUint64(page[HeaderCommitSeqOffset:HeaderCommitSeqOffset+8], 0)
-	}
+	binary.BigEndian.PutUint64(page[HeaderCommitSeqOffset:HeaderCommitSeqOffset+8], h.CommitSeq)
 	copy(page[HeaderEncryptionKeyCheckOffset:HeaderEncryptionKeyCheckOffset+HeaderEncryptionKeyCheckLen], h.EncryptionKeyCheck[:])
 	binary.BigEndian.PutUint32(page[HeaderMaxValueBytesOffset:HeaderMaxValueBytesOffset+4], h.MaxValueBytes)
 	binary.BigEndian.PutUint16(page[HeaderEmbeddingDimOffset:HeaderEmbeddingDimOffset+2], h.EmbeddingDim)

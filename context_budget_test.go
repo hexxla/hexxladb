@@ -9,7 +9,7 @@ import (
 func TestContextReaderSharesAndEnforcesWorkBudgets(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	db := openMVCCRegressionDB(t, filepath.Join(t.TempDir(), "budget.db"), &Options{EnableMVCC: true})
+	db := openMVCCRegressionDB(t, filepath.Join(t.TempDir(), "budget.db"), &Options{})
 	t.Cleanup(func() { _ = db.Close() })
 	from, to := Coord{}, Coord{Q: 1}
 	if err := db.Update(func(tx *Tx) error {

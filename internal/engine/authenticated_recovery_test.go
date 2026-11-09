@@ -156,9 +156,9 @@ func authenticatedRecoveryTestOptions() *Options {
 				return bytes.Clone(physical[AuthenticatedPageOverhead:]), nil
 			},
 		},
-		UseFormatV3:        true,
-		NewEncryptedDB:     true,
+
 		NewAuthenticatedDB: true,
+		EncryptionSalt:     [16]byte{1},
 		WALMACKey:          walKey,
 		EnableWALMAC:       true,
 		HeaderMACKey:       headerKey,

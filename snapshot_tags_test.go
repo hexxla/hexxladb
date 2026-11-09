@@ -15,7 +15,7 @@ import (
 func openSnapTagDB(t *testing.T) *hexxladb.DB {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "snap.db")
-	db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(path, &hexxladb.Options{})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestSnapshotTags_PersistsAcrossReopen(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "snap.db")
 
-	db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(path, &hexxladb.Options{})
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestSnapshotTags_PersistsAcrossReopen(t *testing.T) {
 	}
 
 	// Reopen and verify tag is still there.
-	db2, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+	db2, err := hexxladb.Open(path, &hexxladb.Options{})
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}

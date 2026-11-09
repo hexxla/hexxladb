@@ -207,8 +207,8 @@ func runStrategy(ctx context.Context, cfg config, docs []document, policy placem
 	defer func() { _ = os.RemoveAll(tempDir) }()
 	db, err := hexxladb.Open(filepath.Join(tempDir, "placement.db"), &hexxladb.Options{
 		EmbeddingDimension: vectorDimension,
-		EnableMVCC:         true,
-		DistanceMetric:     hexxladb.DistanceCosine,
+
+		DistanceMetric: hexxladb.DistanceCosine,
 	})
 	if err != nil {
 		return report, fmt.Errorf("open temporary database: %w", err)

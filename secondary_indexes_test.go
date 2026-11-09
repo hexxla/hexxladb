@@ -147,7 +147,7 @@ func TestPutCell_secondaryIndexes(t *testing.T) {
 func TestTx_Put_mvcc_rejects_raw_cell_key_without_version_suffix(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	db, err := hexxladb.Open(filepath.Join(dir, "mvcc_raw_put.db"), &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(filepath.Join(dir, "mvcc_raw_put.db"), &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestTx_Put_mvcc_rejects_raw_cell_key_without_version_suffix(t *testing.T) {
 func TestTx_AscendCellsBySource_mvccSnapshotIsolation(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	db, err := hexxladb.Open(filepath.Join(dir, "cell_src_mvcc.db"), &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(filepath.Join(dir, "cell_src_mvcc.db"), &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestTx_AscendCellsBySource_mvccSnapshotIsolation(t *testing.T) {
 func TestTx_AscendCellsByTag_mvccSnapshotIsolation(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	db, err := hexxladb.Open(filepath.Join(dir, "cell_tag_mvcc.db"), &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(filepath.Join(dir, "cell_tag_mvcc.db"), &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestTx_ListExistingTopics_distinctSorted(t *testing.T) {
 func TestTx_ListExistingTopics_mvccViewAt(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	db, err := hexxladb.Open(filepath.Join(dir, "topics_mvcc.db"), &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(filepath.Join(dir, "topics_mvcc.db"), &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

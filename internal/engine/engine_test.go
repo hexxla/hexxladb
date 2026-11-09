@@ -45,13 +45,19 @@ func TestOpen_replaysPendingWAL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	header, err := e.ReadHeader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	header.LastWALSeq, header.NextPageID = 1, 2
+	marker := e.encodeHeaderWALRecord(header, 1)
 	if err := e.Close(); err != nil {
 		t.Fatal(err)
 	}
 
 	payload := bytes.Repeat([]byte{0x99}, DefaultPageSize)
 	rec := encodeWALRecord(1, 1, payload, DefaultPageSize)
-	if err := os.WriteFile(WalPath(path), rec, 0o600); err != nil {
+	if err := os.WriteFile(WalPath(path), append(marker, rec...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

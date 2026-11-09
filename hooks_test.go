@@ -125,7 +125,7 @@ func TestHook_AfterPutCell_MVCCPath(t *testing.T) {
 	t.Parallel()
 	var calls atomic.Int64
 	db := openHookDB(t, &hexxladb.Options{
-		EnableMVCC: true,
+
 		AfterPutCell: hexxladb.AfterPutCellHookFunc(func(_ context.Context, _ record.CellRecord) error {
 			calls.Add(1)
 			return nil

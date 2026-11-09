@@ -33,10 +33,20 @@ entry point owns wiring and database lifetime. Production transports belong
 to their embedding applications. The reference app and diagnostic package are
 outside the library's dependency graph.
 
-Root files group cell writes, seam lifecycle, spatial reads, and migration
-stages by responsibility. They share the existing transaction boundary.
-
 Public API compatibility follows [VERSIONING.md](../../VERSIONING.md). Use root aliases deliberately for shared data types. Preserve transaction ordering, changefeed and recovery guarantees when changing a storage boundary.
+
+## Root file map
+
+Start with these files when tracing a public operation. Related files share the root transaction boundary.
+
+| Workflow | Entry points and coordination |
+| --- | --- |
+| Database and transactions | [`db.go`](../../db.go) opens and closes handles. [`tx.go`](../../tx.go) runs reads and writes, [`batch.go`](../../batch.go) batches writes, and [`changelog_outbox.go`](../../changelog_outbox.go) coordinates changefeed delivery. |
+| Records and secondary indexes | [`cells.go`](../../cells.go), [`delete_cell.go`](../../delete_cell.go), and [`seams.go`](../../seams.go) handle record lifecycles. [`cell_secondary.go`](../../cell_secondary.go) and [`seam_secondary.go`](../../seam_secondary.go) maintain lookup keys. |
+| Snapshots and retention | [`mvcc.go`](../../mvcc.go) resolves versioned records. [`mvcc_lifecycle.go`](../../mvcc_lifecycle.go) prunes history, [`mvcc_snapshot_floor.go`](../../mvcc_snapshot_floor.go) tracks retention, and [`snapshot_tags.go`](../../snapshot_tags.go) names snapshots. |
+| Retrieval and traversal | [`query.go`](../../query.go) defines queries and [`query_exec.go`](../../query_exec.go) executes them. [`context_load.go`](../../context_load.go), [`spatial_reads.go`](../../spatial_reads.go), and [`pathfind_api.go`](../../pathfind_api.go) drive context, spatial scans, and pathfinding. |
+| Embeddings and HNSW | [`tx_embedding.go`](../../tx_embedding.go) writes vectors and [`embedding_search.go`](../../embedding_search.go) handles lookup. [`embedding_index_rebuild.go`](../../embedding_index_rebuild.go) takes the vector snapshot and publishes the graph built by [`internal/hnsw`](../../internal/hnsw/build.go). |
+| Maintenance | [`backup.go`](../../backup.go), [`compact.go`](../../compact.go), and [`rotation.go`](../../rotation.go) coordinate durable copies. [`health.go`](../../health.go) checks logical records and indexes. |
 
 ## Verification
 

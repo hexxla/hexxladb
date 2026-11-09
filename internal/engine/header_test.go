@@ -8,7 +8,7 @@ import (
 func TestHeader_roundTrip(t *testing.T) {
 	t.Parallel()
 	h := Header{
-		FormatVersion:  formatVersionV1,
+		FormatVersion:  formatVersionV2,
 		PageSize:       uint32(DefaultPageSize),
 		LastWALSeq:     42,
 		NextPageID:     7,

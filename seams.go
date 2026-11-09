@@ -41,19 +41,16 @@ func (tx *Tx) putSeamWithOp(ctx context.Context, rec record.SeamRecord, clogOp b
 	if err != nil {
 		return err
 	}
-	if err := tx.validateAndPrepareSeamOverwrite(pk, rec); err != nil {
+	if err := tx.validateAndPrepareSeamOverwrite(rec); err != nil {
 		return err
 	}
 	data, err := record.EncodeSeam(rec)
 	if err != nil {
 		return err
 	}
-	writeKey := pk
-	if tx.db.useMVCC {
-		writeKey, err = index.SeamKeyWithVersion(rec.ID, tx.writeSeq)
-		if err != nil {
-			return err
-		}
+	writeKey, err := index.SeamKeyWithVersion(rec.ID, tx.writeSeq)
+	if err != nil {
+		return err
 	}
 	if err := tx.putDirect(writeKey, data); err != nil {
 		return err
@@ -66,11 +63,7 @@ func (tx *Tx) putSeamWithOp(ctx context.Context, rec record.SeamRecord, clogOp b
 	if err := tx.putDirect(sk, nil); err != nil {
 		return err
 	}
-	secSeq := uint64(0)
-	if tx.db.useMVCC {
-		secSeq = tx.writeSeq
-	}
-	if err := tx.putSeamSecondaryIndex(rec, secSeq); err != nil {
+	if err := tx.putSeamSecondaryIndex(rec, tx.writeSeq); err != nil {
 		return err
 	}
 	tx.noteChangelog(clogOp, pk, data)
@@ -82,35 +75,18 @@ func (tx *Tx) putSeamWithOp(ctx context.Context, rec record.SeamRecord, clogOp b
 
 // validateAndPrepareSeamOverwrite checks endpoint consistency for an existing seam and
 // removes secondary indexes for an overwritten physical version.
-func (tx *Tx) validateAndPrepareSeamOverwrite(pk []byte, rec record.SeamRecord) error {
-	if tx.db.useMVCC {
-		old, seq, ok, err := tx.visibleSeamAndSeq(rec.ID)
-		if err != nil || !ok {
-			return err
-		}
-		if err := checkSeamEndpoints(old, rec); err != nil {
-			return err
-		}
-		if seq == tx.writeSeq {
-			return tx.removeSeamSecondaryIndex(old, seq)
-		}
-		return nil
-	}
-	raw, ok, err := tx.Get(pk)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return nil
-	}
-	old, err := record.DecodeSeam(raw)
-	if err != nil {
+func (tx *Tx) validateAndPrepareSeamOverwrite(rec record.SeamRecord) error {
+	old, seq, ok, err := tx.visibleSeamAndSeq(rec.ID)
+	if err != nil || !ok {
 		return err
 	}
 	if err := checkSeamEndpoints(old, rec); err != nil {
 		return err
 	}
-	return tx.removeSeamSecondaryIndex(old, 0)
+	if seq == tx.writeSeq {
+		return tx.removeSeamSecondaryIndex(old, seq)
+	}
+	return nil
 }
 
 // checkSeamEndpoints returns ErrSeamEndpointMismatch if old and updated records disagree on endpoints.

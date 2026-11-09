@@ -136,7 +136,7 @@ func TestTx_AscendSeamsBySource_contextCanceled(t *testing.T) {
 func TestTx_AscendSeamsBySource_mvccSnapshotIsolation(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	db, err := hexxladb.Open(filepath.Join(dir, "seam_sec_mvcc.db"), &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(filepath.Join(dir, "seam_sec_mvcc.db"), &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,7 +11,7 @@ import (
 
 func TestEmbeddingIndexDeferredRebuildLifecycle(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "deferred.db")
-	opts := &hexxladb.Options{EnableMVCC: true, EmbeddingDimension: 3}
+	opts := &hexxladb.Options{EmbeddingDimension: 3}
 	db, err := hexxladb.Open(path, opts)
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +113,7 @@ func TestCompactPreservesDirtyEmbeddingIndexFallback(t *testing.T) {
 	dir := t.TempDir()
 	sourcePath := filepath.Join(dir, "compact-source.db")
 	destinationPath := filepath.Join(dir, "compact-destination.db")
-	db, err := hexxladb.Open(sourcePath, &hexxladb.Options{EnableMVCC: true, EmbeddingDimension: 3})
+	db, err := hexxladb.Open(sourcePath, &hexxladb.Options{EmbeddingDimension: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,33 +133,9 @@ func TestCompactPreservesDirtyEmbeddingIndexFallback(t *testing.T) {
 	assertEmbeddingSearchPath(t, compacted, hexxladb.EmbeddingSearchPathFlat, 2)
 }
 
-func TestMigrationPreservesDirtyEmbeddingIndexFallback(t *testing.T) {
-	dir := t.TempDir()
-	sourcePath := filepath.Join(dir, "migration-source.db")
-	destinationPath := filepath.Join(dir, "migration-destination.db")
-	db, err := hexxladb.Open(sourcePath, &hexxladb.Options{EmbeddingDimension: 3})
-	if err != nil {
-		t.Fatal(err)
-	}
-	putRebuildVectors(t, db, 2, true)
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := hexxladb.MigrateV1ToV2(t.Context(), sourcePath, destinationPath, nil); err != nil {
-		t.Fatal(err)
-	}
-
-	migrated, err := hexxladb.Open(destinationPath, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = migrated.Close() })
-	assertEmbeddingSearchPath(t, migrated, hexxladb.EmbeddingSearchPathFlat, 2)
-}
-
 func openRebuildDB(t *testing.T, name string) *hexxladb.DB {
 	t.Helper()
-	db, err := hexxladb.Open(filepath.Join(t.TempDir(), name), &hexxladb.Options{EnableMVCC: true, EmbeddingDimension: 3})
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), name), &hexxladb.Options{EmbeddingDimension: 3})
 	if err != nil {
 		t.Fatal(err)
 	}

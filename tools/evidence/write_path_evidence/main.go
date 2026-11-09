@@ -89,7 +89,6 @@ type workloadReport struct {
 	GrowthBytesPerCell   int64           `json:"growth_bytes_per_cell"`
 	WritePhases          phaseSummary    `json:"write_phases"`
 	ApplyBatches         uint64          `json:"apply_batches"`
-	MultiJobBatches      uint64          `json:"multi_job_batches"`
 	WALSyncs             uint64          `json:"wal_syncs"`
 	WALSyncsPerCommit    float64         `json:"wal_syncs_per_commit"`
 	ReferenceTarget      referenceTarget `json:"reference_target"`
@@ -205,7 +204,7 @@ func runCellWorkload(ctx context.Context, warmup, samples, batchSize int) (workl
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	path := filepath.Join(dir, "cells.db")
-	db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(path, &hexxladb.Options{})
 	if err != nil {
 		return workloadReport{}, err
 	}
@@ -235,7 +234,7 @@ func runEmbeddingWorkload(ctx context.Context, warmup, samples int) (workloadRep
 	defer func() { _ = os.RemoveAll(dir) }()
 	path := filepath.Join(dir, "embeddings.db")
 	db, err := hexxladb.Open(path, &hexxladb.Options{
-		EnableMVCC:         true,
+
 		EmbeddingDimension: embeddingDimension,
 		DistanceMetric:     hexxladb.DistanceCosine,
 		PageSize:           4096,
@@ -262,7 +261,7 @@ func measure(path string, db *hexxladb.DB, samples, cellsPerCommit int, operatio
 	var memoryBefore runtime.MemStats
 	runtime.ReadMemStats(&memoryBefore)
 	statsBefore := db.WriteStats()
-	applyBefore, multiBefore, syncBefore := db.GroupWALStats()
+	applyBefore, syncBefore := db.WALStats()
 	bytesBefore := fileSize(path)
 
 	latencies := make([]time.Duration, 0, samples)
@@ -276,7 +275,7 @@ func measure(path string, db *hexxladb.DB, samples, cellsPerCommit int, operatio
 	}
 	elapsed := time.Since(started)
 	statsAfter := db.WriteStats()
-	applyAfter, multiAfter, syncAfter := db.GroupWALStats()
+	applyAfter, syncAfter := db.WALStats()
 	var memoryAfter runtime.MemStats
 	runtime.ReadMemStats(&memoryAfter)
 
@@ -299,7 +298,6 @@ func measure(path string, db *hexxladb.DB, samples, cellsPerCommit int, operatio
 		GrowthBytesPerCell:   growth / cellDivisor,
 		WritePhases:          summarizePhases(statsBefore, statsAfter),
 		ApplyBatches:         applyAfter - applyBefore,
-		MultiJobBatches:      multiAfter - multiBefore,
 		WALSyncs:             syncAfter - syncBefore,
 		ReferenceTarget:      target,
 	}

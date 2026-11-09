@@ -163,10 +163,8 @@ func (t *BTree) readOverflowChain(firstPageID uint64, logicalLen uint32) ([]byte
 }
 
 // freeOverflowChain walks an overflow chain, queues authenticated pages for
-// transactional reuse, and accounts for legacy extend-only waste.
+// transactional reuse.
 func (t *BTree) freeOverflowChain(firstPageID uint64) error {
-	ps := t.pageSize()
-	payload := uint64(overflowPayloadPerPage(ps)) //nolint:gosec // G115: ps >= overflowPtrSize always
 	pid := firstPageID
 	for pid != 0 {
 		page, release, err := t.eng.readPagePooled(pid)
@@ -179,8 +177,6 @@ func (t *BTree) freeOverflowChain(firstPageID uint64) error {
 			if err := t.eng.releasePageID(pid); err != nil {
 				return err
 			}
-		} else {
-			t.eng.wastedBytes.Add(payload)
 		}
 		pid = nextID
 	}

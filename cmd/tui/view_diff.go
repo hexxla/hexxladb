@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -89,8 +88,6 @@ func (v *diffView) View() string {
 	switch {
 	case !v.loaded:
 		return styleDim.Render("Computing snapshot diff…")
-	case errors.Is(v.err, hexxladb.ErrMVCCRequired):
-		return styleDim.Render("Snapshot diff requires MVCC.")
 	case v.err != nil:
 		return styleBad.Render("Diff error: " + terminalText(v.err.Error()))
 	}

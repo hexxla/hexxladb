@@ -19,9 +19,6 @@ type SnapshotTag struct {
 // TagSnapshot creates or updates a named reference to the current head commit sequence.
 // label must be non-empty and at most [index.SnapTagMaxLabelBytes] bytes.
 // Subsequent calls with the same label overwrite the previous mapping.
-//
-// When MVCC is disabled the tag is still stored (commit_seq 0) and [DB.ViewAtTag]
-// will open a zero-seq snapshot (same as [DB.ViewAt](0, fn)).
 func (db *DB) TagSnapshot(label string) error {
 	if db == nil {
 		return ErrDatabaseClosed

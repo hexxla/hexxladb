@@ -12,7 +12,7 @@ New databases created with `EncryptionKey` or `Passphrase` use engine **format v
 - the final authenticated header is recorded as the v3 WAL commit marker; and
 - an enabled changelog uses its independent authenticated encrypted format v2.
 
-Plaintext creation remains unchanged: `EnableMVCC: false` creates engine v1 and `EnableMVCC: true` creates engine v2. Existing encrypted v1/v2 databases remain readable through the legacy AES-256-XTS path; opening one does not silently rewrite it.
+Plaintext creation uses engine v2. Both profiles use MVCC.
 
 ## Authenticated page layout
 
@@ -38,9 +38,8 @@ Traffic analysis remains possible. An observer can estimate allocated page count
 
 - **Raw key:** [`Options.EncryptionKey`](../../options.go) accepts an arbitrary secret. Use at least 128 bits of entropy. New v3 databases derive a 32-byte authenticated master with HKDF-SHA256, then domain-separated page, header, WAL, verifier, and changelog keys.
 - **Passphrase:** [`Options.Passphrase`](../../options.go) uses [Argon2id](https://pkg.go.dev/golang.org/x/crypto/argon2) with the random 16-byte database salt, then the same v3 key hierarchy.
-- **Legacy v1/v2:** the historical `hexxladb-m9-aes-xts-v1` HKDF label and 64-byte AES-256-XTS key derivation are frozen for read compatibility.
 
-Do not set `EncryptionKey` and `Passphrase` together, or combine either with custom page hooks. `Open` returns [`ErrEncryptionOptions`](../../errors.go). Key material and decrypted pages in process memory are not protected from an attacker with process-memory access.
+Do not set `EncryptionKey` and `Passphrase` together. `Open` returns [`ErrEncryptionOptions`](../../errors.go). Key material and decrypted pages in process memory are not protected from an attacker with process-memory access.
 
 ## WAL and recovery
 
@@ -66,8 +65,6 @@ Two rollback classes remain outside the v3 local-file guarantee:
 
 Use least-privilege file ownership and independently authenticated, offline backups. The AEAD supplies integrity, but it does not make hostile storage available or prevent deletion.
 
-Legacy AES-XTS data pages provide confidentiality only. B+ tree decoding may detect some damage, but it is not a cryptographic integrity check. Migrate legacy files before relying on the v3 guarantees.
-
 ## Changelog policy
 
 - Plaintext databases use changelog format v1.
@@ -76,39 +73,24 @@ Legacy AES-XTS data pages provide confidentiality only. B+ tree decoding may det
 - Existing plaintext changelog history is never silently mixed with encrypted frames. Archive/reconcile it according to application retention policy, then create a new encrypted log.
 - [`RotateEncryption`](../../rotation.go) re-encrypts changelog history when both option sets enable the same effective changelog path. Its recovery marker makes interrupted filesystem swaps explicit through `ErrRotationIncomplete` and `RecoverInterruptedRotation`.
 
-## Migration and rotation
+## Rotation and offline conversion
 
-[`MigrateToAuthenticated`](../../migration.go) creates a distinct encrypted v3 candidate from a closed v1 or v2 source. The source is locked and preserved. Independent source and destination credentials are supported.
+[`RotateEncryption`](../../rotation.go) rewrites a plaintext v2 or encrypted
+v3 database into an encrypted v3 candidate with the replacement credential.
+It preserves the commit head, retained versions, snapshot retention floor,
+and embedding configuration. It reopens the candidate and checks the head
+and floor before replacing the source. Retain a verified recovery set until
+the replacement reopens successfully.
 
-- v1 uses the bounded, resumable logical migration path and rebuilds MVCC physical keys and derived indexes;
-- v2 copies the complete physical MVCC keyspace through a bounded logical destination writer, verifies the candidate, and removes it on interruption; retry from the preserved source; and
-- neither path transplants changelog frames. Existing changelog state requires explicit `ResetChangelog` authorization and consumer re-bootstrap.
-
-Run an exact dry run before copying:
-
-```bash
-HEXXLA_DESTINATION_PASSPHRASE='...' \
-  hexxladb migrate-to-authenticated --dry-run -o memory-v3.db memory.db
-
-HEXXLA_DESTINATION_PASSPHRASE='...' \
-  hexxladb migrate-to-authenticated -o memory-v3.db memory.db
-```
-
-The command accepts credential **environment-variable names**, never credential values as arguments. Standard-base64 raw keys use `HEXXLA_SOURCE_ENCRYPTION_KEY` and `HEXXLA_DESTINATION_ENCRYPTION_KEY`. Environment variables remain visible to sufficiently privileged same-host actors; avoid shared wrappers and checked-in env files, and unset values after maintenance.
-
-[`RotateEncryption`](../../rotation.go) always writes a fresh authenticated v3 destination under the replacement credential. It is therefore also the supported offline key-rotation path for an existing v3 database and an upgrade path for a legacy encrypted database when in-place source preservation is not required. Retain a verified recovery set until the replacement reopens successfully.
-
-## Downgrade policy
-
-Older libraries do not understand engine v3 and must return `ErrUnsupportedFormatVersion`. There is no v3-to-v2 downgrade writer. Restore the preserved legacy source or an independently authenticated pre-upgrade backup if rollback is required.
+Engine v1 and AES-XTS files require the [offline conversion procedure](./OPERATIONS.md#offline-conversion-of-retired-files).
 
 ## Related errors and invariants
 
 - [`ErrEncryptionKeyRequired`](../../errors.go): encrypted file opened without a credential.
 - [`ErrEncryptionKeyMismatch`](../../errors.go): key/passphrase does not match the database verifier.
 - [`ErrCorruptDatabase`](../../db.go): authenticated header/page/WAL validation or reachable-page truncation failed.
-- [`ErrMigrationIncomplete`](../../errors.go): a resumable v1 migration candidate is not publishable.
-- [`ErrCompactionIncomplete`](../../errors.go): an interrupted copy candidate is not publishable.
+- [`ErrMigrationIncomplete`](../../errors.go): an offline conversion candidate still has a checkpoint.
+- [`ErrCompactionIncomplete`](../../errors.go): an interrupted copy candidate is unpublished.
 - [`ErrChangelogCorrupt`](../../errors.go): authenticated changelog validation failed.
 
-Wrong credentials fail before page data is returned. New encrypted files are v3 from their first durable header. Compaction preserves the source engine format; it does not silently upgrade a legacy source. Backup preserves encryption byte-for-byte. Migration and rotation write through the destination format from their first page.
+Wrong credentials fail before page data is returned. New encrypted files are v3 from their first durable header. Compaction preserves the source profile. Backup preserves encryption byte-for-byte. Rotation writes through the destination format from its first page.

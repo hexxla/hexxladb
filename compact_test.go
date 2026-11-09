@@ -175,7 +175,7 @@ func TestCompactTo_preservesData(t *testing.T) {
 // TestCompactTo_MVCC_preservesHistory verifies MVCC version rows and tombstones survive compaction.
 func TestCompactTo_MVCC_preservesHistory(t *testing.T) {
 	t.Parallel()
-	opts := &hexxladb.Options{EnableMVCC: true}
+	opts := &hexxladb.Options{}
 	db, srcPath := openCompactDB(t, opts)
 	ctx := context.Background()
 

@@ -27,28 +27,25 @@ Implementation packages under internal/ are private to this module.
 
 Exported entrypoints:
   - Open, OpenExisting, Options, DB, DB.Close — exclusively locked engine
-    shell with durable WAL (see docs/hexxladb/DURABILITY.md). Optional
-    logical changefeed (Options.ChangelogEnabled, DB.ReadChangelogSince)
-    with durable named cursors (DB.AdvanceChangelogConsumer,
-    DB.GetChangelogConsumerCursor; see docs/hexxladb/CHANGEFEED.md).
-    Configurable page size via Options.PageSize (4096/8192/16384/65536;
-    default 4096); readable at runtime via DB.PageSize. Per-database value size
-    limit via Options.MaxValueBytes (512–1048576 bytes; default 8192); readable
-    at runtime via DB.MaxValueBytes. Transparent per-value DEFLATE compression
-    is always-on (compress/flate, Go stdlib; values ≥ 64 bytes). MVCC on
-    new plaintext databases via Options.EnableMVCC / Options.MVCCRetention;
-    new encrypted databases always use authenticated MVCC format v3;
-    lifecycle: DB.StatsMVCC, DB.PruneCellVersions, DB.SuggestedPruneBeforeSeq,
+    shell with durable WAL (see docs/hexxladb/DURABILITY.md). Optional logical
+    changefeed (Options.ChangelogEnabled, DB.ReadChangelogSince) with durable
+    named cursors (DB.AdvanceChangelogConsumer, DB.GetChangelogConsumerCursor;
+    see docs/hexxladb/CHANGEFEED.md). Configurable page size via
+    Options.PageSize (4096/8192/16384/65536; default 4096); readable at runtime
+    via DB.PageSize. Per-database value size limit via Options.MaxValueBytes
+    (512–1048576 bytes; default 8192); readable at runtime via DB.MaxValueBytes.
+    Transparent per-value DEFLATE compression is always-on (compress/flate,
+    Go stdlib; values ≥ 64 bytes). MVCC on every database, with
+    Options.MVCCRetention for prune suggestions. Plaintext databases use
+    format v2 and encrypted databases use authenticated format v3. lifecycle:
+    DB.StatsMVCC, DB.PruneCellVersions, DB.SuggestedPruneBeforeSeq,
     PruneScheduler (see docs/hexxladb/OPERATIONS.md). Encryption operations
-    include RotateEncryption. PreflightMigrateV1ToV2 and MigrateV1ToV2 provide
-    an offline, capacity-checked, resumable, verified upgrade from a format-v1
-    source. PreflightMigrateToAuthenticated and MigrateToAuthenticated create a
-    verified authenticated encrypted v3 candidate from a closed v1 or v2 source.
+    include RotateEncryption.
   - DB.SnapshotDiff — retained MVCC cell/seam history between two commit
     sequences; use the logical changelog for complete CDC or audit processing.
   - DB.View, DB.ViewAt, DB.ViewAtTime, DB.Update, DB.Batch, Tx — Bolt-style
     transactions; DB.Batch is an alias for DB.Update; see docs/hexxladb/TX.md.
-    DB.WriteStats and DB.GroupWALStats expose cumulative write-phase timing and
+    DB.WriteStats and DB.WALStats expose cumulative write-phase timing and
     redo-sync counters.
   - DB.StorageStats — physical, live, reusable, and reclaimable
     storage accounting; DB.ReclaimTail safely truncates a contiguous
@@ -102,15 +99,15 @@ Exported entrypoints:
   - Sentinel errors are defined in errors.go and support errors.Is.
     Recovery-sensitive categories include lifecycle (ErrDatabaseClosed,
     ErrDatabaseLocked), persisted integrity (ErrCorruptDatabase),
-    bounded scans (ErrQueryScanLimit, ErrSpatialScanLimit), format and
-    migration refusal (ErrUnsupportedFormatVersion, ErrMigrationIncomplete,
-    ErrMigrationChangelogState, ErrCompactionIncomplete), commit
-    finalization (ErrCommitFinalization, ErrCommitDurable), encryption and
-    changelog integrity (ErrEncryptionKeyMismatch, ErrChangelogCorrupt,
+    bounded scans (ErrQueryScanLimit, ErrSpatialScanLimit),
+    format and migration refusal (ErrUnsupportedFormatVersion,
+    ErrMigrationIncomplete, ErrCompactionIncomplete), commit finalization
+    (ErrCommitFinalization, ErrCommitDurable), encryption and changelog
+    integrity (ErrEncryptionKeyMismatch, ErrChangelogCorrupt,
     ErrChangelogConsumerInvalidated), placement (ErrNoFreeCellPlacement),
     embedding rebuild (ErrEmbeddingIndexChanged, ErrEmbeddingIndexTooLarge),
     maintenance capacity (ErrInsufficientSpace), and MVCC snapshot errors
-    (ErrReadSeqFuture, ErrMVCCRequired).
+    (ErrReadSeqFuture, ErrSnapshotExpired).
   - Named snapshots: DB.TagSnapshot, DB.ListSnapshotTags, DB.ViewAtTag,
     DB.DeleteSnapshotTag; retained-history comparison through DB.SnapshotDiff.
   - Interrupted offline encryption swaps fail closed through
@@ -242,20 +239,15 @@ var (
 	// HexxlaDB permits one open handle per database path to protect the primary file and WAL.
 	ErrDatabaseLocked = errors.New("hexxladb: database is locked")
 
-	// ErrUnsupportedFormatVersion means the database was created by a newer HexxlaDB format.
+	// ErrUnsupportedFormatVersion means the primary format is retired or unknown.
 	ErrUnsupportedFormatVersion = errors.New("hexxladb: unsupported database format version")
 
-	// ErrMigrationIncomplete means a destination contains resumable migration state and
-	// must be completed with [MigrateV1ToV2] or [MigrateToAuthenticated] before ordinary use.
+	// ErrMigrationIncomplete means a candidate still contains an offline conversion checkpoint.
 	ErrMigrationIncomplete = errors.New("hexxladb: migration is incomplete")
 
 	// ErrCompactionIncomplete means a destination contains an interrupted
 	// compaction marker and must be removed before retrying compaction.
 	ErrCompactionIncomplete = errors.New("hexxladb: compaction is incomplete")
-
-	// ErrMigrationChangelogState means a v1 source has durable changelog state that the
-	// caller did not explicitly authorize the migration to reset.
-	ErrMigrationChangelogState = errors.New("hexxladb: migration source has changelog state")
 
 	// ErrTxReadOnly means a write was attempted inside [DB.View] (read-only transaction).
 	ErrTxReadOnly = errors.New("hexxladb: transaction is read-only")
@@ -320,9 +312,6 @@ var (
 	// Do not retry the mutation; close and reopen the database to complete recovery.
 	ErrCommitDurable = errors.New("hexxladb: commit is durable")
 
-	// ErrMVCCRequired is returned when an MVCC-only operation is called on a format-v1 database.
-	ErrMVCCRequired = errors.New("hexxladb: operation requires MVCC (EnableMVCC on open)")
-
 	// ErrHistoricalDataUnavailable means a historical view requested current-only
 	// edges or embeddings. Use [DB.View] to read those records at the current head.
 	ErrHistoricalDataUnavailable = errors.New("hexxladb: edges and embeddings are current-only")
@@ -334,12 +323,6 @@ var (
 	// ErrSnapshotTagLabelTooLong means the label passed to [DB.TagSnapshot] exceeds the
 	// maximum allowed length (200 bytes).
 	ErrSnapshotTagLabelTooLong = errors.New("hexxladb: snapshot tag label too long")
-
-	// ErrEmbeddingsDisabled is retained for backward compatibility but no longer returned by
-	// standard embedding operations. Dimension is now auto-detected on the first [Tx.PutEmbedding].
-	//
-	// Deprecated: check [DB.EmbeddingDimension] == 0 to see if embeddings have been stored yet.
-	ErrEmbeddingsDisabled = errors.New("hexxladb: embeddings not enabled for this database")
 
 	// ErrEmbeddingDimension means the vector length does not match [DB.EmbeddingDimension].
 	ErrEmbeddingDimension = errors.New("hexxladb: vector dimension mismatch")
@@ -405,24 +388,6 @@ func CompactToWithOptions(ctx context.Context, srcPath, destPath string, opts *O
 func DeriveKeyFromPassphrase(passphrase string, salt []byte) ([]byte, error)
     DeriveKeyFromPassphrase derives raw key material using Argon2id (for use
     with Open passphrase mode).
-
-func MigrateToAuthenticated(ctx context.Context, srcPath, destPath string, opts *MigrationOptions) error
-    MigrateToAuthenticated performs an offline, source-preserving migration
-    from format v1 or v2 into an exclusively created authenticated format-v3
-    destination. DestinationOptions must provide a raw key or passphrase.
-
-func MigrateV1ToV2(ctx context.Context, srcPath, destPath string, opts *MigrationOptions) (retErr error)
-    MigrateV1ToV2 performs an offline, resumable logical copy from a format-v1
-    source into a format-v2 MVCC destination. The source must be closed by
-    every other handle; it is never replaced or deleted. The destination is
-    exclusively created on the first call. A later call resumes only when its
-    embedded source digest matches.
-
-    Mutable cell, facet, and seam records are rewritten through their public
-    primitives so v2 physical keys and secondary indexes are rebuilt. Other
-    application and immutable index rows are copied byte-for-byte. Completion
-    includes a full logical verification; ordinary Open refuses a destination
-    while resumable state remains.
 
 func RecoverInterruptedRotation(path string, opts *Options) error
     RecoverInterruptedRotation rolls an uncommitted filesystem swap back to
@@ -957,12 +922,6 @@ func (db *DB) GetChangelogConsumerCursor(consumerID string) (uint64, bool, error
     changelog is enabled, the cursor is also validated against its logical
     history; disabled handles expose the primary metadata for administration.
 
-func (db *DB) GroupWALStats() (applyBatches, batchesWith2PlusJobs, walSynces uint64)
-    GroupWALStats reports the number of WAL commit attempts and successful redo
-    syncs. The middle counter is retained for compatibility and always returns
-    zero. Redo syncs exclude the sync used to reset the WAL after a durable
-    commit.
-
 func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthReport, error)
     HealthCheck performs an integrity scan of the database and returns a
     HealthReport. It runs inside a stable read-only snapshot. Other readers
@@ -993,8 +952,7 @@ func (db *DB) MaxValueBytes() uint32
 func (db *DB) OldestSnapshotSeq() (uint64, error)
     OldestSnapshotSeq returns the earliest guaranteed point-in-time sequence.
     On a database written by an older release without a recorded retention
-    boundary, the head at first open with this release is the baseline. Returns
-    ErrMVCCRequired on single-version databases.
+    boundary, the head at first open with this release is the baseline.
 
 func (db *DB) PageSize() uint32
     PageSize returns the page size of the database in bytes. For new databases,
@@ -1041,8 +999,7 @@ func (db *DB) ReclaimTail() (uint64, error)
 func (db *DB) SnapshotDiff(ctx context.Context, fromSeq, toSeq uint64, cfg SnapshotDiffConfig) (SnapshotDiff, error)
     SnapshotDiff returns retained cell and seam writes with commit_seq in the
     half-open range (fromSeq, toSeq]. Both sequences must be valid (≤ current
-    CommitSeq). Requires an MVCC database (plaintext format v2 or authenticated
-    format v3); returns ErrMVCCRequired otherwise.
+    CommitSeq).
 
     SnapshotDiff is a retained-history diagnostic, not a complete logical
     changefeed: versions removed by DB.PruneCellVersions do not appear, and
@@ -1073,9 +1030,6 @@ func (db *DB) TagSnapshot(label string) error
     sequence. label must be non-empty and at most index.SnapTagMaxLabelBytes
     bytes. Subsequent calls with the same label overwrite the previous mapping.
 
-    When MVCC is disabled the tag is still stored (commit_seq 0) and
-    DB.ViewAtTag will open a zero-seq snapshot (same as DB.ViewAt(0, fn)).
-
 func (db *DB) Update(fn func(*Tx) error) error
     Update runs fn inside an exclusive read-write transaction. The database
     lock remains held through synchronous engine commit and finalization. Batch
@@ -1092,8 +1046,8 @@ func (db *DB) ViewAt(readSeq uint64, fn func(*Tx) error) error
     ViewAt runs fn inside a read-only transaction pinned to read_seq (commit
     sequence). read_seq must not exceed the database header's CommitSeq or
     ErrReadSeqFuture is returned. Sequences before DB.OldestSnapshotSeq return
-    ErrSnapshotExpired. On MVCC databases, typed edge and embedding reads on
-    older sequences return ErrHistoricalDataUnavailable.
+    ErrSnapshotExpired. Typed edge and embedding reads on older sequences return
+    ErrHistoricalDataUnavailable.
 
 func (db *DB) ViewAtTag(label string, fn func(*Tx) error) error
     ViewAtTag opens a read-only transaction pinned to the commit sequence
@@ -1104,8 +1058,12 @@ func (db *DB) ViewAtTag(label string, fn func(*Tx) error) error
 func (db *DB) ViewAtTime(asOf time.Time, fn func(*Tx) error) error
     ViewAtTime runs fn inside a read-only transaction pinned to the most recent
     commit at or before asOf. A resolved sequence before DB.OldestSnapshotSeq
-    returns ErrSnapshotExpired. For format-v1 databases this resolves to the
-    latest committed snapshot.
+    returns ErrSnapshotExpired.
+
+func (db *DB) WALStats() (commitAttempts, redoSyncs uint64)
+    WALStats reports the number of WAL commit attempts and successful redo
+    syncs. Redo syncs exclude the sync used to reset the WAL after a durable
+    commit.
 
 func (db *DB) WriteStats() WriteStats
     WriteStats returns a lock-free snapshot of cumulative write-path timings.
@@ -1276,7 +1234,7 @@ type HealthReport struct {
 	// cell does not carry the tag). Populated only when CheckTagIndex is true.
 	TagIndexErrors int
 	// SourceIndexErrors is the count of source/ index entries inconsistent with
-	// the primary rows at the corresponding commit (or, for v1, no visible cell at coord).
+	// the primary rows at the corresponding commit.
 	SourceIndexErrors int
 
 	// MVCCStats is a snapshot of MVCC counters at check time.
@@ -1354,14 +1312,6 @@ type MVCCStats struct {
 	CommitSeq     uint64
 	VersionedRows int64
 	LogicalCells  int64
-	// WastedBytes is the cumulative logical byte size of overflow-page chains freed
-	// since the database was opened. These pages are dead space on disk until the next
-	// [CompactTo]. The counter is in-memory only and resets to zero on reopen.
-	// A non-zero value is a signal to schedule compaction.
-	//
-	// Deprecated: use [DB.StorageStats] ReclaimableBytes for persistent, complete
-	// whole-page reachability accounting. WastedBytes counts only overflow payload.
-	WastedBytes uint64
 }
     MVCCStats summarizes physical MVCC cell rows (keys under cell/ with version
     suffix).
@@ -1382,76 +1332,9 @@ type MaintenanceSpaceRequirement struct {
     MaintenanceSpaceRequirement is a conservative capacity check for one
     filesystem used by a copy-style maintenance operation.
 
-type MigrationOptions struct {
-
-	// SourceOptions supplies credentials and page transforms needed to open the source.
-	// ChangelogEnabled must be false; the source sidecar is never modified or copied.
-	SourceOptions *Options
-	// DestinationOptions supplies credentials or page transforms for the destination.
-	// MigrateToAuthenticated requires official raw-key or passphrase encryption;
-	// MigrateV1ToV2 may also create a plaintext or legacy encrypted v2 file.
-	// Page size, maximum value size, and embedding configuration are inherited from the source.
-	// Cell validators and post-write hooks are ignored to keep retryable migration free of
-	// application side effects.
-	// ChangelogEnabled must be false during migration and may be enabled after verification.
-	DestinationOptions *Options
-	// BatchSize is the maximum number of source rows processed per durable destination
-	// transaction. Zero uses 4096; values must be between 1 and 4096.
-	BatchSize int
-	// SnapshotDirectory selects the existing directory for the locked temporary
-	// source snapshot. Empty uses the destination's parent directory, keeping the
-	// temporary copy off a potentially small system temporary filesystem.
-	SnapshotDirectory string
-	// ResetChangelog explicitly starts a new logical changefeed history at the destination.
-	// It is required when the source contains changelog head, outbox, checkpoint, or consumer state.
-	ResetChangelog bool
-	// OnPreflight is called after source, destination-resume, changelog, and
-	// capacity checks succeed but before the destination is created or advanced.
-	OnPreflight func(MigrationPreflight)
-	// OnProgress is called after each destination batch and reports an atomic resume checkpoint.
-	OnProgress func(MigrationProgress)
-	// Has unexported fields.
-}
-    MigrationOptions configures offline source-preserving format migration.
-
-type MigrationPreflight struct {
-	SourceStorage      StorageStats
-	SourcePrimaryBytes uint64
-	SourceWALBytes     uint64
-	Resumable          bool
-	ProcessedKeys      uint64
-	Space              []MaintenanceSpaceRequirement
-}
-    MigrationPreflight reports the source state, resume state, and capacity
-    checked by PreflightMigrateV1ToV2 or PreflightMigrateToAuthenticated.
-
-func PreflightMigrateToAuthenticated(ctx context.Context, srcPath, destPath string, opts *MigrationOptions) (MigrationPreflight, error)
-    PreflightMigrateToAuthenticated performs the same source-format, credential,
-    changelog-state, path, and capacity checks as MigrateToAuthenticated without
-    creating or advancing the destination.
-
-func PreflightMigrateV1ToV2(ctx context.Context, srcPath, destPath string, opts *MigrationOptions) (MigrationPreflight, error)
-    PreflightMigrateV1ToV2 performs the same source-format, credential,
-    changelog-state, resume-identity, path, and conservative capacity checks
-    as MigrateV1ToV2 without creating a destination or copying a new migration
-    batch. Inspecting an existing partial destination may perform normal WAL
-    recovery. The exact source check creates and removes a temporary locked
-    snapshot, so its cost is proportional to the source recovery set.
-
-type MigrationProgress struct {
-	ProcessedKeys uint64
-	Resumed       bool
-}
-    MigrationProgress is durable, cumulative progress for MigrateV1ToV2 or
-    MigrateToAuthenticated.
-
 type Options struct {
 
-	// EnableMVCC, when true, creates new databases at engine format v2 with MVCC versioned keys
-	// (see [docs/hexxladb/TX.md] for snapshot semantics and [docs/hexxladb/OPERATIONS.md] for retention/pruning).
-	// Existing v1 files are never auto-upgraded; they keep single-version behavior until migrated.
-	EnableMVCC bool
-	// MVCCRetention is optional policy for [DB.SuggestedPruneBeforeSeq] / [DB.MVCCPrunePlan] (ignored for v1 files).
+	// MVCCRetention is optional policy for [DB.SuggestedPruneBeforeSeq] / [DB.MVCCPrunePlan].
 	MVCCRetention MVCCRetention
 	// ChangelogEnabled, when true, maintains an append-only logical changefeed file (see [docs/hexxladb/CHANGEFEED.md]).
 	// With [EncryptionKey] or [Passphrase], new changelogs use authenticated encryption automatically;
@@ -1463,20 +1346,12 @@ type Options struct {
 	// until 256 records are pending or [DB.Close]. A crash may redeliver intents after reopen but
 	// cannot permanently lose a committed event while the primary database remains recoverable.
 	ChangelogLazy bool
-	// BeforeWritePage optional transform before a data page is logged and written.
-	// If [EncryptionKey] or [Passphrase] is set, custom hooks must not be used.
-	BeforeWritePage func(pageID uint64, plain []byte) (out []byte, err error)
-	// AfterReadPage optional transform after reading a data page from disk.
-	AfterReadPage func(pageID uint64, data []byte) (out []byte, err error)
-
-	// EncryptionKey is an optional secret for authenticated at-rest encryption
-	// of new databases. Existing legacy AES-XTS databases remain readable with
-	// the same credential; see [docs/hexxladb/ENCRYPTION.md].
+	// EncryptionKey is an optional secret for authenticated at-rest encryption.
 	// Stretched with HKDF-SHA256; use a key with at least 128 bits of entropy.
-	// Mutually exclusive with [Passphrase] and with custom page hooks.
+	// Mutually exclusive with [Passphrase].
 	EncryptionKey []byte
 	// Passphrase optional user passphrase; combined with Argon2id and the per-database salt in the file header.
-	// Mutually exclusive with [EncryptionKey] and custom page hooks.
+	// Mutually exclusive with [EncryptionKey].
 	Passphrase string
 
 	// CellValidator optional pre-write validation hook. When set, [Tx.PutCell] calls
@@ -1516,11 +1391,6 @@ type Options struct {
 	// platforms (e.g. Linux) instead of fsync(2) for engine durability barriers. Default false; see
 	// [docs/hexxladb/DURABILITY.md] before enabling in production.
 	UsePrimaryFdatasync bool
-	// GroupWALMaxBatchWait is retained for source compatibility. It is ignored.
-	//
-	// Deprecated: Batch records in one [DB.Update] to share a durability barrier.
-	GroupWALMaxBatchWait time.Duration
-
 	// EmbeddingDimension optionally pre-sets the fixed vector dimension for new databases.
 	// When 0 (default), the dimension is auto-detected from the first [Tx.PutEmbedding] call
 	// and persisted in the file header. When non-zero, the dimension is set at creation time.
@@ -1639,7 +1509,7 @@ const (
 type StorageStats struct {
 	PageSize uint64
 	// PhysicalPageSize includes any authenticated-page envelope. It equals
-	// PageSize for plaintext and legacy XTS databases.
+	// PageSize for plaintext databases.
 	PhysicalPageSize uint64
 	PrimaryBytes     uint64
 	WALBytes         uint64
@@ -1806,9 +1676,9 @@ func (tx *Tx) DeleteCell(ctx context.Context, key PackedCoord) error
     Only allowed inside DB.Update.
 
 func (tx *Tx) DeleteCellWithOutcome(ctx context.Context, key PackedCoord) (removed bool, err error)
-    DeleteCellWithOutcome behaves like Tx.DeleteCell but sets removed=true when
-    a visible cell existed and was tombstoned (MVCC) or hard-deleted (v1). A
-    second delete on the same coordinate returns removed=false with a nil error.
+    DeleteCellWithOutcome behaves like Tx.DeleteCell but sets removed=true
+    when a visible cell existed and was tombstoned. A second delete on the same
+    coordinate returns removed=false with a nil error.
 
     Only allowed inside DB.Update.
 
@@ -1862,9 +1732,8 @@ func (tx *Tx) FindUnusedCellPlacement(ctx context.Context, anchor Coord, maxRadi
     FindUnusedCellPlacement is like Tx.FindFreeCellPlacement but skips
     coordinates with a recorded MVCC cell or tombstone, including deletions
     in the current update. Use it for new logical identities that must stay
-    distinct from deleted cells. Returns ErrMVCCRequired on single-version
-    databases. Only recorded cell history is checked; callers own references to
-    coordinates that never had a cell.
+    distinct from deleted cells. Only recorded cell history is checked; callers
+    own references to coordinates that never had a cell.
 
 func (tx *Tx) Get(key []byte) (val []byte, ok bool, err error)
     Get returns a physical key from the ordered store, or (nil, false, nil) if
@@ -1962,11 +1831,11 @@ func (tx *Tx) Put(key, val []byte) error
     validation, MVCC, or changefeed.
 
 func (tx *Tx) PutCell(ctx context.Context, rec CellRecord) error
-    PutCell writes a cell record at cell/<packed> for rec.Key (v1) or
-    version-suffixed keys (MVCC). It maintains source/, time/, and tag/
-    secondary indexes (see Tx.AscendCellsBySource, Tx.AscendCellsInTimeBucket,
-    Tx.AscendCellsByTag). Only allowed inside DB.Update. A storage or post-write
-    hook error aborts the update even if its callback returns nil.
+    PutCell writes a versioned cell record for rec.Key. It maintains source/,
+    time/, and tag/ secondary indexes (see Tx.AscendCellsBySource,
+    Tx.AscendCellsInTimeBucket, Tx.AscendCellsByTag). Only allowed inside
+    DB.Update. A storage or post-write hook error aborts the update even if its
+    callback returns nil.
 
 func (tx *Tx) PutEdge(rec EdgeWalkRecord) error
     PutEdge writes an edge at edge/<from>/<to>/<relation_type>. Only allowed

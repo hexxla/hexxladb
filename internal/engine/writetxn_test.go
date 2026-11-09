@@ -42,7 +42,7 @@ func TestWriteTxn_WritePageOwnsBufferedBytes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "owned.db")
 	reusedHookOutput := make([]byte, DefaultPageSize)
 	e, err := Open(path, &Options{Hooks: &PageHooks{
-		BeforeWrite: func(_ uint64, plain []byte) ([]byte, error) {
+		BeforeWriteVersioned: func(_, _ uint64, plain []byte) ([]byte, error) {
 			copy(reusedHookOutput, plain)
 			return reusedHookOutput, nil
 		},
@@ -233,8 +233,8 @@ func TestWriteTxn_singleWALSyncForTwoPages(t *testing.T) {
 	if e.LastWALSeq() != 2 {
 		t.Fatalf("LastWALSeq = %d", e.LastWALSeq())
 	}
-	if commits, grouped, syncs := e.GroupWALStats(); commits != 1 || grouped != 0 || syncs != 1 {
-		t.Fatalf("WAL counters = %d, %d, %d", commits, grouped, syncs)
+	if commits, syncs := e.WALStats(); commits != 1 || syncs != 1 {
+		t.Fatalf("WAL counters commits=%d syncs=%d", commits, syncs)
 	}
 	_ = e.Close()
 	e2, err := Open(path, nil)

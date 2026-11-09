@@ -31,7 +31,7 @@ func TestBTreeMixedOrderInsertDeleteAndReopen(t *testing.T) {
 	for _, mode := range []string{"plaintext", "authenticated"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
-			opts := &Options{UseFormatV2: true}
+			opts := &Options{}
 			if mode == "authenticated" {
 				opts = authenticatedRecoveryTestOptions()
 			}

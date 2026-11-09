@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -55,9 +54,6 @@ type Engine struct {
 	commitFailed   bool
 	walCommits     atomic.Uint64
 	walCommitSyncs atomic.Uint64
-	// wastedBytes accumulates legacy extend-only overflow waste. This counter is
-	// in-memory only (resets on Open) and is exposed via WastedBytes().
-	wastedBytes atomic.Uint64
 }
 
 // WalPath returns the WAL path for a primary database path.
@@ -249,11 +245,9 @@ func openInitNewDB(db *os.File, opts *Options, usePrimaryFdatasync bool) (int, e
 	if err != nil {
 		return 0, err
 	}
-	ver := formatVersionV1
-	if opts != nil && opts.UseFormatV3 {
+	ver := formatVersionV2
+	if opts != nil && opts.NewAuthenticatedDB {
 		ver = formatVersionV3
-	} else if opts != nil && opts.UseFormatV2 {
-		ver = formatVersionV2
 	}
 	var embDim uint16
 	var embMetric DistanceMetric
@@ -274,7 +268,7 @@ func openInitNewDB(db *os.File, opts *Options, usePrimaryFdatasync bool) (int, e
 		EmbeddingDim:    embDim,
 		EmbeddingMetric: embMetric,
 	}
-	if opts != nil && opts.NewEncryptedDB {
+	if opts != nil && opts.NewAuthenticatedDB {
 		if err := openApplyEncryptionToHeader(&hdr, opts); err != nil {
 			return 0, err
 		}
@@ -298,30 +292,18 @@ func openInitNewDB(db *os.File, opts *Options, usePrimaryFdatasync bool) (int, e
 
 // openApplyEncryptionToHeader sets encryption features and salt on a new header.
 func openApplyEncryptionToHeader(hdr *Header, opts *Options) error {
-	hdr.Features |= FeatureEncryptedDataPages
-	if opts.EnableWALMAC {
-		hdr.Features |= FeatureWALKeyedMAC
+	if !opts.EnableWALMAC || !opts.EnableHeaderMAC || opts.EncryptionSalt == ([16]byte{}) {
+		return fmt.Errorf("%w: authenticated format requires WAL MAC, header MAC, and a database salt", ErrCorruptHeader)
 	}
-	if opts.NewAuthenticatedDB {
-		if !opts.UseFormatV3 || !opts.EnableWALMAC || !opts.EnableHeaderMAC {
-			return fmt.Errorf("%w: authenticated format requires v3, WAL MAC, and header MAC", ErrCorruptHeader)
-		}
-		hdr.Features |= FeatureAuthenticatedDataPages
-	}
-	if opts.EncryptionSalt == ([16]byte{}) {
-		if _, err := rand.Read(hdr.EncryptionSalt[:]); err != nil {
-			return err
-		}
-	} else {
-		hdr.EncryptionSalt = opts.EncryptionSalt
-	}
+	hdr.Features |= FeatureEncryptedDataPages | FeatureWALKeyedMAC | FeatureAuthenticatedDataPages
+	hdr.EncryptionSalt = opts.EncryptionSalt
 	hdr.EncryptionKeyCheck = opts.EncryptionKeyCheck
 	return nil
 }
 
 // openValidateEncryptionKey checks if the encryption key matches the stored key check.
 func openValidateEncryptionKey(opts *Options, hdr Header) error {
-	if opts != nil && opts.ExpectEncryptionKeyCheck && hdr.Features&FeatureEncryptedDataPages != 0 &&
+	if opts != nil && hdr.FormatVersion == formatVersionV3 &&
 		hdr.EncryptionKeyCheck != ([HeaderEncryptionKeyCheckLen]byte{}) && hdr.EncryptionKeyCheck != opts.EncryptionKeyCheck {
 		return ErrBadEncryptionKey
 	}
@@ -641,11 +623,6 @@ func (e *Engine) Path() string { return e.path }
 
 // LastWALSeq returns the last applied redo sequence (for tests).
 func (e *Engine) LastWALSeq() uint64 { return e.lastSeq }
-
-// WastedBytes returns the cumulative logical byte size of overflow-page chains
-// freed since this [Engine] was opened. These pages are dead space on disk until
-// the next [CompactTo]. The counter resets to zero on [Open] / [Engine.Close] + reopen.
-func (e *Engine) WastedBytes() uint64 { return e.wastedBytes.Load() }
 
 // ReadHeader returns the current file header (page 0 prefix).
 func (e *Engine) ReadHeader() (Header, error) {

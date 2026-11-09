@@ -19,7 +19,7 @@ func TestSerializedCommit_concurrentUpdatesPreserveWrites(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gw.db")
 	db, err := hexxladb.Open(path, &hexxladb.Options{
-		EnableMVCC:    true,
+
 		PageCacheSize: -1,
 	})
 	if err != nil {
@@ -87,7 +87,7 @@ func TestSerializedCommit_concurrentUpdatesPreserveWrites(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	db, err = hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true, PageCacheSize: -1})
+	db, err = hexxladb.Open(path, &hexxladb.Options{PageCacheSize: -1})
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestSerializedCommit_concurrentUpdatesNoRace(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gw2.db")
-	db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(path, &hexxladb.Options{})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -163,17 +163,15 @@ func TestSerializedCommit_concurrentUpdatesNoRace(t *testing.T) {
 		t.Fatalf("Update: %v", e)
 	default:
 	}
-	apply, multi, walSyncs := db.GroupWALStats()
-	if apply != 32 || multi != 0 || walSyncs != 32 {
-		t.Fatalf("GroupWALStats: apply=%d multi=%d walSyncs=%d", apply, multi, walSyncs)
+	apply, walSyncs := db.WALStats()
+	if apply != 32 || walSyncs != 32 {
+		t.Fatalf("WALStats: apply=%d walSyncs=%d", apply, walSyncs)
 	}
 }
 
 func TestSerializedCommit_readerWaitsForUpdateFinalization(t *testing.T) {
 	t.Parallel()
-	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "reader-finalization.db"), &hexxladb.Options{
-		EnableMVCC: true,
-	})
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "reader-finalization.db"), &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

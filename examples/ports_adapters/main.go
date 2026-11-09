@@ -26,7 +26,7 @@ func run(ctx context.Context) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, os.RemoveAll(dir)) }()
-	db, err := hexxladb.Open(filepath.Join(dir, "example.db"), &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(filepath.Join(dir, "example.db"), &hexxladb.Options{})
 	if err != nil {
 		return err
 	}

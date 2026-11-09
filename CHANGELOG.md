@@ -2,12 +2,16 @@
 
 ## [Unreleased]
 
+### Breaking
+
+- **Storage formats** — all databases use MVCC. New plaintext databases use engine v2 and new encrypted databases use authenticated v3. Engine v1 and AES-XTS files are refused before WAL replay. Use the [pinned v0.6.0 conversion procedure](docs/hexxladb/OPERATIONS.md#offline-conversion-of-retired-files) for retired files. The current library and CLI no longer ship the legacy conversion commands.
+- **Go API** — remove `Options.EnableMVCC`, public page-transform hooks, `GroupWALMaxBatchWait`, `ErrMVCCRequired`, and `ErrEmbeddingsDisabled`. Use `DB.WALStats` for commit attempts and redo syncs, and `DB.StorageStats` for reclaimable storage in place of `MVCCStats.WastedBytes`.
+
 ### API compatibility
 
 - **Historical retention** — `ViewAt`, `ViewAtTime`, and `ViewAtTag` return `ErrSnapshotExpired` below the recorded MVCC boundary. Existing MVCC files without retention metadata start at the upgrade-time head. Use a pre-upgrade backup to roll back to an older writer or pruner.
 
-- **WAL compatibility** — v1/v2 writes use a leading commit header. Recover an interrupted write with a current binary before downgrade. Clean database files retain their primary format. Pending v2 WALs from older versions that lack a commit header are refused and left intact.
-- **Write tuning** — deprecated `GroupWALMaxBatchWait` is ignored. Batch records inside `DB.Update` to share a durable commit. The middle counter in `GroupWALStats` is always zero.
+- **WAL compatibility** — v2 writes use a leading commit header. Recover an interrupted write with a current binary before downgrade. Clean database files retain their primary format. Pending v2 WALs from older versions that lack a commit header are refused and left intact.
 
 - **Historical reads** — typed edge and vector reads on older MVCC views return `ErrHistoricalDataUnavailable` where they previously read current data. Use versioned records for historical retrieval or open a separate `DB.View` for current graph and vector data.
 - **Raw writes** — `Tx.Put` returns `ErrInvalidArgument` for database-owned key families. Use typed methods for database records and move application writes to a prefix such as `app/`. Existing raw values remain readable. The database format and open behavior are unchanged.
@@ -31,6 +35,8 @@
 - **MVCC index repair** — `RepairMVCCIndexesTo` and `hexxladb compact --rebuild-mvcc-indexes` rebuild cell and seam secondary indexes from retained versions in a verified, source-preserving copy.
 
 ### Fixed
+
+- **MVCC key rotation** — preserve commit sequences, retained snapshots, and embedding settings when rewriting an encrypted database or converting MVCC to authenticated encryption.
 
 - **Snapshot pruning** — preserve the cell or tombstone visible at the cutoff and atomically publish the retention boundary with deleted versions.
 
@@ -56,6 +62,10 @@
 - **Dependency security** — upgrade the Go crypto and text modules to versions that address the high-severity advisories reported by the dependency inventory scan.
 
 ### Changed
+
+- **Architecture** — build detached graphs in the internal HNSW package and document the root package's main workflows.
+
+- **README** — explain vector search trade-offs in the retrieval guide and put commit batching guidance alongside performance evidence.
 
 - **README** — explain topic neighborhoods, separate released installation from the checkout quickstart, and document the current explorer controls.
 

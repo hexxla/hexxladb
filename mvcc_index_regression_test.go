@@ -13,7 +13,7 @@ import (
 
 func TestMVCCSecondaryIndexesFollowSnapshot(t *testing.T) {
 	t.Parallel()
-	db := openMVCCRegressionDB(t, filepath.Join(t.TempDir(), "index.db"), &Options{EnableMVCC: true})
+	db := openMVCCRegressionDB(t, filepath.Join(t.TempDir(), "index.db"), &Options{})
 	ctx := t.Context()
 	coord, err := Pack(Coord{Q: 1})
 	if err != nil {
@@ -124,7 +124,7 @@ func TestRepairMVCCIndexesToRestoresRetainedHistory(t *testing.T) {
 		name string
 		opts Options
 	}{
-		{"plaintext", Options{EnableMVCC: true}},
+		{"plaintext", Options{}},
 		{"authenticated", Options{EncryptionKey: []byte("mvcc index repair fixture")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -239,7 +239,7 @@ func TestRepairMVCCIndexesToRequiresExistingSource(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	source, destination := filepath.Join(dir, "missing.db"), filepath.Join(dir, "candidate.db")
-	err := RepairMVCCIndexesTo(t.Context(), source, destination, &Options{EnableMVCC: true}, nil)
+	err := RepairMVCCIndexesTo(t.Context(), source, destination, &Options{}, nil)
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing source error = %v, want os.ErrNotExist", err)
 	}
@@ -252,7 +252,7 @@ func TestRepairMVCCIndexesToRequiresExistingSource(t *testing.T) {
 
 func TestViewAtTimeAcrossUnixEpoch(t *testing.T) {
 	t.Parallel()
-	db := openMVCCRegressionDB(t, filepath.Join(t.TempDir(), "timeline.db"), &Options{EnableMVCC: true})
+	db := openMVCCRegressionDB(t, filepath.Join(t.TempDir(), "timeline.db"), &Options{})
 	key, err := Pack(Coord{})
 	if err != nil {
 		t.Fatal(err)

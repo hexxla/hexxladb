@@ -28,7 +28,7 @@ six hex steps apart, so the other group lies outside a three-ring radial
 scan from any cell in either group. Tags let you find topic records from
 anywhere on the grid.
 
-Your application chooses the anchors, radii, and tags. On an MVCC database, use
+Your application chooses the anchors, radii, and tags. Use
 `FindUnusedCellPlacement` and `PutCell` in the same `DB.Update` to allocate
 a new record without reusing a recorded tombstone. Graph edges and supersession
 can deliberately connect records across neighborhoods.
@@ -66,9 +66,11 @@ current checkout.
 ## Choose how to retrieve context
 
 - **Find seeds.** `QueryCells` supports lexical search, structured filters, and
-  optional vector similarity. A lexical scan can return partial hits with
-  `ErrQueryScanLimit`. Filtered vector queries can report candidate-budget
-  exhaustion or score exactly within a bounded tag, source, or radius scan.
+  optional vector similarity. Filtered HNSW search is approximate.
+  `QueryCellsWithStats` reports when the candidate budget ends the search.
+  For exact scoring over a bounded scan, set `MaxScanRows` with a required
+  tag, source, or radius. Row-limited scans can return partial hits with
+  `ErrQueryScanLimit`.
   [Query guide](docs/hexxladb/API_REFERENCE.md#query-and-content-search)
 - **Expand from a seed.** `LoadContext` scans neighboring rings or follows
   selected edge types. It can include facets and seams and resolve supersession.
@@ -114,18 +116,12 @@ fixture paths, and diagnostics.
   compaction, and diagnostics. See also the [encryption model](docs/hexxladb/ENCRYPTION.md).
 - [Performance evidence](docs/hexxladb/PERFORMANCE_EVIDENCE.md) records dated
   benchmarks and the workloads under [`tools/evidence`](tools/evidence/).
-  Use `task bench-api` to measure the current checkout.
+  Use `task bench-api` to measure the current checkout. Commits are serialized.
+  Batch related writes in `DB.Update` to share one durable commit.
+- [Compatibility policy](VERSIONING.md) and [roadmap](docs/ROADMAP.md) describe
+  upgrade expectations and planned work.
 
 `task build` builds the CLI and TUI. `task build-examples` compiles the examples.
-
-## Caveats
-
-Commits are serialized. Batch related writes in `DB.Update` to share one
-durable commit. MVCC snapshots have an explicit retention boundary. Reads
-before it return `ErrSnapshotExpired`. Filtered HNSW search is approximate
-and its rebuild has documented bounds. Authenticated format v3 supports page reuse and tail reclaim. Physical
-compaction and format migrations are explicit operations.
-[Compatibility policy](VERSIONING.md) · [Roadmap](docs/ROADMAP.md)
 
 ## Contributing
 

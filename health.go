@@ -31,7 +31,7 @@ type HealthReport struct {
 	// cell does not carry the tag). Populated only when CheckTagIndex is true.
 	TagIndexErrors int
 	// SourceIndexErrors is the count of source/ index entries inconsistent with
-	// the primary rows at the corresponding commit (or, for v1, no visible cell at coord).
+	// the primary rows at the corresponding commit.
 	SourceIndexErrors int
 
 	// MVCCStats is a snapshot of MVCC counters at check time.
@@ -114,13 +114,13 @@ func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthRep
 		}
 
 		if cfg.CheckTagIndex {
-			if err := healthCheckTagIndex(ctx, tx, db.useMVCC, liveCells, cfg.MaxErrors, &report); err != nil {
+			if err := healthCheckTagIndex(ctx, tx, liveCells, cfg.MaxErrors, &report); err != nil {
 				return err
 			}
 		}
 
 		if cfg.CheckSourceIndex {
-			if err := healthCheckSourceIndex(ctx, tx, db.useMVCC, liveCells, cfg.MaxErrors, &report); err != nil {
+			if err := healthCheckSourceIndex(ctx, tx, liveCells, cfg.MaxErrors, &report); err != nil {
 				return err
 			}
 		}
@@ -137,10 +137,8 @@ func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthRep
 // live PackedCoords, the total live cell count, and MVCC stats computed in the
 // same pass — eliminating the separate StatsMVCC() scan that HealthCheck previously issued.
 func healthScanCells(ctx context.Context, tx *Tx, db *DB) (liveCells map[lattice.PackedCoord]struct{}, cellCount int, stats MVCCStats, err error) {
-	isMVCC := db.useMVCC
 	ch := db.cachedHdr.Load()
 	stats.CommitSeq = ch.commitSeq
-	stats.WastedBytes = db.eng.WastedBytes()
 
 	liveCells = map[lattice.PackedCoord]struct{}{}
 	cellFrom := []byte(index.CellPrefix)
@@ -172,17 +170,13 @@ func healthScanCells(ctx context.Context, tx *Tx, db *DB) (liveCells map[lattice
 			return false
 		}
 		keyLen := len(k)
-		v1Len := len(index.CellPrefix) + index.PackedCoordKeyLen
-		mvccLen := v1Len + index.VersionSuffixLen
-		wantLen := v1Len
-		if isMVCC {
-			wantLen = mvccLen
-		}
-		if keyLen != wantLen {
+		prefixLen := len(index.CellPrefix) + index.PackedCoordKeyLen
+		mvccLen := prefixLen + index.VersionSuffixLen
+		if keyLen != mvccLen {
 			scanErr = fmt.Errorf("%w: malformed cell primary key", ErrCorruptDatabase)
 			return false
 		}
-		p, pErr := index.ParseCellKey(k[:v1Len])
+		p, pErr := index.ParseCellKey(k[:prefixLen])
 		if pErr != nil {
 			scanErr = fmt.Errorf("%w: parse cell primary key: %w", ErrCorruptDatabase, pErr)
 			return false
@@ -191,29 +185,16 @@ func healthScanCells(ctx context.Context, tx *Tx, db *DB) (liveCells map[lattice
 			scanErr = fmt.Errorf("%w: unpack cell primary coordinate: %w", ErrCorruptDatabase, unpackErr)
 			return false
 		}
-		if isMVCC {
-			stats.VersionedRows++
-			if !hasPrevCoord || p != lastCoord {
-				if err := flushMVCCCell(); err != nil {
-					scanErr = err
-					return false
-				}
-				lastCoord = p
-				hasPrevCoord = true
-			}
-			lastValue = slices.Clone(v)
-		} else {
-			if len(v) == 0 {
-				scanErr = fmt.Errorf("%w: empty non-MVCC cell record", ErrCorruptDatabase)
-				return false
-			}
-			if err := validateHealthCell(p, v); err != nil {
+		stats.VersionedRows++
+		if !hasPrevCoord || p != lastCoord {
+			if err := flushMVCCCell(); err != nil {
 				scanErr = err
 				return false
 			}
-			liveCells[p] = struct{}{}
-			cellCount++
+			lastCoord = p
+			hasPrevCoord = true
 		}
+		lastValue = slices.Clone(v)
 		return true
 	}); rangeErr != nil {
 		return nil, 0, MVCCStats{}, fmt.Errorf("hexxladb: health cell scan: %w", rangeErr)
@@ -221,10 +202,8 @@ func healthScanCells(ctx context.Context, tx *Tx, db *DB) (liveCells map[lattice
 	if scanErr != nil {
 		return nil, 0, MVCCStats{}, scanErr
 	}
-	if isMVCC {
-		if err := flushMVCCCell(); err != nil {
-			return nil, 0, MVCCStats{}, err
-		}
+	if err := flushMVCCCell(); err != nil {
+		return nil, 0, MVCCStats{}, err
 	}
 	return liveCells, cellCount, stats, nil
 }
@@ -271,7 +250,7 @@ func healthCheckOrphans(ctx context.Context, seams []record.SeamRecord, liveCell
 }
 
 // healthCheckTagIndex verifies every tag/ secondary index entry has a live primary cell.
-func healthCheckTagIndex(ctx context.Context, tx *Tx, isMVCC bool, liveCells map[lattice.PackedCoord]struct{}, maxErrors int, report *HealthReport) error {
+func healthCheckTagIndex(ctx context.Context, tx *Tx, liveCells map[lattice.PackedCoord]struct{}, maxErrors int, report *HealthReport) error {
 	tagFrom, tagTo := index.TagFamilyScanBounds()
 	var scanErr error
 
@@ -280,7 +259,7 @@ func healthCheckTagIndex(ctx context.Context, tx *Tx, isMVCC bool, liveCells map
 			scanErr = err
 			return false
 		}
-		tagAlive, terr := secondaryTagIndexConsistent(tx, isMVCC, k, liveCells)
+		tagAlive, terr := secondaryTagIndexConsistent(tx, k, liveCells)
 		if terr != nil {
 			scanErr = terr
 			return false
@@ -308,7 +287,7 @@ func healthCheckTagIndex(ctx context.Context, tx *Tx, isMVCC bool, liveCells map
 }
 
 // healthCheckSourceIndex verifies every source/ secondary index entry has a live primary cell.
-func healthCheckSourceIndex(ctx context.Context, tx *Tx, isMVCC bool, liveCells map[lattice.PackedCoord]struct{}, maxErrors int, report *HealthReport) error {
+func healthCheckSourceIndex(ctx context.Context, tx *Tx, liveCells map[lattice.PackedCoord]struct{}, maxErrors int, report *HealthReport) error {
 	var scanErr error
 
 	if err := tx.AscendRange(
@@ -319,7 +298,7 @@ func healthCheckSourceIndex(ctx context.Context, tx *Tx, isMVCC bool, liveCells 
 				scanErr = err
 				return false
 			}
-			srcAlive, sErr := secondarySourceIndexConsistent(tx, isMVCC, k, liveCells)
+			srcAlive, sErr := secondarySourceIndexConsistent(tx, k, liveCells)
 			if sErr != nil {
 				scanErr = sErr
 				return false
@@ -348,14 +327,14 @@ func healthCheckSourceIndex(ctx context.Context, tx *Tx, isMVCC bool, liveCells 
 }
 
 // secondaryTagIndexConsistent verifies a physical tag/ key against primary storage.
-// MVCC suffixed keys are validated against cell/<packed><seq>; v1 keys and
-// unsuffixed tag keys check live head cells only. Malformed storage fails closed.
-func secondaryTagIndexConsistent(tx *Tx, dbMVCC bool, k []byte, live map[lattice.PackedCoord]struct{}) (bool, error) {
+// MVCC suffixed keys are validated against cell/<packed><seq>; an unsuffixed tag key
+// is checked against the live head. Malformed storage fails closed.
+func secondaryTagIndexConsistent(tx *Tx, k []byte, live map[lattice.PackedCoord]struct{}) (bool, error) {
 	tag, p, seq, hasSeq, err := index.ParseTagKeyWithSeq(k)
 	if err != nil {
 		return false, fmt.Errorf("%w: parse tag secondary key: %w", ErrCorruptDatabase, err)
 	}
-	if dbMVCC && hasSeq {
+	if hasSeq {
 		ck := index.CellKeyWithVersion(p, seq)
 		val, found, err := tx.getDirect(ck)
 		if err != nil {
@@ -377,12 +356,12 @@ func secondaryTagIndexConsistent(tx *Tx, dbMVCC bool, k []byte, live map[lattice
 	return alive, nil
 }
 
-func secondarySourceIndexConsistent(tx *Tx, dbMVCC bool, k []byte, live map[lattice.PackedCoord]struct{}) (bool, error) {
+func secondarySourceIndexConsistent(tx *Tx, k []byte, live map[lattice.PackedCoord]struct{}) (bool, error) {
 	sid, p, seq, hasSeq, err := index.ParseSourceKeyWithSeq(k)
 	if err != nil {
 		return false, fmt.Errorf("%w: parse source secondary key: %w", ErrCorruptDatabase, err)
 	}
-	if dbMVCC && hasSeq {
+	if hasSeq {
 		ck := index.CellKeyWithVersion(p, seq)
 		val, found, err := tx.getDirect(ck)
 		if err != nil {

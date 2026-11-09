@@ -270,16 +270,60 @@ func TestOpen_rejectsChangelogFromAnotherEncryptedDatabase(t *testing.T) {
 	}
 }
 
-func TestOptions_encryptionConflictsWithHooks(t *testing.T) {
+func TestOptions_rejectsMixedEncryptionCredentials(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "x.db")
 	_, err := hexxladb.Open(path, &hexxladb.Options{
-		EncryptionKey:   []byte("sixteen.byte.key!!"),
-		BeforeWritePage: func(uint64, []byte) ([]byte, error) { return nil, nil },
+		EncryptionKey: []byte("sixteen.byte.key!!"),
+		Passphrase:    "also configured",
 	})
 	if !errors.Is(err, hexxladb.ErrEncryptionOptions) {
 		t.Fatalf("got %v want %v", err, hexxladb.ErrEncryptionOptions)
+	}
+}
+
+func TestRetiredFormatsLeaveRecoverySetIntact(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		version  uint32
+		features uint32
+	}{
+		{name: "single-version", version: 1},
+		{name: "legacy-encrypted", version: 2, features: engine.FeatureEncryptedDataPages},
+		{name: "unknown-newer", version: 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "retired.db")
+			primary := make([]byte, 4096)
+			copy(primary, "HEXXLADB")
+			binary.BigEndian.PutUint32(primary[8:12], tc.version)
+			binary.BigEndian.PutUint32(primary[12:16], 4096)
+			binary.BigEndian.PutUint64(primary[24:32], 1)
+			binary.BigEndian.PutUint32(primary[40:44], tc.features)
+			wal := []byte("pending recovery bytes")
+			for component, data := range map[string][]byte{path: primary, path + "-wal": wal} {
+				if err := os.WriteFile(component, data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			credentials := &hexxladb.Options{EncryptionKey: []byte("test-encryption-key")}
+			for _, opts := range []*hexxladb.Options{nil, credentials} {
+				if _, err := hexxladb.OpenExisting(path, opts); !errors.Is(err, hexxladb.ErrUnsupportedFormatVersion) {
+					t.Fatalf("OpenExisting = %v, want ErrUnsupportedFormatVersion", err)
+				}
+			}
+			if err := hexxladb.RotateEncryption(path, nil, credentials); !errors.Is(err, hexxladb.ErrUnsupportedFormatVersion) {
+				t.Fatalf("RotateEncryption = %v, want ErrUnsupportedFormatVersion", err)
+			}
+			for component, want := range map[string][]byte{path: primary, path + "-wal": wal} {
+				got, err := os.ReadFile(component)
+				if err != nil || !bytes.Equal(got, want) {
+					t.Fatalf("%s changed after refusal: %v", filepath.Base(component), err)
+				}
+			}
+		})
 	}
 }
 
@@ -595,5 +639,99 @@ func TestRotateEncryptionWithOptions_progressAndStreaming(t *testing.T) {
 	}
 	if progressed < 50 {
 		t.Fatalf("progress callback should reflect copied rows, got %d", progressed)
+	}
+}
+
+func TestRotateEncryptionPreservesMVCC(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		oldKey    []byte
+		batchSize int
+	}{
+		{name: "plaintext-v2-small-batches", batchSize: 1},
+		{name: "encrypted-v3-default-batch", oldKey: []byte("sixteen.byte.key!!")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "rotate-mvcc.db")
+			oldOpts := &hexxladb.Options{
+				EncryptionKey: tc.oldKey, ChangelogEnabled: true,
+				EmbeddingDimension: 2, DistanceMetric: hexxladb.DistanceL2,
+			}
+			newOpts := &hexxladb.Options{
+				EncryptionKey: []byte("replacement-key!"), ChangelogEnabled: true, ChangelogLazy: true,
+			}
+			key, err := hexxladb.Pack(hexxladb.Coord{Q: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			db, err := hexxladb.Open(path, oldOpts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			put := func(content string) {
+				t.Helper()
+				if err := db.Update(func(tx *hexxladb.Tx) error {
+					return tx.PutCell(t.Context(), hexxladb.CellRecord{Key: key, RawContent: content})
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			put("one")
+			put("two")
+			if err := db.TagSnapshot("retained"); err != nil {
+				t.Fatal(err)
+			}
+			put("three")
+			if n, err := db.PruneCellVersions(2, 10); n != 1 || err != nil {
+				t.Fatalf("prune = %d, %v, want one pruned version", n, err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := hexxladb.RotateEncryptionWithOptions(path, oldOpts, newOpts, &hexxladb.RotateOptions{BatchSize: tc.batchSize}); err != nil {
+				t.Fatal(err)
+			}
+			db, err = hexxladb.OpenExisting(path, newOpts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stats, err := db.StatsMVCC(); err != nil || stats.CommitSeq != 3 || stats.VersionedRows != 2 {
+				t.Fatalf("MVCC stats = %+v, %v, want head 3 and two versions", stats, err)
+			}
+			if floor, err := db.OldestSnapshotSeq(); err != nil || floor != 2 {
+				t.Fatalf("snapshot floor = %d, %v, want 2", floor, err)
+			}
+			if err := db.ViewAt(1, func(*hexxladb.Tx) error { return nil }); !errors.Is(err, hexxladb.ErrSnapshotExpired) {
+				t.Fatalf("pruned snapshot = %v, want ErrSnapshotExpired", err)
+			}
+			read := func(want string) func(*hexxladb.Tx) error {
+				return func(tx *hexxladb.Tx) error {
+					cell, found, err := tx.GetCell(key)
+					if err != nil || !found || cell.RawContent != want {
+						t.Fatalf("cell = %q, found=%t, err=%v, want %q", cell.RawContent, found, err, want)
+					}
+					return nil
+				}
+			}
+			if err := db.ViewAtTag("retained", read("two")); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.View(read("three")); err != nil {
+				t.Fatal(err)
+			}
+			if dim, metric := db.EmbeddingDimension(), db.EmbeddingMetric(); dim != 2 || metric != hexxladb.DistanceL2 {
+				t.Fatalf("embedding configuration = %d, %v, want dimension 2 and L2", dim, metric)
+			}
+			put("four")
+			if err := db.ViewAt(4, read("four")); err != nil {
+				t.Fatal(err)
+			}
+			changes, err := db.ReadChangelogSince(0, 10)
+			if err != nil || len(changes) != 4 || changes[3].Seq != 4 {
+				t.Fatalf("changelog after rotation and write = %v, %v, want four records", changes, err)
+			}
+		})
 	}
 }

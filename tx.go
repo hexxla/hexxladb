@@ -25,7 +25,7 @@ type Tx struct {
 	changelogOutboxKeys    [][]byte
 	changefeedHeadBefore   uint64
 	changefeedHeadAdvanced bool
-	// readSeq is the MVCC snapshot (largest visible commit_seq). Ignored when the DB is format v1.
+	// readSeq is the MVCC snapshot (largest visible commit_seq).
 	readSeq uint64
 	// writeSeq is the commit_seq assigned to writes in this Update (hdr.CommitSeq+1). Zero in read-only txs.
 	writeSeq uint64
@@ -61,7 +61,7 @@ func (db *DB) View(fn func(*Tx) error) error {
 // ViewAt runs fn inside a read-only transaction pinned to read_seq (commit sequence).
 // read_seq must not exceed the database header's CommitSeq or [ErrReadSeqFuture] is returned.
 // Sequences before [DB.OldestSnapshotSeq] return [ErrSnapshotExpired].
-// On MVCC databases, typed edge and embedding reads on older sequences return
+// Typed edge and embedding reads on older sequences return
 // [ErrHistoricalDataUnavailable].
 func (db *DB) ViewAt(readSeq uint64, fn func(*Tx) error) error {
 	if fn == nil {
@@ -88,7 +88,6 @@ func (db *DB) ViewAt(readSeq uint64, fn func(*Tx) error) error {
 
 // ViewAtTime runs fn inside a read-only transaction pinned to the most recent commit at or before asOf.
 // A resolved sequence before [DB.OldestSnapshotSeq] returns [ErrSnapshotExpired].
-// For format-v1 databases this resolves to the latest committed snapshot.
 func (db *DB) ViewAtTime(asOf time.Time, fn func(*Tx) error) error {
 	if fn == nil {
 		return ErrNilCallback
@@ -102,13 +101,9 @@ func (db *DB) ViewAtTime(asOf time.Time, fn func(*Tx) error) error {
 		return ErrDatabaseClosed
 	}
 	ch := db.cachedHdr.Load()
-	readSeq := ch.commitSeq
-	if db.useMVCC {
-		var err error
-		readSeq, err = db.resolveReadSeqAtOrBefore(asOf)
-		if err != nil {
-			return err
-		}
+	readSeq, err := db.resolveReadSeqAtOrBefore(asOf)
+	if err != nil {
+		return err
 	}
 	if err := db.checkSnapshotFloor(readSeq); err != nil {
 		return err
@@ -118,7 +113,7 @@ func (db *DB) ViewAtTime(asOf time.Time, fn func(*Tx) error) error {
 }
 
 func (tx *Tx) checkCurrentData() error {
-	if !tx.writable && tx.db.useMVCC && tx.readSeq != tx.db.cachedHdr.Load().commitSeq {
+	if !tx.writable && tx.readSeq != tx.db.cachedHdr.Load().commitSeq {
 		return ErrHistoricalDataUnavailable
 	}
 	return nil
@@ -165,17 +160,13 @@ func (db *DB) Update(fn func(*Tx) error) error { //nolint:gocyclo // durability 
 	ch := db.cachedHdr.Load()
 	writeSeqBefore = ch.commitSeq
 	commitWall := time.Now().UTC().UnixNano()
-	if db.useMVCC {
-		wseq := db.writeSeqNext.Add(1)
-		tx = &Tx{
-			db:          db,
-			writable:    true,
-			readSeq:     ch.commitSeq,
-			writeSeq:    wseq,
-			cellOverlay: make(map[lattice.PackedCoord][]byte),
-		}
-	} else {
-		tx = &Tx{db: db, writable: true}
+	wseq := db.writeSeqNext.Add(1)
+	tx = &Tx{
+		db:          db,
+		writable:    true,
+		readSeq:     ch.commitSeq,
+		writeSeq:    wseq,
+		cellOverlay: make(map[lattice.PackedCoord][]byte),
 	}
 	callbackStarted := time.Now()
 	fnErr := fn(tx)
@@ -183,15 +174,13 @@ func (db *DB) Update(fn func(*Tx) error) error { //nolint:gocyclo // durability 
 	if err := cmp.Or(fnErr, tx.stagedWriteErr); err != nil {
 		return err
 	}
-	if db.useMVCC {
-		if !db.snapshotFloorStored {
-			if err := tx.stageSnapshotFloor(db.snapshotFloor); err != nil {
-				return err
-			}
+	if !db.snapshotFloorStored {
+		if err := tx.stageSnapshotFloor(db.snapshotFloor); err != nil {
+			return err
 		}
-		if err := db.btree.Put(index.CommitTimeKey(commitWall, tx.writeSeq), emptySecondaryVal); err != nil {
-			return fmt.Errorf("%w: commit timeline: %w", ErrCommitFinalization, err)
-		}
+	}
+	if err := db.btree.Put(index.CommitTimeKey(commitWall, tx.writeSeq), emptySecondaryVal); err != nil {
+		return fmt.Errorf("%w: commit timeline: %w", ErrCommitFinalization, err)
 	}
 	if err := db.stageChangelogOutbox(tx, commitWall); err != nil {
 		return fmt.Errorf("%w: durable changelog intent: %w", ErrCommitFinalization, err)
@@ -202,9 +191,7 @@ func (db *DB) Update(fn func(*Tx) error) error { //nolint:gocyclo // durability 
 		}
 	}
 	finalHeader, err := db.eng.UpdateHeaderGet(func(h *engine.Header) {
-		if db.useMVCC {
-			h.CommitSeq = tx.writeSeq
-		}
+		h.CommitSeq = tx.writeSeq
 	})
 	if err != nil {
 		return fmt.Errorf("%w: header publication: %w", ErrCommitFinalization, err)
@@ -227,7 +214,7 @@ func (db *DB) Update(fn func(*Tx) error) error { //nolint:gocyclo // durability 
 	}
 	committed = true
 	db.writeStats.commits.Add(1)
-	db.snapshotFloorStored = db.useMVCC
+	db.snapshotFloorStored = true
 	db.storeCachedHeader(finalHeader.CommitSeq, finalHeader.BTreeRoot)
 	crashtest.At("db_engine_committed")
 	finalizationStarted := time.Now()

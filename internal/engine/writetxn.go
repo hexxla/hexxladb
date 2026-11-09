@@ -70,9 +70,9 @@ func (e *Engine) CommitWriteTxn() error {
 	return e.commitPages(txn.hdr, txn.pending)
 }
 
-// GroupWALStats preserves the public compatibility counters without a group queue.
-func (e *Engine) GroupWALStats() (commits, grouped, redoSyncs uint64) {
-	return e.walCommits.Load(), 0, e.walCommitSyncs.Load()
+// WALStats reports commit attempts and successful redo syncs.
+func (e *Engine) WALStats() (commitAttempts, redoSyncs uint64) {
+	return e.walCommits.Load(), e.walCommitSyncs.Load()
 }
 
 func (e *Engine) commitPages(final Header, pending []pendingRedo) (err error) {
@@ -153,7 +153,7 @@ func (e *Engine) writeCommitWAL(final Header, pending []pendingRedo) error {
 		return err
 	}
 	marker := e.encodeHeaderWALRecord(final, uint64(len(pending)))
-	// Legacy readers reject a pending page-zero marker. Put it first for v1/v2
+	// Legacy readers reject a pending page-zero marker. Put it first for v2
 	// so those readers cannot apply new-format pages before detecting it.
 	if !e.headerMACEnabled {
 		if _, err := e.wal.Write(marker); err != nil {

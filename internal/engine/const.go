@@ -40,7 +40,6 @@ func resolvePageSize(opts *Options) (uint32, error) {
 const (
 	headerMagic      = "HEXXLADB"
 	headerPrefixSize = 512
-	formatVersionV1  = uint32(1)
 	formatVersionV2  = uint32(2)                  // MVCC: commit_seq in header (see ENGINE_FORMAT.md).
 	formatVersionV3  = AuthenticatedFormatVersion // MVCC plus authenticated data-page envelopes.
 

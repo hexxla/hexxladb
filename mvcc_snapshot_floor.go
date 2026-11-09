@@ -8,9 +8,6 @@ import (
 )
 
 func (db *DB) loadSnapshotFloor(head uint64) error {
-	if !db.useMVCC {
-		return nil
-	}
 	value, found, err := db.btree.Get([]byte(index.MVCCSnapshotFloorKey))
 	if err != nil {
 		return mapEngineDataError(err)
@@ -41,7 +38,7 @@ func (db *DB) checkSnapshotFloor(seq uint64) error {
 	if db.snapshotFloorUncertain {
 		return fmt.Errorf("%w: reopen to recover snapshot retention", ErrCommitFinalization)
 	}
-	if db.useMVCC && seq < db.snapshotFloor {
+	if seq < db.snapshotFloor {
 		return fmt.Errorf("%w: requested %d, earliest %d", ErrSnapshotExpired, seq, db.snapshotFloor)
 	}
 	return nil
@@ -50,7 +47,6 @@ func (db *DB) checkSnapshotFloor(seq uint64) error {
 // OldestSnapshotSeq returns the earliest guaranteed point-in-time sequence.
 // On a database written by an older release without a recorded retention
 // boundary, the head at first open with this release is the baseline.
-// Returns [ErrMVCCRequired] on single-version databases.
 func (db *DB) OldestSnapshotSeq() (uint64, error) {
 	if db == nil {
 		return 0, ErrDatabaseClosed
@@ -59,9 +55,6 @@ func (db *DB) OldestSnapshotSeq() (uint64, error) {
 	defer db.mu.RUnlock()
 	if db.activeEng() == nil {
 		return 0, ErrDatabaseClosed
-	}
-	if !db.useMVCC {
-		return 0, ErrMVCCRequired
 	}
 	if err := db.checkSnapshotFloor(db.snapshotFloor); err != nil {
 		return 0, err

@@ -29,7 +29,7 @@ func (ctx *cancelAfterChecksContext) Err() error {
 
 func TestBackupToHoldsReadLockUntilCaptureCompletes(t *testing.T) {
 	sourcePath := filepath.Join(t.TempDir(), "source.db")
-	db, err := Open(sourcePath, &Options{EnableMVCC: true})
+	db, err := Open(sourcePath, &Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

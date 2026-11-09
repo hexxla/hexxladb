@@ -25,16 +25,22 @@ func TestReplay_restoresStalePrimaryWhenWALAhead(t *testing.T) {
 	if err := e.WritePage(1, oldP); err != nil {
 		t.Fatal(err)
 	}
+	header, err := e.ReadHeader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	header.LastWALSeq++
+	marker := e.encodeHeaderWALRecord(header, 1)
 	if err := e.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	rec2 := encodeWALRecord(2, 1, newP, DefaultPageSize)
+	rec2 := encodeWALRecord(header.LastWALSeq, 1, newP, DefaultPageSize)
 	wf, err := os.OpenFile(WalPath(path), os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := wf.Write(rec2); err != nil {
+	if _, err := wf.Write(append(marker, rec2...)); err != nil {
 		_ = wf.Close()
 		t.Fatal(err)
 	}
@@ -55,7 +61,7 @@ func TestReplay_restoresStalePrimaryWhenWALAhead(t *testing.T) {
 	if !bytes.Equal(got, newP) {
 		t.Fatal("expected replay of seq 2 to restore newer page payload")
 	}
-	if e2.LastWALSeq() != 2 {
-		t.Fatalf("LastWALSeq want 2 got %d", e2.LastWALSeq())
+	if e2.LastWALSeq() != header.LastWALSeq {
+		t.Fatalf("LastWALSeq want %d got %d", header.LastWALSeq, e2.LastWALSeq())
 	}
 }

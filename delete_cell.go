@@ -33,7 +33,7 @@ func (tx *Tx) DeleteCell(ctx context.Context, key PackedCoord) error {
 }
 
 // DeleteCellWithOutcome behaves like [Tx.DeleteCell] but sets removed=true when a
-// visible cell existed and was tombstoned (MVCC) or hard-deleted (v1). A second
+// visible cell existed and was tombstoned. A second
 // delete on the same coordinate returns removed=false with a nil error.
 //
 // Only allowed inside [DB.Update].
@@ -48,38 +48,7 @@ func (tx *Tx) DeleteCellWithOutcome(ctx context.Context, key PackedCoord) (remov
 		return false, err
 	}
 
-	if !tx.db.useMVCC {
-		return tx.deleteCellV1(key)
-	}
 	return tx.deleteCellMVCC(ctx, key)
-}
-
-// deleteCellV1 hard-deletes the cell, secondary indexes, facets, and outbound edges.
-func (tx *Tx) deleteCellV1(key lattice.PackedCoord) (removed bool, err error) {
-	old, had, err := tx.GetCell(key)
-	if err != nil {
-		return false, err
-	}
-	if !had {
-		return false, nil // idempotent
-	}
-	if err := tx.deleteDirect(index.CellKey(key)); err != nil {
-		return false, err
-	}
-	if err := tx.removeCellSecondaryIndex(old, 0); err != nil {
-		return false, err
-	}
-	if err := tx.deleteFacetsForCell(key); err != nil {
-		return false, err
-	}
-	if err := tx.deleteOutboundEdges(key); err != nil {
-		return false, err
-	}
-	if err := tx.deleteEmbeddingIfEnabled(key); err != nil {
-		return false, err
-	}
-	tx.noteChangelog(changelog.OpDeleteCell, index.CellKey(key), nil)
-	return true, nil
 }
 
 // deleteCellMVCC tombstones the cell and its facets, removes staged secondary
@@ -130,32 +99,6 @@ func (tx *Tx) deleteCellMVCC(ctx context.Context, key lattice.PackedCoord) (remo
 
 	tx.noteChangelog(changelog.OpDeleteCell, index.CellKey(key), nil)
 	return true, nil
-}
-
-// deleteFacetsForCell hard-deletes all facet keys for the given cell (v1 path).
-func (tx *Tx) deleteFacetsForCell(key lattice.PackedCoord) error {
-	lo, err := index.FacetRangeLower(key)
-	if err != nil {
-		return err
-	}
-	hi, err := index.FacetRangeUpper(key)
-	if err != nil {
-		return err
-	}
-	// Collect keys first to avoid mutation during iteration.
-	var keys [][]byte
-	if err := tx.AscendRange(lo, hi, func(k, _ []byte) bool {
-		keys = append(keys, append([]byte(nil), k...))
-		return true
-	}); err != nil {
-		return err
-	}
-	for _, k := range keys {
-		if err := tx.deleteDirect(k); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // tombstoneFacetsForCell writes zero-length tombstones for each visible facet (MVCC path).

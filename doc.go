@@ -20,19 +20,15 @@
 //     Configurable page size via [Options.PageSize] (4096/8192/16384/65536; default 4096); readable at runtime via [DB.PageSize].
 //     Per-database value size limit via [Options.MaxValueBytes] (512–1048576 bytes; default 8192); readable at runtime via [DB.MaxValueBytes].
 //     Transparent per-value DEFLATE compression is always-on (compress/flate, Go stdlib; values ≥ 64 bytes).
-//     MVCC on new plaintext databases via [Options.EnableMVCC] / [Options.MVCCRetention];
-//     new encrypted databases always use authenticated MVCC format v3;
+//     MVCC on every database, with [Options.MVCCRetention] for prune suggestions.
+//     Plaintext databases use format v2 and encrypted databases use authenticated format v3.
 //     lifecycle: [DB.StatsMVCC], [DB.PruneCellVersions], [DB.SuggestedPruneBeforeSeq], [PruneScheduler]
 //     (see docs/hexxladb/OPERATIONS.md). Encryption operations include [RotateEncryption].
-//     [PreflightMigrateV1ToV2] and [MigrateV1ToV2] provide an offline,
-//     capacity-checked, resumable, verified upgrade from a format-v1 source.
-//     [PreflightMigrateToAuthenticated] and [MigrateToAuthenticated] create a
-//     verified authenticated encrypted v3 candidate from a closed v1 or v2 source.
 //   - [DB.SnapshotDiff] — retained MVCC cell/seam history between two commit sequences;
 //     use the logical changelog for complete CDC or audit processing.
 //   - [DB.View], [DB.ViewAt], [DB.ViewAtTime], [DB.Update], [DB.Batch], [Tx] —
 //     Bolt-style transactions; [DB.Batch] is an alias for [DB.Update]; see docs/hexxladb/TX.md.
-//     [DB.WriteStats] and [DB.GroupWALStats] expose cumulative write-phase timing and redo-sync counters.
+//     [DB.WriteStats] and [DB.WALStats] expose cumulative write-phase timing and redo-sync counters.
 //   - [DB.StorageStats] — physical, live, reusable, and reclaimable storage accounting;
 //     [DB.ReclaimTail] safely truncates a contiguous authenticated-freelist suffix.
 //   - [DB.BackupTo] — consistent online physical backup of the primary, WAL, and optional changelog.
@@ -78,12 +74,12 @@
 //   - Sentinel errors are defined in errors.go and support [errors.Is]. Recovery-sensitive
 //     categories include lifecycle ([ErrDatabaseClosed], [ErrDatabaseLocked]), persisted integrity
 //     ([ErrCorruptDatabase]), bounded scans ([ErrQueryScanLimit], [ErrSpatialScanLimit]), format and migration
-//     refusal ([ErrUnsupportedFormatVersion], [ErrMigrationIncomplete], [ErrMigrationChangelogState], [ErrCompactionIncomplete]),
+//     refusal ([ErrUnsupportedFormatVersion], [ErrMigrationIncomplete], [ErrCompactionIncomplete]),
 //     commit finalization ([ErrCommitFinalization], [ErrCommitDurable]), encryption and changelog
 //     integrity ([ErrEncryptionKeyMismatch], [ErrChangelogCorrupt], [ErrChangelogConsumerInvalidated]),
 //     placement ([ErrNoFreeCellPlacement]), embedding rebuild
 //     ([ErrEmbeddingIndexChanged], [ErrEmbeddingIndexTooLarge]), maintenance capacity ([ErrInsufficientSpace]),
-//     and MVCC snapshot errors ([ErrReadSeqFuture], [ErrMVCCRequired]).
+//     and MVCC snapshot errors ([ErrReadSeqFuture], [ErrSnapshotExpired]).
 //   - Named snapshots: [DB.TagSnapshot], [DB.ListSnapshotTags], [DB.ViewAtTag],
 //     [DB.DeleteSnapshotTag]; retained-history comparison through [DB.SnapshotDiff].
 //   - Interrupted offline encryption swaps fail closed through [ErrRotationIncomplete]

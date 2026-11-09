@@ -71,7 +71,7 @@ Underfull leaves remain valid when neither sibling fits.
 
 ## Allocator
 
-- New pages use the engine’s **`next_page_id`** discipline: the next allocated id is the current **`NextPageID`** from the header before **`WritePage`** (see ENGINE_FORMAT). Plaintext and legacy encrypted v1/v2 allocation is extend-only; operators reclaim dead pages through explicit compaction. Authenticated v3 persists generation-linked reusable page ids inside the authenticated transaction/WAL boundary, consumes the lowest free id before extending, and supports bounded tail reclaim.
+- New pages use the engine’s **`next_page_id`** discipline: the next allocated id is the current **`NextPageID`** from the header before **`WritePage`** (see ENGINE_FORMAT). Plaintext v2 allocation is extend-only; operators reclaim dead pages through explicit compaction. Authenticated v3 persists generation-linked reusable page ids inside the authenticated transaction/WAL boundary, consumes the lowest free id before extending, and supports bounded tail reclaim.
 
 ## Key encoding (application layer)
 

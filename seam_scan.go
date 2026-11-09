@@ -22,20 +22,7 @@ func (tx *Tx) AscendSeams(ctx context.Context, visit func(SeamRecord) bool) erro
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if tx.db.useMVCC {
-		return tx.ascendVersionedSeams(ctx, visit)
-	}
-	return tx.scanSeamPrimaries(ctx, func(key, value []byte) (bool, error) {
-		seam, err := decodeScannedSeam(value)
-		if err != nil {
-			return false, err
-		}
-		expectedKey, err := index.SeamKey(seam.ID)
-		if err != nil || !bytes.Equal(key, expectedKey) {
-			return false, fmt.Errorf("%w: seam primary key does not match encoded record ID", ErrCorruptDatabase)
-		}
-		return visit(seam), nil
-	})
+	return tx.ascendVersionedSeams(ctx, visit)
 }
 
 func (tx *Tx) ascendVersionedSeams(ctx context.Context, visit func(SeamRecord) bool) error {

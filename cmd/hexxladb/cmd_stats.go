@@ -1,12 +1,10 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"os"
 
-	"github.com/hexxla/hexxladb"
 	"github.com/hexxla/hexxladb/internal/cmdconfig"
 )
 
@@ -44,7 +42,7 @@ func cmdStats(args []string) int {
 	}
 
 	oldest, err := db.OldestSnapshotSeq()
-	if err != nil && !errors.Is(err, hexxladb.ErrMVCCRequired) {
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "hexxladb stats: retention: %v\n", err)
 		return 1
 	}

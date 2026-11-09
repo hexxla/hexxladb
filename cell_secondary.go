@@ -40,10 +40,7 @@ func (tx *Tx) cellSourceSecondaryKey(rec record.CellRecord, commitSeq uint64) ([
 	if sid == "" {
 		return nil, nil
 	}
-	if tx.db.useMVCC {
-		return index.SourceKeyWithVersion(sid, rec.Key, commitSeq)
-	}
-	return index.SourceKey(sid, rec.Key)
+	return index.SourceKeyWithVersion(sid, rec.Key, commitSeq)
 }
 
 // cellTimeSecondaryKey returns the time/ index key when validity maps to a week bucket.
@@ -52,17 +49,11 @@ func (tx *Tx) cellTimeSecondaryKey(rec record.CellRecord, commitSeq uint64) ([]b
 	if !ok {
 		return nil, false
 	}
-	if tx.db.useMVCC {
-		return index.TimeKeyWithVersion(b, rec.Key, commitSeq), true
-	}
-	return index.TimeKey(b, rec.Key), true
+	return index.TimeKeyWithVersion(b, rec.Key, commitSeq), true
 }
 
 func (tx *Tx) cellTagSecondaryKey(tag string, key lattice.PackedCoord, commitSeq uint64) ([]byte, error) {
-	if tx.db.useMVCC {
-		return index.TagKeyWithVersion(tag, key, commitSeq)
-	}
-	return index.TagKey(tag, key)
+	return index.TagKeyWithVersion(tag, key, commitSeq)
 }
 
 func (tx *Tx) visitCellSecondaryKeys(rec record.CellRecord, commitSeq uint64, visit func([]byte) error) error {
@@ -103,24 +94,15 @@ func (tx *Tx) removeCellSecondaryIndex(rec record.CellRecord, commitSeq uint64) 
 }
 
 func (tx *Tx) cellSourceScanBounds(sourceID string) (from, to []byte, err error) {
-	if tx.db.useMVCC {
-		return index.SourceRangePrefixAllVersions(sourceID)
-	}
-	return index.SourceRangePrefix(sourceID)
+	return index.SourceRangePrefixAllVersions(sourceID)
 }
 
 func (tx *Tx) cellTimeScanBounds(bucket int64) (from, to []byte) {
-	if tx.db.useMVCC {
-		return index.TimeRangePrefixAllVersions(bucket)
-	}
-	return index.TimeRangePrefix(bucket)
+	return index.TimeRangePrefixAllVersions(bucket)
 }
 
 func (tx *Tx) cellTagScanBounds(tag string) (from, to []byte, err error) {
-	if tx.db.useMVCC {
-		return index.TagRangePrefixAllVersions(tag)
-	}
-	return index.TagRangePrefix(tag)
+	return index.TagRangePrefixAllVersions(tag)
 }
 
 // AscendCellsBySource scans the source/ secondary index for sourceID and calls fn with each

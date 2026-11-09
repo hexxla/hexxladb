@@ -15,8 +15,8 @@ func TestTx_FindFreeCellPlacementDeterministicWithinUpdate(t *testing.T) {
 		name string
 		opts *hexxladb.Options
 	}{
-		{name: "format-v1"},
-		{name: "mvcc", opts: &hexxladb.Options{EnableMVCC: true}},
+		{name: "plaintext"},
+		{name: "authenticated", opts: &hexxladb.Options{EncryptionKey: []byte("test-encryption-key")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -190,7 +190,7 @@ func TestTx_FindFreeCellPlacementMVCCReusesTombstoneAndPreservesHistory(t *testi
 	t.Parallel()
 	db, err := hexxladb.Open(
 		filepath.Join(t.TempDir(), "placement.db"),
-		&hexxladb.Options{EnableMVCC: true},
+		&hexxladb.Options{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -257,7 +257,7 @@ func TestTx_FindFreeCellPlacementMVCCReusesTombstoneAndPreservesHistory(t *testi
 
 func TestTx_FindUnusedCellPlacementPreservesDeletedIdentity(t *testing.T) {
 	t.Parallel()
-	db := openHookDB(t, &hexxladb.Options{EnableMVCC: true})
+	db := openHookDB(t, &hexxladb.Options{})
 	anchor := hexxladb.Coord{}
 	key := mustPackTest(t, anchor)
 	mustPutCell(t, db, anchor, "original")

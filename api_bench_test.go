@@ -124,7 +124,7 @@ func BenchmarkAPI_PutCell(b *testing.B) {
 // BenchmarkAPI_PutCell_MVCC compares per-write overhead with MVCC enabled.
 func BenchmarkAPI_PutCell_MVCC(b *testing.B) {
 	path := filepath.Join(b.TempDir(), "putcell_mvcc.db")
-	db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(path, &hexxladb.Options{})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -163,10 +163,10 @@ func BenchmarkAPI_WritePath(b *testing.B) {
 		callbackDelay time.Duration
 	}
 	cases := []writeCase{
-		{name: "single_default", opts: hexxladb.Options{EnableMVCC: true}, cellsPerWrite: 1},
-		{name: "single_fdatasync", opts: hexxladb.Options{EnableMVCC: true, UsePrimaryFdatasync: true}, cellsPerWrite: 1},
-		{name: "single_callback_1ms", opts: hexxladb.Options{EnableMVCC: true}, cellsPerWrite: 1, callbackDelay: time.Millisecond},
-		{name: "batch_100", opts: hexxladb.Options{EnableMVCC: true}, cellsPerWrite: 100},
+		{name: "single_default", opts: hexxladb.Options{}, cellsPerWrite: 1},
+		{name: "single_fdatasync", opts: hexxladb.Options{UsePrimaryFdatasync: true}, cellsPerWrite: 1},
+		{name: "single_callback_1ms", opts: hexxladb.Options{}, cellsPerWrite: 1, callbackDelay: time.Millisecond},
+		{name: "batch_100", opts: hexxladb.Options{}, cellsPerWrite: 100},
 	}
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
@@ -203,7 +203,7 @@ func BenchmarkAPI_WritePath(b *testing.B) {
 			}
 			b.StopTimer()
 			reportWriteMetrics(b, db)
-			reportGroupWALMetrics(b, db)
+			reportWALMetrics(b, db)
 		})
 	}
 }
@@ -211,7 +211,7 @@ func BenchmarkAPI_WritePath(b *testing.B) {
 // BenchmarkAPI_WriteReaderBlocking measures how long a View waits behind an
 // Update whose callback deliberately remains active for one millisecond.
 func BenchmarkAPI_WriteReaderBlocking(b *testing.B) {
-	db, err := hexxladb.Open(filepath.Join(b.TempDir(), "reader_blocking.db"), &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(filepath.Join(b.TempDir(), "reader_blocking.db"), &hexxladb.Options{})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -246,15 +246,14 @@ func BenchmarkAPI_WriteReaderBlocking(b *testing.B) {
 		}
 	}
 	b.StopTimer()
-	reportGroupWALMetrics(b, db)
+	reportWALMetrics(b, db)
 }
 
-func reportGroupWALMetrics(b *testing.B, db *hexxladb.DB) {
+func reportWALMetrics(b *testing.B, db *hexxladb.DB) {
 	b.Helper()
-	applyBatches, multiJobBatches, walSyncs := db.GroupWALStats()
+	commitAttempts, walSyncs := db.WALStats()
 	operations := float64(max(b.N, 1))
-	b.ReportMetric(float64(applyBatches)/operations, "apply-batches/op")
-	b.ReportMetric(float64(multiJobBatches)/operations, "multi-job-batches/op")
+	b.ReportMetric(float64(commitAttempts)/operations, "commit-attempts/op")
 	b.ReportMetric(float64(walSyncs)/operations, "wal-syncs/op")
 }
 
@@ -315,7 +314,7 @@ func BenchmarkAPI_GetCell_Encrypted(b *testing.B) {
 func BenchmarkAPI_GetCell_MVCC(b *testing.B) {
 	for _, n := range apiBenchPreloadSizes(b) {
 		b.Run(fmt.Sprintf("cells_%d", n), func(b *testing.B) {
-			db, key := benchAPIPreloadCellsWithOptions(b, n, &hexxladb.Options{EnableMVCC: true})
+			db, key := benchAPIPreloadCellsWithOptions(b, n, &hexxladb.Options{})
 			b.Cleanup(func() { _ = db.Close() })
 			b.ReportMetric(float64(n), "cells")
 			b.ReportAllocs()
@@ -338,7 +337,7 @@ func BenchmarkAPI_GetCell_MVCC_Encrypted(b *testing.B) {
 	for _, n := range apiBenchPreloadSizes(b) {
 		b.Run(fmt.Sprintf("cells_%d", n), func(b *testing.B) {
 			opts := &hexxladb.Options{
-				EnableMVCC:    true,
+
 				EncryptionKey: []byte("sixteen.byte.key!!"),
 			}
 			db, key := benchAPIPreloadCellsWithOptions(b, n, opts)
@@ -643,7 +642,7 @@ func BenchmarkAPI_MVCCVersionResolution(b *testing.B) {
 	for _, versions := range []int{10, 100, 1000, 6000} {
 		b.Run(fmt.Sprintf("versions_%d", versions), func(b *testing.B) {
 			path := filepath.Join(b.TempDir(), "mvcc_versions.db")
-			db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+			db, err := hexxladb.Open(path, &hexxladb.Options{})
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -804,7 +803,7 @@ func BenchmarkAPI_BatchPutCells(b *testing.B) {
 	nq := 200
 	for _, batchSize := range []int{10, 100, 500} {
 		b.Run(fmt.Sprintf("batch_%d", batchSize), func(b *testing.B) {
-			db, err := hexxladb.Open(filepath.Join(b.TempDir(), "batch_bench.db"), &hexxladb.Options{EnableMVCC: true})
+			db, err := hexxladb.Open(filepath.Join(b.TempDir(), "batch_bench.db"), &hexxladb.Options{})
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -1138,7 +1137,7 @@ func BenchmarkAPI_SnapshotDiff(b *testing.B) {
 	for _, nWrites := range []int{10, 100, 500} {
 		b.Run(fmt.Sprintf("writes_%d", nWrites), func(b *testing.B) {
 			path := filepath.Join(b.TempDir(), "snapdiff.db")
-			db, err := hexxladb.Open(path, &hexxladb.Options{EnableMVCC: true})
+			db, err := hexxladb.Open(path, &hexxladb.Options{})
 			if err != nil {
 				b.Fatal(err)
 			}

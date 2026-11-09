@@ -34,7 +34,7 @@ func TestBTree_hexxladbLatticeChurnPruneShape(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lattice_churn.db")
-	e, err := Open(path, &Options{UseFormatV2: true})
+	e, err := Open(path, &Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestBTree_putGet(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "t.db")
-	e, err := Open(path, &Options{UseFormatV2: true})
+	e, err := Open(path, &Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestBTree_manySplits(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "big.db")
-	e, err := Open(path, &Options{UseFormatV2: true})
+	e, err := Open(path, &Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestBTree_ascendRange(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "r.db")
-	e, err := Open(path, &Options{UseFormatV2: true})
+	e, err := Open(path, &Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestBTree_ascendRange(t *testing.T) {
 
 func TestBTree_descendRange(t *testing.T) {
 	t.Parallel()
-	e, err := Open(filepath.Join(t.TempDir(), "descend.db"), &Options{UseFormatV2: true})
+	e, err := Open(filepath.Join(t.TempDir(), "descend.db"), &Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +311,7 @@ func TestBTree_delete(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "del.db")
-	e, err := Open(path, &Options{UseFormatV2: true})
+	e, err := Open(path, &Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +347,7 @@ func TestBTree_mvccShapedSequentialDelete(t *testing.T) {
 	p := lattice.PackedCoord{3, 9}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mvccish.db")
-	e, err := Open(path, &Options{UseFormatV2: true})
+	e, err := Open(path, &Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -381,7 +381,7 @@ func TestBTree_mvccPlusCommitTimeAlternatingThenPrune(t *testing.T) {
 	p := lattice.PackedCoord{3, 9}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mvcc_meta.db")
-	e, err := Open(path, &Options{UseFormatV2: true})
+	e, err := Open(path, &Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +413,7 @@ func TestBTree_mvccShapedDeleteFirstStaleOnly(t *testing.T) {
 	p := lattice.PackedCoord{3, 9}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mvcc_first.db")
-	e, err := Open(path, &Options{UseFormatV2: true})
+	e, err := Open(path, &Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

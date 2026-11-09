@@ -16,7 +16,7 @@ func TestParametricPageSize_putGetDelete(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
 			path := filepath.Join(dir, "ps.db")
-			e, err := Open(path, &Options{PageSize: ps, UseFormatV2: true})
+			e, err := Open(path, &Options{PageSize: ps})
 			if err != nil {
 				t.Fatal(err)
 			}

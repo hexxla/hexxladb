@@ -12,27 +12,15 @@ type Options struct {
 	RequireExistingPrimary bool
 	// Hooks optional page transforms (e.g. encryption).
 	Hooks *PageHooks
-	// NewEncryptedDB sets FeatureEncryptedDataPages on newly created database files.
-	NewEncryptedDB bool
-	// NewAuthenticatedDB creates format v3 with authenticated data pages. It
-	// requires NewEncryptedDB, authenticated page hooks, WAL MAC, and header MAC.
+	// NewAuthenticatedDB creates a format-v3 database with authenticated pages.
 	NewAuthenticatedDB bool
 	// NewIncompleteCompaction marks the first durable header as an unpublished
 	// compaction destination. The public database boundary owns this lifecycle.
 	NewIncompleteCompaction bool
-	// EncryptionSalt is stored in the header for passphrase KDF (16 bytes). Ignored unless NewEncryptedDB.
-	// If NewEncryptedDB and EncryptionSalt is zero, [Open] fills it with crypto/rand.
+	// EncryptionSalt is the database identity used by authenticated encryption.
 	EncryptionSalt [16]byte
-	// UseFormatV2, when true on a new empty database file, writes format_version 2 with CommitSeq support (MVCC).
-	// Ignored when opening an existing non-empty file (format is taken from the header).
-	UseFormatV2 bool
-	// UseFormatV3 creates the authenticated MVCC engine format. It is set by the
-	// public encryption boundary, not by callers of the private engine directly.
-	UseFormatV3 bool
 	// EncryptionKeyCheck is persisted for new encrypted DBs and used to verify provided keys.
 	EncryptionKeyCheck [HeaderEncryptionKeyCheckLen]byte
-	// ExpectEncryptionKeyCheck requests deterministic wrong-key detection on open.
-	ExpectEncryptionKeyCheck bool
 	// WALMACKey is used when EnableWALMAC is true to sign/verify WAL records.
 	WALMACKey [32]byte
 	// EnableWALMAC enables keyed MAC verification for WAL records.

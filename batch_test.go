@@ -97,11 +97,11 @@ func TestBatchPutCells_SkippedCellLeavesNoPrimaryIndexOrEvent(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name string
-		mvcc bool
-	}{{"v1", false}, {"mvcc", true}} {
+		key  []byte
+	}{{"plaintext", nil}, {"authenticated", []byte("test-encryption-key")}} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			db := openHookDB(t, &hexxladb.Options{EnableMVCC: tc.mvcc, ChangelogEnabled: true})
+			db := openHookDB(t, &hexxladb.Options{EncryptionKey: tc.key, ChangelogEnabled: true})
 			rejected := mustPackTest(t, hexxladb.Coord{})
 			accepted := mustPackTest(t, hexxladb.Coord{Q: 1})
 			result, err := db.BatchPutCells(t.Context(), []hexxladb.CellRecord{
@@ -135,7 +135,7 @@ func TestBatchPutCells_HookFailureAbortsChunk(t *testing.T) {
 	t.Parallel()
 	hookErr := errors.New("hook rejected staged cell")
 	db := openHookDB(t, &hexxladb.Options{
-		EnableMVCC:       true,
+
 		ChangelogEnabled: true,
 		AfterPutCell: hexxladb.AfterPutCellHookFunc(func(_ context.Context, cell hexxladb.CellRecord) error {
 			if cell.RawContent == "hook error" {

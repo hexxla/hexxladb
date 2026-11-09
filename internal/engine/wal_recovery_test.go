@@ -14,7 +14,7 @@ func TestOpenRejectsUnsafePlaintextMVCCRedoWithoutChangingFiles(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			path := filepath.Join(t.TempDir(), "database")
-			opts := &Options{UseFormatV2: true}
+			opts := &Options{}
 			eng, err := Open(path, opts)
 			if err != nil {
 				t.Fatal(err)
@@ -63,7 +63,7 @@ func TestOpenRejectsUnsafePlaintextMVCCRedoWithoutChangingFiles(t *testing.T) {
 func TestFailedPrimaryWriteFencesRetriesUntilReplay(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "database")
-	opts := &Options{UseFormatV2: true}
+	opts := &Options{}
 	eng, err := Open(path, opts)
 	if err != nil {
 		t.Fatal(err)

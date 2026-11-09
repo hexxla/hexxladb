@@ -1,7 +1,8 @@
 package hexxladb
 
 import (
-	"bytes"
+	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,16 +52,26 @@ func RotateEncryptionWithOptions(path string, currentOpts, newOpts *Options, rop
 			return err
 		}
 	}
-	src, err := Open(path, currentOpts)
+	src, err := OpenExisting(path, currentOpts)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = src.Close() }()
 
+	dstOpts := *newOpts
+	header, err := src.eng.ReadHeader()
+	if err != nil {
+		return fmt.Errorf("rotate: read source header: %w", err)
+	}
+	head, floor := header.CommitSeq, src.snapshotFloor
+	dstOpts.PageSize = cmp.Or(dstOpts.PageSize, header.PageSize)
+	dstOpts.MaxValueBytes = cmp.Or(dstOpts.MaxValueBytes, header.MaxValueBytes)
+	// Copied vectors and graph links depend on the source configuration.
+	dstOpts.EmbeddingDimension = header.EmbeddingDim
+	dstOpts.DistanceMetric = DistanceMetric(header.EmbeddingMetric)
 	tmpPath := path + ".rotate.tmp"
 	_ = os.Remove(tmpPath)
 	_ = os.Remove(tmpPath + "-wal")
-	dstOpts := *newOpts
 	tmpChangelogPath := ""
 	if copyChangelog {
 		tmpChangelogPath = changelogPath + ".rotate.tmp"
@@ -81,24 +92,64 @@ func RotateEncryptionWithOptions(path string, currentOpts, newOpts *Options, rop
 		}
 		onProgress = ropts.OnProgress
 	}
-	if err := rotateCopyData(src, dst, batchSize, onProgress); err != nil {
-		return err
+	if err := rotateCopyMVCC(src, dst, head, batchSize, onProgress); err != nil {
+		return fmt.Errorf("rotate: %w", err)
 	}
 	if copyChangelog {
 		if err := src.changelog.CopyTo(dst.changelog); err != nil {
 			return err
+		}
+		if dstOpts.ChangelogLazy {
+			// The replacement must be durable even when ordinary writes sync lazily.
+			if err := dst.changelog.Sync(); err != nil {
+				return fmt.Errorf("rotate: sync destination changelog: %w", err)
+			}
 		}
 	}
 	if err := dst.Close(); err != nil {
 		return err
 	}
 	dst = nil
+	if err := verifyRotatedMVCC(tmpPath, &dstOpts, head, floor); err != nil {
+		return fmt.Errorf("rotate: verify destination: %w", err)
+	}
 	if err := src.Close(); err != nil {
 		return err
 	}
 	src = nil
 
 	return rotateSwapFiles(path, tmpPath, changelogPath, tmpChangelogPath)
+}
+
+func rotateCopyMVCC(src, dst *DB, head uint64, batchSize int, onProgress func(int64)) error {
+	opts := CompactOptions{BatchSize: batchSize}
+	if onProgress != nil {
+		var reported int64
+		opts.OnProgress = func(progress CompactProgress) {
+			for reported < int64(progress.CopiedKeys) { //nolint:gosec // rows are bounded by file size
+				reported++
+				onProgress(reported)
+			}
+		}
+	}
+	if err := src.View(func(tx *Tx) error {
+		return copyPhysicalRows(context.Background(), tx, dst, opts, false)
+	}); err != nil {
+		return err
+	}
+	return restorePhysicalCopyHead(dst, head)
+}
+
+func verifyRotatedMVCC(path string, opts *Options, head, floor uint64) (retErr error) {
+	db, err := OpenExisting(path, opts)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, db.Close()) }()
+	if gotHead, gotFloor := db.cachedHdr.Load().commitSeq, db.snapshotFloor; gotHead != head || gotFloor != floor {
+		return fmt.Errorf("%w: commit head and snapshot floor are %d/%d, want %d/%d", ErrCorruptDatabase, gotHead, gotFloor, head, floor)
+	}
+	return nil
 }
 
 func rotationChangelogPlan(path string, currentOpts, newOpts *Options) (bool, string, error) {
@@ -123,50 +174,6 @@ func configuredChangelogPath(path string, opts *Options) string {
 		return opts.ChangelogPath
 	}
 	return path + "-changelog"
-}
-
-// rotateRow is a key/value pair captured during rotation.
-type rotateRow struct{ k, v []byte }
-
-// rotateCopyData performs the batched logical copy from src to dst.
-func rotateCopyData(src, dst *DB, batchSize int, onProgress func(int64)) error {
-	var from []byte
-	var copied int64
-	for {
-		batch := make([]rotateRow, 0, batchSize)
-		if err := src.View(func(tx *Tx) error {
-			return tx.AscendRange(from, nil, func(k, v []byte) bool {
-				if from != nil && bytes.Equal(k, from) {
-					return true
-				}
-				batch = append(batch, rotateRow{
-					k: append([]byte(nil), k...),
-					v: append([]byte(nil), v...),
-				})
-				return len(batch) < batchSize
-			})
-		}); err != nil {
-			return err
-		}
-		if len(batch) == 0 {
-			return nil
-		}
-		if err := dst.Update(func(tx *Tx) error {
-			for i := range batch {
-				if err := tx.putDirect(batch[i].k, batch[i].v); err != nil {
-					return err
-				}
-				copied++
-				if onProgress != nil {
-					onProgress(copied)
-				}
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-		from = batch[len(batch)-1].k
-	}
 }
 
 // rotateSwapFiles atomically replaces the original DB file with the rotated tmp file.

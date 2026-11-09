@@ -31,20 +31,15 @@ var (
 	// HexxlaDB permits one open handle per database path to protect the primary file and WAL.
 	ErrDatabaseLocked = errors.New("hexxladb: database is locked")
 
-	// ErrUnsupportedFormatVersion means the database was created by a newer HexxlaDB format.
+	// ErrUnsupportedFormatVersion means the primary format is retired or unknown.
 	ErrUnsupportedFormatVersion = errors.New("hexxladb: unsupported database format version")
 
-	// ErrMigrationIncomplete means a destination contains resumable migration state and
-	// must be completed with [MigrateV1ToV2] or [MigrateToAuthenticated] before ordinary use.
+	// ErrMigrationIncomplete means a candidate still contains an offline conversion checkpoint.
 	ErrMigrationIncomplete = errors.New("hexxladb: migration is incomplete")
 
 	// ErrCompactionIncomplete means a destination contains an interrupted
 	// compaction marker and must be removed before retrying compaction.
 	ErrCompactionIncomplete = errors.New("hexxladb: compaction is incomplete")
-
-	// ErrMigrationChangelogState means a v1 source has durable changelog state that the
-	// caller did not explicitly authorize the migration to reset.
-	ErrMigrationChangelogState = errors.New("hexxladb: migration source has changelog state")
 
 	// ErrTxReadOnly means a write was attempted inside [DB.View] (read-only transaction).
 	ErrTxReadOnly = errors.New("hexxladb: transaction is read-only")
@@ -109,9 +104,6 @@ var (
 	// Do not retry the mutation; close and reopen the database to complete recovery.
 	ErrCommitDurable = errors.New("hexxladb: commit is durable")
 
-	// ErrMVCCRequired is returned when an MVCC-only operation is called on a format-v1 database.
-	ErrMVCCRequired = errors.New("hexxladb: operation requires MVCC (EnableMVCC on open)")
-
 	// ErrHistoricalDataUnavailable means a historical view requested current-only
 	// edges or embeddings. Use [DB.View] to read those records at the current head.
 	ErrHistoricalDataUnavailable = errors.New("hexxladb: edges and embeddings are current-only")
@@ -123,12 +115,6 @@ var (
 	// ErrSnapshotTagLabelTooLong means the label passed to [DB.TagSnapshot] exceeds the
 	// maximum allowed length (200 bytes).
 	ErrSnapshotTagLabelTooLong = errors.New("hexxladb: snapshot tag label too long")
-
-	// ErrEmbeddingsDisabled is retained for backward compatibility but no longer returned by
-	// standard embedding operations. Dimension is now auto-detected on the first [Tx.PutEmbedding].
-	//
-	// Deprecated: check [DB.EmbeddingDimension] == 0 to see if embeddings have been stored yet.
-	ErrEmbeddingsDisabled = errors.New("hexxladb: embeddings not enabled for this database")
 
 	// ErrEmbeddingDimension means the vector length does not match [DB.EmbeddingDimension].
 	ErrEmbeddingDimension = errors.New("hexxladb: vector dimension mismatch")

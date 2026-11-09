@@ -10,7 +10,7 @@ import (
 
 func TestHistoricalViewRejectsCurrentGraphAndVectorData(t *testing.T) {
 	t.Parallel()
-	db := openHookDB(t, &hexxladb.Options{EnableMVCC: true})
+	db := openHookDB(t, &hexxladb.Options{})
 	ctx := t.Context()
 	from, to := hexxladb.Coord{}, hexxladb.Coord{Q: 1}
 	key := mustPackTest(t, from)
@@ -69,7 +69,7 @@ func TestHistoricalViewRejectsCurrentGraphAndVectorData(t *testing.T) {
 
 func TestLoadContextGraphCountsOnlyLiveResultsAndStopsScanning(t *testing.T) {
 	t.Parallel()
-	db := openHookDB(t, &hexxladb.Options{EnableMVCC: true})
+	db := openHookDB(t, &hexxladb.Options{})
 	seed, target, later := hexxladb.Coord{}, hexxladb.Coord{Q: 1}, hexxladb.Coord{Q: 2}
 	seedKey := mustPackTest(t, seed)
 	targetKey := mustPackTest(t, target)

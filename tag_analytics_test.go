@@ -40,7 +40,7 @@ func TestTagCooccurrences_CountsEachCellOnce(t *testing.T) {
 
 func TestTagCountsRevalidatesMVCCSecondaryMembership(t *testing.T) {
 	t.Parallel()
-	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "tag-counts.db"), &hexxladb.Options{EnableMVCC: true})
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "tag-counts.db"), &hexxladb.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

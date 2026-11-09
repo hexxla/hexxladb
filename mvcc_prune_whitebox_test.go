@@ -18,7 +18,7 @@ func TestMVCC_whiteboxBtreeKeyShapeAfterRepeatedPutCell(t *testing.T) {
 	path := filepath.Join(dir, "shape.db")
 	const iterations = 273
 	db, err := Open(path, &Options{
-		EnableMVCC: true,
+
 		MVCCRetention: MVCCRetention{
 			RetainCommitsBehindHead: 27,
 		},

@@ -95,15 +95,7 @@ func (p *walReplayPlan) finish(highest uint64) error {
 		return nil
 	}
 	if !p.hasMarker {
-		// Only the historical v1 page-redo contract can be recovered without
-		// metadata. In v2 that would let later writes reuse a hidden commit's
-		// sequence and expose its rows. Leave the recovery set intact.
-		if p.base.FormatVersion != formatVersionV1 {
-			return fmt.Errorf("%w: pending WAL has no recoverable commit header", ErrCorruptWAL)
-		}
-		p.final = p.base
-		p.final.LastWALSeq = highest
-		return nil
+		return fmt.Errorf("%w: pending WAL has no recoverable commit header", ErrCorruptWAL)
 	}
 	if p.final.LastWALSeq != highest {
 		return ErrCorruptWAL

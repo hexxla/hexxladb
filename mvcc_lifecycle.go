@@ -50,7 +50,7 @@ func (db *DB) SuggestedPruneBeforeSeq() (beforeSeq uint64, ok bool, err error) {
 	if db.activeEng() == nil {
 		return 0, false, ErrDatabaseClosed
 	}
-	if !db.useMVCC || db.mvccRetention.RetainCommitsBehindHead == 0 {
+	if db.mvccRetention.RetainCommitsBehindHead == 0 {
 		return 0, false, nil
 	}
 	ch := db.cachedHdr.Load()
@@ -99,14 +99,6 @@ type MVCCStats struct {
 	CommitSeq     uint64
 	VersionedRows int64
 	LogicalCells  int64
-	// WastedBytes is the cumulative logical byte size of overflow-page chains freed
-	// since the database was opened. These pages are dead space on disk until the next
-	// [CompactTo]. The counter is in-memory only and resets to zero on reopen.
-	// A non-zero value is a signal to schedule compaction.
-	//
-	// Deprecated: use [DB.StorageStats] ReclaimableBytes for persistent, complete
-	// whole-page reachability accounting. WastedBytes counts only overflow payload.
-	WastedBytes uint64
 }
 
 // MVCCPruneProfile defines operational defaults for stale-version pruning cadence.
@@ -132,9 +124,6 @@ func (db *DB) StatsMVCC() (MVCCStats, error) {
 		return MVCCStats{}, ErrDatabaseClosed
 	}
 	ch := db.cachedHdr.Load()
-	if !db.useMVCC {
-		return MVCCStats{CommitSeq: ch.commitSeq}, nil
-	}
 	var rows, logicalCells int64
 	var prevCoord lattice.PackedCoord
 	var hasPrev bool
@@ -160,7 +149,6 @@ func (db *DB) StatsMVCC() (MVCCStats, error) {
 		CommitSeq:     ch.commitSeq,
 		VersionedRows: rows,
 		LogicalCells:  logicalCells,
-		WastedBytes:   db.eng.WastedBytes(),
 	}, nil
 }
 
@@ -180,9 +168,6 @@ func (db *DB) PruneCellVersions(beforeSeq uint64, maxDelete int) (deleted int, e
 	defer db.mu.Unlock()
 	if db.activeEng() == nil {
 		return 0, ErrDatabaseClosed
-	}
-	if !db.useMVCC {
-		return 0, nil
 	}
 
 	beforeSeq = min(beforeSeq, db.cachedHdr.Load().commitSeq)

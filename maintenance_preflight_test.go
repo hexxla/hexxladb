@@ -2,7 +2,6 @@ package hexxladb_test
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -61,119 +60,6 @@ func TestPreflightCompactToPreservesDestinationComponents(t *testing.T) {
 	}
 }
 
-func TestPreflightMigrateV1ToV2IsExactAndLeavesNoFiles(t *testing.T) {
-	t.Parallel()
-	directory := t.TempDir()
-	sourcePath := filepath.Join(directory, "source.db")
-	destinationPath := filepath.Join(directory, "destination.db")
-	seedMigrationFixture(t, sourcePath, &hexxladb.Options{EmbeddingDimension: 3})
-	sourceBefore, err := os.ReadFile(sourcePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	plan, err := hexxladb.PreflightMigrateV1ToV2(t.Context(), sourcePath, destinationPath, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.Resumable || plan.ProcessedKeys != 0 {
-		t.Fatalf("unexpected resume plan: %#v", plan)
-	}
-	if plan.SourcePrimaryBytes == 0 || plan.SourceStorage.LiveBytes == 0 || len(plan.Space) != 1 {
-		t.Fatalf("incomplete migration plan: %#v", plan)
-	}
-	if _, err := os.Stat(destinationPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("preflight created destination: %v", err)
-	}
-	sourceAfter, err := os.ReadFile(sourcePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(sourceAfter, sourceBefore) {
-		t.Fatal("preflight changed source primary")
-	}
-	matches, err := filepath.Glob(filepath.Join(directory, ".hexxladb-migrate-v1-*"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(matches) != 0 {
-		t.Fatalf("preflight left source snapshots: %v", matches)
-	}
-}
-
-func TestPreflightMigrateV1ToV2RecognizesMatchingResumeWithoutAdvancing(t *testing.T) {
-	t.Parallel()
-	directory := t.TempDir()
-	sourcePath := filepath.Join(directory, "source.db")
-	destinationPath := filepath.Join(directory, "destination.db")
-	seedMigrationFixture(t, sourcePath, &hexxladb.Options{EmbeddingDimension: 3})
-
-	ctx, cancel := context.WithCancel(t.Context())
-	err := hexxladb.MigrateV1ToV2(ctx, sourcePath, destinationPath, &hexxladb.MigrationOptions{
-		BatchSize: 1,
-		OnProgress: func(hexxladb.MigrationProgress) {
-			cancel()
-		},
-	})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancel migration: got %v, want context.Canceled", err)
-	}
-	destinationBefore, err := os.ReadFile(destinationPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	plan, err := hexxladb.PreflightMigrateV1ToV2(t.Context(), sourcePath, destinationPath, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !plan.Resumable || plan.ProcessedKeys == 0 {
-		t.Fatalf("resume plan=%#v", plan)
-	}
-	destinationAfter, err := os.ReadFile(destinationPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(destinationAfter, destinationBefore) {
-		t.Fatal("preflight advanced resumable destination")
-	}
-	if _, err := hexxladb.Open(destinationPath, nil); !errors.Is(err, hexxladb.ErrMigrationIncomplete) {
-		t.Fatalf("ordinary open error=%v, want ErrMigrationIncomplete", err)
-	}
-}
-
-func TestMigrateV1ToV2PreflightCallbackRunsBeforeDestinationCreation(t *testing.T) {
-	t.Parallel()
-	directory := t.TempDir()
-	sourcePath := filepath.Join(directory, "source.db")
-	destinationPath := filepath.Join(directory, "destination.db")
-	seedMigrationFixture(t, sourcePath, &hexxladb.Options{EmbeddingDimension: 3})
-	callbackCalled := false
-	if err := hexxladb.MigrateV1ToV2(t.Context(), sourcePath, destinationPath, &hexxladb.MigrationOptions{
-		OnPreflight: func(plan hexxladb.MigrationPreflight) {
-			callbackCalled = true
-			if plan.SourceStorage.LiveBytes == 0 || len(plan.Space) == 0 {
-				t.Fatalf("preflight plan=%#v", plan)
-			}
-			if _, err := os.Stat(destinationPath); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("destination exists during preflight callback: %v", err)
-			}
-			probe, err := hexxladb.Open(sourcePath, nil)
-			if probe != nil {
-				_ = probe.Close()
-			}
-			if !errors.Is(err, hexxladb.ErrDatabaseLocked) {
-				t.Fatalf("source lock probe error=%v, want ErrDatabaseLocked", err)
-			}
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if !callbackCalled {
-		t.Fatal("preflight callback was not called")
-	}
-}
-
 func TestPreflightMaintenanceRejectsSourceAlias(t *testing.T) {
 	t.Parallel()
 	db, sourcePath := openCompactDB(t, nil)
@@ -185,8 +71,5 @@ func TestPreflightMaintenanceRejectsSourceAlias(t *testing.T) {
 
 	if _, err := hexxladb.PreflightCompactTo(t.Context(), sourcePath, aliasPath, nil); !errors.Is(err, hexxladb.ErrInvalidArgument) {
 		t.Fatalf("compact alias error=%v, want ErrInvalidArgument", err)
-	}
-	if _, err := hexxladb.PreflightMigrateV1ToV2(t.Context(), sourcePath, aliasPath, nil); !errors.Is(err, hexxladb.ErrInvalidArgument) {
-		t.Fatalf("migration alias error=%v, want ErrInvalidArgument", err)
 	}
 }

@@ -23,7 +23,6 @@ lock and can replay the WAL and create sidecars. See [recovery compatibility](./
 
 ```go
 db, err := hexxladb.Open("memory.db", &hexxladb.Options{
-    EnableMVCC: true,
 })
 if err != nil {
     return err
@@ -80,7 +79,7 @@ HexxlaDB does not infer semantic anchors or enforce clustering. [`Tx.FindFreeCel
 Use [`Tx.FindUnusedCellPlacement`](../../cells.go) for a new logical identity in an
 MVCC database with edges or seams. It skips recorded tombstones, including
 deletions staged in the current update. Legacy placement can reuse an address
-still referenced by inbound edges or seams. On format v1 and for histories
+still referenced by inbound edges or seams. For histories
 predating MVCC migration, keep an application-owned allocation map if addresses
 must never be reused. The allocator checks cell history. The application owns
 references to coordinates that never contained a cell.
@@ -315,10 +314,8 @@ Operational setup and evidence gates are documented in [`OPERATIONS.md`](./OPERA
 
 ## MVCC lifecycle and snapshots
 
-Plaintext databases enable MVCC when they are created with
-`Options.EnableMVCC`. Newly created encrypted databases always use authenticated
-MVCC format v3 regardless of that flag. Existing files retain their persisted
-format; ordinary `Open` never converts them.
+Plaintext databases use engine v2 and encrypted databases use authenticated
+v3. Both support MVCC snapshots. Ordinary `Open` retains the persisted format.
 
 | API                                                                                | Use                                                   |
 | ---------------------------------------------------------------------------------- | ----------------------------------------------------- |
@@ -360,7 +357,7 @@ visibility and typed writes for validation, indexes, and changefeed.
 | [`DB.AdvanceChangelogConsumer`, `DB.GetChangelogConsumerCursor`](../../changelog_consumers.go) | Register and compare-and-advance a named durable cursor. |
 | [`DB.ListChangelogConsumers`, `DB.DeleteChangelogConsumer`, `DB.ChangelogRetentionFloor`](../../changelog_consumers.go) | Inspect/delete consumers and compute the advisory minimum acknowledged sequence. |
 | [`DB.HealthCheck`](../../health.go)                                          | Fail closed on malformed visible records and optionally validate orphans and secondary indexes. |
-| [`DB.GroupWALStats`](../../db.go)                                            | Observe WAL commit and redo-sync counters.                                    |
+| [`DB.WALStats`](../../db.go)                                            | Observe WAL commit and redo-sync counters.                                    |
 | [`DB.WriteStats`](../../write_stats.go)                                      | Observe cumulative write contention and phase timing.         |
 | [`DB.BackupTo`](../../backup.go)                                             | Capture a consistent primary/WAL/changelog recovery set.       |
 | [`DB.StorageStats`](../../storage_stats.go)                                  | Measure physical, reachable, and reclaimable storage.         |
@@ -369,32 +366,11 @@ visibility and typed writes for validation, indexes, and changefeed.
 | [`DB.Compact`, `CompactTo`](../../compact.go)                                | Rewrite live keys into a new compact file.                     |
 | [`DB.CompactWithOptions`, `CompactToWithOptions`](../../compact.go)          | Bound copy batches, receive durable progress, and optionally verify the candidate. |
 | [`RepairMVCCIndexesTo`](../../compact.go)                                    | Rebuild MVCC secondary indexes in a verified copy from retained primary versions. |
-| [`PreflightMigrateV1ToV2`](../../maintenance_preflight.go)                   | Check v1 format, credentials, changelog/resume state, paths, and capacity without copying a new batch. |
-| [`MigrateV1ToV2`](../../migration.go)                                       | Offline, resumable logical migration into an MVCC database.    |
-| [`PreflightMigrateToAuthenticated`](../../maintenance_preflight.go)          | Check a v1/v2 source, destination credentials, changelog policy, paths, and capacity without creating a v3 candidate. |
-| [`MigrateToAuthenticated`](../../migration.go)                              | Offline, source-preserving migration into authenticated encrypted format v3. |
 | [`DeriveKeyFromPassphrase`](../../encryption.go)                             | Derive an encryption key using the database KDF.               |
 | [`RotateEncryption`, `RotateEncryptionWithOptions`](../../rotation.go)       | Perform offline key rotation or encryption migration.          |
 | [`RecoverInterruptedRotation`](../../rotation.go)                            | Roll back an interrupted encryption-file swap using matching changelog configuration. |
 
-`MigrateV1ToV2` requires distinct source and destination paths and keeps the
-source recovery set intact. Its destination is unavailable to ordinary `Open`
-until post-copy verification succeeds. See the
-[`OPERATIONS.md` migration runbook](./OPERATIONS.md#format-v1-to-v2-migration).
-
-`MigrateToAuthenticated` requires destination encryption credentials and a
-closed format-v1 or format-v2 source. It never replaces the source. V1 copying
-is resumable; an interrupted v2-to-v3 candidate is removed and retried from the
-preserved source. See the
-[`OPERATIONS.md` authenticated migration runbook](./OPERATIONS.md#authenticated-format-v3-migration).
-
-Maintenance preflights return `MaintenanceSpaceRequirement` values grouped by
-filesystem so a source snapshot and destination on the same volume are checked
-as one conservative capacity requirement. `AvailableKnown` is false on
-platforms without a supported free-space query; callers must then supply their
-own operator check. `ErrInsufficientSpace` identifies a known capacity refusal.
-
-See [`CHANGEFEED.md`](./CHANGEFEED.md), [`OPERATIONS.md`](./OPERATIONS.md), [`DURABILITY.md`](./DURABILITY.md), and [`ENCRYPTION.md`](./ENCRYPTION.md) before enabling these deployment features.
+Retired formats require [offline conversion](./OPERATIONS.md#offline-conversion-of-retired-files).
 
 ## Validation and hooks
 
@@ -410,7 +386,7 @@ Public sentinel errors are defined in [`errors.go`](../../errors.go). Handle sta
 
 - lifecycle and locking errors such as `ErrDatabaseClosed` and `ErrDatabaseLocked`;
 - argument and transaction errors such as `ErrInvalidArgument` and `ErrTxReadOnly`. An encoded cell larger than the configured value limit returns `ErrInvalidArgument`;
-- snapshot errors such as `ErrReadSeqFuture`, `ErrMVCCRequired`, and `ErrHistoricalDataUnavailable`;
+- snapshot errors such as `ErrReadSeqFuture`, `ErrSnapshotExpired`, and `ErrHistoricalDataUnavailable`;
 - format and migration errors such as `ErrUnsupportedFormatVersion`, `ErrMigrationIncomplete`, and `ErrMigrationChangelogState`;
 - interrupted candidate refusal through `ErrCompactionIncomplete`;
 - maintenance-capacity refusal through `ErrInsufficientSpace`;

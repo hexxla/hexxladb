@@ -24,11 +24,9 @@ authoritative commit. A projection failure reports `ErrCommitDurable`.
 See [commit errors](./TX.md#commit-finalization-failures).
 
 `DB.WriteStats` reports time spent waiting, staging, committing, and finalizing.
-The compatibility method `DB.GroupWALStats` reports commit attempts, zero
-multi-job batches, and successful redo syncs. Its redo counter excludes the
-sync for WAL extent cleanup. `Options.GroupWALMaxBatchWait` is deprecated and
-ignored. `Options.UsePrimaryFdatasync` selects the primary file's data-only
-barrier on platforms that support it.
+`DB.WALStats` reports commit attempts and successful redo syncs. Redo syncs exclude the sync for WAL extent cleanup. Batch records in a single `DB.Update` to share a commit.
+`Options.UsePrimaryFdatasync` selects the primary file’s data-only barrier on
+platforms that support it.
 
 ## Recovery and version compatibility
 
@@ -38,7 +36,7 @@ commit header. Recovery memory is proportional to a WAL record. Truncated,
 invalid, or incomplete pending frames fail closed and preserve the recovery
 set for inspection. See the [WAL format](../../internal/engine/ENGINE_FORMAT.md#wal-file).
 
-- New v1/v2 WAL transactions begin with a header and a page-record count.
+- New v2 WAL transactions begin with a header and a page-record count.
   Older versions can open a cleanly closed database. For an interrupted write
   with a pending new WAL, recover with the newer binary before using an older
   binary. The older reader rejects the pending header record before applying
@@ -47,7 +45,7 @@ set for inspection. See the [WAL format](../../internal/engine/ENGINE_FORMAT.md#
   They cannot restore the logical sequence reliably. Keep the primary and WAL
   together and use a verified backup or a separately validated recovery process.
 - V3 uses its existing authenticated trailing header marker. Old v1 page-only
-  redo remains readable under the legacy recovery rules.
+  redo requires its original release for recovery.
 
 Database creation and physical backup also sync destination directory entries.
 See [backup and copy](./OPERATIONS.md#backup-and-copy).
