@@ -101,3 +101,36 @@ func TestTagFamilyScanBounds_coversPhysicalTagKeys(t *testing.T) {
 		t.Fatalf("physical tag key out of [%q,%q]: len=%d cmp=%d", from, to, len(k), bytes.Compare(k, to))
 	}
 }
+
+func TestSecondaryCoordKeyLayout(t *testing.T) {
+	t.Parallel()
+	const payload = "\x00\x03é//\x01\x02\x03\x04\x05\x06\x07\x08\x11\x12\x13\x14\x15\x16\x17\x18"
+	const suffix = "\x21\x22\x23\x24\x25\x26\x27\x28"
+	coord := lattice.PackedCoord{0x1112131415161718, 0x0102030405060708}
+	const seq = 0x2122232425262728
+	for _, tc := range []struct {
+		family    string
+		bare      func(string, lattice.PackedCoord) ([]byte, error)
+		versioned func(string, lattice.PackedCoord, uint64) ([]byte, error)
+		parse     func([]byte) (string, lattice.PackedCoord, uint64, bool, error)
+	}{
+		{"tag", index.TagKey, index.TagKeyWithVersion, index.ParseTagKeyWithSeq},
+		{"source", index.SourceKey, index.SourceKeyWithVersion, index.ParseSourceKeyWithSeq},
+	} {
+		t.Run(tc.family, func(t *testing.T) {
+			wantBare := tc.family + "/" + payload
+			bare, err := tc.bare("é/", coord)
+			if err != nil || string(bare) != wantBare {
+				t.Fatalf("bare key = %x, want %x, error %v", bare, wantBare, err)
+			}
+			versioned, err := tc.versioned("é/", coord, seq)
+			if err != nil || string(versioned) != wantBare+suffix {
+				t.Fatalf("versioned key = %x, want %x, error %v", versioned, wantBare+suffix, err)
+			}
+			_, _, _, _, err = tc.parse(append(bare, 0))
+			if want := "index: " + tc.family + " key packed len"; err == nil || err.Error() != want {
+				t.Fatalf("malformed key error = %v, want %q", err, want)
+			}
+		})
+	}
+}

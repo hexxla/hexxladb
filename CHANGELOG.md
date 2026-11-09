@@ -6,6 +6,10 @@
 
 - **Development workflow** — Publish module versions through Git tags. Remove automated binary publishing, coverage uploads, duplicate vulnerability scans, and custom complexity and mutation tooling. Retain the API baseline, race suite, and scheduled vulnerability and recovery checks.
 
+### Performance
+
+- **Cell query ranking** — cap retained matches at `MaxResults` and build explanations only for returned cells. Partial results retain the same ordering rules.
+
 ## [0.7.0] - 2026-11-09
 
 ### Breaking

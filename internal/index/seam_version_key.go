@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math"
 
 	"github.com/oklog/ulid/v2"
 )
@@ -24,19 +23,6 @@ func SeamKeyWithVersion(ulidStr string, commitSeq uint64) ([]byte, error) {
 	binary.BigEndian.PutUint64(b[:], commitSeq)
 	out = append(out, b[:]...)
 	return out, nil
-}
-
-// SeamVersionScanBounds returns [from, to] inclusive over all versions for one ULID.
-func SeamVersionScanBounds(ulidStr string) (from, to []byte, err error) {
-	from, err = SeamKeyWithVersion(ulidStr, 0)
-	if err != nil {
-		return nil, nil, err
-	}
-	to, err = SeamKeyWithVersion(ulidStr, math.MaxUint64)
-	if err != nil {
-		return nil, nil, err
-	}
-	return from, to, nil
 }
 
 // ParseSeamCommitSeq extracts commit sequence from seam/<ulid>/<seq> keys.

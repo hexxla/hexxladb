@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
@@ -49,32 +48,6 @@ func FacetKeyWithVersion(p lattice.PackedCoord, facetID byte, commitSeq uint64) 
 	var suf [VersionSuffixLen]byte
 	binary.BigEndian.PutUint64(suf[:], commitSeq)
 	return append(out, suf[:]...), nil
-}
-
-// FacetVersionScanBounds returns [from, to] inclusive for AscendRange over all MVCC rows for (p, facetID).
-func FacetVersionScanBounds(p lattice.PackedCoord, facetID byte) (from, to []byte, err error) {
-	from, err = FacetKeyWithVersion(p, facetID, 0)
-	if err != nil {
-		return nil, nil, err
-	}
-	to, err = FacetKeyWithVersion(p, facetID, math.MaxUint64)
-	if err != nil {
-		return nil, nil, err
-	}
-	return from, to, nil
-}
-
-// FacetCellAllVersionsRange returns [from, to] inclusive across facet_id 0..[MaxFacetID] and all commit_seq.
-func FacetCellAllVersionsRange(p lattice.PackedCoord) (from, to []byte, err error) {
-	from, err = FacetKeyWithVersion(p, 0, 0)
-	if err != nil {
-		return nil, nil, err
-	}
-	to, err = FacetKeyWithVersion(p, MaxFacetID, math.MaxUint64)
-	if err != nil {
-		return nil, nil, err
-	}
-	return from, to, nil
 }
 
 // ParseFacetKey parses a key built by [FacetKey] or [FacetKeyWithVersion].

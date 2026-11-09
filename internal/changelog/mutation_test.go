@@ -75,12 +75,12 @@ func TestLog_Append_keyAtMaxLength(t *testing.T) {
 
 	// Key of exactly 65535 bytes — must succeed.
 	maxKey := []byte(strings.Repeat("k", 65535))
-	if err := log.Append(1, changelog.OpPutCell, maxKey, []byte("v")); err != nil {
+	if err := changelog.AppendTestEntry(log, 1, changelog.OpPutCell, maxKey, []byte("v")); err != nil {
 		t.Fatalf("Append with 65535 key should succeed: %v", err)
 	}
 	// Key of 65536 bytes — must fail.
 	overKey := []byte(strings.Repeat("k", 65536))
-	if err := log.Append(2, changelog.OpPutCell, overKey, []byte("v")); err == nil {
+	if err := changelog.AppendTestEntry(log, 2, changelog.OpPutCell, overKey, []byte("v")); err == nil {
 		t.Fatal("Append with 65536 key should fail")
 	}
 }
@@ -102,7 +102,7 @@ func TestLog_AppendBatch_keyAtMaxLength(t *testing.T) {
 	entries := []changelog.Entry{
 		{Op: changelog.OpPutCell, Key: maxKey, Encoded: []byte("v")},
 	}
-	if err := log.AppendBatch(1, entries); err != nil {
+	if err := changelog.AppendTestEntries(log, 1, entries); err != nil {
 		t.Fatalf("AppendBatch with 65535 key should succeed: %v", err)
 	}
 
@@ -110,7 +110,7 @@ func TestLog_AppendBatch_keyAtMaxLength(t *testing.T) {
 	entries2 := []changelog.Entry{
 		{Op: changelog.OpPutCell, Key: overKey, Encoded: []byte("v")},
 	}
-	if err := log.AppendBatch(2, entries2); err == nil {
+	if err := changelog.AppendTestEntries(log, 2, entries2); err == nil {
 		t.Fatal("AppendBatch with 65536 key should fail")
 	}
 }
@@ -127,7 +127,7 @@ func TestLog_ReadSince_limitZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = log.Close() })
-	_ = log.Append(1, changelog.OpPutCell, []byte("k"), []byte("v"))
+	_ = changelog.AppendTestEntry(log, 1, changelog.OpPutCell, []byte("k"), []byte("v"))
 
 	// limit=0 should return nil/empty.
 	recs, err := log.ReadSince(0, 0)
@@ -157,9 +157,9 @@ func TestLog_ReadSince_exactLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = log.Close() })
-	_ = log.Append(1, changelog.OpPutCell, []byte("a"), []byte("x"))
-	_ = log.Append(2, changelog.OpPutCell, []byte("b"), []byte("y"))
-	_ = log.Append(3, changelog.OpPutCell, []byte("c"), []byte("z"))
+	_ = changelog.AppendTestEntry(log, 1, changelog.OpPutCell, []byte("a"), []byte("x"))
+	_ = changelog.AppendTestEntry(log, 2, changelog.OpPutCell, []byte("b"), []byte("y"))
+	_ = changelog.AppendTestEntry(log, 3, changelog.OpPutCell, []byte("c"), []byte("z"))
 
 	// Limit exactly matches record count.
 	recs, err := log.ReadSince(0, 3)
@@ -188,7 +188,7 @@ func TestLog_ReadSince_corruptFrameLen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = log.Append(1, changelog.OpPutCell, []byte("k"), []byte("v"))
+	_ = changelog.AppendTestEntry(log, 1, changelog.OpPutCell, []byte("k"), []byte("v"))
 	_ = log.Close()
 
 	// Corrupt the first frame's length field to be too small (< 28).
@@ -233,7 +233,7 @@ func TestLog_Append_emptyPayload(t *testing.T) {
 	t.Cleanup(func() { _ = log.Close() })
 
 	// Empty encoded — no hash, no inline.
-	if err := log.Append(1, changelog.OpDeleteCell, []byte("k"), nil); err != nil {
+	if err := changelog.AppendTestEntry(log, 1, changelog.OpDeleteCell, []byte("k"), nil); err != nil {
 		t.Fatal(err)
 	}
 	recs, err := log.ReadSince(0, 10)
@@ -266,7 +266,7 @@ func TestLog_Append_smallPayload_inlined(t *testing.T) {
 	t.Cleanup(func() { _ = log.Close() })
 
 	enc := []byte("small")
-	if err := log.Append(1, changelog.OpPutCell, []byte("k"), enc); err != nil {
+	if err := changelog.AppendTestEntry(log, 1, changelog.OpPutCell, []byte("k"), enc); err != nil {
 		t.Fatal(err)
 	}
 	recs, err := log.ReadSince(0, 10)
@@ -298,7 +298,7 @@ func TestLog_Append_payloadAtMaxInlineBoundary(t *testing.T) {
 
 	// Exactly MaxInlinePayload bytes — should be inlined.
 	atMax := bytes.Repeat([]byte{0xAB}, changelog.MaxInlinePayload)
-	if err := log.Append(1, changelog.OpPutCell, []byte("k"), atMax); err != nil {
+	if err := changelog.AppendTestEntry(log, 1, changelog.OpPutCell, []byte("k"), atMax); err != nil {
 		t.Fatal(err)
 	}
 	recs, err := log.ReadSince(0, 10)
@@ -312,7 +312,7 @@ func TestLog_Append_payloadAtMaxInlineBoundary(t *testing.T) {
 
 	// One byte over MaxInlinePayload — should NOT be inlined.
 	overMax := bytes.Repeat([]byte{0xCD}, changelog.MaxInlinePayload+1)
-	if err := log.Append(2, changelog.OpPutCell, []byte("k2"), overMax); err != nil {
+	if err := changelog.AppendTestEntry(log, 2, changelog.OpPutCell, []byte("k2"), overMax); err != nil {
 		t.Fatal(err)
 	}
 	recs, err = log.ReadSince(1, 10)
@@ -341,7 +341,7 @@ func TestLog_ReadSince_corruptCRC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = log.Append(1, changelog.OpPutCell, []byte("k"), []byte("v"))
+	_ = changelog.AppendTestEntry(log, 1, changelog.OpPutCell, []byte("k"), []byte("v"))
 	_ = log.Close()
 
 	raw, err := os.ReadFile(path)
@@ -381,7 +381,7 @@ func TestLog_ReadSince_afterSeqFiltering(t *testing.T) {
 	t.Cleanup(func() { _ = log.Close() })
 
 	for i := range 5 {
-		_ = log.Append(int64(i), changelog.OpPutCell, []byte("k"), []byte("v"))
+		_ = changelog.AppendTestEntry(log, int64(i), changelog.OpPutCell, []byte("k"), []byte("v"))
 	}
 
 	// afterSeq=3 should return seq 4 and 5.
@@ -407,9 +407,9 @@ func TestLog_reopenAfterMultipleAppends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = log.Append(1, changelog.OpPutCell, []byte("k1"), []byte("v1"))
-	_ = log.Append(2, changelog.OpPutSeam, []byte("k2"), nil)
-	_ = log.Append(3, changelog.OpPutFacet, []byte("k3"), []byte("payload"))
+	_ = changelog.AppendTestEntry(log, 1, changelog.OpPutCell, []byte("k1"), []byte("v1"))
+	_ = changelog.AppendTestEntry(log, 2, changelog.OpPutSeam, []byte("k2"), nil)
+	_ = changelog.AppendTestEntry(log, 3, changelog.OpPutFacet, []byte("k3"), []byte("payload"))
 	_ = log.Close()
 
 	log2, err := changelog.Open(path, true)
@@ -421,7 +421,7 @@ func TestLog_reopenAfterMultipleAppends(t *testing.T) {
 		t.Fatalf("MaxSeq=%d want 3", log2.MaxSeq())
 	}
 	// Append continues from seq 4.
-	_ = log2.Append(4, changelog.OpPutEdge, []byte("k4"), []byte("edge"))
+	_ = changelog.AppendTestEntry(log2, 4, changelog.OpPutEdge, []byte("k4"), []byte("edge"))
 	if log2.MaxSeq() != 4 {
 		t.Fatalf("MaxSeq=%d want 4", log2.MaxSeq())
 	}
@@ -438,7 +438,7 @@ func TestLog_appendAfterClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = log.Close()
-	if err := log.Append(1, changelog.OpPutCell, []byte("k"), []byte("v")); err == nil {
+	if err := changelog.AppendTestEntry(log, 1, changelog.OpPutCell, []byte("k"), []byte("v")); err == nil {
 		t.Fatal("Append on closed log should fail")
 	}
 }

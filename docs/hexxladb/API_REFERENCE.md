@@ -167,7 +167,9 @@ Unix epoch are handled correctly. A radius can supply the scan when no earlier
 plan applies. The planner uses no persistent cardinality statistics.
 
 `CellQuery.MaxScanRows` bounds physical cell/tag/source rows or spatial
-coordinate probes. The query returns sorted partial results with
+coordinate probes. A positive `MaxResults` limits the retained results while
+preserving the selected ordering over scanned candidates. Ties preserve
+candidate traversal order. The query returns sorted partial results with
 `ErrQueryScanLimit` if it has work left at that budget. When combined with an
 embedding and a required tag, source, or radius, `MaxScanRows` selects exact
 scoring over the bounded filter scan. Leave `EmbeddingCandidateLimit` unset

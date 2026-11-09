@@ -5,12 +5,42 @@ import (
 	"errors"
 	"math"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/hexxla/hexxladb"
 )
+
+func TestQueryCells_CappedResultsMatchUncapped(t *testing.T) {
+	t.Parallel()
+	db := openQueryDB(t)
+	for i := range 16 {
+		putQueryCell(t, db, hexxladb.Coord{Q: i - 8}, "same text", "shared", []string{"shared"}, float64(i%3)/3, time.Unix(int64(i%4), 0))
+	}
+	for _, order := range []hexxladb.SortOrder{hexxladb.SortByScore, hexxladb.SortByConfidence, hexxladb.SortByRecency, hexxladb.SortByCoord} {
+		for _, scanLimit := range []int{0, 7} {
+			err := db.View(func(tx *hexxladb.Tx) error {
+				query := hexxladb.CellQuery{Query: "same", SortBy: order, Explain: true, MaxScanRows: scanLimit}
+				all, allErr := tx.QueryCells(t.Context(), query)
+				query.MaxResults = 3
+				top, topErr := tx.QueryCells(t.Context(), query)
+				if scanLimit == 0 && (allErr != nil || topErr != nil) ||
+					scanLimit > 0 && (!errors.Is(allErr, hexxladb.ErrQueryScanLimit) || !errors.Is(topErr, hexxladb.ErrQueryScanLimit)) {
+					t.Fatalf("order %v, scan limit %d: uncapped error %v, capped error %v", order, scanLimit, allErr, topErr)
+				}
+				if len(all) < 3 || !reflect.DeepEqual(top, all[:3]) {
+					t.Fatalf("order %v, scan limit %d: capped results %v do not match the uncapped prefix %v", order, scanLimit, top, all)
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
 
 func TestQueryCells_PlannerPrefersBoundedSpatialProbe(t *testing.T) {
 	t.Parallel()

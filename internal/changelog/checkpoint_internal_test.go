@@ -21,7 +21,7 @@ func TestLog_CheckpointsBuildAppendAndReopen(t *testing.T) {
 		for i := range entries {
 			entries[i] = Entry{Op: OpPutCell, Key: []byte("cell"), Encoded: []byte("value")}
 		}
-		if err := log.AppendBatch(1, entries); err != nil {
+		if err := AppendTestEntries(log, 1, entries); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -48,7 +48,7 @@ func TestLog_CheckpointsBuildAppendAndReopen(t *testing.T) {
 	assertReadSinceRange(t, log, 768, 4, 769)
 
 	for range 224 {
-		if err := log.Append(1, OpPutCell, []byte("cell"), []byte("value")); err != nil {
+		if err := AppendTestEntry(log, 1, OpPutCell, []byte("cell"), []byte("value")); err != nil {
 			t.Fatal(err)
 		}
 	}

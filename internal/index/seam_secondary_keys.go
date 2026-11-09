@@ -124,17 +124,6 @@ func ParseSeamTimeKey(key []byte) (bucket int64, ulidStr string, err error) {
 	return bucket, ulidStr, nil
 }
 
-// ParseSeamTimeCommitSeq extracts commit_seq from seam-time versioned keys.
-func ParseSeamTimeCommitSeq(key []byte) (uint64, bool) {
-	if len(key) != len(SeamTimePrefix)+8+1+ULIDStringLen+1+VersionSuffixLen {
-		return 0, false
-	}
-	if key[len(key)-VersionSuffixLen-1] != '/' {
-		return 0, false
-	}
-	return binary.BigEndian.Uint64(key[len(key)-VersionSuffixLen:]), true
-}
-
 // SeamSourceKey returns seam-source/<u16be len><id bytes>/<ulid> for lexicographic scans by source.
 func SeamSourceKey(sourceID, ulidStr string) ([]byte, error) {
 	if len(ulidStr) != ULIDStringLen {
@@ -264,17 +253,6 @@ func ParseSeamSourceKey(key []byte) (sourceID, ulidStr string, err error) {
 		return "", "", err
 	}
 	return sourceID, ulidStr, nil
-}
-
-// ParseSeamSourceCommitSeq extracts commit_seq from seam-source versioned keys.
-func ParseSeamSourceCommitSeq(key []byte) (uint64, bool) {
-	if len(key) < VersionSuffixLen+1 {
-		return 0, false
-	}
-	if key[len(key)-VersionSuffixLen-1] != '/' {
-		return 0, false
-	}
-	return binary.BigEndian.Uint64(key[len(key)-VersionSuffixLen:]), true
 }
 
 var errInvalidSeamULID = errors.New("index: invalid seam ulid for secondary key")

@@ -91,11 +91,10 @@ func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthRep
 		report.CellCount = cellCount
 		report.MVCCStats = mvccStats
 
-		var seams []SeamRecord
 		if err := tx.AscendSeams(ctx, func(s SeamRecord) bool {
 			report.SeamCount++
 			if cfg.CheckOrphans {
-				seams = append(seams, s)
+				healthCheckOrphan(s, liveCells, &report)
 			}
 			if s.ResolutionStatus == "resolved" {
 				report.SeamsResolved++
@@ -105,12 +104,6 @@ func (db *DB) HealthCheck(ctx context.Context, cfg HealthCheckConfig) (HealthRep
 			return true
 		}); err != nil {
 			return fmt.Errorf("hexxladb: health seam scan: %w", err)
-		}
-
-		if cfg.CheckOrphans {
-			if err := healthCheckOrphans(ctx, seams, liveCells, &report); err != nil {
-				return err
-			}
 		}
 
 		if cfg.CheckTagIndex {
@@ -222,163 +215,90 @@ func validateHealthCell(key lattice.PackedCoord, value []byte) error {
 	return nil
 }
 
-// healthCheckOrphans detects seams whose CellA or CellB are not in liveCells.
-func healthCheckOrphans(ctx context.Context, seams []record.SeamRecord, liveCells map[lattice.PackedCoord]struct{}, report *HealthReport) error {
-	for _, s := range seams {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		aCoord, errA := lattice.Unpack(s.CellA)
-		bCoord, errB := lattice.Unpack(s.CellB)
-		if errA != nil || errB != nil {
-			report.OrphanedSeams = append(report.OrphanedSeams, s.ID)
-			report.Warnings = append(report.Warnings,
-				fmt.Sprintf("seam %s: cannot unpack endpoint coords", s.ID))
-			continue
-		}
-		_, aOk := liveCells[s.CellA]
-		_, bOk := liveCells[s.CellB]
-		if !aOk || !bOk {
-			report.OrphanedSeams = append(report.OrphanedSeams, s.ID)
-			report.Warnings = append(report.Warnings, fmt.Sprintf(
-				"seam %s: endpoint (%d,%d) or (%d,%d) has no visible cell",
-				s.ID, aCoord.Q, aCoord.R, bCoord.Q, bCoord.R,
-			))
-		}
+// healthCheckOrphan records a seam whose endpoints are malformed or missing.
+func healthCheckOrphan(s record.SeamRecord, liveCells map[lattice.PackedCoord]struct{}, report *HealthReport) {
+	aCoord, errA := lattice.Unpack(s.CellA)
+	bCoord, errB := lattice.Unpack(s.CellB)
+	if errA != nil || errB != nil {
+		report.OrphanedSeams = append(report.OrphanedSeams, s.ID)
+		report.Warnings = append(report.Warnings,
+			fmt.Sprintf("seam %s: cannot unpack endpoint coords", s.ID))
+		return
 	}
-	return nil
+	_, aOk := liveCells[s.CellA]
+	_, bOk := liveCells[s.CellB]
+	if !aOk || !bOk {
+		report.OrphanedSeams = append(report.OrphanedSeams, s.ID)
+		report.Warnings = append(report.Warnings, fmt.Sprintf(
+			"seam %s: endpoint (%d,%d) or (%d,%d) has no visible cell",
+			s.ID, aCoord.Q, aCoord.R, bCoord.Q, bCoord.R,
+		))
+	}
 }
 
-// healthCheckTagIndex verifies every tag/ secondary index entry has a live primary cell.
 func healthCheckTagIndex(ctx context.Context, tx *Tx, liveCells map[lattice.PackedCoord]struct{}, maxErrors int, report *HealthReport) error {
-	tagFrom, tagTo := index.TagFamilyScanBounds()
-	var scanErr error
+	from, to := index.TagFamilyScanBounds()
+	return healthCheckSecondary(ctx, tx, liveCells, from, to, maxErrors, &report.Warnings, &report.TagIndexErrors,
+		"tag", index.ParseTagKeyWithSeq, func(rec record.CellRecord, id string) bool { return slices.Contains(rec.Tags, id) })
+}
 
-	if err := tx.AscendRange(tagFrom, tagTo, func(k, _ []byte) bool {
-		if err := ctx.Err(); err != nil {
+func healthCheckSourceIndex(ctx context.Context, tx *Tx, liveCells map[lattice.PackedCoord]struct{}, maxErrors int, report *HealthReport) error {
+	return healthCheckSecondary(ctx, tx, liveCells, []byte(index.SourcePrefix), []byte("source0"), maxErrors, &report.Warnings, &report.SourceIndexErrors,
+		"source", index.ParseSourceKeyWithSeq, func(rec record.CellRecord, id string) bool { return strings.TrimSpace(rec.Provenance.SourceID) == id })
+}
+
+func healthCheckSecondary(
+	ctx context.Context, tx *Tx, live map[lattice.PackedCoord]struct{}, from, to []byte,
+	maxErrors int, warnings *[]string, count *int, family string,
+	parse func([]byte) (string, lattice.PackedCoord, uint64, bool, error),
+	matches func(record.CellRecord, string) bool,
+) error {
+	var scanErr error
+	if err := tx.AscendRange(from, to, func(k, _ []byte) bool {
+		if scanErr = ctx.Err(); scanErr != nil {
+			return false
+		}
+		id, coord, seq, versioned, err := parse(k)
+		if err != nil {
+			scanErr = fmt.Errorf("%w: parse %s secondary key: %w", ErrCorruptDatabase, family, err)
+			return false
+		}
+		consistent, err := healthSecondaryConsistent(tx, live, family, id, coord, seq, versioned, matches)
+		if err != nil {
 			scanErr = err
 			return false
 		}
-		tagAlive, terr := secondaryTagIndexConsistent(tx, k, liveCells)
-		if terr != nil {
-			scanErr = terr
-			return false
+		if consistent {
+			return true
 		}
-		if !tagAlive {
-			tag, _, _, _, parseErr := index.ParseTagKeyWithSeq(k)
-			if parseErr != nil {
-				return true
-			}
-			report.TagIndexErrors++
-			report.Warnings = append(report.Warnings, fmt.Sprintf(
-				"tag index: stale or inconsistent secondary for tag %q", tag,
-			))
-			if maxErrors > 0 && report.TagIndexErrors >= maxErrors {
-				report.Warnings = append(report.Warnings,
-					fmt.Sprintf("tag index check stopped at MaxErrors=%d", maxErrors))
-				return false
-			}
+		*count++
+		*warnings = append(*warnings, fmt.Sprintf("%s index: stale or inconsistent secondary for %s %q", family, family, id))
+		if maxErrors > 0 && *count >= maxErrors {
+			*warnings = append(*warnings, fmt.Sprintf("%s index check stopped at MaxErrors=%d", family, maxErrors))
+			return false
 		}
 		return true
 	}); err != nil {
-		return fmt.Errorf("hexxladb: health tag index scan: %w", err)
+		return fmt.Errorf("hexxladb: health %s index scan: %w", family, err)
 	}
 	return scanErr
 }
 
-// healthCheckSourceIndex verifies every source/ secondary index entry has a live primary cell.
-func healthCheckSourceIndex(ctx context.Context, tx *Tx, liveCells map[lattice.PackedCoord]struct{}, maxErrors int, report *HealthReport) error {
-	var scanErr error
-
-	if err := tx.AscendRange(
-		[]byte(index.SourcePrefix),
-		[]byte("source0"),
-		func(k, _ []byte) bool {
-			if err := ctx.Err(); err != nil {
-				scanErr = err
-				return false
-			}
-			srcAlive, sErr := secondarySourceIndexConsistent(tx, k, liveCells)
-			if sErr != nil {
-				scanErr = sErr
-				return false
-			}
-			if !srcAlive {
-				sid, _, _, _, parseErr := index.ParseSourceKeyWithSeq(k)
-				if parseErr != nil {
-					return true
-				}
-				report.SourceIndexErrors++
-				report.Warnings = append(report.Warnings, fmt.Sprintf(
-					"source index: stale or inconsistent secondary for source %q", sid,
-				))
-				if maxErrors > 0 && report.SourceIndexErrors >= maxErrors {
-					report.Warnings = append(report.Warnings,
-						fmt.Sprintf("source index check stopped at MaxErrors=%d", maxErrors))
-					return false
-				}
-			}
-			return true
-		},
-	); err != nil {
-		return fmt.Errorf("hexxladb: health source index scan: %w", err)
+func healthSecondaryConsistent(tx *Tx, live map[lattice.PackedCoord]struct{}, family, id string, coord lattice.PackedCoord, seq uint64, versioned bool, matches func(record.CellRecord, string) bool) (bool, error) {
+	if !versioned {
+		_, found := live[coord]
+		return found, nil
 	}
-	return scanErr
-}
-
-// secondaryTagIndexConsistent verifies a physical tag/ key against primary storage.
-// MVCC suffixed keys are validated against cell/<packed><seq>; an unsuffixed tag key
-// is checked against the live head. Malformed storage fails closed.
-func secondaryTagIndexConsistent(tx *Tx, k []byte, live map[lattice.PackedCoord]struct{}) (bool, error) {
-	tag, p, seq, hasSeq, err := index.ParseTagKeyWithSeq(k)
+	val, found, err := tx.getDirect(index.CellKeyWithVersion(coord, seq))
+	if err != nil || !found || len(val) == 0 {
+		return false, err
+	}
+	rec, err := record.DecodeCell(val)
 	if err != nil {
-		return false, fmt.Errorf("%w: parse tag secondary key: %w", ErrCorruptDatabase, err)
+		return false, fmt.Errorf("%w: decode %s-indexed cell: %w", ErrCorruptDatabase, family, err)
 	}
-	if hasSeq {
-		ck := index.CellKeyWithVersion(p, seq)
-		val, found, err := tx.getDirect(ck)
-		if err != nil {
-			return false, err
-		}
-		if !found || len(val) == 0 {
-			return false, nil
-		}
-		rec, err := record.DecodeCell(val)
-		if err != nil {
-			return false, fmt.Errorf("%w: decode tag-indexed cell: %w", ErrCorruptDatabase, err)
-		}
-		if rec.Key != p {
-			return false, fmt.Errorf("%w: tag-indexed cell key mismatch", ErrCorruptDatabase)
-		}
-		return slices.Contains(rec.Tags, tag), nil
+	if rec.Key != coord {
+		return false, fmt.Errorf("%w: %s-indexed cell key mismatch", ErrCorruptDatabase, family)
 	}
-	_, alive := live[p]
-	return alive, nil
-}
-
-func secondarySourceIndexConsistent(tx *Tx, k []byte, live map[lattice.PackedCoord]struct{}) (bool, error) {
-	sid, p, seq, hasSeq, err := index.ParseSourceKeyWithSeq(k)
-	if err != nil {
-		return false, fmt.Errorf("%w: parse source secondary key: %w", ErrCorruptDatabase, err)
-	}
-	if hasSeq {
-		ck := index.CellKeyWithVersion(p, seq)
-		val, found, err := tx.getDirect(ck)
-		if err != nil {
-			return false, err
-		}
-		if !found || len(val) == 0 {
-			return false, nil
-		}
-		rec, err := record.DecodeCell(val)
-		if err != nil {
-			return false, fmt.Errorf("%w: decode source-indexed cell: %w", ErrCorruptDatabase, err)
-		}
-		if rec.Key != p {
-			return false, fmt.Errorf("%w: source-indexed cell key mismatch", ErrCorruptDatabase)
-		}
-		return strings.TrimSpace(rec.Provenance.SourceID) == sid, nil
-	}
-	_, alive := live[p]
-	return alive, nil
+	return matches(rec, id), nil
 }

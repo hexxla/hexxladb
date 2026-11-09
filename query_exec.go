@@ -1,7 +1,6 @@
 package hexxladb
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -47,15 +46,22 @@ func (tx *Tx) QueryCellsWithStats(ctx context.Context, q CellQuery) ([]CellQuery
 		return nil, stats, err
 	}
 	queryLow := strings.ToLower(strings.TrimSpace(q.Query))
-	var results []CellQueryResult
+	collector := queryCollector{order: q.SortBy, limit: q.MaxResults}
 	var err error
 	switch {
 	case len(q.Embedding) == 0:
-		results, err = tx.queryCellsByIndex(ctx, q, queryLow)
+		err = tx.scanQueryCells(ctx, q, func(rec record.CellRecord) bool {
+			if ctx.Err() != nil {
+				return false
+			}
+			collector.add(q, rec, queryLow, 0)
+			return true
+		})
 	case q.MaxScanRows > 0:
-		results, err = tx.queryCellsByExactFilter(ctx, q, queryLow, &stats)
+		err = tx.queryCellsByExactFilter(ctx, q, queryLow, &stats, &collector)
 	default:
-		results, err = tx.queryCellsByEmbedding(ctx, q, queryLow, &stats)
+		collector.hits = []queryCandidate{}
+		err = tx.queryCellsByEmbedding(ctx, q, queryLow, &stats, &collector)
 	}
 	if err != nil && !errors.Is(err, ErrQueryScanLimit) {
 		return nil, stats, err
@@ -63,11 +69,7 @@ func (tx *Tx) QueryCellsWithStats(ctx context.Context, q CellQuery) ([]CellQuery
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, stats, ctxErr
 	}
-	sortResults(results, q.SortBy)
-	if q.MaxResults > 0 && len(results) > q.MaxResults {
-		results = results[:q.MaxResults]
-	}
-	return results, stats, err
+	return collector.results(q, queryLow), stats, err
 }
 
 func (tx *Tx) validateCellQuery(ctx context.Context, q CellQuery) error {
@@ -104,22 +106,6 @@ func (tx *Tx) validateCellQuery(ctx context.Context, q CellQuery) error {
 		}
 	}
 	return nil
-}
-
-func (tx *Tx) queryCellsByIndex(ctx context.Context, q CellQuery, queryLow string) ([]CellQueryResult, error) {
-	var results []CellQueryResult
-	yield := func(rec record.CellRecord) bool {
-		if ctx.Err() != nil {
-			return false
-		}
-		if r, ok := scoreRecord(q, rec, queryLow, 0); ok {
-			results = append(results, r)
-		}
-		return true
-	}
-
-	err := tx.scanQueryCells(ctx, q, yield)
-	return results, err
 }
 
 func (tx *Tx) scanQueryCells(ctx context.Context, q CellQuery, yield func(record.CellRecord) bool) error {
@@ -221,46 +207,6 @@ func (tx *Tx) scanAllCellsFused(ctx context.Context, maxScanRows int, yield func
 	return decodeErr
 }
 
-// scoreRecord applies predicates, scores, and builds a CellQueryResult.
-// Returns (result, true) if the record passes all filters; (zero, false) otherwise.
-func scoreRecord(q CellQuery, rec record.CellRecord, queryLow string, embeddingScore float64) (CellQueryResult, bool) {
-	coord, err := lattice.Unpack(rec.Key)
-	if err != nil {
-		return CellQueryResult{}, false
-	}
-	c := Coord(coord)
-
-	if !applyPredicates(q, rec, c) {
-		return CellQueryResult{}, false
-	}
-
-	score, matched := scoreCell(queryLow, rec.Tags, rec.RawContent, rec.Provenance.SourceID, rec.Provenance.Confidence)
-	if !matched {
-		return CellQueryResult{}, false
-	}
-	score += embeddingScore
-
-	var explanation string
-	if q.Explain {
-		explanation = buildExplanation(q, rec, c, score, queryLow, embeddingScore)
-	}
-
-	cell := CellView{
-		Coord: c, RawContent: rec.RawContent, Tags: rec.Tags,
-		Provenance: rec.Provenance, Validity: rec.Validity,
-	}
-	if rec.ClusterHint != nil {
-		if hint, err := lattice.Unpack(*rec.ClusterHint); err == nil {
-			cell.ClusterHint = new(hint)
-		}
-	}
-	return CellQueryResult{
-		Cell:        cell,
-		Score:       score,
-		Explanation: explanation,
-	}, true
-}
-
 // ── scanners (fused: filter+score called inline, no intermediate slice) ───────
 
 // scanByTagFused walks the tag index and calls yield for each decoded record.
@@ -314,10 +260,10 @@ func (tx *Tx) scanByRadiusFused(ctx context.Context, center Coord, radius, maxSc
 	return nil
 }
 
-func (tx *Tx) queryCellsByEmbedding(ctx context.Context, q CellQuery, queryLow string, stats *CellQueryStats) ([]CellQueryResult, error) {
+func (tx *Tx) queryCellsByEmbedding(ctx context.Context, q CellQuery, queryLow string, stats *CellQueryStats, collector *queryCollector) error {
 	maxResults := q.MaxResults
 	if maxResults <= 0 && q.EmbeddingCandidateLimit == 0 {
-		return tx.queryCellsByFlatEmbedding(ctx, q, queryLow, stats)
+		return tx.queryCellsByFlatEmbedding(ctx, q, queryLow, stats, collector)
 	}
 
 	candidateLimit := q.EmbeddingCandidateLimit
@@ -329,16 +275,15 @@ func (tx *Tx) queryCellsByEmbedding(ctx context.Context, q CellQuery, queryLow s
 		fetchK = min(candidateLimit, max(20, multiplyCapped(maxResults, 2, candidateLimit)))
 	}
 	seen := make(map[lattice.PackedCoord]struct{}, fetchK)
-	results := make([]CellQueryResult, 0, min(fetchK, max(maxResults, 0)))
 	for {
 		hits, searchStats, err := tx.searchByEmbedding(ctx, q.Embedding, EmbeddingSearchConfig{MaxResults: fetchK})
 		if err != nil {
-			return nil, err
+			return err
 		}
 		stats.EmbeddingPath = searchStats.Path
 		for _, hit := range hits {
 			if err := ctx.Err(); err != nil {
-				return nil, err
+				return err
 			}
 			// Approximate result sets from successive searches need not be nested.
 			if len(seen) == candidateLimit {
@@ -350,22 +295,20 @@ func (tx *Tx) queryCellsByEmbedding(ctx context.Context, q CellQuery, queryLow s
 			seen[hit.Coord] = struct{}{}
 			rec, ok, err := tx.GetCell(hit.Coord)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			if !ok {
 				continue
 			}
-			if result, matched := scoreRecord(q, rec, queryLow, hit.Score); matched {
-				results = append(results, result)
-			}
+			collector.add(q, rec, queryLow, hit.Score)
 		}
 		stats.EmbeddingCandidates = len(seen)
-		if (maxResults > 0 && len(results) >= maxResults) || len(hits) < fetchK {
-			return results, nil
+		if (maxResults > 0 && len(collector.hits) >= maxResults) || len(hits) < fetchK {
+			return nil
 		}
 		if len(seen) == candidateLimit || fetchK == candidateLimit {
 			stats.EmbeddingCandidateLimitReached = true
-			return results, nil
+			return nil
 		}
 		fetchK = min(candidateLimit, fetchK*2)
 	}
@@ -378,14 +321,13 @@ func multiplyCapped(value, factor, limit int) int {
 	return value * factor
 }
 
-func (tx *Tx) queryCellsByFlatEmbedding(ctx context.Context, q CellQuery, queryLow string, stats *CellQueryStats) ([]CellQueryResult, error) {
+func (tx *Tx) queryCellsByFlatEmbedding(ctx context.Context, q CellQuery, queryLow string, stats *CellQueryStats, collector *queryCollector) error {
 	similarity, err := tx.exactEmbeddingScorer(q.Embedding, stats)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	results := []CellQueryResult{}
 	if similarity == nil {
-		return results, nil
+		return nil
 	}
 	err = tx.scanEmbeddings(ctx, func(coord lattice.PackedCoord, vec []float32) error {
 		stats.EmbeddingCandidates++
@@ -396,25 +338,22 @@ func (tx *Tx) queryCellsByFlatEmbedding(ctx context.Context, q CellQuery, queryL
 		if !ok {
 			return nil
 		}
-		if result, matched := scoreRecord(q, rec, queryLow, similarity(vec)); matched {
-			results = append(results, result)
-		}
+		collector.add(q, rec, queryLow, similarity(vec))
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return results, nil
+	return nil
 }
 
 // queryCellsByExactFilter scores only vectors reached by the bounded filter
 // scan, bypassing the graph even when one is available.
-func (tx *Tx) queryCellsByExactFilter(ctx context.Context, q CellQuery, queryLow string, stats *CellQueryStats) ([]CellQueryResult, error) {
+func (tx *Tx) queryCellsByExactFilter(ctx context.Context, q CellQuery, queryLow string, stats *CellQueryStats, collector *queryCollector) error {
 	similarity, err := tx.exactEmbeddingScorer(q.Embedding, stats)
 	if err != nil || similarity == nil {
-		return nil, err
+		return err
 	}
-	var results []CellQueryResult
 	var lookupErr error
 	err = tx.scanQueryCells(ctx, q, func(rec record.CellRecord) bool {
 		vec, found, err := tx.GetEmbedding(rec.Key)
@@ -424,16 +363,14 @@ func (tx *Tx) queryCellsByExactFilter(ctx context.Context, q CellQuery, queryLow
 		}
 		if found {
 			stats.EmbeddingCandidates++
-			if result, matched := scoreRecord(q, rec, queryLow, similarity(vec)); matched {
-				results = append(results, result)
-			}
+			collector.add(q, rec, queryLow, similarity(vec))
 		}
 		return true
 	})
 	if lookupErr != nil {
-		return nil, lookupErr
+		return lookupErr
 	}
-	return results, err
+	return err
 }
 
 func (tx *Tx) exactEmbeddingScorer(query []float32, stats *CellQueryStats) (func([]float32) float64, error) {
@@ -504,63 +441,6 @@ func applyPredicates(q CellQuery, rec record.CellRecord, c Coord) bool {
 		}
 	}
 	return true
-}
-
-// ── sorting ───────────────────────────────────────────────────────────────────
-
-func sortResults(results []CellQueryResult, order SortOrder) {
-	switch order {
-	case SortByConfidence:
-		slices.SortFunc(results, func(a, b CellQueryResult) int {
-			ac, bc := a.Cell.Provenance.Confidence, b.Cell.Provenance.Confidence
-			if ac > bc {
-				return -1
-			}
-			if ac < bc {
-				return 1
-			}
-			return 0
-		})
-	case SortByRecency:
-		slices.SortFunc(results, func(a, b CellQueryResult) int {
-			at, bt := a.Cell.Validity.ValidFrom, b.Cell.Validity.ValidFrom
-			switch {
-			case at == nil && bt == nil:
-				return 0
-			case at == nil:
-				return 1
-			case bt == nil:
-				return -1
-			default:
-				return cmp.Compare(*bt, *at)
-			}
-		})
-	case SortByCoord:
-		slices.SortFunc(results, func(a, b CellQueryResult) int {
-			ci, cj := a.Cell.Coord, b.Cell.Coord
-			if ci.Q != cj.Q {
-				return ci.Q - cj.Q
-			}
-			return ci.R - cj.R
-		})
-	default: // SortByScore
-		slices.SortFunc(results, func(a, b CellQueryResult) int {
-			if a.Score != b.Score {
-				if a.Score > b.Score {
-					return -1
-				}
-				return 1
-			}
-			ac, bc := a.Cell.Provenance.Confidence, b.Cell.Provenance.Confidence
-			if ac > bc {
-				return -1
-			}
-			if ac < bc {
-				return 1
-			}
-			return 0
-		})
-	}
 }
 
 // ── explain ───────────────────────────────────────────────────────────────────

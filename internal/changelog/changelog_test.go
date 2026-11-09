@@ -23,7 +23,7 @@ func TestLog_appendRead_roundTrip(t *testing.T) {
 
 	key := []byte("cell/\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x02")
 	enc := []byte("hello-world-payload")
-	if err := log.Append(42, changelog.OpPutCell, key, enc); err != nil {
+	if err := changelog.AppendTestEntry(log, 42, changelog.OpPutCell, key, enc); err != nil {
 		t.Fatal(err)
 	}
 	recs, err := log.ReadSince(0, 10)
@@ -68,7 +68,7 @@ func TestLog_appendBatch(t *testing.T) {
 		{Op: changelog.OpPutCell, Key: []byte("a"), Encoded: []byte("x")},
 		{Op: changelog.OpPutEdge, Key: []byte("b"), Encoded: []byte("y")},
 	}
-	if err := log.AppendBatch(100, entries); err != nil {
+	if err := changelog.AppendTestEntries(log, 100, entries); err != nil {
 		t.Fatal(err)
 	}
 	if log.MaxSeq() != 2 {
@@ -153,7 +153,7 @@ func TestLog_largePayload_hashOnly(t *testing.T) {
 	for i := range large {
 		large[i] = byte(i % 251)
 	}
-	if err := log.Append(1, changelog.OpPutCell, []byte("k"), large); err != nil {
+	if err := changelog.AppendTestEntry(log, 1, changelog.OpPutCell, []byte("k"), large); err != nil {
 		t.Fatal(err)
 	}
 	recs, err := log.ReadSince(0, 1)
@@ -178,7 +178,7 @@ func TestOpen_recoversMaxSeq(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = log1.Append(1, changelog.OpPutCell, []byte("a"), nil)
+	_ = changelog.AppendTestEntry(log1, 1, changelog.OpPutCell, []byte("a"), nil)
 	_ = log1.Close()
 
 	log2, err := changelog.Open(path, true)
@@ -189,7 +189,7 @@ func TestOpen_recoversMaxSeq(t *testing.T) {
 	if log2.MaxSeq() != 1 {
 		t.Fatalf("maxSeq=%d", log2.MaxSeq())
 	}
-	if err := log2.Append(2, changelog.OpPutCell, []byte("b"), nil); err != nil {
+	if err := changelog.AppendTestEntry(log2, 2, changelog.OpPutCell, []byte("b"), nil); err != nil {
 		t.Fatal(err)
 	}
 	if log2.MaxSeq() != 2 {
@@ -208,7 +208,7 @@ func TestLog_encryptedRoundTripReopenAndCiphertext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := log.AppendBatch(100, []changelog.Entry{
+	if err := changelog.AppendTestEntries(log, 100, []changelog.Entry{
 		{Op: changelog.OpPutCell, Key: secretKey, Encoded: secretPayload},
 		{Op: changelog.OpPutEdge, Key: []byte("edge/private"), Encoded: []byte("edge-payload")},
 	}); err != nil {
@@ -244,7 +244,7 @@ func TestLog_encryptedRoundTripReopenAndCiphertext(t *testing.T) {
 	if log.MaxSeq() != 2 {
 		t.Fatalf("MaxSeq after reopen = %d, want 2", log.MaxSeq())
 	}
-	if err := log.Append(101, changelog.OpDeleteCell, []byte("cell/deleted"), nil); err != nil {
+	if err := changelog.AppendTestEntry(log, 101, changelog.OpDeleteCell, []byte("cell/deleted"), nil); err != nil {
 		t.Fatal(err)
 	}
 	tail, err := log.ReadSince(2, 1)
@@ -307,7 +307,7 @@ func TestLog_encryptedTamperFailsClosed(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := log.Append(1, changelog.OpPutCell, []byte("cell/key"), []byte("secret")); err != nil {
+			if err := changelog.AppendTestEntry(log, 1, changelog.OpPutCell, []byte("cell/key"), []byte("secret")); err != nil {
 				t.Fatal(err)
 			}
 			if err := log.Close(); err != nil {
@@ -346,7 +346,7 @@ func TestLog_encryptedTruncationFailsClosed(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := log.Append(1, changelog.OpPutCell, []byte("cell/key"), []byte("secret")); err != nil {
+			if err := changelog.AppendTestEntry(log, 1, changelog.OpPutCell, []byte("cell/key"), []byte("secret")); err != nil {
 				t.Fatal(err)
 			}
 			if err := log.Close(); err != nil {
@@ -378,7 +378,7 @@ func TestOpenRecoverable_truncatesOnlyIncompleteFinalFrame(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := log.Append(1, changelog.OpPutCell, []byte("complete"), []byte("value")); err != nil {
+			if err := changelog.AppendTestEntry(log, 1, changelog.OpPutCell, []byte("complete"), []byte("value")); err != nil {
 				t.Fatal(err)
 			}
 			if err := log.Close(); err != nil {
@@ -446,7 +446,7 @@ func TestLog_CopyToReencryptsAndPreservesHashOnlyRecord(t *testing.T) {
 	t.Cleanup(func() { _ = destination.Close() })
 
 	payload := bytes.Repeat([]byte("private"), changelog.MaxInlinePayload)
-	if err := source.Append(9876, changelog.OpPutCell, []byte("cell/private"), payload); err != nil {
+	if err := changelog.AppendTestEntry(source, 9876, changelog.OpPutCell, []byte("cell/private"), payload); err != nil {
 		t.Fatal(err)
 	}
 	before, err := source.ReadSince(0, 1)
@@ -492,7 +492,7 @@ func TestLog_logicalDigestSurvivesReopenAndReencryption(t *testing.T) {
 			Encoded: fmt.Appendf(nil, "value-%03d", i),
 		}
 	}
-	if err := source.AppendBatch(1234, entries); err != nil {
+	if err := changelog.AppendTestEntries(source, 1234, entries); err != nil {
 		t.Fatal(err)
 	}
 	wantHead, wantHeadDigest, err := source.LogicalCheckpoint()
@@ -586,7 +586,7 @@ func BenchmarkLog_ReadSinceTail(b *testing.B) {
 					Encoded: []byte("value"),
 				}
 			}
-			if err := log.AppendBatch(1, entries); err != nil {
+			if err := changelog.AppendTestEntries(log, 1, entries); err != nil {
 				b.Fatal(err)
 			}
 		}
