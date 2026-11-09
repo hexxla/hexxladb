@@ -56,10 +56,10 @@ word budget. With Task installed, `task demo` runs the same example.
 From your own Go module, install the tagged release.
 
 ```sh
-go get github.com/hexxla/hexxladb@v0.6.0
+go get github.com/hexxla/hexxladb@v0.7.0
 ```
 
-Use the [tagged README](https://github.com/hexxla/hexxladb/blob/v0.6.0/README.md)
+Use the [tagged README](https://github.com/hexxla/hexxladb/blob/v0.7.0/README.md)
 for that version. The example and explorer commands on this page run the
 current checkout.
 

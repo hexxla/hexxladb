@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-09
+
 ### Breaking
 
 - **Storage formats** — all databases use MVCC. New plaintext databases use engine v2 and new encrypted databases use authenticated v3. Engine v1 and AES-XTS files are refused before WAL replay. Use the [pinned v0.6.0 conversion procedure](docs/hexxladb/OPERATIONS.md#offline-conversion-of-retired-files) for retired files. The current library and CLI no longer ship the legacy conversion commands.
@@ -507,7 +509,8 @@
 
 _First release._
 
-[Unreleased]: https://github.com/hexxla/hexxladb/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/hexxla/hexxladb/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/hexxla/hexxladb/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/hexxla/hexxladb/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/hexxla/hexxladb/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/hexxla/hexxladb/compare/v0.4.0...v0.5.0
