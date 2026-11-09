@@ -1,7 +1,6 @@
 package hexxladb
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -23,19 +22,18 @@ const preferredSpatialPlanProbeLimit = 4096
 // QueryCells executes a [CellQuery] against the transaction's snapshot and
 // returns matching cells ordered according to [CellQuery.SortBy].
 //
-// The planner uses a bounded cost heuristic:
-//   - Embedding set    →  ANN via [Tx.SearchByEmbedding] (HNSW or flat scan)
-//   - Small radius     →  ring walk when its exact probe count is cheaper than
-//     the configured scan budget or the conservative spatial threshold
-//   - RequireTags set  →  first caller-provided tag secondary index
-//   - SourceID set     →  source secondary index
-//   - After/Before set →  complete primary scan (correct across signed time buckets)
-//   - Center+Radius    →  ring walk around Center
-//   - fallback         →  complete primary scan
+// The planner prefers a small spatial disk, then the first required tag or
+// source index. Other queries scan the spatial disk or primary cells. Time
+// bounds are applied to the visible records and can span the Unix epoch.
 //
-// After the primary index narrows the candidate set, all remaining predicates
-// are applied as in-memory filters. Results are scored and sorted according to
-// [CellQuery.SortBy] then capped to [CellQuery.MaxResults].
+// Vector queries use candidate retrieval through HNSW or flat scoring. A
+// positive [CellQuery.MaxScanRows] with a required tag, source, or radius
+// scores the bounded filter scan exactly. With unlimited results and neither
+// budget set, the query scores every stored vector exactly.
+//
+// Results are filtered, sorted, and capped to [CellQuery.MaxResults].
+// If the row budget is exhausted, the sorted partial results accompany
+// [ErrQueryScanLimit].
 func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, error) {
 	results, _, err := tx.QueryCellsWithStats(ctx, q)
 	return results, err
@@ -161,54 +159,66 @@ func preferSpatialPlan(q CellQuery) bool {
 func (tx *Tx) scanAllCellsFused(ctx context.Context, maxScanRows int, yield func(record.CellRecord) bool) error {
 	from := []byte(index.CellPrefix)
 	to := []byte("cell0") // sorts immediately after every cell/ key
-	v1Len := len(index.CellPrefix) + index.PackedCoordKeyLen
-	var previous lattice.PackedCoord
-	havePrevious := false
+	readSeq := max(tx.readSeq, tx.writeSeq)
+	var coord, pendingCoord lattice.PackedCoord
+	var pendingValue []byte
+	havePending := false
 	scanned := 0
-	var scanErr error
+	var decodeErr error
 
-	err := tx.AscendRange(from, to, func(k, _ []byte) bool {
-		if err := ctx.Err(); err != nil {
-			scanErr = err
-			return false
+	flush := func() bool {
+		havePending = false
+		if len(pendingValue) == 0 {
+			return true // MVCC tombstone.
 		}
-		if maxScanRows > 0 && scanned >= maxScanRows {
-			scanErr = ErrQueryScanLimit
-			return false
+		rec, err := record.DecodeCell(pendingValue)
+		decodeErr = err
+		return err == nil && yield(rec)
+	}
+	err := tx.ascendRangeSelected(from, to, func(key []byte) (bool, error) {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if maxScanRows > 0 && scanned == maxScanRows {
+			return false, ErrQueryScanLimit
 		}
 		scanned++
-		if !bytes.HasPrefix(k, from) || len(k) < v1Len {
-			return true
-		}
-		coord, err := index.ParseCellKey(k[:v1Len])
-		if err != nil {
-			return true
-		}
-		if havePrevious && coord == previous {
-			return true
-		}
-		previous = coord
-		havePrevious = true
-		rec, ok, err := tx.GetCell(coord)
-		if err != nil {
-			scanErr = err
+		parsed, seq, err := index.ParseCellVersionKey(key)
+		coord = parsed
+		return err == nil && seq <= readSeq, nil
+	}, func(_, value []byte) bool {
+		if havePending && coord != pendingCoord && !flush() {
 			return false
 		}
-		if !ok {
-			return true
-		}
-		if !yield(rec) {
-			return false
-		}
+		// Physical versions ascend by commit sequence. The last visible
+		// version replaces earlier ones, including when it is a tombstone.
+		pendingCoord, pendingValue, havePending = coord, value, true
 		return true
 	})
+	if decodeErr != nil {
+		return decodeErr
+	}
+	if errors.Is(err, ErrQueryScanLimit) {
+		// The budget can split a coordinate's versions. Preserve the latest
+		// snapshot-visible result for the final coordinate admitted to the scan.
+		if havePending {
+			rec, found, getErr := tx.GetCell(pendingCoord)
+			if getErr != nil {
+				return getErr
+			}
+			if found {
+				yield(rec)
+			}
+		}
+		return ErrQueryScanLimit
+	}
 	if err != nil {
 		return fmt.Errorf("hexxladb: QueryCells full scan: %w", err)
 	}
-	if scanErr != nil {
-		return scanErr
+	if havePending {
+		flush()
 	}
-	return nil
+	return decodeErr
 }
 
 // scoreRecord applies predicates, scores, and builds a CellQueryResult.

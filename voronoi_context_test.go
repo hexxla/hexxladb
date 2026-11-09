@@ -17,6 +17,28 @@ func openVoronoiTestDB(t *testing.T) *hexxladb.DB {
 	return openPathfindTestDB(t)
 }
 
+func TestLoadContextVoronoi_CancelsDuringPartition(t *testing.T) {
+	t.Parallel()
+	db := openVoronoiTestDB(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	checks := 0
+	err := db.View(func(tx *hexxladb.Tx) error {
+		_, err := tx.LoadContextVoronoi(ctx, []hexxladb.Coord{{}}, hexxladb.VoronoiContextConfig{
+			MaxRadius: 64,
+			WeightFunc: func(hexxladb.Coord) float64 {
+				checks++
+				cancel()
+				return 0
+			},
+		})
+		return err
+	})
+	if !errors.Is(err, context.Canceled) || errors.Is(err, hexxladb.ErrInvalidArgument) || checks != 1 {
+		t.Fatalf("Voronoi returned %v after %d weight checks", err, checks)
+	}
+}
+
 func TestLoadContextVoronoi_singleSeed(t *testing.T) {
 	t.Parallel()
 	db := openVoronoiTestDB(t)

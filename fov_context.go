@@ -57,7 +57,10 @@ func (tx *Tx) LoadContextFOV(ctx context.Context, center Coord, maxR int, opaque
 	}
 	cfg.withDefaults()
 
-	visible := lattice.FieldOfView(center, maxR, opaque)
+	visible, err := lattice.FieldOfViewContext(ctx, center, maxR, opaque)
+	if err != nil {
+		return nil, err
+	}
 	return tx.fetchVisibleCells(ctx, visible, cfg.MaxCells)
 }
 

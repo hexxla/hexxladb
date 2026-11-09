@@ -3,6 +3,7 @@ package hexxladb
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"math"
 
@@ -19,6 +20,9 @@ type FindEdgePathConfig struct {
 	// MaxExpand limits the number of nodes expanded by the shortest-path search
 	// (0 = unlimited).
 	MaxExpand int
+	// MaxEdgeRows limits the total adjacency rows read across all expansions,
+	// including rows excluded by Filter (0 = unlimited).
+	MaxEdgeRows int
 	// CostFunc overrides edge-weight-based traversal cost.
 	// Receives the from and to coordinates; return a negative value to mark an
 	// edge impassable. Nil uses the edge's recorded Weight (1.0 when Weight <= 0).
@@ -29,6 +33,7 @@ type FindEdgePathConfig struct {
 // Only edges whose relationType matches [FindEdgePathConfig.Filter] are traversed
 // (empty = all edges). Edge weights are used as traversal costs unless
 // [FindEdgePathConfig.CostFunc] is set. Returns nil if no path exists.
+// Returns [ErrSpatialScanLimit] if the expansion or edge-row budget is exhausted.
 // Returns [ErrInvalidArgument] if a reachable goal has only paths whose
 // accumulated costs overflow float64. On historical snapshots it returns
 // [ErrHistoricalDataUnavailable].
@@ -42,11 +47,17 @@ func (tx *Tx) FindEdgePath(ctx context.Context, start, goal Coord, cfg FindEdgeP
 	if err := tx.checkCurrentData(); err != nil {
 		return nil, err
 	}
+	if cfg.MaxExpand < 0 || cfg.MaxEdgeRows < 0 {
+		return nil, fmt.Errorf("%w: path budgets must be non-negative", ErrInvalidArgument)
+	}
 	if start == goal {
 		return []Coord{start}, nil
 	}
 
-	traversal := newEdgeTraversal(ctx, tx, matchExactRelation(cfg.Filter), cfg.CostFunc)
+	traversal := edgeTraversal{
+		tx: tx, ctx: ctx, filter: cfg.Filter, override: cfg.CostFunc,
+		weights: make(map[lattice.Coord]float64), maxEdgeRows: cfg.MaxEdgeRows,
+	}
 	path, pathErr := pathfind.Dijkstra(start, goal, traversal.neighbors, traversal.cost, cfg.MaxExpand)
 	if traversal.err != nil {
 		return nil, traversal.err
@@ -55,6 +66,9 @@ func (tx *Tx) FindEdgePath(ctx context.Context, start, goal Coord, cfg FindEdgeP
 		return nil, err
 	}
 	if pathErr != nil {
+		if errors.Is(pathErr, pathfind.ErrExpansionLimit) {
+			return nil, fmt.Errorf("%w: path expansions exceed %d", ErrSpatialScanLimit, cfg.MaxExpand)
+		}
 		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, pathErr)
 	}
 	return path, nil
@@ -73,7 +87,7 @@ func (tx *Tx) WalkEdges(ctx context.Context, start Coord, filter string, maxHops
 	}
 	var result []Coord
 	err := walkEdgeCoords(ctx, start, maxHops, matchExactRelation(filter), func(from PackedCoord, fn func(EdgeWalkRecord) bool) error {
-		return tx.ascendEdgesFrom(from, ctx.Err, fn)
+		return tx.ascendEdgesFrom(from, "", ctx.Err, fn)
 	}, func(coord Coord) bool {
 		result = append(result, coord)
 		return maxNodes <= 0 || len(result) < maxNodes
@@ -132,25 +146,30 @@ func matchExactRelation(filter string) func(string) bool {
 // edgeTraversal keeps the current expansion's weighted adjacency list.
 // The search consumes all neighbor costs before expanding the next coordinate.
 type edgeTraversal struct {
-	tx       *Tx
-	ctx      context.Context
-	matches  func(string) bool
-	override func(from, to Coord) float64
-	from     lattice.Coord
-	loaded   bool
-	weights  map[lattice.Coord]float64
-	order    []lattice.Coord
-	err      error
+	tx          *Tx
+	ctx         context.Context
+	filter      string
+	override    func(from, to Coord) float64
+	from        lattice.Coord
+	loaded      bool
+	weights     map[lattice.Coord]float64
+	order       []lattice.Coord
+	err         error
+	edgeRows    int
+	maxEdgeRows int
 }
 
-func newEdgeTraversal(ctx context.Context, tx *Tx, matches func(string) bool, override func(from, to Coord) float64) *edgeTraversal {
-	return &edgeTraversal{
-		tx:       tx,
-		ctx:      ctx,
-		matches:  matches,
-		override: override,
-		weights:  make(map[lattice.Coord]float64),
+func (t *edgeTraversal) beforeEdge() error {
+	if err := t.ctx.Err(); err != nil {
+		return err
 	}
+	if t.maxEdgeRows > 0 {
+		if t.edgeRows == t.maxEdgeRows {
+			return fmt.Errorf("%w: path edge rows exceed %d", ErrSpatialScanLimit, t.maxEdgeRows)
+		}
+		t.edgeRows++
+	}
+	return nil
 }
 
 func (t *edgeTraversal) neighbors(from lattice.Coord) []lattice.Coord {
@@ -200,10 +219,7 @@ func (t *edgeTraversal) load(from lattice.Coord) {
 
 	clear(t.weights)
 	t.order = t.order[:0]
-	err = t.tx.ascendEdgesFrom(packed, t.ctx.Err, func(edge record.EdgeRecord) bool {
-		if t.matches != nil && !t.matches(edge.RelationType) {
-			return true
-		}
+	err = t.tx.ascendEdgesFrom(packed, t.filter, t.beforeEdge, func(edge record.EdgeRecord) bool {
 		to, unpackErr := lattice.Unpack(edge.To)
 		if unpackErr != nil {
 			t.err = unpackErr

@@ -2,7 +2,7 @@ package lattice
 
 import (
 	"cmp"
-	"math"
+	"context"
 	"slices"
 	"sort"
 )
@@ -12,10 +12,11 @@ import (
 // The first blocking hex is visible. Results are deterministic and nearest-first.
 // Returns nil if maxRadius < 0 or opaque is nil. Returns {origin} if maxRadius == 0.
 func FieldOfView(origin Coord, maxRadius int, opaque func(Coord) bool) []Coord {
-	return FieldOfViewShadowcast(origin, maxRadius, opaque)
+	visible, _ := FieldOfViewContext(context.Background(), origin, maxRadius, opaque)
+	return visible
 }
 
-// FieldOfViewShadowcast casts the angular shadows of regular hexagons using
+// FieldOfViewContext casts the angular shadows of regular hexagons using
 // exact integer directions. A floor tile is visible when the segment joining
 // its centre to origin does not intersect another opaque hex, including edges.
 // This geometric rule is reciprocal and invariant under hex rotations.
@@ -28,31 +29,47 @@ func FieldOfView(origin Coord, maxRadius int, opaque func(Coord) bool) []Coord {
 // Work is O(R² log R) and memory O(R²) for radius R. The opacity callback is
 // evaluated once for each non-origin coordinate in the disk and must be stable
 // throughout the call. Opaque origins do not block their own outgoing sight.
-func FieldOfViewShadowcast(origin Coord, maxRadius int, opaque func(Coord) bool) []Coord {
+func FieldOfViewContext(ctx context.Context, origin Coord, maxRadius int, opaque func(Coord) bool) ([]Coord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if maxRadius < 0 || opaque == nil {
-		return nil
+		return nil, nil
 	}
 	if maxRadius == 0 {
-		return []Coord{origin}
+		return []Coord{origin}, nil
 	}
-	rays := WalkRings(nil, Coord{}, maxRadius)[1:]
-	cells := make([]fovCell, len(rays))
+	numRays := 3 * maxRadius * (maxRadius + 1)
+	rays := WalkRings(make([]Coord, 0, numRays+1), Coord{}, maxRadius)[1:]
+	cells := make([]fovCell, numRays)
+	done := ctx.Done()
 	hasBlocker := false
 	for i, offset := range rays {
+		select {
+		case <-done:
+			return nil, ctx.Err()
+		default:
+		}
 		blocked := opaque(Coord{Q: origin.Q + offset.Q, R: origin.R + offset.R})
 		cells[i] = fovCell{offset: offset, blocked: blocked}
 		hasBlocker = hasBlocker || blocked
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	visible := make([]Coord, 1, numRays+1)
+	visible[0] = origin
 	if !hasBlocker {
-		visible := make([]Coord, 1, len(rays)+1)
-		visible[0] = origin
-		for _, offset := range rays {
-			visible = append(visible, Coord{Q: origin.Q + offset.Q, R: origin.R + offset.R})
+		for _, cell := range cells {
+			visible = append(visible, Coord{Q: origin.Q + cell.offset.Q, R: origin.R + cell.offset.R})
 		}
 		sortFOVVisible(visible, origin)
-		return visible
+		return visible, ctx.Err()
 	}
 	slices.SortFunc(cells, func(a, b fovCell) int { return compareFOVDirections(a.offset, b.offset) })
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for i := range cells {
 		rays[i] = cells[i].offset
 		cells[i].ray = i
@@ -61,9 +78,12 @@ func FieldOfViewShadowcast(origin Coord, maxRadius int, opaque func(Coord) bool)
 		return cmp.Compare(fovDistanceSquared(a.offset), fovDistanceSquared(b.offset))
 	})
 	shadows := make(fovShadows, len(rays)+1)
-	visible := make([]Coord, 1, len(rays)+1)
-	visible[0] = origin
 	for _, cell := range cells {
+		select {
+		case <-done:
+			return nil, ctx.Err()
+		default:
+		}
 		coord := Coord{Q: origin.Q + cell.offset.Q, R: origin.R + cell.offset.R}
 		if !shadows.contains(cell.ray) {
 			visible = append(visible, coord)
@@ -73,7 +93,7 @@ func FieldOfViewShadowcast(origin Coord, maxRadius int, opaque func(Coord) bool)
 		}
 	}
 	sortFOVVisible(visible, origin)
-	return visible
+	return visible, ctx.Err()
 }
 
 func sortFOVVisible(visible []Coord, origin Coord) {
@@ -150,85 +170,4 @@ func (shadows fovShadows) cast(offset Coord, rays []Coord) {
 	if compareFOVDirections(left, right) > 0 {
 		shadows.add(0, 1)
 	}
-}
-
-// FieldOfViewRaycast is the original raycasting implementation, retained for
-// regression comparison in tests. Not used in production paths.
-func FieldOfViewRaycast(origin Coord, maxRadius int, opaque func(Coord) bool) []Coord {
-	candidates := WalkRings(nil, origin, maxRadius)
-	visible := make(map[Coord]struct{}, len(candidates))
-	visible[origin] = struct{}{}
-	for _, target := range candidates {
-		if target == origin {
-			continue
-		}
-		if checkLOS(origin, target, opaque) {
-			visible[target] = struct{}{}
-		}
-	}
-	out := make([]Coord, 0, len(visible))
-	for c := range visible {
-		out = append(out, c)
-	}
-	return out
-}
-
-// checkLOS returns true if target is visible from origin using raycasting.
-func checkLOS(origin, target Coord, opaque func(Coord) bool) bool {
-	line := HexLine(origin, target)
-	return !slices.ContainsFunc(line[1:len(line)-1], opaque)
-}
-
-// HexLine returns the hex coordinates on a straight line from a to b using
-// cube-coordinate linear interpolation and rounding (Red Blob Games algorithm).
-// The result includes both endpoints.
-func HexLine(a, b Coord) []Coord {
-	dist := a.Distance(b)
-	if dist == 0 {
-		return []Coord{a}
-	}
-
-	ac, bc := a.Cube(), b.Cube()
-	out := make([]Coord, 0, dist+1)
-	for i := range dist + 1 {
-		t := float64(i) / float64(dist)
-		out = append(out, cubeRound(cubeLerp(ac, bc, t)))
-	}
-	return out
-}
-
-// cubeLerp interpolates between two cube coordinates at parameter t ∈ [0, 1].
-func cubeLerp(a, b Cube, t float64) fractionalCube {
-	return fractionalCube{
-		q: float64(a.Q) + (float64(b.Q)-float64(a.Q))*t,
-		r: float64(a.R) + (float64(b.R)-float64(a.R))*t,
-		s: float64(a.S) + (float64(b.S)-float64(a.S))*t,
-	}
-}
-
-// fractionalCube holds floating-point cube coordinates for interpolation.
-type fractionalCube struct{ q, r, s float64 }
-
-// cubeRound converts a fractional cube coordinate to the nearest integer hex
-// by rounding each component and adjusting the one with the largest delta to
-// enforce q+r+s=0. (Red Blob Games "Rounding to nearest hex" algorithm.)
-func cubeRound(f fractionalCube) Coord {
-	q := int(math.Round(f.q))
-	r := int(math.Round(f.r))
-	s := int(math.Round(f.s))
-
-	qDiff := math.Abs(float64(q) - f.q)
-	rDiff := math.Abs(float64(r) - f.r)
-	sDiff := math.Abs(float64(s) - f.s)
-
-	switch {
-	case qDiff > rDiff && qDiff > sDiff:
-		q = -r - s
-	case rDiff > sDiff:
-		r = -q - s
-	default:
-		// s has largest diff (or tie): s = -q - r (implicit, not stored in axial)
-	}
-
-	return Coord{Q: q, R: r}
 }

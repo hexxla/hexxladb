@@ -80,6 +80,7 @@ type Options struct {
 	// Either way, once set it is immutable — all subsequent vectors must match.
 	EmbeddingDimension uint16
 	// DistanceMetric sets the similarity function for embedding search. Default is [DistanceCosine].
-	// Persisted in the file header; immutable after creation.
+	// Set it at creation with a nonzero EmbeddingDimension. The metric is
+	// persisted in the file header once the dimension is set.
 	DistanceMetric DistanceMetric
 }

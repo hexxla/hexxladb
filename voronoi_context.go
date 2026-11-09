@@ -2,6 +2,7 @@ package hexxladb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
@@ -81,9 +82,12 @@ func (tx *Tx) LoadContextVoronoi(ctx context.Context, seeds []Coord, cfg Voronoi
 		}
 	}
 
-	cells, _, err := lattice.VoronoiChecked(seeds, cfg.MaxRadius, cfg.WeightFunc)
-	if err != nil {
+	cells, err := lattice.VoronoiContext(ctx, seeds, cfg.MaxRadius, cfg.WeightFunc)
+	if errors.Is(err, lattice.ErrInvalidWeight) {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	}
+	if err != nil {
+		return nil, err
 	}
 	return tx.loadVoronoiRegions(ctx, seeds, cells, cfg)
 }

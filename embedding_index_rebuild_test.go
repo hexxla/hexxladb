@@ -9,6 +9,45 @@ import (
 	"github.com/hexxla/hexxladb"
 )
 
+func TestEmbeddingIndexDisconnectedRebuildKeepsExactSearch(t *testing.T) {
+	t.Parallel()
+	db, err := hexxladb.Open(filepath.Join(t.TempDir(), "duplicate.db"), &hexxladb.Options{EmbeddingDimension: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	const count = 128
+	vector := []float32{1, 0, 0}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		for i := range count {
+			if err := tx.PutEmbedding(rebuildCoord(t, i), vector); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	checkExact := func() {
+		t.Helper()
+		if err := db.View(func(tx *hexxladb.Tx) error {
+			hits, stats, err := tx.SearchByEmbeddingWithStats(vector, hexxladb.EmbeddingSearchConfig{MaxResults: count})
+			if err == nil && (len(hits) != count || stats.Path != hexxladb.EmbeddingSearchPathFlat) {
+				t.Errorf("search returned %d of %d vectors on path %q", len(hits), count, stats.Path)
+			}
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checkExact()
+	if _, err := db.RebuildEmbeddingIndex(t.Context(), nil); !errors.Is(err, hexxladb.ErrEmbeddingIndexDisconnected) {
+		t.Fatalf("rebuild error = %v, want ErrEmbeddingIndexDisconnected", err)
+	}
+	checkExact()
+}
+
 func TestEmbeddingIndexDeferredRebuildLifecycle(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "deferred.db")
 	opts := &hexxladb.Options{EmbeddingDimension: 3}

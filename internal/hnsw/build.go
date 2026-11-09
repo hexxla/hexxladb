@@ -2,6 +2,7 @@ package hnsw
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -31,11 +32,13 @@ func Build(ctx context.Context, embeddings []Embedding, score func(a, b []float3
 		if err := ctx.Err(); err != nil {
 			return BuiltGraph{}, err
 		}
-		if err := graph.Insert(embedding.Coord, embedding.Vector); err != nil {
+		// A later insertion may connect a node that initially lost all
+		// reciprocal links. Validate the completed graph before publication.
+		if err := graph.Insert(embedding.Coord, embedding.Vector); err != nil && !errors.Is(err, ErrDisconnectedGraph) {
 			return BuiltGraph{}, fmt.Errorf("build embedding graph: %w", err)
 		}
 	}
-	if err := storage.validate(); err != nil {
+	if err := storage.validate(ctx); err != nil {
 		return BuiltGraph{}, fmt.Errorf("validate embedding graph: %w", err)
 	}
 
@@ -115,7 +118,7 @@ func (s *memoryHNSWStorage) GetEmbeddingVec(coord lattice.PackedCoord) ([]float3
 	return vector, found, nil
 }
 
-func (s *memoryHNSWStorage) validate() error {
+func (s *memoryHNSWStorage) validate(ctx context.Context) error {
 	if len(s.embeddings) == 0 {
 		if s.meta != nil || s.entryFound || len(s.nodes) != 0 {
 			return fmt.Errorf("empty embedding set produced graph records")
@@ -131,11 +134,14 @@ func (s *memoryHNSWStorage) validate() error {
 	if len(s.nodes) != len(s.embeddings) {
 		return fmt.Errorf("node count %d does not match embeddings %d", len(s.nodes), len(s.embeddings))
 	}
-	if _, found := s.nodes[s.entry]; !found {
-		return fmt.Errorf("entry point has no node")
+	if entry := s.nodes[s.entry]; entry == nil || entry.MaxLayer != s.meta.MaxLayer {
+		return fmt.Errorf("entry point has no node at the top layer")
 	}
 	for coord, node := range s.nodes {
-		if node == nil || node.Coord != coord || len(node.Neighbors) != int(node.MaxLayer)+1 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if node == nil || node.Coord != coord || len(node.Neighbors) != int(node.MaxLayer)+1 || node.MaxLayer > s.meta.MaxLayer {
 			return fmt.Errorf("invalid node structure")
 		}
 		for layer, neighbors := range node.Neighbors {
@@ -147,11 +153,43 @@ func (s *memoryHNSWStorage) validate() error {
 				return fmt.Errorf("node degree exceeds layer limit")
 			}
 			for _, neighbor := range neighbors {
-				if _, found := s.nodes[neighbor]; !found {
-					return fmt.Errorf("node references missing neighbor")
+				if target := s.nodes[neighbor]; target == nil || int(target.MaxLayer) < layer {
+					return fmt.Errorf("node references missing neighbor at layer %d", layer)
 				}
 			}
 		}
+	}
+	return validateReachability(ctx, s.entry, len(s.nodes), func(coord lattice.PackedCoord) ([]lattice.PackedCoord, bool) {
+		node, found := s.nodes[coord]
+		if !found {
+			return nil, false
+		}
+		return node.Neighbors[0], true
+	})
+}
+
+func validateReachability(ctx context.Context, entry lattice.PackedCoord, count int, links func(lattice.PackedCoord) ([]lattice.PackedCoord, bool)) error {
+	seen := make(map[lattice.PackedCoord]struct{}, count)
+	seen[entry] = struct{}{}
+	queue := make([]lattice.PackedCoord, 1, count)
+	queue[0] = entry
+	for i := 0; i < len(queue); i++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		neighbors, found := links(queue[i])
+		if !found {
+			return fmt.Errorf("%w: layer-zero node is missing", ErrCorruptGraph)
+		}
+		for _, neighbor := range neighbors {
+			if _, found := seen[neighbor]; !found {
+				seen[neighbor] = struct{}{}
+				queue = append(queue, neighbor)
+			}
+		}
+	}
+	if len(seen) != count {
+		return fmt.Errorf("%w: layer zero reaches %d of %d nodes from the entry point", ErrDisconnectedGraph, len(seen), count)
 	}
 	return nil
 }

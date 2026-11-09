@@ -119,9 +119,12 @@ var (
 	// ErrEmbeddingDimension means the vector length does not match [DB.EmbeddingDimension].
 	ErrEmbeddingDimension = errors.New("hexxladb: vector dimension mismatch")
 	// ErrEmbeddingIndexChanged means authoritative embeddings changed while
-	// [DB.RebuildEmbeddingIndex] was building a replacement graph. The old graph
-	// remains unpublished and searches continue through the exact flat path.
+	// [DB.RebuildEmbeddingIndex] was building a replacement graph. The replacement
+	// is not published and searches continue through the exact flat path.
 	ErrEmbeddingIndexChanged = errors.New("hexxladb: embeddings changed during index rebuild")
+	// ErrEmbeddingIndexDisconnected means the replacement graph could not reach
+	// every vector from its entry point. Exact search remains active.
+	ErrEmbeddingIndexDisconnected = errors.New("hexxladb: embedding index rebuild produced unreachable vectors")
 	// ErrEmbeddingIndexTooLarge means a rebuild would exceed its explicit
 	// in-memory vector bound.
 	ErrEmbeddingIndexTooLarge = errors.New("hexxladb: embedding index rebuild exceeds vector limit")
@@ -130,7 +133,7 @@ var (
 	// The returned result slice is partial but sorted and capped as requested.
 	ErrQueryScanLimit = errors.New("hexxladb: query scan limit reached")
 
-	// ErrSpatialScanLimit means a seam lookup or context load exhausted its work
+	// ErrSpatialScanLimit means a seam lookup, context load, or path search exhausted its work
 	// or result budget. No partial result is returned.
 	ErrSpatialScanLimit = errors.New("hexxladb: spatial scan limit reached")
 

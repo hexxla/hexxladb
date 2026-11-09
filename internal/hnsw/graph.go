@@ -1,6 +1,8 @@
 package hnsw
 
 import (
+	"cmp"
+	"context"
 	"fmt"
 	"math"
 	"slices"
@@ -87,13 +89,14 @@ func (g *Graph) Insert(coord lattice.PackedCoord, vec []float32) error {
 	}
 
 	// Phase 1: Greedy descent from top layer to nodeLayer+1.
-	ep, _, err := g.greedyDescend(vec, entryCoord, entryVec, int(meta.MaxLayer), int(nodeLayer)+1)
+	ep, _, err := g.greedyDescend(context.Background(), vec, entryCoord, entryVec, int(meta.MaxLayer), int(nodeLayer)+1)
 	if err != nil {
 		return err
 	}
 
 	// Phase 2: At insertion layer and below, search + connect.
-	if err := g.insertConnectLayers(coord, vec, ep, newNode, meta); err != nil {
+	linked, err := g.insertConnectLayers(coord, vec, ep, newNode, meta)
+	if err != nil {
 		return err
 	}
 
@@ -101,14 +104,21 @@ func (g *Graph) Insert(coord lattice.PackedCoord, vec []float32) error {
 		return err
 	}
 
-	if nodeLayer > meta.MaxLayer {
+	newEntry := nodeLayer > meta.MaxLayer
+	if newEntry {
 		meta.MaxLayer = nodeLayer
 		if err := g.s.PutHNSWEntry(coord); err != nil {
 			return err
 		}
 	}
 	meta.Count++
-	return g.s.PutHNSWMeta(meta)
+	if err := g.s.PutHNSWMeta(meta); err != nil {
+		return err
+	}
+	if !linked && !newEntry {
+		return fmt.Errorf("%w: inserted node has no incoming layer-zero link", ErrDisconnectedGraph)
+	}
+	return nil
 }
 
 // initSingleNodeGraph stores a single node as the entry point and persists meta.
@@ -170,7 +180,7 @@ func layerForCoord(coord lattice.PackedCoord, m uint16) uint8 {
 
 // greedyDescend performs greedy traversal from startLayer down to stopLayer (exclusive).
 // Returns the best entry point and its distance to vec.
-func (g *Graph) greedyDescend(vec []float32, ep lattice.PackedCoord, epVec []float32, startLayer, stopLayer int) (lattice.PackedCoord, float64, error) {
+func (g *Graph) greedyDescend(ctx context.Context, vec []float32, ep lattice.PackedCoord, epVec []float32, startLayer, stopLayer int) (lattice.PackedCoord, float64, error) {
 	epDist := g.score(vec, epVec)
 	for lc := startLayer; lc >= stopLayer; lc-- {
 		changed := true
@@ -187,6 +197,9 @@ func (g *Graph) greedyDescend(vec []float32, ep lattice.PackedCoord, epVec []flo
 				return ep, epDist, fmt.Errorf("%w: descent node is missing layer %d", ErrCorruptGraph, lc)
 			}
 			for _, nbr := range epNode.Neighbors[lc] {
+				if err := ctx.Err(); err != nil {
+					return ep, epDist, err
+				}
 				nbrVec, nOk, nErr := g.s.GetEmbeddingVec(nbr)
 				if nErr != nil {
 					return ep, epDist, nErr
@@ -208,65 +221,74 @@ func (g *Graph) greedyDescend(vec []float32, ep lattice.PackedCoord, epVec []flo
 
 // insertConnectLayers handles Phase 2 of HNSW insertion: search + bidirectional connect
 // at each layer from min(nodeLayer, maxLayer) down to 0.
-func (g *Graph) insertConnectLayers(coord lattice.PackedCoord, vec []float32, ep lattice.PackedCoord, newNode *Node, meta *Meta) error {
+func (g *Graph) insertConnectLayers(coord lattice.PackedCoord, vec []float32, ep lattice.PackedCoord, newNode *Node, meta *Meta) (bool, error) {
 	mMax0 := meta.M * 2
 	mMax := meta.M
 
+	var linked bool
 	for lc := min(int(newNode.MaxLayer), int(meta.MaxLayer)); lc >= 0; lc-- {
-		candidates, err := g.searchLayer(vec, ep, int(meta.EfC), lc)
+		candidates, err := g.searchLayer(context.Background(), vec, ep, int(meta.EfC), lc)
 		if err != nil {
-			return err
+			return false, err
 		}
 
 		limit := mMax
 		if lc == 0 {
 			limit = mMax0
 		}
-		selected := g.selectNeighbors(candidates, int(limit))
-
-		nbrCoords := make([]lattice.PackedCoord, len(selected))
-		for i, s := range selected {
-			nbrCoords[i] = s.coord
+		selected, err := g.selectNeighbors(candidates, int(limit))
+		if err != nil {
+			return false, err
 		}
-		newNode.Neighbors[lc] = nbrCoords
+		newNode.Neighbors[lc] = selected
 
-		if err := g.connectBidirectional(coord, selected, lc, limit); err != nil {
-			return err
+		linked, err = g.connectBidirectional(coord, selected, lc, limit)
+		if err != nil {
+			return false, err
 		}
 
 		if len(candidates) > 0 {
 			ep = candidates[0].coord
 		}
 	}
-	return nil
+	return linked, nil
 }
 
 // connectBidirectional adds coord to each selected neighbor's list and prunes if needed.
-func (g *Graph) connectBidirectional(coord lattice.PackedCoord, selected []scored, layer int, limit uint16) error {
+func (g *Graph) connectBidirectional(coord lattice.PackedCoord, selected []lattice.PackedCoord, layer int, limit uint16) (bool, error) {
+	linked := false
 	for _, sel := range selected {
-		nbrNode, nOk, nErr := g.s.GetHNSWNode(sel.coord)
+		nbrNode, nOk, nErr := g.s.GetHNSWNode(sel)
 		if nErr != nil {
-			return nErr
+			return false, nErr
 		}
 		if !nOk {
-			continue
+			return false, fmt.Errorf("%w: selected neighbor is missing", ErrCorruptGraph)
 		}
-		for len(nbrNode.Neighbors) <= layer {
-			nbrNode.Neighbors = append(nbrNode.Neighbors, nil)
+		if len(nbrNode.Neighbors) <= layer {
+			return false, fmt.Errorf("%w: selected neighbor is missing layer %d", ErrCorruptGraph, layer)
 		}
 		nbrNode.Neighbors[layer] = append(nbrNode.Neighbors[layer], coord)
-		if uint16(len(nbrNode.Neighbors[layer])) > limit { //nolint:gosec // bounded by uint16
-			nbrNode.Neighbors[layer] = g.pruneNeighbors(sel.coord, nbrNode.Neighbors[layer], int(limit), layer)
+		if len(nbrNode.Neighbors[layer]) > int(limit) {
+			pruned, err := g.pruneNeighbors(sel, nbrNode.Neighbors[layer], int(limit))
+			if err != nil {
+				return false, err
+			}
+			nbrNode.Neighbors[layer] = pruned
 		}
+		linked = linked || slices.Contains(nbrNode.Neighbors[layer], coord)
 		if err := g.s.PutHNSWNode(nbrNode); err != nil {
-			return err
+			return false, err
 		}
 	}
-	return nil
+	return linked, nil
 }
 
 // Search returns the top-K nearest neighbors to vec using HNSW graph traversal.
-func (g *Graph) Search(vec []float32, k, efSearch int) ([]SearchResult, error) {
+func (g *Graph) Search(ctx context.Context, vec []float32, k, efSearch int) ([]SearchResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if efSearch <= 0 {
 		efSearch = 100
 	}
@@ -301,13 +323,13 @@ func (g *Graph) Search(vec []float32, k, efSearch int) ([]SearchResult, error) {
 	}
 
 	// Greedy descent from top layer to layer 1.
-	ep, _, err := g.greedyDescend(vec, entryCoord, entryVec, int(meta.MaxLayer), 1)
+	ep, _, err := g.greedyDescend(ctx, vec, entryCoord, entryVec, int(meta.MaxLayer), 1)
 	if err != nil {
 		return nil, err
 	}
 
 	// Layer 0: beam search.
-	candidates, err := g.searchLayer(vec, ep, efSearch, 0)
+	candidates, err := g.searchLayer(ctx, vec, ep, efSearch, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -359,7 +381,7 @@ func (g *Graph) Delete(coord lattice.PackedCoord) error {
 func (g *Graph) removeNode(node *Node, meta *Meta, entryCoord lattice.PackedCoord) error {
 	coord := node.Coord
 
-	replacement, err := g.repairIncomingLinks(node, meta, coord == entryCoord)
+	replacement, layerZero, err := g.repairIncomingLinks(node, meta, coord == entryCoord)
 	if err != nil {
 		return err
 	}
@@ -378,18 +400,32 @@ func (g *Graph) removeNode(node *Node, meta *Meta, entryCoord lattice.PackedCoor
 			return fmt.Errorf("%w: no surviving entry point", ErrCorruptGraph)
 		}
 		meta.MaxLayer = replacement.MaxLayer
-		if err := g.s.PutHNSWEntry(replacement.Coord); err != nil {
+		entryCoord = replacement.Coord
+		if err := g.s.PutHNSWEntry(entryCoord); err != nil {
 			return err
 		}
 	}
-	return g.s.PutHNSWMeta(meta)
+	if err := g.s.PutHNSWMeta(meta); err != nil {
+		return err
+	}
+	if uint64(len(layerZero)) != meta.Count { //nolint:gosec // map length is non-negative.
+		return fmt.Errorf("%w: layer-zero node count does not match metadata", ErrCorruptGraph)
+	}
+	if meta.Count == 0 {
+		return nil
+	}
+	return validateReachability(context.Background(), entryCoord, len(layerZero), func(coord lattice.PackedCoord) ([]lattice.PackedCoord, bool) {
+		neighbors, found := layerZero[coord]
+		return neighbors, found
+	})
 }
 
 // Neighbor pruning can make links directional. Find actual incoming links
 // before removing a node, and stage rewrites only after finishing the scan.
-func (g *Graph) repairIncomingLinks(removed *Node, meta *Meta, replaceEntry bool) (*Node, error) {
+func (g *Graph) repairIncomingLinks(removed *Node, meta *Meta, replaceEntry bool) (*Node, map[lattice.PackedCoord][]lattice.PackedCoord, error) {
 	var replacement *Node
 	var changed []*Node
+	layerZero := make(map[lattice.PackedCoord][]lattice.PackedCoord)
 	err := g.s.WalkHNSWNodes(func(node *Node) {
 		if node.Coord == removed.Coord {
 			return
@@ -400,16 +436,17 @@ func (g *Graph) repairIncomingLinks(removed *Node, meta *Meta, replaceEntry bool
 		if g.removeIncomingLinks(node, removed, meta) {
 			changed = append(changed, node)
 		}
+		layerZero[node.Coord] = node.Neighbors[0]
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, node := range changed {
 		if err := g.s.PutHNSWNode(node); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return replacement, nil
+	return replacement, layerZero, nil
 }
 
 func betterEntry(node, best *Node) bool {
@@ -456,7 +493,10 @@ func (g *Graph) layerLimit(meta *Meta, lc int) uint16 {
 
 // searchLayer runs ef-bounded greedy search at the given layer starting from ep.
 // Returns candidates sorted by descending similarity.
-func (g *Graph) searchLayer(vec []float32, ep lattice.PackedCoord, ef, layer int) ([]scored, error) {
+func (g *Graph) searchLayer(ctx context.Context, vec []float32, ep lattice.PackedCoord, ef, layer int) ([]scored, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	epVec, ok, err := g.s.GetEmbeddingVec(ep)
 	if err != nil {
 		return nil, err
@@ -485,12 +525,12 @@ func (g *Graph) searchLayer(vec []float32, ep lattice.PackedCoord, ef, layer int
 		if err != nil {
 			return nil, err
 		}
-		candidates, results, err = g.expandSearchNeighbors(vec, neighbors, ef, visited, candidates, results)
+		candidates, results, err = g.expandSearchNeighbors(ctx, vec, neighbors, ef, visited, candidates, results)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return results, nil
+	return results, ctx.Err()
 }
 
 func (g *Graph) neighborsAtLayer(coord lattice.PackedCoord, layer int) ([]lattice.PackedCoord, error) {
@@ -508,6 +548,7 @@ func (g *Graph) neighborsAtLayer(coord lattice.PackedCoord, layer int) ([]lattic
 }
 
 func (g *Graph) expandSearchNeighbors(
+	ctx context.Context,
 	vec []float32,
 	neighbors []lattice.PackedCoord,
 	ef int,
@@ -515,6 +556,9 @@ func (g *Graph) expandSearchNeighbors(
 	candidates, results []scored,
 ) ([]scored, []scored, error) {
 	for _, nbr := range neighbors {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		if visited[nbr] {
 			continue
 		}
@@ -541,46 +585,67 @@ func (g *Graph) expandSearchNeighbors(
 	return candidates, results, nil
 }
 
-// selectNeighbors keeps the highest-scoring candidates. The measured graph
-// profile does not currently justify the more expensive diversity heuristic.
-func (g *Graph) selectNeighbors(candidates []scored, limit int) []scored {
+// selectNeighbors implements SELECT-NEIGHBORS-HEURISTIC (Algorithm 4) from
+// https://arxiv.org/abs/1603.09320 with no candidate extension and with refill.
+// Candidates arrive in descending similarity order. A closer selected neighbor
+// occludes a candidate when the two are at least as similar as the candidate
+// and the owner. Refill uses the closest occluded candidates.
+func (g *Graph) selectNeighbors(candidates []scored, limit int) ([]lattice.PackedCoord, error) {
+	selected := make([]lattice.PackedCoord, 0, min(limit, len(candidates)))
 	if len(candidates) <= limit {
-		return candidates
-	}
-	return candidates[:limit]
-}
-
-// pruneNeighbors reduces a neighbor list to the limit best by similarity to the owner.
-func (g *Graph) pruneNeighbors(owner lattice.PackedCoord, neighbors []lattice.PackedCoord, limit, _ int) []lattice.PackedCoord {
-	ownerVec, ok, err := g.s.GetEmbeddingVec(owner)
-	if err != nil || !ok {
-		// Can't score — just truncate.
-		if len(neighbors) > limit {
-			return neighbors[:limit]
+		// All candidates would be retained by the refill step.
+		for _, candidate := range candidates {
+			selected = append(selected, candidate.coord)
 		}
-		return neighbors
+		return selected, nil
 	}
-	type nbrScore struct {
-		coord lattice.PackedCoord
-		score float64
-	}
-	scored := make([]nbrScore, 0, len(neighbors))
-	for _, nbr := range neighbors {
-		nbrVec, nOk, nErr := g.s.GetEmbeddingVec(nbr)
-		if nErr != nil || !nOk {
+	vectors := make([][]float32, 0, limit)
+	discarded := make([]lattice.PackedCoord, 0, limit)
+	for _, candidate := range candidates {
+		if len(selected) == limit {
+			break
+		}
+		vector, ok, err := g.s.GetEmbeddingVec(candidate.coord)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("%w: selection candidate embedding is missing", ErrCorruptGraph)
+		}
+		if slices.ContainsFunc(vectors, func(other []float32) bool { return g.score(vector, other) >= candidate.dist }) {
+			if len(discarded) < limit {
+				discarded = append(discarded, candidate.coord)
+			}
 			continue
 		}
-		scored = append(scored, nbrScore{coord: nbr, score: g.score(ownerVec, nbrVec)})
+		selected = append(selected, candidate.coord)
+		vectors = append(vectors, vector)
 	}
-	sort.Slice(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
-	if len(scored) > limit {
-		scored = scored[:limit]
+	return append(selected, discarded[:min(len(discarded), limit-len(selected))]...), nil
+}
+
+// pruneNeighbors reruns neighbor selection against the owner when the degree limit is exceeded.
+func (g *Graph) pruneNeighbors(owner lattice.PackedCoord, neighbors []lattice.PackedCoord, limit int) ([]lattice.PackedCoord, error) {
+	ownerVec, ok, err := g.s.GetEmbeddingVec(owner)
+	if err != nil {
+		return nil, err
 	}
-	result := make([]lattice.PackedCoord, len(scored))
-	for i, s := range scored {
-		result[i] = s.coord
+	if !ok {
+		return nil, fmt.Errorf("%w: pruning owner embedding is missing", ErrCorruptGraph)
 	}
-	return result
+	candidates := make([]scored, 0, len(neighbors))
+	for _, nbr := range neighbors {
+		nbrVec, nOk, nErr := g.s.GetEmbeddingVec(nbr)
+		if nErr != nil {
+			return nil, nErr
+		}
+		if !nOk {
+			return nil, fmt.Errorf("%w: pruning neighbor embedding is missing", ErrCorruptGraph)
+		}
+		candidates = append(candidates, scored{coord: nbr, dist: g.score(ownerVec, nbrVec)})
+	}
+	slices.SortStableFunc(candidates, func(a, b scored) int { return cmp.Compare(b.dist, a.dist) })
+	return g.selectNeighbors(candidates, limit)
 }
 
 type scored struct {

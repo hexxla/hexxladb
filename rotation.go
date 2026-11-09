@@ -22,13 +22,15 @@ type rotationState struct {
 type RotateOptions struct {
 	// BatchSize controls how many KV rows are copied per write transaction.
 	BatchSize int
-	// OnProgress is called after each copied row.
+	// OnProgress reports each copied row in order after its batch commits.
 	OnProgress func(copied int64)
 }
 
 // RotateEncryption rewrites the database at path using newOpts encryption settings.
-// It performs an offline logical copy (all key/value rows) into a temporary database,
-// atomically swaps files, and removes stale WAL files.
+// It encrypts a plaintext v2 database or replaces an authenticated v3
+// credential. The offline copy preserves commit sequences, retained versions,
+// and the snapshot retention floor. If enabled, the changelog must use the
+// same path before and after rotation.
 func RotateEncryption(path string, currentOpts, newOpts *Options) error {
 	return RotateEncryptionWithOptions(path, currentOpts, newOpts, nil)
 }

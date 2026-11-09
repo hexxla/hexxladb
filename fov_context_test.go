@@ -17,6 +17,25 @@ func openFOVTestDB(t *testing.T) *hexxladb.DB {
 	return openPathfindTestDB(t)
 }
 
+func TestLoadContextFOV_CancelsDuringGeometry(t *testing.T) {
+	t.Parallel()
+	db := openFOVTestDB(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	checks := 0
+	err := db.View(func(tx *hexxladb.Tx) error {
+		_, err := tx.LoadContextFOV(ctx, hexxladb.Coord{}, 256, func(hexxladb.Coord) bool {
+			checks++
+			cancel()
+			return false
+		}, hexxladb.FOVContextConfig{})
+		return err
+	})
+	if !errors.Is(err, context.Canceled) || checks != 1 {
+		t.Fatalf("FOV returned %v after %d opacity checks", err, checks)
+	}
+}
+
 func populateFOVCells(t *testing.T, db *hexxladb.DB, maxR int) {
 	t.Helper()
 	ctx := context.Background()

@@ -2,6 +2,7 @@ package lattice
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -58,15 +59,34 @@ type voronoiSearch struct {
 
 // VoronoiChecked is [Voronoi] with validation errors returned to API adapters.
 func VoronoiChecked(seeds []Coord, maxRadius int, weightFn WeightFunc) (cells []VoronoiCell, owner map[Coord]int, err error) {
+	cells, err = VoronoiContext(context.Background(), seeds, maxRadius, weightFn)
+	if err != nil || cells == nil {
+		return nil, nil, err
+	}
+	owner = make(map[Coord]int, len(cells))
+	for _, cell := range cells {
+		owner[cell.Coord] = cell.SeedIdx
+	}
+	return cells, owner, nil
+}
+
+// VoronoiContext computes the ordered partition and stops on cancellation.
+func VoronoiContext(ctx context.Context, seeds []Coord, maxRadius int, weightFn WeightFunc) ([]VoronoiCell, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(seeds) == 0 || maxRadius <= 0 {
-		return nil, nil, nil
+		return nil, nil
 	}
 
 	search := newVoronoiSearch(seeds, maxRadius, weightFn)
-	if err := search.run(); err != nil {
-		return nil, nil, err
+	if err := search.run(ctx); err != nil {
+		return nil, err
 	}
-	return search.result()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return search.result(), ctx.Err()
 }
 
 func newVoronoiSearch(seeds []Coord, maxRadius int, weightFn WeightFunc) *voronoiSearch {
@@ -94,13 +114,13 @@ func newVoronoiSearch(seeds []Coord, maxRadius int, weightFn WeightFunc) *vorono
 // A state is expanded only when it improves the best cost/seed already reached
 // with at most that many hops. Uniform costs therefore visit each cell once.
 // Two rolling frontiers bound memory by the union of the seed disks.
-func (search *voronoiSearch) run() error {
+func (search *voronoiSearch) run(ctx context.Context) error {
 	for range search.maxRadius {
 		next := make([]voronoiState, 0, len(search.frontier))
 		positions := make(map[Coord]int, len(search.frontier))
 		for _, current := range search.frontier {
 			var err error
-			next, err = search.expand(current, next, positions)
+			next, err = search.expand(ctx, current, next, positions)
 			if err != nil {
 				return err
 			}
@@ -118,8 +138,11 @@ type voronoiState struct {
 	assignment voronoiAssignment
 }
 
-func (search *voronoiSearch) expand(current voronoiState, next []voronoiState, positions map[Coord]int) ([]voronoiState, error) {
+func (search *voronoiSearch) expand(ctx context.Context, current voronoiState, next []voronoiState, positions map[Coord]int) ([]voronoiState, error) {
 	for _, neighbor := range current.coord.Neighbors() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		penalty, err := search.penalty(neighbor)
 		if err != nil {
 			return nil, err
@@ -166,12 +189,10 @@ func (search *voronoiSearch) penalty(coord Coord) (float64, error) {
 	return penalty, nil
 }
 
-func (search *voronoiSearch) result() (cells []VoronoiCell, owner map[Coord]int, err error) {
-	owner = make(map[Coord]int, len(search.assignments))
-	cells = make([]VoronoiCell, 0, len(search.assignments))
+func (search *voronoiSearch) result() []VoronoiCell {
+	cells := make([]VoronoiCell, 0, len(search.assignments))
 	for _, coord := range search.discoveryOrder {
 		assigned := search.assignments[coord]
-		owner[coord] = assigned.seedIdx
 		cells = append(cells, VoronoiCell{
 			Coord:    coord,
 			SeedIdx:  assigned.seedIdx,
@@ -191,7 +212,7 @@ func (search *voronoiSearch) result() (cells []VoronoiCell, owner map[Coord]int,
 		}
 		return cmp.Compare(a.Coord.R, b.Coord.R)
 	})
-	return cells, owner, nil
+	return cells
 }
 
 func betterVoronoiAssignment(cost float64, seedIdx, hops int, oldCost float64, oldSeedIdx, oldHops int) bool {

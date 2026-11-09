@@ -32,8 +32,9 @@ type EmbeddingWriteOptions struct {
 
 // PutEmbeddingWithOptions stores a vector embedding and optionally defers HNSW
 // maintenance for bounded bulk ingestion. Deferred writes remain searchable
-// through the exact flat path. Index maintenance errors abort the update even
-// if the callback ignores them. Only allowed inside [DB.Update].
+// through the exact flat path. Detected graph disconnection activates exact
+// search until a rebuild. Other index maintenance errors abort the update
+// even if the callback ignores them. Only allowed inside [DB.Update].
 func (tx *Tx) PutEmbeddingWithOptions(coord PackedCoord, vec []float32, opts EmbeddingWriteOptions) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
@@ -74,7 +75,7 @@ func (tx *Tx) PutEmbeddingWithOptions(coord PackedCoord, vec []float32, opts Emb
 	}
 	// Update HNSW graph.
 	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.SimilarityFunc(tx.db.eng.EmbeddingMetric()))
-	return tx.failEmbeddingWrite(g.Insert(coord, vec))
+	return tx.finishEmbeddingIndexMutation(g.Insert(coord, vec))
 }
 
 func validateEmbeddingVector(vec []float32) error {
@@ -120,8 +121,9 @@ func (tx *Tx) GetEmbedding(coord PackedCoord) (vec []float32, ok bool, err error
 
 // DeleteEmbedding removes the vector embedding for the cell at coord. Idempotent.
 // No-op if no embeddings have been stored yet (dimension not configured).
-// Index maintenance errors abort the update even if the callback ignores
-// them. Only allowed inside [DB.Update].
+// If graph repair leaves vectors unreachable, searches use exact scoring until
+// a rebuild. Other index maintenance errors abort the update even if the
+// callback ignores them. Only allowed inside [DB.Update].
 func (tx *Tx) DeleteEmbedding(coord PackedCoord) error {
 	if err := tx.requireWritable(); err != nil {
 		return err
@@ -150,7 +152,14 @@ func (tx *Tx) deleteEmbeddingIfEnabled(coord lattice.PackedCoord) error {
 		return nil
 	}
 	g := hnsw.NewGraph(&txHNSWStorage{tx: tx}, engine.SimilarityFunc(tx.db.eng.EmbeddingMetric()))
-	return tx.failEmbeddingWrite(g.Delete(coord))
+	return tx.finishEmbeddingIndexMutation(g.Delete(coord))
+}
+
+func (tx *Tx) finishEmbeddingIndexMutation(err error) error {
+	if errors.Is(err, hnsw.ErrDisconnectedGraph) {
+		err = tx.invalidateEmbeddingGraph()
+	}
+	return tx.failEmbeddingWrite(err)
 }
 
 // failEmbeddingWrite prevents a staged vector from committing without its index update.

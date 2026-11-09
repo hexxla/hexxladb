@@ -916,6 +916,60 @@ func TestQueryCells_MaxScanRowsCountsPhysicalMVCCRows(t *testing.T) {
 	}
 }
 
+func TestQueryCells_PrimaryScanSeesSnapshotAndStagedVersions(t *testing.T) {
+	t.Parallel()
+	db := openQueryDB(t)
+	first, err := hexxladb.Pack(hexxladb.Coord{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := hexxladb.Pack(hexxladb.Coord{Q: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		if err := tx.PutCell(t.Context(), hexxladb.CellRecord{Key: first, RawContent: "original"}); err != nil {
+			return err
+		}
+		return tx.PutCell(t.Context(), hexxladb.CellRecord{Key: second, RawContent: "remove"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	check := func(tx *hexxladb.Tx, want ...string) error {
+		hits, err := tx.QueryCells(t.Context(), hexxladb.CellQuery{SortBy: hexxladb.SortByCoord})
+		if err != nil {
+			return err
+		}
+		got := make([]string, 0, len(hits))
+		for _, hit := range hits {
+			got = append(got, hit.Cell.RawContent)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("primary scan = %v, want %v", got, want)
+		}
+		return nil
+	}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		if err := tx.PutCell(t.Context(), hexxladb.CellRecord{Key: first, RawContent: "staged"}); err != nil {
+			return err
+		}
+		if err := tx.DeleteCell(t.Context(), second); err != nil {
+			return err
+		}
+		return check(tx, "staged")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ViewAt(1, func(tx *hexxladb.Tx) error {
+		return check(tx, "original", "remove")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.View(func(tx *hexxladb.Tx) error { return check(tx, "staged") }); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestQueryCells_MaxScanRowsExactBoundaryIsComplete(t *testing.T) {
 	t.Parallel()
 	db := openQueryDB(t)

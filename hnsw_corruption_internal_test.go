@@ -66,6 +66,89 @@ func TestSearchByEmbeddingRejectsCorruptHNSWStorage(t *testing.T) {
 	}
 }
 
+func TestSearchByEmbeddingFallsBackWhenGraphUnderfills(t *testing.T) {
+	t.Parallel()
+	db, err := Open(filepath.Join(t.TempDir(), "underfilled.db"), &Options{EmbeddingDimension: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	first, _ := Pack(Coord{Q: 1})
+	second, _ := Pack(Coord{Q: 2})
+	if err := db.Update(func(tx *Tx) error {
+		if err := tx.PutEmbedding(first, []float32{1, 0}); err != nil {
+			return err
+		}
+		if err := tx.putDirect(index.EmbedKey(second), encodeFloat32s([]float32{0, 1})); err != nil {
+			return err
+		}
+		return (&txHNSWStorage{tx: tx}).PutHNSWMeta(&hnsw.Meta{M: hnsw.DefaultM, EfC: hnsw.DefaultEfConstruction, Count: 2})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.View(func(tx *Tx) error {
+		hits, stats, err := tx.SearchByEmbeddingWithStats([]float32{0, 1}, EmbeddingSearchConfig{MaxResults: 2, MinScore: 0.5})
+		if err == nil && (stats.Path != EmbeddingSearchPathFlat || len(hits) != 1 || hits[0].Coord != second) {
+			t.Errorf("search returned %v on path %q, want exact match at %v", hits, stats.Path, second)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeleteEmbeddingFallsBackWhenRepairDisconnectsGraph(t *testing.T) {
+	t.Parallel()
+	db, err := Open(filepath.Join(t.TempDir(), "delete-disconnect.db"), &Options{EmbeddingDimension: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	keys := make([]PackedCoord, 7)
+	for i := range keys {
+		keys[i], err = Pack(Coord{Q: i})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Update(func(tx *Tx) error {
+		storage := &txHNSWStorage{tx: tx}
+		if err := storage.PutHNSWEntry(keys[0]); err != nil {
+			return err
+		}
+		if err := storage.PutHNSWMeta(&hnsw.Meta{M: 2, EfC: hnsw.DefaultEfConstruction, Count: 7}); err != nil {
+			return err
+		}
+		for i, key := range keys {
+			if err := tx.putDirect(index.EmbedKey(key), encodeFloat32s([]float32{1, 0})); err != nil {
+				return err
+			}
+			var links []PackedCoord
+			switch i {
+			case 0:
+				links = keys[1:5] // Only one vacancy after deleting keys[1].
+			case 1:
+				links = keys[5:] // Two coordinates depend on the removed node.
+			}
+			if err := storage.PutHNSWNode(&hnsw.Node{Coord: key, Neighbors: [][]PackedCoord{links}}); err != nil {
+				return err
+			}
+		}
+		return tx.DeleteEmbedding(keys[1])
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.View(func(tx *Tx) error {
+		hits, stats, err := tx.SearchByEmbeddingWithStats([]float32{1, 0}, EmbeddingSearchConfig{MaxResults: 1})
+		if err == nil && (stats.Path != EmbeddingSearchPathFlat || len(hits) != 1) {
+			t.Errorf("search returned %v on path %q, want one exact result", hits, stats.Path)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestEmbeddingChurnFailureAbortsStagedVector(t *testing.T) {
 	t.Parallel()
 	db, err := Open(filepath.Join(t.TempDir(), "churn.db"), &Options{EmbeddingDimension: 2})

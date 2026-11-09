@@ -1,12 +1,93 @@
 package hnsw
 
 import (
+	"context"
 	"errors"
 	"math"
+	"math/rand/v2"
 	"testing"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
+
+type failingEmbeddingRead struct {
+	*memStorage
+	target lattice.PackedCoord
+	err    error
+}
+
+func (s failingEmbeddingRead) GetEmbeddingVec(coord lattice.PackedCoord) ([]float32, bool, error) {
+	if coord == s.target {
+		return nil, false, s.err
+	}
+	return s.memStorage.GetEmbeddingVec(coord)
+}
+
+func TestGraphPruningPropagatesStorageFailures(t *testing.T) {
+	t.Parallel()
+	storage := newMemStorage()
+	owner, a, b := coord(1), coord(2), coord(3)
+	for _, key := range []lattice.PackedCoord{owner, a, b} {
+		storage.SetVec(key, []float32{1, 0})
+	}
+	readErr := errors.New("storage read failed")
+	for _, target := range []lattice.PackedCoord{owner, b} {
+		for _, fault := range []error{readErr, nil} {
+			want := fault
+			if want == nil {
+				want = ErrCorruptGraph
+			}
+			graph := NewGraph(failingEmbeddingRead{memStorage: storage, target: target, err: fault}, testSimilarity)
+			if _, err := graph.pruneNeighbors(owner, []lattice.PackedCoord{a, b}, 1); !errors.Is(err, want) {
+				t.Errorf("pruning error = %v, want %v", err, want)
+			}
+		}
+	}
+}
+
+func TestGraphSearchCancelsDuringBeam(t *testing.T) {
+	t.Parallel()
+	storage := newMemStorage()
+	graph := NewGraph(storage, testSimilarity)
+	for _, key := range []lattice.PackedCoord{coord(1), coord(2), coord(3)} {
+		vector := []float32{1, 0}
+		storage.SetVec(key, vector)
+		if err := graph.Insert(key, vector); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	scores := 0
+	graph = NewGraph(storage, func(a, b []float32) float64 {
+		scores++
+		if scores == 3 {
+			cancel()
+		}
+		return testSimilarity(a, b)
+	})
+	if _, err := graph.Search(ctx, []float32{1, 0}, 3, 3); !errors.Is(err, context.Canceled) || scores != 3 {
+		t.Fatalf("Search error = %v after %d scores", err, scores)
+	}
+}
+
+func TestBuildReachesSeparatedVectorClusters(t *testing.T) {
+	t.Parallel()
+	const count = 512
+	rng := rand.New(rand.NewPCG(1, 43))
+	embeddings := make([]Embedding, count)
+	for i := range embeddings {
+		vector := make([]float32, 16)
+		for j := range vector {
+			vector[j] = float32(0.05 * rng.NormFloat64())
+		}
+		vector[i%len(vector)]++
+		embeddings[i] = Embedding{Coord: coord(uint64(i + 1)), Vector: vector}
+	}
+	if graph, err := Build(t.Context(), embeddings, testSimilarity); err != nil || len(graph.Nodes) != count {
+		t.Fatalf("built %d nodes, want %d: %v", len(graph.Nodes), count, err)
+	}
+}
 
 // memStorage is an in-memory implementation of Storage for testing.
 type memStorage struct {
@@ -167,7 +248,7 @@ func TestGraph_InsertMultiple_SearchRecall(t *testing.T) {
 
 	// Search for vec close to (1,0,0) — should find coord(1).
 	query := []float32{1, 0, 0}
-	results, err := g.Search(query, 5, 50)
+	results, err := g.Search(t.Context(), query, 5, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +307,7 @@ func TestGraph_Delete(t *testing.T) {
 	}
 
 	// Search should still work.
-	results, err := g.Search([]float32{1, 0, 0}, 3, 50)
+	results, err := g.Search(t.Context(), []float32{1, 0, 0}, 3, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +402,7 @@ func TestGraph_UpdateExisting(t *testing.T) {
 	}
 
 	// Search should find the updated vector.
-	results, err := g.Search([]float32{0, 1, 0}, 1, 10)
+	results, err := g.Search(t.Context(), []float32{0, 1, 0}, 1, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +416,7 @@ func TestGraph_SearchEmpty(t *testing.T) {
 	s := newMemStorage()
 	g := NewGraph(s, testSimilarity)
 
-	results, err := g.Search([]float32{1, 0, 0}, 5, 50)
+	results, err := g.Search(t.Context(), []float32{1, 0, 0}, 5, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +442,7 @@ func TestGraph_SearchRejectsIncompleteGraph(t *testing.T) {
 			s.nodes[entry] = &Node{Coord: entry, Neighbors: [][]lattice.PackedCoord{{}}}
 			removePart(s)
 
-			_, err := NewGraph(s, testSimilarity).Search([]float32{1, 0}, 1, 10)
+			_, err := NewGraph(s, testSimilarity).Search(t.Context(), []float32{1, 0}, 1, 10)
 			if !errors.Is(err, ErrCorruptGraph) {
 				t.Fatalf("Search error = %v, want ErrCorruptGraph", err)
 			}
@@ -411,7 +492,7 @@ func TestGraphRepairsOneWayLinks(t *testing.T) {
 					t.Fatalf("survivor still points to removed node: %v", links)
 				}
 			}
-			hits, err := graph.Search([]float32{0, 1}, 1, 10)
+			hits, err := graph.Search(t.Context(), []float32{0, 1}, 1, 10)
 			if err != nil || len(hits) != 1 || hits[0].Coord != survivor {
 				t.Fatalf("search = %v, %v, want %v", hits, err, survivor)
 			}

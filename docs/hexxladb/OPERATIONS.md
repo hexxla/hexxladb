@@ -377,7 +377,7 @@ space for rebuilt index entries, especially when historical rows are missing.
 
 ## Deferred embedding ingestion and HNSW rebuild
 
-Ordinary `PutEmbedding` keeps HNSW current in the same commit. For a bounded
+Ordinary `PutEmbedding` updates a current HNSW graph in the same commit. For a bounded
 bulk load, write vectors with `PutEmbeddingWithOptions` and
 `DeferIndexMaintenance: true`, then publish a replacement graph:
 
@@ -407,12 +407,14 @@ The first deferred write marks the persisted graph stale; queries remain
 correct through exact flat search, as reported by `SearchByEmbeddingWithStats`.
 Rebuild preflight counts vectors, estimates peak heap/transient WAL, and checks
 free space before advancing the stale revision. It then snapshots authoritative
-vectors, builds outside the write transaction, structurally validates the
-candidate, and publishes it in one commit. Normal readers and writers may run
+vectors, builds outside the write transaction, verifies layer-zero
+reachability from the entry point, and publishes the graph in one commit. Normal readers and writers may run
 during graph construction. Any embedding mutation advances the revision and
 causes publication to return `ErrEmbeddingIndexChanged`; retry from the
-preflight. Cancellation or a publish error also leaves exact search active and
-the prior graph records untouched.
+preflight. If the build leaves unreachable vectors, it returns
+`ErrEmbeddingIndexDisconnected` and exact search stays active. Failed or
+cancelled rebuilds preserve the prior graph records. Rebuild an existing
+index to apply the new neighbor-selection policy across the graph.
 
 Zero options use a 10,000-vector and 2 GiB estimate ceiling. The hard supported
 rebuild limit is 20,000 vectors, based on the retained 32-dimensional evidence;

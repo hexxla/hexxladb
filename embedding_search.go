@@ -51,7 +51,8 @@ type EmbeddingSearchResult struct {
 }
 
 // SearchByEmbedding finds the cells whose embeddings are most similar to vec.
-// Uses HNSW graph when available, falling back to flat scan over the embed/ keyspace.
+// Uses HNSW when the graph is current and supplies enough candidates. Otherwise
+// it scores the authoritative embeddings with an exact flat scan.
 // Returns empty results if no embeddings have been stored yet (dimension not configured).
 // On historical snapshots it returns [ErrHistoricalDataUnavailable].
 func (tx *Tx) SearchByEmbedding(vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, error) {
@@ -108,7 +109,7 @@ func (tx *Tx) searchByEmbedding(ctx context.Context, vec []float32, cfg Embeddin
 	}
 	if !stateFound || !state.dirty {
 		// Try HNSW graph first when the persisted lifecycle state says it is current.
-		if results, used, searchErr := tx.searchHNSW(vec, maxResults, cfg.MinScore, efSearch, metric); searchErr != nil {
+		if results, used, searchErr := tx.searchHNSW(ctx, vec, maxResults, cfg.MinScore, efSearch, metric); searchErr != nil {
 			return nil, EmbeddingSearchStats{}, searchErr
 		} else if used {
 			return results, EmbeddingSearchStats{Path: EmbeddingSearchPathHNSW, EfSearch: efSearch}, ctx.Err()
@@ -201,10 +202,10 @@ func heapToResults(h searchMinHeap) []EmbeddingSearchResult {
 }
 
 // searchHNSW attempts HNSW search. Returns (results, true, nil) if graph exists,
-// or (nil, false, nil) if no graph is available (caller should fall back to flat scan).
-func (tx *Tx) searchHNSW(vec []float32, maxResults int, minScore float64, efSearch int, metric engine.DistanceMetric) ([]EmbeddingSearchResult, bool, error) {
+// or (nil, false, nil) if the graph is absent or returns too few candidates.
+func (tx *Tx) searchHNSW(ctx context.Context, vec []float32, maxResults int, minScore float64, efSearch int, metric engine.DistanceMetric) ([]EmbeddingSearchResult, bool, error) {
 	stor := &txHNSWStorage{tx: tx}
-	_, hasMeta, err := stor.GetHNSWMeta()
+	meta, hasMeta, err := stor.GetHNSWMeta()
 	if err != nil {
 		return nil, false, err
 	}
@@ -212,15 +213,17 @@ func (tx *Tx) searchHNSW(vec []float32, maxResults int, minScore float64, efSear
 		return nil, false, nil // no graph — fall back to flat scan
 	}
 	g := hnsw.NewGraph(stor, engine.SimilarityFunc(metric))
-	hnswResults, err := g.Search(vec, maxResults, efSearch)
+	hnswResults, err := g.Search(ctx, vec, maxResults, efSearch)
 	if err != nil {
 		if errors.Is(err, hnsw.ErrCorruptGraph) {
 			return nil, false, fmt.Errorf("%w: %w", ErrCorruptDatabase, err)
 		}
 		return nil, false, err
 	}
-	if hnswResults == nil {
-		return nil, true, nil
+	// Check before MinScore filtering. An underfilled beam indicates that
+	// the graph could not supply the requested number of vectors.
+	if uint64(len(hnswResults)) < min(uint64(maxResults), meta.Count) { //nolint:gosec // maxResults is positive and slice length is non-negative.
+		return nil, false, nil
 	}
 	out := make([]EmbeddingSearchResult, 0, len(hnswResults))
 	for _, r := range hnswResults {

@@ -171,10 +171,10 @@ func (tx *Tx) GetEdge(from, to PackedCoord, relationType string) (EdgeWalkRecord
 // It stops when fn returns false or when keys leave the matching from-cell prefix.
 // On historical snapshots it returns [ErrHistoricalDataUnavailable].
 func (tx *Tx) AscendEdgesFrom(from PackedCoord, fn func(EdgeWalkRecord) bool) error {
-	return tx.ascendEdgesFrom(from, nil, fn)
+	return tx.ascendEdgesFrom(from, "", nil, fn)
 }
 
-func (tx *Tx) ascendEdgesFrom(from PackedCoord, beforeDecode func() error, fn func(EdgeWalkRecord) bool) error {
+func (tx *Tx) ascendEdgesFrom(from PackedCoord, filter string, beforeDecode func() error, fn func(EdgeWalkRecord) bool) error {
 	if tx == nil || tx.db == nil {
 		return ErrClosed
 	}
@@ -185,20 +185,35 @@ func (tx *Tx) ascendEdgesFrom(from PackedCoord, beforeDecode func() error, fn fu
 		return err
 	}
 	prefix := index.EdgeFromPrefix(from)
-	var decodeErr error
-	err := tx.AscendRange(prefix, nil, func(k, v []byte) bool {
-		if !bytes.HasPrefix(k, prefix) {
-			return false
+	end := bytes.Clone(prefix)
+	end[len(end)-1]++ // EdgeFromPrefix always ends in '/'.
+	selectKey := func(key []byte) (bool, error) {
+		if bytes.Equal(key, end) {
+			return false, nil
 		}
 		if beforeDecode != nil {
 			if err := beforeDecode(); err != nil {
-				decodeErr = err
-				return false
+				return false, err
 			}
 		}
+		if filter == "" {
+			return true, nil
+		}
+		_, _, relation, err := index.ParseEdgeKey(key)
+		if err != nil {
+			return false, fmt.Errorf("%w: invalid edge key: %w", ErrCorruptDatabase, err)
+		}
+		return relation == filter, nil
+	}
+	var decodeErr error
+	err := tx.ascendRangeSelected(prefix, end, selectKey, func(_, v []byte) bool {
 		rec, err := record.DecodeEdge(v)
 		if err != nil {
 			decodeErr = err
+			return false
+		}
+		if filter != "" && rec.RelationType != filter {
+			decodeErr = fmt.Errorf("%w: edge relation does not match key", ErrCorruptDatabase)
 			return false
 		}
 		return fn(rec)

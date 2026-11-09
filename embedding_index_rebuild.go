@@ -3,6 +3,7 @@ package hexxladb
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -52,6 +53,8 @@ type embeddingRebuildFaultHooks struct {
 // progress, embedding queries use exact flat search. If embeddings change
 // after the snapshot, publication fails with [ErrEmbeddingIndexChanged] and
 // the exact fallback remains active so the caller can retry.
+// If layer zero cannot reach every vector, publication fails with
+// [ErrEmbeddingIndexDisconnected] and the exact fallback remains active.
 func (db *DB) RebuildEmbeddingIndex(ctx context.Context, opts *EmbeddingIndexRebuildOptions) (EmbeddingIndexRebuildStats, error) {
 	var stats EmbeddingIndexRebuildStats
 	maxVectors, estimatedPeakBytes, err := db.preflightEmbeddingIndexRebuild(ctx, opts)
@@ -72,10 +75,13 @@ func (db *DB) RebuildEmbeddingIndex(ctx context.Context, opts *EmbeddingIndexReb
 
 	buildStarted := time.Now()
 	graph, err := hnsw.Build(ctx, candidates, engine.SimilarityFunc(db.EmbeddingMetric()))
+	stats.BuildDuration = time.Since(buildStarted)
+	if errors.Is(err, hnsw.ErrDisconnectedGraph) {
+		return stats, fmt.Errorf("%w: %w", ErrEmbeddingIndexDisconnected, err)
+	}
 	if err != nil {
 		return stats, err
 	}
-	stats.BuildDuration = time.Since(buildStarted)
 	if hook := db.embeddingRebuildFaults; hook != nil && hook.beforePublish != nil {
 		hook.beforePublish()
 	}

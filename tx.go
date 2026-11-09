@@ -301,6 +301,10 @@ func (tx *Tx) deleteDirect(key []byte) error {
 
 // AscendRange calls fn for keys in [from, to] inclusive (byte order). If from is nil, starts at the smallest key.
 func (tx *Tx) AscendRange(from, to []byte, fn func(k, v []byte) bool) error {
+	return tx.ascendRangeSelected(from, to, nil, fn)
+}
+
+func (tx *Tx) ascendRangeSelected(from, to []byte, selectKey func([]byte) (bool, error), fn func(k, v []byte) bool) error {
 	if tx == nil || tx.db == nil {
 		return ErrClosed
 	}
@@ -308,10 +312,15 @@ func (tx *Tx) AscendRange(from, to []byte, fn func(k, v []byte) bool) error {
 	if e == nil {
 		return ErrDatabaseClosed
 	}
-	if !tx.writable && tx.cachedBTreeRoot != 0 {
-		return mapEngineDataError(tx.db.btree.AscendRangeFromRoot(tx.cachedBTreeRoot, from, to, fn))
+	root := tx.cachedBTreeRoot
+	if tx.writable || root == 0 {
+		header, err := e.ReadHeader()
+		if err != nil {
+			return mapEngineDataError(err)
+		}
+		root = header.BTreeRoot
 	}
-	return mapEngineDataError(tx.db.btree.AscendRange(from, to, fn))
+	return mapEngineDataError(tx.db.btree.AscendRangeSelected(root, from, to, selectKey, fn))
 }
 
 func mapEngineDataError(err error) error {

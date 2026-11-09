@@ -71,3 +71,14 @@ func (tx *Tx) recordEmbeddingMutation(deferIndex bool) (bool, error) {
 	}
 	return !state.dirty, nil
 }
+
+// invalidateEmbeddingGraph leaves the current mutation's revision intact.
+// recordEmbeddingMutation already advanced it if a rebuild was in progress.
+func (tx *Tx) invalidateEmbeddingGraph() error {
+	state, _, err := tx.loadEmbeddingIndexState()
+	if err != nil {
+		return err
+	}
+	state.dirty = true
+	return tx.putEmbeddingIndexState(state)
+}

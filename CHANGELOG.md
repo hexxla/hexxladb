@@ -6,6 +6,7 @@
 
 - **Storage formats** — all databases use MVCC. New plaintext databases use engine v2 and new encrypted databases use authenticated v3. Engine v1 and AES-XTS files are refused before WAL replay. Use the [pinned v0.6.0 conversion procedure](docs/hexxladb/OPERATIONS.md#offline-conversion-of-retired-files) for retired files. The current library and CLI no longer ship the legacy conversion commands.
 - **Go API** — remove `Options.EnableMVCC`, public page-transform hooks, `GroupWALMaxBatchWait`, `ErrMVCCRequired`, and `ErrEmbeddingsDisabled`. Use `DB.WALStats` for commit attempts and redo syncs, and `DB.StorageStats` for reclaimable storage in place of `MVCCStats.WastedBytes`.
+- **Path search budgets** — `FindEdgePath` returns `ErrSpatialScanLimit` when `MaxExpand` or the new `MaxEdgeRows` budget runs out. A nil path with no error means the goal is unreachable.
 
 ### API compatibility
 
@@ -20,6 +21,7 @@
 ### Performance
 
 - **Read and graph paths** — traverse B+ tree separators without materializing them, copy only consumed range rows, and reuse decoder scratch per database and adjacency scratch per graph expansion. This reduces MVCC point-read and graph traversal allocations while preserving page validation and snapshot semantics.
+- **Primary and edge scans** — stream snapshot-visible cell versions in primary key order and check path relation filters before reading edge values.
 
 ### Added
 
@@ -36,6 +38,8 @@
 
 ### Fixed
 
+- **HNSW graph quality** — use the published diversity heuristic, propagate neighbor read errors, and reject unreachable replacement graphs. If the graph underfills a search, score the authoritative vectors exactly.
+- **Cancellation** — stop HNSW traversal, FOV, and weighted Voronoi work during cancelled requests.
 - **MVCC key rotation** — preserve commit sequences, retained snapshots, and embedding settings when rewriting an encrypted database or converting MVCC to authenticated encryption.
 
 - **Snapshot pruning** — preserve the cell or tombstone visible at the cutoff and atomically publish the retention boundary with deleted versions.
@@ -62,6 +66,8 @@
 - **Dependency security** — upgrade the Go crypto and text modules to versions that address the high-severity advisories reported by the dependency inventory scan.
 
 ### Changed
+
+- **API documentation** — align query budgets, snapshot validity, encryption, and maintenance guidance with the current MVCC-only API.
 
 - **Architecture** — build detached graphs in the internal HNSW package and document the root package's main workflows.
 

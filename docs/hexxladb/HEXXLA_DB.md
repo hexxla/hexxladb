@@ -120,13 +120,21 @@ Snapshot and validity semantics are documented in [`TX.md`](./TX.md); retention 
 
 Embeddings are optional. `Options.EmbeddingDimension` and `Options.DistanceMetric` become immutable database settings once established. Each cell may have one float32 vector.
 
-`PutEmbedding` maintains the persisted HNSW graph. Node levels are derived deterministically from the packed coordinate, so the same vectors and insertion order produce the same graph layout without persisted random state. `SearchByEmbedding` uses HNSW when a complete current graph is available and falls back to a flat scan when the graph is absent or deliberately marked stale; malformed metadata, entry, node, neighbor, or vector state fails closed with `ErrCorruptDatabase` rather than returning a partial result. `SearchByEmbeddingWithStats` exposes the selected path and effective query breadth. `DeleteCell` also removes the cell's embedding and HNSW node.
+`PutEmbedding` maintains a current HNSW graph. Node levels are derived
+deterministically from the packed coordinate. `SearchByEmbedding` falls back
+to an exact flat scan when the graph is absent, stale, or returns fewer
+vectors than requested and available. Malformed graph or vector data
+encountered during the search returns `ErrCorruptDatabase`.
+`SearchByEmbeddingWithStats` exposes the selected path and effective query
+breadth. `DeleteCell` removes the authoritative vector and repairs the graph
+when it is current. Detected graph disconnection marks the graph stale.
 
 `PutEmbeddingWithOptions` can defer graph maintenance during bounded bulk
 ingestion. The vector under `embed/` remains authoritative and the lifecycle
 state becomes dirty, so queries use exact flat search rather than a stale
 graph. `RebuildEmbeddingIndex` advances the persisted revision, snapshots the
-authoritative vectors, builds and validates a bounded in-memory graph, then
+authoritative vectors, builds a bounded in-memory graph, checks layer-zero
+reachability from its entry point, then
 replaces the graph keys and marks that same revision current in one database
 commit. Every embedding mutation during a dirty interval advances the revision;
 an intervening write therefore prevents publication. Cancellation and failed

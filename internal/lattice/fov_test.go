@@ -146,7 +146,7 @@ func TestFieldOfViewShadowcast_symmetry(t *testing.T) {
 	}
 	opaque := func(c lattice.Coord) bool { return obstacles[c] }
 
-	visible := lattice.FieldOfViewShadowcast(origin, 5, opaque)
+	visible := lattice.FieldOfView(origin, 5, opaque)
 	visSet := make(map[lattice.Coord]struct{}, len(visible))
 	for _, c := range visible {
 		visSet[c] = struct{}{}
@@ -157,7 +157,7 @@ func TestFieldOfViewShadowcast_symmetry(t *testing.T) {
 		if opaque(a) {
 			continue
 		}
-		aVisible := lattice.FieldOfViewShadowcast(a, 5, opaque)
+		aVisible := lattice.FieldOfView(a, 5, opaque)
 		aSet := make(map[lattice.Coord]struct{}, len(aVisible))
 		for _, c := range aVisible {
 			aSet[c] = struct{}{}
@@ -174,7 +174,7 @@ func TestFieldOfViewShadowcast_openRegressionVsRaycast(t *testing.T) {
 	noOpaque := func(lattice.Coord) bool { return false }
 
 	for r := 0; r <= 5; r++ {
-		shadow := lattice.FieldOfViewShadowcast(origin, r, noOpaque)
+		shadow := lattice.FieldOfView(origin, r, noOpaque)
 		ray := lattice.FieldOfViewRaycast(origin, r, noOpaque)
 		if len(shadow) != len(ray) {
 			t.Fatalf("r=%d: shadowcast=%d raycasting=%d", r, len(shadow), len(ray))
@@ -197,7 +197,7 @@ func TestFieldOfViewShadowcast_pillarShadow(t *testing.T) {
 	pillar := lattice.Coord{Q: 2, R: 0}
 	opaque := func(c lattice.Coord) bool { return c == pillar }
 
-	visible := lattice.FieldOfViewShadowcast(origin, 5, opaque)
+	visible := lattice.FieldOfView(origin, 5, opaque)
 	visSet := make(map[lattice.Coord]struct{}, len(visible))
 	for _, c := range visible {
 		visSet[c] = struct{}{}
@@ -224,7 +224,7 @@ func TestFieldOfViewShadowcast_countOpen(t *testing.T) {
 	origin := lattice.Coord{Q: 0, R: 0}
 	noOpaque := func(lattice.Coord) bool { return false }
 	for r := 0; r <= 8; r++ {
-		got := lattice.FieldOfViewShadowcast(origin, r, noOpaque)
+		got := lattice.FieldOfView(origin, r, noOpaque)
 		want := 1 + 3*r*(r+1)
 		if len(got) != want {
 			t.Fatalf("r=%d: got %d cells, want %d (ball formula)", r, len(got), want)
@@ -239,9 +239,9 @@ func TestFieldOfViewShadowcast_deterministicNearestFirst(t *testing.T) {
 		return c == (lattice.Coord{Q: 3, R: -1})
 	}
 
-	want := lattice.FieldOfViewShadowcast(origin, 4, opaque)
+	want := lattice.FieldOfView(origin, 4, opaque)
 	for range 20 {
-		got := lattice.FieldOfViewShadowcast(origin, 4, opaque)
+		got := lattice.FieldOfView(origin, 4, opaque)
 		if !slices.Equal(got, want) {
 			t.Fatalf("FOV order changed between identical calls:\nfirst=%v\nnext=%v", want, got)
 		}
@@ -266,17 +266,17 @@ func BenchmarkFieldOfViewShadowcast(b *testing.B) {
 	noOpaque := func(lattice.Coord) bool { return false }
 	b.Run("r10", func(b *testing.B) {
 		for b.Loop() {
-			lattice.FieldOfViewShadowcast(origin, 10, noOpaque)
+			lattice.FieldOfView(origin, 10, noOpaque)
 		}
 	})
 	b.Run("r20", func(b *testing.B) {
 		for b.Loop() {
-			lattice.FieldOfViewShadowcast(origin, 20, noOpaque)
+			lattice.FieldOfView(origin, 20, noOpaque)
 		}
 	})
 	b.Run("r50", func(b *testing.B) {
 		for b.Loop() {
-			lattice.FieldOfViewShadowcast(origin, 50, noOpaque)
+			lattice.FieldOfView(origin, 50, noOpaque)
 		}
 	})
 }

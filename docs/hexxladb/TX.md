@@ -69,7 +69,7 @@ keys such as `app/`.
 
 The lattice API adds **`PutCell`**, **`GetCell`**, **`WalkRing`**, **`PutSeam`**, **`FindSeams`**, **`LoadContext`**, and **`ResolveSeam`** on **`Tx`**. Writes require **`Update`**; reads use **`View`** (or **`Update`**).
 
-- **`PutSeam`** writes **`seam/<ulid>`** plus a **`seam-by-cells/<lo>/<hi>/<ulid>`** secondary (empty value). Changing endpoints for an existing ULID returns **`ErrSeamEndpointMismatch`**. [`AscendSeams`](../../seam_scan.go) streams one version visible to the transaction per seam, in ID order. **`FindSeams`** uses the secondary index over cells in the query ball and loads primaries by ULID.
+- **`PutSeam`** writes **`seam/<ulid><commit_seq>`** plus a **`seam-by-cells/<lo>/<hi>/<ulid>`** secondary (empty value). Changing endpoints for an existing ULID returns **`ErrSeamEndpointMismatch`**. [`AscendSeams`](../../seam_scan.go) streams one version visible to the transaction per seam, in ID order. **`FindSeams`** uses the secondary index over cells in the query ball and loads primaries by ULID.
 
 ## Spec-named helpers
 
@@ -81,7 +81,7 @@ Mapping to [`HEXXLA_DB.md`](./HEXXLA_DB.md) Native Query Primitives:
 
 ## Validity filters and facet ring loads
 
-Single-version **read filters** on the current committed cell and seam (not MVCC; for **`ViewAt`** / **`ViewAtTime`** see **Snapshot semantics** and **MVCC temporal semantics** above):
+These read filters apply record validity to cells and seams visible in the transaction snapshot. The caller can choose the snapshot and the validity time independently.
 
 - **[`ValidityWire`](../../export.go)** — half-open validity window **`[ValidFrom, ValidTo)`** in Unix nanoseconds UTC (`nil` bound = open on that side), applied by validity-aware typed reads.
 - **[`Tx.WalkRingAt`](../../spatial_reads.go)** — same ring order as **`WalkRing`**, but invokes the callback only for cells whose **`Validity`** contains **`asOf`** (missing or out-of-window cells are skipped).
@@ -106,19 +106,17 @@ For MVCC formats v2 and v3 the authoritative visibility clock is **`CommitSeq`**
 
 ## Secondary indexes — `source/` and `time/`
 
-Per [HEXXLA_DB.md](./HEXXLA_DB.md) Storage Layout, **`PutCell`** dual-writes secondary keys (empty values, like seam secondaries):
+Per [HEXXLA_DB.md](./HEXXLA_DB.md) Storage Layout, **`PutCell`** writes secondary keys with empty values and a commit sequence suffix.
 
-- **`source/<u16be len><source_id bytes>/<packed_coord>`** — when **`Provenance.SourceID`** is non-empty after trim. **`SourceID`** length is capped ([`index.MaxSourceIDBytes`](../../internal/index/source_key.go)); oversize returns **`ErrInvalidArgument`**.
-- **`time/<int64be week_bucket>/<packed_coord>`** — when **`Validity.ValidFrom`** is set; **`week_bucket`** = **`ValidFrom` / (7×24h in nanoseconds)** ([`index.WeekBucketFromValidity`](../../internal/index/time_key.go)). No **`time/`** entry when **`ValidFrom`** is nil.
+- **`source/<u16be len><source_id bytes>/<packed_coord><commit_seq>`** — when **`Provenance.SourceID`** is non-empty after trim. **`SourceID`** length is capped ([`index.MaxSourceIDBytes`](../../internal/index/source_key.go)); oversize returns **`ErrInvalidArgument`**.
+- **`time/<int64be week_bucket>/<packed_coord><commit_seq>`** — when **`Validity.ValidFrom`** is set; **`week_bucket`** = **`ValidFrom` / (7×24h in nanoseconds)** ([`index.WeekBucketFromValidity`](../../internal/index/time_key.go)). No **`time/`** entry when **`ValidFrom`** is nil.
 
 **Seams** use separate prefixes so keys do not collide with cell keys:
 
-- **`seam-source/<u16be len><source_id>/<ulid>`** — when **[`SeamRecord.Provenance.SourceID`](../../internal/record/types.go)** is non-empty after trim ([`index.SeamSourceKey`](../../internal/index/seam_secondary_keys.go)).
-- **`seam-time/<int64be week_bucket>/<ulid>`** — when **`SeamRecord.Validity.ValidFrom`** is set (same week bucket scheme as cells).
+- **`seam-source/<u16be len><source_id>/<ulid><commit_seq>`** — when **[`SeamRecord.Provenance.SourceID`](../../internal/record/types.go)** is non-empty after trim ([`index.SeamSourceKey`](../../internal/index/seam_secondary_keys.go)).
+- **`seam-time/<int64be week_bucket>/<ulid><commit_seq>`** — when **`SeamRecord.Validity.ValidFrom`** is set (same week bucket scheme as cells).
 
-**`PutSeam`** removes stale seam secondaries when replacing a v1 record or replacing a staged version within the same MVCC transaction. Under MVCC formats v2 and v3, each committed seam version keeps its source and time entries, and read paths select the visible version for the transaction snapshot.
-
-On v1 overwrite, stale secondaries are removed via **[`engine.BTree.Delete`](../../internal/engine/btree_delete.go)** before attaching new index keys.
+Replacing a staged seam in the same transaction removes that staged version’s old secondary entries. Each committed seam version keeps its source and time entries. Reads recheck the visible version against the requested index predicate.
 
 Read paths for **cells**: **[`Tx.AscendCellsBySource`](../../cell_secondary.go)** (prefix scan by **`source_id`**), **[`Tx.AscendCellsInTimeBucket`](../../cell_secondary.go)** (one UTC week bucket), **[`Tx.AscendCellsByTag`](../../cell_secondary.go)** (prefix scan by **`tag`**; secondaries maintained by **`PutCell`**), **[`Tx.AscendDistinctTags`](../../cell_secondary.go)** / **[`Tx.ListExistingTopics`](../../cell_secondary.go)** (distinct **`tag`** values visible at this snapshot).
 

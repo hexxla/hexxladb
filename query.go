@@ -23,8 +23,8 @@ const (
 
 // CellQuery is a composable predicate specification for [Tx.QueryCells].
 //
-// All non-zero fields are combined as AND conditions. Fields that are zero
-// values (empty strings, nil slices, zero times, etc.) are ignored.
+// Active predicates are combined with AND. Each field documents its own
+// default, including the OR within AnyTags and the bounds on result and scan size.
 //
 // Typical usage:
 //
@@ -116,8 +116,8 @@ type CellQuery struct {
 	// All other predicates, including Query, are applied to embedding candidates.
 	// With a positive MaxResults, candidate retrieval widens until enough matches
 	// are found, the search is exhausted, or EmbeddingCandidateLimit is reached.
-	// With unlimited MaxResults and no explicit candidate limit, all embeddings
-	// are scanned exactly.
+	// With unlimited MaxResults and both budgets unset, all embeddings are
+	// scanned exactly. A positive MaxScanRows selects bounded exact scoring.
 	// Historical views return [ErrHistoricalDataUnavailable] when Embedding is set.
 	Embedding []float32
 
@@ -136,7 +136,7 @@ type CellQueryResult struct {
 	Cell CellView
 
 	// Score is the composite relevance score used for SortByScore ordering.
-	// Zero for queries that use SortByConfidence, SortByRecency, or SortByCoord.
+	// The score is populated even when the result order uses a different field.
 	Score float64
 
 	// Explanation is a human-readable breakdown of the score and filter decisions.

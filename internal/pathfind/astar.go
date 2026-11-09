@@ -12,6 +12,9 @@ import (
 // ErrCostOverflow indicates that the cheapest path has no finite float64 cost.
 var ErrCostOverflow = errors.New("pathfind: cumulative path cost overflows float64")
 
+// ErrExpansionLimit indicates that further expansion would exceed the search budget.
+var ErrExpansionLimit = errors.New("pathfind: expansion limit reached")
+
 // AStar finds the shortest path from start to goal using the A* algorithm.
 // Returns nil if no path with a finite accumulated cost exists. The neighbors
 // function determines graph connectivity, the cost function determines edge
@@ -47,7 +50,7 @@ func shortestPath(start, goal lattice.Coord, neighbors NeighborFunc, cost CostFu
 			return reconstructPath(s.cameFrom, goal), nil
 		}
 		if maxExpand > 0 && expanded >= maxExpand {
-			return nil, nil
+			return nil, ErrExpansionLimit
 		}
 		expanded++
 		s.expandNode(cur, goal, neighbors, cost, heuristic)

@@ -335,6 +335,12 @@ func (t *BTree) insertIntoInternal(pid uint64, page, key, val []byte) ([]childRe
 // provided root page ID. Callers that already hold a snapshot root (e.g. read-only
 // Tx with cachedBTreeRoot) should prefer this to avoid a ReadHeader pread.
 func (t *BTree) AscendRangeFromRoot(root uint64, from, to []byte, fn func(k, v []byte) bool) error {
+	return t.AscendRangeSelected(root, from, to, nil, fn)
+}
+
+// AscendRangeSelected applies selectKey to each key in the range before
+// resolving its value. The predicate may only borrow the key until it returns.
+func (t *BTree) AscendRangeSelected(root uint64, from, to []byte, selectKey func([]byte) (bool, error), fn func(k, v []byte) bool) error {
 	if root == 0 {
 		return nil
 	}
@@ -343,7 +349,7 @@ func (t *BTree) AscendRangeFromRoot(root uint64, from, to []byte, fn func(k, v [
 		return err
 	}
 	for pid != 0 {
-		next, done, err := t.ascendLeaf(pid, from, to, fn)
+		next, done, err := t.ascendLeaf(pid, from, to, selectKey, fn)
 		if err != nil || done {
 			return err
 		}
@@ -354,7 +360,7 @@ func (t *BTree) AscendRangeFromRoot(root uint64, from, to []byte, fn func(k, v [
 
 // ascendLeaf validates the leaf before calling fn and materializes only
 // entries inside the requested range that the callback actually consumes.
-func (t *BTree) ascendLeaf(pid uint64, from, to []byte, fn func(k, v []byte) bool) (next uint64, done bool, err error) {
+func (t *BTree) ascendLeaf(pid uint64, from, to []byte, selectKey func([]byte) (bool, error), fn func(k, v []byte) bool) (next uint64, done bool, err error) {
 	page, release, err := t.eng.readPagePooled(pid)
 	if err != nil {
 		return 0, false, err
@@ -383,6 +389,15 @@ func (t *BTree) ascendLeaf(pid uint64, from, to []byte, fn func(k, v []byte) boo
 		key, value, err := readLeafEntry(page, &off)
 		if err != nil {
 			return 0, false, err
+		}
+		if selectKey != nil {
+			selected, err := selectKey(key)
+			if err != nil {
+				return 0, false, err
+			}
+			if !selected {
+				continue
+			}
 		}
 		value, err = t.resolveLeafValue(value)
 		if err != nil {

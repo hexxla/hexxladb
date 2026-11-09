@@ -2,7 +2,7 @@
 
 This guide organizes the module-root API by task. During pre-v1 development,
 the API stability inventory in [`VERSIONING.md`](../../VERSIONING.md#root-api-stability-inventory)
-is authoritative. This guide is intentionally not a second copy of every exported declaration. Use [`go doc github.com/hexxla/hexxladb`](https://pkg.go.dev/github.com/hexxla/hexxladb) for the exhaustive, source-derived symbol reference.
+is authoritative. Run `go doc -all github.com/hexxla/hexxladb` from the checkout for the full exported reference.
 
 All application imports use:
 
@@ -22,15 +22,14 @@ when a missing or empty primary must be rejected. It still takes the exclusive
 lock and can replay the WAL and create sidecars. See [recovery compatibility](./DURABILITY.md#recovery-and-version-compatibility).
 
 ```go
-db, err := hexxladb.Open("memory.db", &hexxladb.Options{
-})
+db, err := hexxladb.Open("memory.db", nil)
 if err != nil {
     return err
 }
 defer db.Close()
 ```
 
-[`Options`](../../options.go) controls page and value limits, MVCC, changelog, embeddings, encryption, hooks, and durability tuning. Defaults and supported combinations are documented in [`CONFIGURATION.md`](./CONFIGURATION.md).
+[`Options`](../../options.go) controls page and value limits, prune suggestions, changelog, embeddings, encryption, hooks, and durability tuning. Both storage profiles use MVCC. Defaults and supported combinations are documented in [`CONFIGURATION.md`](./CONFIGURATION.md).
 
 ## Transactions
 
@@ -76,10 +75,10 @@ Violations return `ErrInvalidArgument` before serialization or index updates.
 
 HexxlaDB does not infer semantic anchors or enforce clustering. [`Tx.FindFreeCellPlacement`](../../cells.go) searches from a caller-supplied anchor in deterministic ring order and returns the first coordinate without a visible cell, its packed key, and the number of occupied positions probed. Call it inside the same `DB.Update` as `PutCell`; the writable transaction prevents another writer from claiming the result, while `PutCell` remains the explicit canonical write. The helper does not reserve a result from repeated calls in the same transaction, so write the returned key before searching again. It accepts radii from zero through `MaxCellPlacementRadius`, requires the complete search disk to fit within the packable coordinate range, and returns `ErrNoFreeCellPlacement` on bounded exhaustion. A current MVCC tombstone is free for placement; writing there creates a new version while retained snapshots continue to expose the earlier cell.
 
-Use [`Tx.FindUnusedCellPlacement`](../../cells.go) for a new logical identity in an
-MVCC database with edges or seams. It skips recorded tombstones, including
-deletions staged in the current update. Legacy placement can reuse an address
-still referenced by inbound edges or seams. For histories
+Use [`Tx.FindUnusedCellPlacement`](../../cells.go) for a new logical identity
+when inbound edges or seams may still reference deleted cells. It skips recorded
+tombstones, including deletions staged in the current update. `FindFreeCellPlacement`
+can reuse those addresses. For histories
 predating MVCC migration, keep an application-owned allocation map if addresses
 must never be reused. The allocator checks cell history. The application owns
 references to coordinates that never contained a cell.
@@ -156,9 +155,10 @@ With `QueryCells`, a zero radius leaves spatial scope unrestricted.
 
 The query planner uses the exact coordinate-probe count to prefer a small
 spatial disk over an unknown-cardinality tag or source range; otherwise it uses
-the first required tag supplied by the caller, then source, temporal, spatial,
-or complete primary scanning. It does not maintain persistent cardinality
-statistics.
+the first required tag, source, or a scan. A non-vector query with time bounds
+and no cheaper index path scans primary cells so dates on either side of the
+Unix epoch are handled correctly. A radius can supply the scan when no earlier
+plan applies. The planner uses no persistent cardinality statistics.
 
 `CellQuery.MaxScanRows` bounds physical cell/tag/source rows or spatial
 coordinate probes. The query returns sorted partial results with
@@ -167,8 +167,11 @@ embedding and a required tag, source, or radius, `MaxScanRows` selects exact
 scoring over the bounded filter scan. Leave `EmbeddingCandidateLimit` unset
 in this mode.
 
-With a positive result limit or a candidate budget, the default vector route
-widens the search window before applying filters.
+With a positive result limit or a candidate budget, the vector route filters
+candidates and can widen the search window to seek more matches. HNSW is
+approximate. The flat path takes over when the graph is absent, dirty, or
+returns fewer vectors than requested and available. It scores vectors exactly,
+but a candidate window can still limit which records reach the filters.
 [`QueryCellsWithStats`](../../query_exec.go) reports the path, distinct
 candidates examined, and whether the candidate ceiling stopped widening
 before the result quota was filled. The ceiling is at most
@@ -198,9 +201,16 @@ Weighted Voronoi assigns each coordinate in the footprint to the seed with the
 lowest path cost within the hop radius. Seed order breaks cost ties. Invalid
 penalties or overflowing path costs return `ErrInvalidArgument`. FOV uses
 symmetric center-to-center visibility, with an opaque hex boundary blocking
-sight through it. Graph context accepts a comma-separated set of relation names
-in a single breadth-first traversal. `FindEdgePath` returns `ErrInvalidArgument`
-when a reachable goal has only paths whose costs overflow `float64`.
+sight through it. Both stop computing geometry when the context is cancelled.
+Graph context accepts a comma-separated set of relation names in a single
+breadth-first traversal.
+
+`FindEdgePath` returns a nil path with no error when the goal is unreachable.
+Set `MaxExpand` to cap expanded nodes and `MaxEdgeRows` to cap adjacency rows
+examined across the entire search, including rows excluded by `Filter`. Zero
+means unlimited. Budget exhaustion returns `ErrSpatialScanLimit`. Negative
+budgets and reachable goals whose path costs all overflow `float64` return
+`ErrInvalidArgument`.
 
 For a current view with `requires` edges, this pack follows up to two hops
 from `start`, even when a target lies outside its geometric neighborhood.
@@ -215,7 +225,7 @@ if err != nil {
     return err
 }
 path, err := tx.FindEdgePath(ctx, start, goal, hexxladb.FindEdgePathConfig{
-    Filter: "requires", MaxExpand: 100,
+    Filter: "requires", MaxExpand: 100, MaxEdgeRows: 2_000,
 })
 if err != nil {
     return err
@@ -294,10 +304,13 @@ For bulk ingestion, pass `EmbeddingWriteOptions{DeferIndexMaintenance: true}`
 to each write, then call `RebuildEmbeddingIndex`. The persisted index revision
 makes every query use exact flat search while the graph is stale. Rebuild first
 checks the vector count, conservative memory budget, and available filesystem
-space; it builds outside the write transaction, structurally validates the
-candidate, and publishes all graph records in one commit only if no embedding
-changed after the snapshot. Cancellation, an intervening mutation, or publish
-failure leaves flat search active and preserves the previously published graph.
+space. It uses the published HNSW diversity heuristic, builds outside the write
+transaction, and checks that layer zero can reach every vector from the entry
+point. It publishes all graph records in one commit only if no embedding changed
+after the snapshot. An unreachable vector prevents publication and returns
+`ErrEmbeddingIndexDisconnected`. Failed or cancelled rebuilds leave flat search
+active and preserve the previously published graph.
+Rebuild an existing index to apply the new neighbor policy across the graph.
 The default rebuild limit is 10,000 vectors and the validated hard limit is
 20,000; raise neither service expectations nor resource budgets without
 representative evidence.
@@ -339,8 +352,8 @@ logical changelog with durable consumer cursors for CDC and audit processing.
 The exported root API is classified as a v1 candidate but the module remains on
 the `v0.y.z` line until the external graduation gates in
 [`VERSIONING.md`](../../VERSIONING.md) pass. CI runs `task api-check` against the
-committed v0.6 surface so additions, signature changes, and public documentation
-changes require deliberate compatibility review.
+[current API baseline](../../api/public.txt) so additions, signature changes,
+and public documentation changes receive deliberate review.
 
 ## Advanced byte-key access
 
@@ -363,11 +376,11 @@ visibility and typed writes for validation, indexes, and changefeed.
 | [`DB.StorageStats`](../../storage_stats.go)                                  | Measure physical, reachable, and reclaimable storage.         |
 | [`DB.ReclaimTail`](../../reclaim.go)                                         | Truncate a contiguous authenticated-freelist suffix safely.   |
 | [`PreflightCompactTo`](../../maintenance_preflight.go)                       | Check source storage, path collisions, and copy capacity without creating a candidate. |
-| [`DB.Compact`, `CompactTo`](../../compact.go)                                | Rewrite live keys into a new compact file.                     |
+| [`DB.Compact`, `CompactTo`](../../compact.go)                                | Copy physical keys, including retained versions and tombstones, into a compact file.                     |
 | [`DB.CompactWithOptions`, `CompactToWithOptions`](../../compact.go)          | Bound copy batches, receive durable progress, and optionally verify the candidate. |
 | [`RepairMVCCIndexesTo`](../../compact.go)                                    | Rebuild MVCC secondary indexes in a verified copy from retained primary versions. |
 | [`DeriveKeyFromPassphrase`](../../encryption.go)                             | Derive an encryption key using the database KDF.               |
-| [`RotateEncryption`, `RotateEncryptionWithOptions`](../../rotation.go)       | Perform offline key rotation or encryption migration.          |
+| [`RotateEncryption`, `RotateEncryptionWithOptions`](../../rotation.go)       | Encrypt plaintext v2 or rotate authenticated v3 credentials offline, preserving retained snapshots.          |
 | [`RecoverInterruptedRotation`](../../rotation.go)                            | Roll back an interrupted encryption-file swap using matching changelog configuration. |
 
 Retired formats require [offline conversion](./OPERATIONS.md#offline-conversion-of-retired-files).

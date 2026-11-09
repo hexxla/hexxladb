@@ -64,7 +64,7 @@ Exported entrypoints:
     Tx.WalkRing, Tx.PutSeam, Tx.FindSeams, Tx.FindSeamsAt, Tx.AscendSeams,
     Tx.LoadContext, Tx.ResolveSeam; public context, raw-spatial, seam, and
     candidate constants bound enumeration work and return ErrSpatialScanLimit
-    when a context or seam scan exhausts its budget; facets/edges:
+    when a context, seam, or edge path scan exhausts its budget; facets/edges:
     Tx.PutFacet, Tx.GetFacet, Tx.AscendFacetsForCell, Tx.PutEdge, Tx.GetEdge,
     Tx.AscendEdgesFrom ([facets_edges.go]); stable record aliases: CellRecord,
     SeamRecord, FacetWalkRecord, EdgeWalkRecord ([export.go]); NewFacetDerived,
@@ -327,9 +327,12 @@ var (
 	// ErrEmbeddingDimension means the vector length does not match [DB.EmbeddingDimension].
 	ErrEmbeddingDimension = errors.New("hexxladb: vector dimension mismatch")
 	// ErrEmbeddingIndexChanged means authoritative embeddings changed while
-	// [DB.RebuildEmbeddingIndex] was building a replacement graph. The old graph
-	// remains unpublished and searches continue through the exact flat path.
+	// [DB.RebuildEmbeddingIndex] was building a replacement graph. The replacement
+	// is not published and searches continue through the exact flat path.
 	ErrEmbeddingIndexChanged = errors.New("hexxladb: embeddings changed during index rebuild")
+	// ErrEmbeddingIndexDisconnected means the replacement graph could not reach
+	// every vector from its entry point. Exact search remains active.
+	ErrEmbeddingIndexDisconnected = errors.New("hexxladb: embedding index rebuild produced unreachable vectors")
 	// ErrEmbeddingIndexTooLarge means a rebuild would exceed its explicit
 	// in-memory vector bound.
 	ErrEmbeddingIndexTooLarge = errors.New("hexxladb: embedding index rebuild exceeds vector limit")
@@ -338,7 +341,7 @@ var (
 	// The returned result slice is partial but sorted and capped as requested.
 	ErrQueryScanLimit = errors.New("hexxladb: query scan limit reached")
 
-	// ErrSpatialScanLimit means a seam lookup or context load exhausted its work
+	// ErrSpatialScanLimit means a seam lookup, context load, or path search exhausted its work
 	// or result budget. No partial result is returned.
 	ErrSpatialScanLimit = errors.New("hexxladb: spatial scan limit reached")
 
@@ -410,8 +413,10 @@ func RepairMVCCIndexesTo(ctx context.Context, srcPath, destPath string, opts *Op
 
 func RotateEncryption(path string, currentOpts, newOpts *Options) error
     RotateEncryption rewrites the database at path using newOpts encryption
-    settings. It performs an offline logical copy (all key/value rows) into a
-    temporary database, atomically swaps files, and removes stale WAL files.
+    settings. It encrypts a plaintext v2 database or replaces an authenticated
+    v3 credential. The offline copy preserves commit sequences, retained
+    versions, and the snapshot retention floor. If enabled, the changelog must
+    use the same path before and after rotation.
 
 func RotateEncryptionWithOptions(path string, currentOpts, newOpts *Options, ropts *RotateOptions) error
     RotateEncryptionWithOptions performs offline rotation with streaming copy
@@ -589,8 +594,8 @@ type CellQuery struct {
 	// All other predicates, including Query, are applied to embedding candidates.
 	// With a positive MaxResults, candidate retrieval widens until enough matches
 	// are found, the search is exhausted, or EmbeddingCandidateLimit is reached.
-	// With unlimited MaxResults and no explicit candidate limit, all embeddings
-	// are scanned exactly.
+	// With unlimited MaxResults and both budgets unset, all embeddings are
+	// scanned exactly. A positive MaxScanRows selects bounded exact scoring.
 	// Historical views return [ErrHistoricalDataUnavailable] when Embedding is set.
 	Embedding []float32
 
@@ -603,8 +608,9 @@ type CellQuery struct {
 }
     CellQuery is a composable predicate specification for Tx.QueryCells.
 
-    All non-zero fields are combined as AND conditions. Fields that are zero
-    values (empty strings, nil slices, zero times, etc.) are ignored.
+    Active predicates are combined with AND. Each field documents its own
+    default, including the OR within AnyTags and the bounds on result and scan
+    size.
 
     Typical usage:
 
@@ -622,7 +628,7 @@ type CellQueryResult struct {
 	Cell CellView
 
 	// Score is the composite relevance score used for SortByScore ordering.
-	// Zero for queries that use SortByConfidence, SortByRecency, or SortByCoord.
+	// The score is populated even when the result order uses a different field.
 	Score float64
 
 	// Explanation is a human-readable breakdown of the score and filter decisions.
@@ -985,7 +991,9 @@ func (db *DB) RebuildEmbeddingIndex(ctx context.Context, opts *EmbeddingIndexReb
     memory, then atomically replaces the published graph. While the build is
     in progress, embedding queries use exact flat search. If embeddings change
     after the snapshot, publication fails with ErrEmbeddingIndexChanged and the
-    exact fallback remains active so the caller can retry.
+    exact fallback remains active so the caller can retry. If layer zero cannot
+    reach every vector, publication fails with ErrEmbeddingIndexDisconnected and
+    the exact fallback remains active.
 
 func (db *DB) ReclaimTail() (uint64, error)
     ReclaimTail truncates the contiguous physical-file suffix currently owned
@@ -1190,6 +1198,9 @@ type FindEdgePathConfig struct {
 	// MaxExpand limits the number of nodes expanded by the shortest-path search
 	// (0 = unlimited).
 	MaxExpand int
+	// MaxEdgeRows limits the total adjacency rows read across all expansions,
+	// including rows excluded by Filter (0 = unlimited).
+	MaxEdgeRows int
 	// CostFunc overrides edge-weight-based traversal cost.
 	// Receives the from and to coordinates; return a negative value to mark an
 	// edge impassable. Nil uses the edge's recorded Weight (1.0 when Weight <= 0).
@@ -1397,7 +1408,8 @@ type Options struct {
 	// Either way, once set it is immutable — all subsequent vectors must match.
 	EmbeddingDimension uint16
 	// DistanceMetric sets the similarity function for embedding search. Default is [DistanceCosine].
-	// Persisted in the file header; immutable after creation.
+	// Set it at creation with a nonzero EmbeddingDimension. The metric is
+	// persisted in the file header once the dimension is set.
 	DistanceMetric DistanceMetric
 	// Has unexported fields.
 }
@@ -1441,7 +1453,7 @@ type RingDensity struct {
 type RotateOptions struct {
 	// BatchSize controls how many KV rows are copied per write transaction.
 	BatchSize int
-	// OnProgress is called after each copied row.
+	// OnProgress reports each copied row in order after its batch commits.
 	OnProgress func(copied int64)
 }
     RotateOptions configures RotateEncryptionWithOptions.
@@ -1685,8 +1697,9 @@ func (tx *Tx) DeleteCellWithOutcome(ctx context.Context, key PackedCoord) (remov
 func (tx *Tx) DeleteEmbedding(coord PackedCoord) error
     DeleteEmbedding removes the vector embedding for the cell at coord.
     Idempotent. No-op if no embeddings have been stored yet (dimension not
-    configured). Index maintenance errors abort the update even if the callback
-    ignores them. Only allowed inside DB.Update.
+    configured). If graph repair leaves vectors unreachable, searches use exact
+    scoring until a rebuild. Other index maintenance errors abort the update
+    even if the callback ignores them. Only allowed inside DB.Update.
 
 func (tx *Tx) ExportCellsJSON(ctx context.Context, center Coord, maxR int, w io.Writer) (int, error)
     ExportCellsJSON writes all visible cells as a JSON array to w. Each element
@@ -1697,8 +1710,9 @@ func (tx *Tx) FindEdgePath(ctx context.Context, start, goal Coord, cfg FindEdgeP
     Only edges whose relationType matches FindEdgePathConfig.Filter are
     traversed (empty = all edges). Edge weights are used as traversal costs
     unless FindEdgePathConfig.CostFunc is set. Returns nil if no path exists.
-    Returns ErrInvalidArgument if a reachable goal has only paths whose
-    accumulated costs overflow float64. On historical snapshots it returns
+    Returns ErrSpatialScanLimit if the expansion or edge-row budget is
+    exhausted. Returns ErrInvalidArgument if a reachable goal has only paths
+    whose accumulated costs overflow float64. On historical snapshots it returns
     ErrHistoricalDataUnavailable.
 
 func (tx *Tx) FindFreeCellPlacement(ctx context.Context, anchor Coord, maxRadius int) (CellPlacement, error)
@@ -1851,7 +1865,8 @@ func (tx *Tx) PutEmbedding(coord PackedCoord, vec []float32) error
 func (tx *Tx) PutEmbeddingWithOptions(coord PackedCoord, vec []float32, opts EmbeddingWriteOptions) error
     PutEmbeddingWithOptions stores a vector embedding and optionally defers HNSW
     maintenance for bounded bulk ingestion. Deferred writes remain searchable
-    through the exact flat path. Index maintenance errors abort the update even
+    through the exact flat path. Detected graph disconnection activates exact
+    search until a rebuild. Other index maintenance errors abort the update even
     if the callback ignores them. Only allowed inside DB.Update.
 
 func (tx *Tx) PutFacet(rec FacetWalkRecord) error
@@ -1871,20 +1886,17 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
     QueryCells executes a CellQuery against the transaction's snapshot and
     returns matching cells ordered according to CellQuery.SortBy.
 
-    The planner uses a bounded cost heuristic:
-      - Embedding set → ANN via Tx.SearchByEmbedding (HNSW or flat scan)
-      - Small radius → ring walk when its exact probe count is cheaper than the
-        configured scan budget or the conservative spatial threshold
-      - RequireTags set → first caller-provided tag secondary index
-      - SourceID set → source secondary index
-      - After/Before set → complete primary scan (correct across signed time
-        buckets)
-      - Center+Radius → ring walk around Center
-      - fallback → complete primary scan
+    The planner prefers a small spatial disk, then the first required tag
+    or source index. Other queries scan the spatial disk or primary cells.
+    Time bounds are applied to the visible records and can span the Unix epoch.
 
-    After the primary index narrows the candidate set, all remaining predicates
-    are applied as in-memory filters. Results are scored and sorted according to
-    CellQuery.SortBy then capped to CellQuery.MaxResults.
+    Vector queries use candidate retrieval through HNSW or flat scoring.
+    A positive CellQuery.MaxScanRows with a required tag, source, or radius
+    scores the bounded filter scan exactly. With unlimited results and neither
+    budget set, the query scores every stored vector exactly.
+
+    Results are filtered, sorted, and capped to CellQuery.MaxResults. If the row
+    budget is exhausted, the sorted partial results accompany ErrQueryScanLimit.
 
 func (tx *Tx) QueryCellsWithStats(ctx context.Context, q CellQuery) ([]CellQueryResult, CellQueryStats, error)
     QueryCellsWithStats runs Tx.QueryCells and reports the vector search path
@@ -1924,8 +1936,9 @@ func (tx *Tx) ScanContextRaw(ctx context.Context, center Coord, maxR, maxCells i
 
 func (tx *Tx) SearchByEmbedding(vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, error)
     SearchByEmbedding finds the cells whose embeddings are most similar to vec.
-    Uses HNSW graph when available, falling back to flat scan over the
-    embed/ keyspace. Returns empty results if no embeddings have been stored
+    Uses HNSW when the graph is current and supplies enough candidates.
+    Otherwise it scores the authoritative embeddings with an exact
+    flat scan. Returns empty results if no embeddings have been stored
     yet (dimension not configured). On historical snapshots it returns
     ErrHistoricalDataUnavailable.
 
@@ -2107,14 +2120,10 @@ func FieldOfView(origin Coord, maxRadius int, opaque func(Coord) bool) []Coord
     Returns nil if maxRadius < 0 or opaque is nil. Returns {origin} if maxRadius
     == 0.
 
-func FieldOfViewRaycast(origin Coord, maxRadius int, opaque func(Coord) bool) []Coord
-    FieldOfViewRaycast is the original raycasting implementation, retained for
-    regression comparison in tests. Not used in production paths.
-
-func FieldOfViewShadowcast(origin Coord, maxRadius int, opaque func(Coord) bool) []Coord
-    FieldOfViewShadowcast casts the angular shadows of regular hexagons using
-    exact integer directions. A floor tile is visible when the segment joining
-    its centre to origin does not intersect another opaque hex, including edges.
+func FieldOfViewContext(ctx context.Context, origin Coord, maxRadius int, opaque func(Coord) bool) ([]Coord, error)
+    FieldOfViewContext casts the angular shadows of regular hexagons using exact
+    integer directions. A floor tile is visible when the segment joining its
+    centre to origin does not intersect another opaque hex, including edges.
     This geometric rule is reciprocal and invariant under hex rotations.
 
     Tiles are processed by squared Euclidean distance. A line crossing from one
@@ -2125,11 +2134,6 @@ func FieldOfViewShadowcast(origin Coord, maxRadius int, opaque func(Coord) bool)
     Work is O(R² log R) and memory O(R²) for radius R. The opacity callback is
     evaluated once for each non-origin coordinate in the disk and must be stable
     throughout the call. Opaque origins do not block their own outgoing sight.
-
-func HexLine(a, b Coord) []Coord
-    HexLine returns the hex coordinates on a straight line from a to b
-    using cube-coordinate linear interpolation and rounding (Red Blob Games
-    algorithm). The result includes both endpoints.
 
 func RefineCoord(coarse Coord, factor int) ([]Coord, error)
     RefineCoord returns the factor² fine-grid children of a coarse

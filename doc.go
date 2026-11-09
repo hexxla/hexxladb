@@ -40,7 +40,7 @@
 //   - Lattice primitives: [Tx.FindUnusedCellPlacement], [Tx.FindFreeCellPlacement], [Tx.PutCell], [Tx.GetCell], [Tx.DeleteCell], [Tx.DeleteCellWithOutcome], [Tx.WalkRing], [Tx.PutSeam],
 //     [Tx.FindSeams], [Tx.FindSeamsAt], [Tx.AscendSeams], [Tx.LoadContext], [Tx.ResolveSeam];
 //     public context, raw-spatial, seam, and candidate constants bound enumeration
-//     work and return [ErrSpatialScanLimit] when a context or seam scan exhausts its budget;
+//     work and return [ErrSpatialScanLimit] when a context, seam, or edge path scan exhausts its budget;
 //     facets/edges: [Tx.PutFacet], [Tx.GetFacet], [Tx.AscendFacetsForCell],
 //     [Tx.PutEdge], [Tx.GetEdge], [Tx.AscendEdgesFrom] ([facets_edges.go]);
 //     stable record aliases: [CellRecord], [SeamRecord], [FacetWalkRecord], [EdgeWalkRecord] ([export.go]);

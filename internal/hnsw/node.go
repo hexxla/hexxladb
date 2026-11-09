@@ -15,6 +15,9 @@ import (
 // HNSW state. The root storage adapter maps it to the public corruption error.
 var ErrCorruptGraph = errors.New("hnsw: corrupt graph")
 
+// ErrDisconnectedGraph identifies a graph known to have unreachable vectors.
+var ErrDisconnectedGraph = errors.New("hnsw: disconnected graph")
+
 // Node is the in-memory representation of an HNSW graph node.
 // Each node stores neighbor lists for layers 0..MaxLayer.
 type Node struct {

@@ -370,6 +370,68 @@ distributions, stricter recall targets, or different hardware, rerun the same
 command with representative inputs and retain the JSON before choosing
 `EfSearch`, batch size, cache, page settings, or rebuild resource ceilings.
 
+### November 2026 algorithm audit
+
+Controlled Go 1.27.3 trials used Linux/amd64 on an Intel Core i9-14900HX
+with `GOMAXPROCS=1`. The read benchmarks below report the median of three
+runs. The routing fixture matches 16 of 128 edges from the start, with each
+matching edge followed by one more edge to the goal. The primary scan fixture
+queries 2,000 cells for a common text token and returns the first 20 ranked
+results. Each version adds a separate committed value per cell.
+
+| Operation | Previous median | Current median | Allocations per operation |
+| --- | ---: | ---: | ---: |
+| Filtered route | 289 µs | 68 µs | 1,296 → 523 |
+| Primary scan, one version per cell | 2.82 ms | 1.06 ms | 28,090 → 14,087 |
+| Primary scan, five versions per cell | 11.99 ms | 6.60 ms | 55,817 → 36,604 |
+
+The primary scan reduces versions in a single traversal and retains a final
+snapshot lookup when the physical-row budget stops inside a coordinate.
+Unfiltered routing at degree 128 had overlapping latency ranges. FOV at radius
+256 used 14.2 MB per operation, down from 29.0 MB. The blocked radius-256 case
+took approximately 84 ms with preallocated rays versus 75 ms in the prior
+run. Mid-operation cancellation stopped the opacity and Voronoi weight
+callbacks after one invocation in both regression fixtures.
+
+For neighbor selection, the comparison held insertion order, graph degree,
+construction breadth, and search breadth fixed. It used 32-dimensional
+vectors, squared Euclidean ranking, three seeds and 24 queries per seed at
+`EfSearch=100`. On 2,048 vectors in 16 synthetic clusters, nearest-only
+pruning reached 94 vectors at layer zero and recall@10 ranged from 0.69 to
+0.81. Algorithm 4 with refill reached all 2,048 and yielded recall 1.00 for
+all three seeds. Build time increased from 0.26 s to 0.86–0.92 s. On
+2,048 Gaussian vectors, Algorithm 4 reached all vectors, up from 2,023–2,029.
+On 512 identical vectors, both reached 33. The rebuild now rejects such
+disconnection and leaves exact scoring active.
+[HNSW Algorithm 4](https://arxiv.org/abs/1603.09320)
+
+The disk-backed vector comparison used the seeded cosine evidence workload
+with 15 held-out queries, 4 KiB pages, a 64 MiB cache, and default search breadth.
+Exact queries ran on the authoritative vectors before publication. HNSW
+queries ran after publication on the same vectors and queries.
+
+| Workload | Exact p50 | HNSW p50 | HNSW recall@10 |
+| --- | ---: | ---: | ---: |
+| 1,000 × 32d | 0.25 ms | 1.53 ms | 1.000 |
+| 1,000 × 384d | 1.15 ms | 5.62 ms | 1.000 |
+| 5,000 × 32d | 1.08 ms | 3.50 ms | 1.000 |
+| 5,000 × 384d | 8.29 ms | 18.89 ms | 1.000 |
+| 10,000 × 32d | 1.80 ms | 4.40 ms | 0.993 |
+
+Exact scoring won this latency comparison. A global crossover would require
+workloads beyond these fixtures, including representative query and filter
+distributions, cache budgets, and recall targets.
+
+An in-memory bidirectional Dijkstra trial selected the frontier with the
+smaller label and stopped when the two minimum labels reached the incumbent
+path cost. Distances matched forward Dijkstra on 4,000 random directed pairs.
+Median edge visits fell from 215 to 73. Both read 1,025 edges on a chain and
+2,048 on a symmetric fan. On a graph with a wide incoming adjacency at the
+goal, visits increased from 2 to 1,025. The experiment measured vertex-level
+selection, with a reverse adjacency already available. HexxlaDB continues
+to use the outgoing edge index and forward Dijkstra.
+[Bidirectional search selection and stopping rules](https://arxiv.org/html/2410.14638v4#S2)
+
 ### Lattice-placement evidence
 
 The runner creates the same deterministic six-topic, 120-document corpus in two

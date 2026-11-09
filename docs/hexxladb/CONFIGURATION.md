@@ -28,7 +28,7 @@ All fields on `hexxladb.Options`. Fields marked **immutable** are persisted in t
 
 | Field           | Type            | Default | Immutable | Description                                                                                                                                           |
 | --------------- | --------------- | ------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MVCCRetention` | `MVCCRetention` | zero    | no        | Policy for `SuggestedPruneBeforeSeq`. `RetainCommitsBehindHead` keeps N commits of history.                                                           |
+| `MVCCRetention` | `MVCCRetention` | zero    | no        | Policy for `SuggestedPruneBeforeSeq`. `RetainCommitsBehindHead` sets the suggested cutoff relative to head. A caller or scheduler applies pruning.                                                           |
 | `PageSize`      | `uint32`        | `4096`  | yes       | B+ tree page size. Accepted: `4096`, `8192`, `16384`, `65536`. Larger pages = fewer I/O ops for big values; smaller = less waste for small DBs.       |
 | `MaxValueBytes` | `uint32`        | `8192`  | no        | Max encoded value size per B+ tree entry. Accepted: 512 to 1048576 (powers of 2). A non-zero value on reopen updates the persisted limit for subsequent writes; existing values are unchanged. |
 | `PageCacheSize` | `int64`         | `0`     | no        | In-process B+ tree page-cache budget. `0` selects 4 MiB, positive values set bytes, and `-1` disables the cache.                                   |
@@ -38,11 +38,13 @@ All fields on `hexxladb.Options`. Fields marked **immutable** are persisted in t
 | Field                | Type             | Default          | Immutable | Description                                                                                                                                                                                                                                                                                                                   |
 | -------------------- | ---------------- | ---------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `EmbeddingDimension` | `uint16`         | `0`              | yes       | Optional pre-set vector dimension. When `0` (default), the dimension is **auto-detected from the first `PutEmbedding` call** and persisted in the file header. When non-zero, locked at creation time. Either way, once set all vectors must match. Common values: `384` (all-MiniLM), `768` (BERT), `1536` (OpenAI ada-002). |
-| `DistanceMetric`     | `DistanceMetric` | `DistanceCosine` | yes       | Similarity function. Defaults to cosine. Persisted on first `PutEmbedding` if not set at `Open` time.                                                                                                                                                                                                                         |
+| `DistanceMetric`     | `DistanceMetric` | `DistanceCosine` | yes       | Similarity function. Set it with a nonzero `EmbeddingDimension` at creation. If the first vector establishes the dimension, the metric defaults to cosine.                                                                                                                                                                                                                         |
 
-Embeddings are always available — there is no "disabled" state. A database with no stored embeddings simply has `EmbeddingDimension() == 0` until the first vector is written.
+A zero `EmbeddingDimension()` means the dimension is unset. An empty database can have a nonzero dimension configured at creation.
 
-Ordinary `PutEmbedding` maintains HNSW synchronously. For bounded bulk loads,
+Ordinary `PutEmbedding` maintains a current HNSW graph synchronously. Detected
+disconnection switches retrieval to exact scoring until a successful rebuild.
+For bounded bulk loads,
 `PutEmbeddingWithOptions` can store authoritative vectors with
 `DeferIndexMaintenance`; exact flat search remains available until
 `RebuildEmbeddingIndex` publishes a complete graph. Rebuild defaults to 10,000
@@ -65,7 +67,7 @@ evidence.
 | Field           | Type     | Default | Description                                                                                                                                                  |
 | --------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `EncryptionKey` | `[]byte` | `nil`   | Creates new databases with authenticated XChaCha20-Poly1305 format v3. Use ≥128 bits of entropy. Mutually exclusive with `Passphrase`. |
-| `Passphrase`    | `string` | `""`    | Argon2id plus the per-database salt feeds the same authenticated v3 key hierarchy. Existing legacy passphrase files remain readable. Mutually exclusive with `EncryptionKey`. |
+| `Passphrase`    | `string` | `""`    | Argon2id plus the per-database salt feeds the same authenticated v3 key hierarchy. Mutually exclusive with `EncryptionKey`. |
 
 Authenticated v3 adds 48 physical bytes per logical data page. `PageSize`
 remains the logical B+ tree capacity; inspect `StorageStats.PhysicalPageSize`

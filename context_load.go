@@ -132,7 +132,7 @@ type contextReader struct {
 }
 
 func (r *contextReader) AscendEdgesFrom(from PackedCoord, fn func(EdgeWalkRecord) bool) error {
-	return r.ascendEdgesFrom(from, func() error {
+	return r.ascendEdgesFrom(from, "", func() error {
 		if err := r.ctx.Err(); err != nil {
 			return err
 		}

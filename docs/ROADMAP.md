@@ -13,7 +13,7 @@ Workstream numbers remain stable when completed items are removed.
 | README caveat | Active response |
 | --- | --- |
 | Serialized write throughput | Retain serialized correctness, use bounded caller batching, and rerun the write-path gates before considering commit-pipeline changes. |
-| Measured HNSW envelope | Retain the measured 20,000×32d and 10,000×384d limits; rerun bounded vector evidence before raising them. |
+| Vector search scale | Compare exact scoring and HNSW at matched recall on representative distributions and cache budgets before adopting an automatic crossover or raising rebuild limits. |
 | Sparse coordinates | Retain sparsity as a logical property; use authenticated page reuse, bounded tail reclaim, and explicit compaction for physical storage. |
 | Caller-owned semantic placement | Retain this as a product boundary: applications own meaning and anchor selection; the database must not infer either. |
 | Extend-only storage | Authenticated v3 reuses generation-safe pages and supports explicit tail reclaim; plaintext v2 uses documented compaction. |
@@ -91,6 +91,7 @@ The research corpus contains useful techniques that do not match a demonstrated 
 - Grid route planners assume implicit movement and obstacle rules, while `FindEdgePath` traverses arbitrary directed stored edges.
 - Incremental, anytime, and multi-agent planners require changing obstacle timelines, reservations, or agent objectives owned by an application layer.
 - Contraction hierarchies, landmarks, and bidirectional routing add preprocessing or incoming-edge indexes whose maintenance cost is not justified by current graph profiles.
+- Revisit predicate-aware graph traversal, such as [ACORN](https://arxiv.org/html/2403.04871), when bounded exact scoring misses a measured latency target for selective filters. Compare recall, index size, and write cost on the same corpus.
 - Alternative spatial indexes would duplicate the Morton-keyed B+ tree without evidence of a better end-to-end access path.
 - Planetary coordinate systems and incompatible hierarchy encodings solve a different coordinate domain and would change the stable packed representation.
 - Hydrology, SLAM, meshing, signal processing, coverage planning, reinforcement learning, and neural hex convolution are application algorithms unless they produce a concrete database storage or retrieval requirement.

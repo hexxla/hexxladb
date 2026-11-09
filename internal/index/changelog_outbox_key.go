@@ -9,7 +9,7 @@ const changelogOutboxPrefix = "__meta/changelog-outbox/"
 
 const changelogHeadKey = "__meta/changelog-head"
 
-// ChangelogHeadKey stores the last durable outbox commit identifier for format-v1 databases.
+// ChangelogHeadKey stores the last durable outbox commit identifier.
 func ChangelogHeadKey() []byte { return []byte(changelogHeadKey) }
 
 // ChangelogOutboxKey orders durable changefeed intents by commit and mutation ordinal.

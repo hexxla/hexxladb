@@ -77,6 +77,51 @@ func TestFindEdgePath_basic(t *testing.T) {
 	}
 }
 
+func TestFindEdgePath_WorkBudgets(t *testing.T) {
+	t.Parallel()
+	db := openPathfindTestDB(t)
+	start, via, goal := hexxladb.Coord{}, hexxladb.Coord{Q: 1}, hexxladb.Coord{Q: 2}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		for _, edge := range []struct {
+			from, to hexxladb.Coord
+			relation string
+		}{{start, goal, "other"}, {start, via, "route"}, {via, goal, "route"}} {
+			if err := tx.LinkCells(edge.from, edge.to, edge.relation, 1, record.ProvenanceWire{}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		cfg  hexxladb.FindEdgePathConfig
+		want []hexxladb.Coord
+		err  error
+	}{
+		{"expansion limit", hexxladb.FindEdgePathConfig{Filter: "route", MaxExpand: 1}, nil, hexxladb.ErrSpatialScanLimit},
+		{"filtered row counts", hexxladb.FindEdgePathConfig{Filter: "route", MaxEdgeRows: 2}, nil, hexxladb.ErrSpatialScanLimit},
+		{"exact boundary", hexxladb.FindEdgePathConfig{Filter: "route", MaxExpand: 2, MaxEdgeRows: 3}, []hexxladb.Coord{start, via, goal}, nil},
+		{"unreachable", hexxladb.FindEdgePathConfig{Filter: "absent", MaxExpand: 1, MaxEdgeRows: 2}, nil, nil},
+		{"negative expansion limit", hexxladb.FindEdgePathConfig{MaxExpand: -1}, nil, hexxladb.ErrInvalidArgument},
+		{"negative row limit", hexxladb.FindEdgePathConfig{MaxEdgeRows: -1}, nil, hexxladb.ErrInvalidArgument},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := db.View(func(tx *hexxladb.Tx) error {
+				got, err := tx.FindEdgePath(t.Context(), start, goal, tt.cfg)
+				if !errors.Is(err, tt.err) || !slices.Equal(got, tt.want) {
+					t.Errorf("FindEdgePath = (%v, %v), want (%v, %v)", got, err, tt.want, tt.err)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestFindEdgePath_SubunitWeightsRemainOptimal(t *testing.T) {
 	t.Parallel()
 	db := openPathfindTestDB(t)
