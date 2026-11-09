@@ -103,6 +103,12 @@ Use these methods inside `View` or `Update` callbacks:
 | Stream snapshot-visible seams           | [`Tx.AscendSeams`](../../seam_scan.go)                                                               |
 | Resolve a seam                          | [`Tx.ResolveSeam`](../../seams.go)                                                                       |
 
+`UpdateFacet` requires a visible cell and the SHA-256 hash of its current
+raw content. It returns `ErrCellNotFound` for a missing cell and
+`ErrFacetDerivationMismatch` for a mismatched hash. Use `PutFacet` for
+a write that does not require the hash check. `PutSeam` returns
+`ErrSeamEndpointMismatch` if an update changes an existing seam's endpoints.
+
 [`DB.BatchPutCells`](../../batch.go) writes large cell collections in bounded transactions. `ContinueOnError`
 collects pre-write rejections. Storage and post-write hook failures abort the
 current chunk. Progress and the written count describe durable rows.

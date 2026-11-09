@@ -7,8 +7,8 @@ HexxlaDB is an embedded Go library. Consumers import `github.com/hexxla/hexxladb
 | Path | Ownership |
 | --- | --- |
 | Module root | Stable API and transaction coordination across the engine, logical records, indexes and changefeed |
-| `internal/engine` | Pages, B+ tree, locking, WAL and durable publication |
-| `internal/index`, `internal/record` | Physical key and record encoding |
+| `internal/engine` | Locking, durable publication, [page and WAL formats](../../internal/engine/ENGINE_FORMAT.md), and [B+ tree layout](../../internal/engine/ORDERED_STORE.md) |
+| `internal/index`, `internal/record` | [Physical key families](../hexxladb/HEXXLA_DB.md#logical-key-families) and [binary record encoding](../../internal/record/FORMAT.md) |
 | `internal/lattice`, `internal/views`, `internal/hnsw`, `internal/pathfind` | Private geometry, view assembly and retrieval algorithms |
 | `internal/inspect` | Typed operator diagnostics over the public transaction API and private diagnostic encodings |
 | `cmd/hexxladb`, `cmd/tui` | Operator commands, process lifecycle and presentation |
@@ -41,7 +41,7 @@ Start with these files when tracing a public operation. Related files share the 
 
 | Workflow | Entry points and coordination |
 | --- | --- |
-| Database and transactions | [`db.go`](../../db.go) opens and closes handles. [`tx.go`](../../tx.go) runs reads and writes, [`batch.go`](../../batch.go) batches writes, and [`changelog_outbox.go`](../../changelog_outbox.go) coordinates changefeed delivery. |
+| Database and transactions | [`db.go`](../../db.go) owns the database handle and close path. `db_open.go` opens and recovers the file set. [`tx.go`](../../tx.go) runs reads and writes, [`batch.go`](../../batch.go) batches writes, and [`changelog_outbox.go`](../../changelog_outbox.go) coordinates changefeed delivery. |
 | Records and secondary indexes | [`cells.go`](../../cells.go), [`delete_cell.go`](../../delete_cell.go), and [`seams.go`](../../seams.go) handle record lifecycles. [`cell_secondary.go`](../../cell_secondary.go) and [`seam_secondary.go`](../../seam_secondary.go) maintain lookup keys. |
 | Snapshots and retention | [`mvcc.go`](../../mvcc.go) resolves versioned records. [`mvcc_lifecycle.go`](../../mvcc_lifecycle.go) prunes history, [`mvcc_snapshot_floor.go`](../../mvcc_snapshot_floor.go) tracks retention, and [`snapshot_tags.go`](../../snapshot_tags.go) names snapshots. |
 | Retrieval and traversal | [`query.go`](../../query.go) defines queries and [`query_exec.go`](../../query_exec.go) executes them. [`context_load.go`](../../context_load.go), [`spatial_reads.go`](../../spatial_reads.go), and [`pathfind_api.go`](../../pathfind_api.go) drive context, spatial scans, and pathfinding. |

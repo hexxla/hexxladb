@@ -68,15 +68,9 @@ full check. The scan holds a stable read snapshot, so other readers may proceed
 but writers wait until it finishes. Run it during a maintenance or low-traffic
 window and use a cancellable context for large databases.
 
-### Ten delete calls but visible count dropped by eight
-
-[`DeleteCell`](../../delete_cell.go) is **idempotent**: deleting a coord with **no visible cell** returns **nil** and writes nothing. So **N** delete tools calls can yield **fewer than N** visible-cell drops if:
-
-- two coords were already empty or already tombstoned,
-- coordinates were wrong (`q`,`r` typo),
-- or the client retried the same delete.
-
-Confirm with **HealthCheck `cell_count`**, or enumerate coords before/after.
+Deleting a coordinate with no visible cell is idempotent. Use
+[DeleteCellWithOutcome](../../delete_cell.go) to distinguish a new tombstone
+from a retry or an already-empty coordinate.
 
 ## Terminal explorer
 
@@ -323,7 +317,7 @@ that destination primary and WAL and retry from the preserved source; compaction
 is intentionally restart-only, not resumable. The bit is cleared durably only
 after the copy, source commit-sequence publication, and optional health check.
 
-The closed-source operator equivalent is:
+Use the CLI for a closed database:
 
 ```bash
 hexxladb compact --dry-run -o memory.compacted.db memory.db

@@ -42,7 +42,7 @@ generation-linked free pages, and tail reclaim. See the
 [engine layout](internal/engine/ENGINE_FORMAT.md) and
 [encryption guide](docs/hexxladb/ENCRYPTION.md).
 
-The upcoming release refuses single-version engine v1, AES-XTS files, and
+The main branch refuses single-version engine v1, AES-XTS files, and
 unknown engine versions with `ErrUnsupportedFormatVersion`. The
 [offline conversion procedure](docs/hexxladb/OPERATIONS.md#offline-conversion-of-retired-files)
 uses the pinned v0.6.0 release for legacy files. The current library checks
@@ -67,7 +67,7 @@ The initial candidate profile is:
 - a trusted local filesystem that honors exclusive creation, file locking, and
   `fsync`/`fdatasync` durability for the primary, WAL, and optional changelog;
 - authenticated engine format v3 for encrypted deployments, with 4 KiB logical pages;
-- MVCC enabled, with authenticated primary pages, encrypted changelog, and
+- MVCC, with authenticated primary pages, encrypted changelog, and
   durable consumers exercised together when those optional features are used;
 - at most 20,000 stored vectors at 32 dimensions or 10,000 at 384 dimensions
   with a 64 MiB page cache unless the deployment regenerates vector-scale

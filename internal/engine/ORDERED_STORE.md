@@ -16,8 +16,6 @@ The first **512 bytes** of page 0 are the file header. Fields **32–39** (in ad
 | ------ | ---- | ------------------------------------------------------------------- |
 | 32     | 8    | **btree_root_page** `uint64` — root page id; **0** means empty tree |
 
-Older databases that zeroed this region behave as **empty tree** (`root = 0`).
-
 ## Page layout (all tree nodes)
 
 Every tree page uses the full **page size** (configurable per-database: 4/8/16/64 KiB). Byte order: **big-endian** for multi-byte numeric fields.

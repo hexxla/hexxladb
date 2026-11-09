@@ -4,14 +4,9 @@
 
 **Operations context:** [OPERATIONS.md](./OPERATIONS.md) covers backups, retention, and incident response for changefeed consumers.
 
-## North star
-
-The changefeed is **grounded external memory** for what changed in the store: each entry is sufficient to **invalidate caches**, **rebuild derived views**, or **audit** without scanning the full B+ tree. **Cursor-based tailing** supports **resumable** workers; delivery is **at-least-once** (see below).
-
-## What it is not
-
-- **Not** a decode of the redo WAL ([`internal/engine/wal.go`](../../internal/engine/wal.go)); WAL stays page-image for recovery.
-- **Not** exactly-once end-to-end (requires idempotent consumers or distributed dedup).
+Consumers can tail logical mutations by cursor to update derived views,
+invalidate caches, or audit writes. The redo WAL stores page images for
+database recovery.
 
 ## Files
 
@@ -132,7 +127,7 @@ There is **no** in-process metrics registry in HexxlaDB itself; exporters should
 
 | Signal                             | Meaning                                                                                                                                                                                        |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `changelog_records_lag`            | Difference between latest applied DB `CommitSeq` (or app-level mutation counter) and last fully processed changelog sequence (your consumer cursor).                                           |
+| `changelog_records_lag`            | Difference between an observed sidecar sequence and the consumer’s last fully processed sidecar sequence. Measure both on the same logical history.                                           |
 | `changelog_read_errors_total`      | Count of [`ErrChangelogCorrupt`](../../errors.go) or I/O failures from [`ReadChangelogSince`](../../db_changelog.go).                                                                          |
 | `commit_finalization_errors_total` | [`ErrCommitFinalization`](../../errors.go) from [`Update`](../../tx.go); split known-durable errors with [`ErrCommitDurable`](../../errors.go) and alert until close/reopen recovery succeeds. |
 | `changelog_append_latency_ms`      | Time spent in changelog append path per commit (detect fsync stalls when sync mode is on).                                                                                                     |

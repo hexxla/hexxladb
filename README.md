@@ -111,7 +111,8 @@ fixture paths, and diagnostics.
 - [Remote access](examples/remote_access/) demonstrates an authenticated
   loopback service that owns the database files.
 - [API guide](docs/hexxladb/API_REFERENCE.md) covers records, search, graph
-  traversal, and context assembly.
+  traversal, and context assembly. The [memory model](docs/hexxladb/HEXXLA.md)
+  explains placement, validity, and contradictions.
 - [Operations](docs/hexxladb/OPERATIONS.md) covers backups, migrations,
   compaction, and diagnostics. See also the [encryption model](docs/hexxladb/ENCRYPTION.md).
 - [Performance evidence](docs/hexxladb/PERFORMANCE_EVIDENCE.md) records dated

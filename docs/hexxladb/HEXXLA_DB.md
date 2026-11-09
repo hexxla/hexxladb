@@ -8,23 +8,13 @@ HexxlaDB is an embedded, hex-native database implemented by this module. The sta
 
 The engine uses one B+ tree over byte-ordered key families, backed by fixed-size pages and a redo WAL. Coordinates are Morton-packed so spatial addresses have a stable ordered representation. Lattice operations, records, and secondary indexes are part of the database implementation rather than adapters over a third-party SQL or key-value engine.
 
-`PageSize` is the logical B+ tree page capacity. Plaintext and legacy encrypted
-v2 files use the logical page size as their physical stride. Authenticated encrypted v3 adds a
+`PageSize` is the logical B+ tree page capacity. Plaintext v2 files use the logical page size as their physical stride. Authenticated encrypted v3 adds a
 48-byte generation/nonce/tag envelope to every data page while leaving page 0
 at one logical page. The exact byte layout belongs to
 [`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md).
 
-The principal private packages are:
-
-| Package            | Owns                                                      |
-| ------------------ | --------------------------------------------------------- |
-| `internal/engine`  | File header, pages, B+ tree, WAL, locking, and durability |
-| `internal/lattice` | Coordinates, packing, rings, and pure geometry            |
-| `internal/record`  | Cell, facet, edge, and seam encodings                     |
-| `internal/index`   | Key-family encodings and MVCC suffixes                    |
-| `internal/hnsw`    | Persisted approximate-nearest-neighbor graph mechanics    |
-
-Applications must use the public root API rather than importing these packages.
+The [architecture guide](../architecture/HEXAGONAL_ARCHITECTURE.md) owns
+package boundaries and dependency direction.
 
 ## Logical records
 
@@ -75,7 +65,11 @@ The notation below describes logical identities. Concrete encodings use binary s
 | Changefeed head    | `__meta/changelog-head` → latest durable outbox commit identifier    |
 | Changefeed outbox  | `__meta/changelog-outbox/<commit>/<ordinal>/<key>` → bounded intent  |
 
-Source identifiers and tags are length-prefixed UTF-8 byte strings. Time indexes use UTC week buckets derived from `Validity.ValidFrom`. Missing source, tag, or `ValidFrom` values do not create the corresponding secondary.
+Source identifiers and tags are length-prefixed byte strings. The cell source
+index caps its identifier at [220 bytes](../../internal/index/source_key.go).
+Time indexes derive the UTC week bucket from `Validity.ValidFrom` using
+[division by seven days rounded down](../../internal/index/time_key.go). Missing
+source, tag, or `ValidFrom` values leave the corresponding secondary absent.
 
 Cell and seam source/time/tag secondaries are maintained by their typed write methods. Raw `Tx.Put` does not maintain them.
 
@@ -97,7 +91,7 @@ Cells use a zero-length latest value as a tombstone. Deletion therefore adds a v
 Authenticated format v3 persists reusable B+ tree and overflow-page ids in the
 authenticated transaction boundary and consumes them before extending the
 primary. [`DB.ReclaimTail`](../../reclaim.go) can truncate only a contiguous
-allocator-owned suffix; plaintext and legacy formats remain extend-only.
+allocator-owned suffix. Plaintext v2 remains extend-only.
 [`DB.StorageStats`](../../storage_stats.go) walks the current B+ tree, overflow
 chains, and allocator metadata to report page-rounded live, reusable, and whole
 unreachable bytes. It does not treat unused capacity inside a reachable page as
@@ -160,21 +154,6 @@ The redo WAL and logical changefeed have separate purposes:
 - the changefeed sidecar contains ordered logical deliveries used by external consumers and rebuildable projections.
 
 See [`CHANGEFEED.md`](./CHANGEFEED.md) for framing, cursors, reconciliation, and recovery.
-
-## Supported query paths
-
-Typed public operations provide the following storage paths:
-
-- point reads and writes for cells, facets, edges, seams, and embeddings;
-- ring and bounded-neighborhood enumeration;
-- source, time, and tag secondary scans;
-- seam lookup by cell participation, source, or time;
-- MVCC snapshots by commit sequence, wall time, or named tag;
-- lexical, structured, and embedding-assisted seed selection;
-- context assembly, visibility filtering, graph traversal, and Voronoi partitioning;
-- logical changefeed reads, health checks, snapshot diffs, pruning, and compaction.
-
-The task-oriented public surface is described in [`API_REFERENCE.md`](./API_REFERENCE.md).
 
 ## Derived occupancy summaries
 

@@ -12,7 +12,10 @@
 
 ## Snapshot semantics and MVCC
 
-- **MVCC formats v2 and v3:** Plaintext creation uses v2. Creation with encryption uses authenticated v3. **`View`** pins **`read_seq = header.CommitSeq`** at transaction start (last committed snapshot). **`ViewAt(read_seq uint64)`** pins an **older** committed snapshot; **`read_seq`** must not exceed **`CommitSeq`** or **[`ErrReadSeqFuture`](../../errors.go)** is returned. **`ViewAtTime(time.Time)`** maps wall-clock to the most recent commit with `commit_time <= as_of` and pins that snapshot. If no commit exists at/before `as_of`, it resolves to `read_seq=0`, which is empty when the retention boundary still permits it. Each successful **`Update`** / **`Batch`** records an **`__meta/commit-time/`** entry (wall time sampled at **transaction start**, before the callback) and advances **`CommitSeq`** in the same engine transaction as the versioned data and durable changefeed intents.
+`View` pins the latest committed sequence for the callback. Historical views
+select an explicit sequence, timestamp, or snapshot tag. See
+[MVCC temporal semantics](#mvcc-temporal-semantics) for visibility and timeline
+rules.
 
 ### Retained snapshots
 
@@ -60,24 +63,11 @@ or retrying.
 
 If the engine commit is known durable but changelog append, sync, or outbox cleanup fails, the error matches both **`ErrCommitFinalization`** and **[`ErrCommitDurable`](../../errors.go)**. Do **not** retry the mutation. Further writes on that handle are rejected; close and reopen with the same changelog configuration. `Open` projects remaining durable intents before returning a handle. A crash after changelog append but before outbox cleanup may redeliver the same logical mutation, so consumers must remain idempotent.
 
-## Byte keys and lattice primitives
+## Byte keys
 
-**[`Tx.Get`](../../tx.go)**, **`Put`**, **`AscendRange`** operate on raw **`[]byte`** keys/values backed by the engine B+ tree.
-Raw reads expose physical rows and do not apply typed MVCC visibility.
-Raw writes reject database-owned families and remain available for application
-keys such as `app/`.
-
-The lattice API adds **`PutCell`**, **`GetCell`**, **`WalkRing`**, **`PutSeam`**, **`FindSeams`**, **`LoadContext`**, and **`ResolveSeam`** on **`Tx`**. Writes require **`Update`**; reads use **`View`** (or **`Update`**).
-
-- **`PutSeam`** writes **`seam/<ulid><commit_seq>`** plus a **`seam-by-cells/<lo>/<hi>/<ulid>`** secondary (empty value). Changing endpoints for an existing ULID returns **`ErrSeamEndpointMismatch`**. [`AscendSeams`](../../seam_scan.go) streams one version visible to the transaction per seam, in ID order. **`FindSeams`** uses the secondary index over cells in the query ball and loads primaries by ULID.
-
-## Spec-named helpers
-
-Mapping to [`HEXXLA_DB.md`](./HEXXLA_DB.md) Native Query Primitives:
-
-- `mark_conflict`: **[`Tx.MarkConflict`](../../seams.go)** — new ULID seam, canonical endpoints, **`SeamType`** `"mark_conflict"`, then **`PutSeam`**.
-- `update_facet` (derivation rule): **[`Tx.UpdateFacet`](../../facets_edges.go)** — requires **`DerivationHash`** = SHA-256 of the cell’s current **`RawContent`**; otherwise **`ErrFacetDerivationMismatch`**. Missing cell: **`ErrCellNotFound`**. Unconstrained writes still use **`PutFacet`**.
-- `link_cells`: **[`Tx.LinkCells`](../../facets_edges.go)** — packs coords and **`PutEdge`**.
+Raw reads expose physical versions. Raw writes are available for
+application-owned keys such as `app/`. See [advanced byte-key access](./API_REFERENCE.md#advanced-byte-key-access)
+and [storage key families](./HEXXLA_DB.md#logical-key-families).
 
 ## Validity filters and facet ring loads
 
@@ -94,7 +84,7 @@ These read filters apply record validity to cells and seams visible in the trans
 For MVCC formats v2 and v3 the authoritative visibility clock is **`CommitSeq`** in the engine header (see [`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md)). Each successful [`Update`](../../tx.go) / [`Batch`](../../tx.go) advances `CommitSeq` atomically with its engine transaction; a reopened database therefore cannot expose versioned pages under an older reused sequence.
 
 - **[`DB.ViewAt(readSeq)`](../../tx.go)** pins `read_seq` for the callback. Cell, facet, and seam point reads use the version suffix's byte ordering to seek directly to the largest stored `commit_seq <= read_seq`, then stop after one valid version. [`ErrReadSeqFuture`](../../errors.go) is returned if `read_seq` exceeds the header's `CommitSeq`.
-- **[`DB.ViewAtTime(asOf)`](../../tx.go)** maps UTC wall time to a `read_seq` using the commit timeline: during each MVCC `Update`, an `__meta/commit-time/` btree key records `(wall_unix_nano, writeSeq)` (wall timestamp sampled at transaction start). The resolver seeks to the latest signed timestamp at or before `asOf`, breaking ties by commit sequence. Determinism requires stable UTC clock usage; the same `asOf` yields the same snapshot for a given database history.
+- **[`DB.ViewAtTime(asOf)`](../../tx.go)** maps UTC wall time to a `read_seq` using the commit timeline: during each MVCC `Update`, an `__meta/commit-time/` btree key records `(wall_unix_nano, writeSeq)` (wall timestamp sampled at transaction start). The resolver seeks to the latest signed timestamp at or before `asOf`, breaking ties by commit sequence. If no commit qualifies, it resolves to sequence zero subject to the retention boundary. Determinism requires stable UTC clock usage; the same `asOf` yields the same snapshot for a given database history.
 - **Secondary indexes (`tag/`, `source/`, `time/`, seam secondaries):** version-suffixed entries are retained alongside committed primary versions. Readers deduplicate by logical ID and check that the snapshot-visible record matches the requested tag, source, or week. Deleting a cell preserves the previous committed index entries until its old version is pruned. For databases written by an affected release, see [repairing MVCC secondary indexes](./OPERATIONS.md#repairing-mvcc-secondary-indexes).
 - **Current-only families:** Edges and embeddings are stored at head. Typed
   graph and vector operations return `ErrHistoricalDataUnavailable` when the
@@ -104,30 +94,14 @@ For MVCC formats v2 and v3 the authoritative visibility clock is **`CommitSeq`**
   different commits.
 - **Validity vs snapshot:** [`WalkRingAt`](../../spatial_reads.go), [`FindSeamsAt`](../../seams.go), and [`LoadContextConfig.AsOf`](../../context_load.go) filter by record validity windows — orthogonal to `read_seq` (snapshot time vs. domain validity interval).
 
-## Secondary indexes — `source/` and `time/`
-
-Per [HEXXLA_DB.md](./HEXXLA_DB.md) Storage Layout, **`PutCell`** writes secondary keys with empty values and a commit sequence suffix.
-
-- **`source/<u16be len><source_id bytes>/<packed_coord><commit_seq>`** — when **`Provenance.SourceID`** is non-empty after trim. **`SourceID`** length is capped ([`index.MaxSourceIDBytes`](../../internal/index/source_key.go)); oversize returns **`ErrInvalidArgument`**.
-- **`time/<int64be week_bucket>/<packed_coord><commit_seq>`** — when **`Validity.ValidFrom`** is set; **`week_bucket`** = **`ValidFrom` / (7×24h in nanoseconds)** ([`index.WeekBucketFromValidity`](../../internal/index/time_key.go)). No **`time/`** entry when **`ValidFrom`** is nil.
-
-**Seams** use separate prefixes so keys do not collide with cell keys:
-
-- **`seam-source/<u16be len><source_id>/<ulid><commit_seq>`** — when **[`SeamRecord.Provenance.SourceID`](../../internal/record/types.go)** is non-empty after trim ([`index.SeamSourceKey`](../../internal/index/seam_secondary_keys.go)).
-- **`seam-time/<int64be week_bucket>/<ulid><commit_seq>`** — when **`SeamRecord.Validity.ValidFrom`** is set (same week bucket scheme as cells).
-
-Replacing a staged seam in the same transaction removes that staged version’s old secondary entries. Each committed seam version keeps its source and time entries. Reads recheck the visible version against the requested index predicate.
-
-Read paths for **cells**: **[`Tx.AscendCellsBySource`](../../cell_secondary.go)** (prefix scan by **`source_id`**), **[`Tx.AscendCellsInTimeBucket`](../../cell_secondary.go)** (one UTC week bucket), **[`Tx.AscendCellsByTag`](../../cell_secondary.go)** (prefix scan by **`tag`**; secondaries maintained by **`PutCell`**), **[`Tx.AscendDistinctTags`](../../cell_secondary.go)** / **[`Tx.ListExistingTopics`](../../cell_secondary.go)** (distinct **`tag`** values visible at this snapshot).
+The [storage model](./HEXXLA_DB.md#mvcc-physical-keys) owns the physical
+layout. Replacing a staged version removes that version's old secondary
+entries. Prior committed versions keep their entries until pruning.
 
 ## Logical changefeed
 
-Optional **provenance log** (append-only file next to the database, not page-image WAL tail):
-
-- Enable with **[`Options.ChangelogEnabled`](../../options.go)** (see **[`Options.ChangelogPath`](../../options.go)**, **[`Options.ChangelogLazy`](../../options.go)** for path override and fsync tradeoffs).
-- Read bounded batches with **[`DB.ReadChangelogSince`](../../db_changelog.go)** after commits from **`Update`** / **`Batch`**.
-
-Semantics, cursors, at-least-once delivery, and durability modes are documented in **[`CHANGEFEED.md`](./CHANGEFEED.md)**.
+See the [changefeed contract](./CHANGEFEED.md) for opt-in configuration,
+durable cursors, and consumer recovery.
 
 ## Encryption
 

@@ -3,12 +3,24 @@
 ## Prerequisites
 
 - **Go 1.27.3 or newer**, as required by [`go.mod`](go.mod). [Go toolchain selection](https://go.dev/doc/toolchain) can select the required version automatically.
-- **[Task](https://taskfile.dev)** v3 (CI currently pins **v3.53.1**) for repository build and validation workflows.
+- **[Task](https://taskfile.dev)** v3 for local repository tasks. GitHub Actions runs the validation script directly.
 - Repository analyzers require no global installation. [`scripts/tool.sh`](scripts/tool.sh)
   runs reviewed versions of golangci-lint, govulncheck, gocyclo, and
   gocognit with the active Go toolchain. The first run needs network access.
   Subsequent runs use the Go module and toolchain caches.
-- Optional: the [staged secret-scanning Git hook](.githooks/README.md).
+- Optional: the [staged secret-scanning Git hook](#optional-secret-scanning-hook).
+
+## Optional secret-scanning hook
+
+Install the pinned scanner and ensure Go's bin directory is on your PATH.
+
+~~~sh
+scripts/tool.sh install-gitleaks
+git config --local core.hooksPath .githooks
+~~~
+
+The hook runs `scripts/check-secrets.sh --staged`. Use that command directly
+for a one-off staged check. CI checks pushed commits independently.
 
 ## Clone and run
 
@@ -74,7 +86,7 @@ Compatibility expectations for releases and on-disk format: **[`VERSIONING.md`](
 
 ## Roadmap and out-of-scope boundaries
 
-Technical backlog, explicit non-goals, and **documented vs implemented** audit notes live in **[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Operator-facing retention/soak/incident guidance is in **[`docs/hexxladb/OPERATIONS.md`](docs/hexxladb/OPERATIONS.md)**.
+Technical backlog and non-goals live in **[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Operator-facing retention/soak/incident guidance is in **[`docs/hexxladb/OPERATIONS.md`](docs/hexxladb/OPERATIONS.md)**.
 
 ## Where tests live
 

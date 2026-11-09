@@ -225,8 +225,10 @@ remain covered by their dedicated tests.
 
 ### Public API baseline from August 26, 2026
 
-This historical baseline was measured after the bounded-work, query-planner,
-integrity, and HNSW remediation. Each benchmark below ran sequentially in five
+This historical baseline predates the retirement of engine v1. The commands
+below describe the original measurement. Use the current Taskfile and evidence
+runners when benchmarking this checkout. It was measured after the bounded-work,
+query-planner, integrity, and HNSW remediation. Each benchmark below ran sequentially in five
 independent samples against a fresh temporary database. Fixed iteration counts
 keep the suite bounded while giving short operations enough repetitions:
 
@@ -269,7 +271,7 @@ one number. Setup is outside the timed region.
 | `SnapshotDiff` | 430 µs | 383–589 µs | 6,687 | 500 retained writes |
 
 The planner remediation replaced fixed source-before-radius precedence with an
-exact small-disk cost heuristic. The current combined-query median is 128 µs,
+exact small-disk cost heuristic. The combined-query median in this run was 128 µs,
 versus the prior documented approximately 62 ms source-range plan. This removes
 avoidable candidate reads without persistent cardinality statistics or changed
 predicate semantics. The identical-vector embedding query is a deterministic

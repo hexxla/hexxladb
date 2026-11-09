@@ -67,6 +67,8 @@
 
 ### Changed
 
+- **Documentation cleanup** — consolidate contributor setup and planned work, remove redundant package and example READMEs, and refresh the API, storage, and operations guides.
+
 - **API documentation** — align query budgets, snapshot validity, encryption, and maintenance guidance with the current MVCC-only API.
 
 - **Architecture** — build detached graphs in the internal HNSW package and document the root package's main workflows.

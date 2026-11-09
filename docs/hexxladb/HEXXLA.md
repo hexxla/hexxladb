@@ -41,9 +41,9 @@ A reproducible policy should maintain these invariants:
 1. Assign one logical record to one unoccupied coordinate. Writing at an occupied coordinate intentionally replaces the visible record, so insertion workflows should use `FindFreeCellPlacement` and `PutCell` in the same update.
 2. Choose collision candidates in a stable order. `FindFreeCellPlacement` applies deterministic concentric-ring order around the caller's fixed anchor and reports the occupied positions it probes.
 3. Never shift existing coordinates during ordinary insertion. Append new records at the next free candidate so stored links, external references, and neighborhood explanations remain stable.
-4. Treat `ClusterHint` as caller-owned metadata. HexxlaDB persists it but does not validate the hint, place the cell near it, or keep hinted groups together.
+4. Treat `ClusterHint` as caller-owned metadata. HexxlaDB validates the packed coordinate and persists the hint. The application decides how to use it for placement or grouping.
 5. Keep coordinate identity stable when using edges or seams. Deletion can
-   leave inbound references and seams. On MVCC databases, use
+   leave inbound references and seams. Use
    `FindUnusedCellPlacement` to skip deleted coordinates with recorded history.
 6. Model relocation as lifecycle history: create the successor at a new free coordinate, write its semantic and provenance metadata, and record an explicit directional supersession in the same update. Keep the predecessor addressable for audit; context assembly substitutes the successor only when the caller requests supersession filtering.
 
@@ -80,7 +80,7 @@ The model reserves six facet positions:
 | 4     | Procedural or action-oriented view                                           |
 | 5     | Product-specific view                                                        |
 
-Derived facets carry a hash of the source content. An update is valid only while that hash still matches the cell, preventing a stale derivation from silently attaching to changed source material.
+Derived facets can carry a hash of the source content. The checked update path verifies the hash against the current cell. The low-level facet write stores the supplied record. See the [facet API](./API_REFERENCE.md#cells-facets-edges-and-seams).
 
 ### Edge
 

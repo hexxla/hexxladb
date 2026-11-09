@@ -29,16 +29,15 @@ Update only the documents owned by changed behavior:
 | `docs/hexxladb/OPERATIONS.md`, `PERFORMANCE_EVIDENCE.md` | Operations and reproducible performance evidence       |
 | `docs/ROADMAP.md`                                        | Pending or deliberately deferred work only             |
 
-Do not put completed history in the roadmap or `TODO.md`; it belongs in `CHANGELOG.md`.
+Keep planned work in the roadmap and completed history in `CHANGELOG.md`.
 
 ## Session and release tracking
 
-- [`TODO.md`](TODO.md) contains only active and pending session work.
 - Add user-visible features, fixes, breaking changes, and material documentation changes under `CHANGELOG.md` → `[Unreleased]`.
 - Follow [`VERSIONING.md`](VERSIONING.md) and Semantic Versioning 2.0.0. During v0.y.z, features increment the minor version and fixes increment the patch version; document pre-v1 breaking changes.
 
 ## Repository workflow
 
-Preserve unrelated work and keep commits focused. Use short, one-line commit messages. The [optional Git hook](.githooks/README.md) scans staged changes for secrets.
+Preserve unrelated work and keep commits focused. Use short, one-line commit messages. The [optional Git hook](CONTRIBUTING.md#optional-secret-scanning-hook) scans staged changes for secrets.
 
 Codex-compatible project skills live under `.agents/skills/<skill-name>/SKILL.md`. Add one only for a recurring HexxlaDB-specific workflow; keep general engineering policy in this file.

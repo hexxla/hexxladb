@@ -11,7 +11,7 @@ HexxlaDB uses a **configurable logical page size** (4/8/16/64 KiB; default **4 K
 
 - **Configurable per-database.** Accepted values: **4096**, **8192**, **16384**, **65536** bytes.
 - Set via `Options.PageSize` at creation; persisted in the file header at offset 12 (`uint32`).
-- **Default:** 4096 (4 KiB) for new databases. Existing databases (legacy 64 KiB) continue to work.
+- **Default:** 4096 (4 KiB) for new databases. Supported v2 and v3 databases retain the page size recorded at creation.
 - Readable at runtime via `Engine.PageSizeInt()` / `DB.PageSize()`.
 
 ## Database file layout
@@ -101,7 +101,7 @@ Values ≥ 64 bytes are transparently compressed before storage using DEFLATE (`
 | 1      | 4    | **uncompressed_length** `uint32` big-endian                                    |
 | 5..    | var  | DEFLATE-compressed payload (`compress/flate`, level 1)                         |
 
-If compression does not reduce size, the value is stored raw (no envelope). Compressed and uncompressed values coexist; the per-value `0xFE` magic disambiguates on read. Compression runs **before** the overflow threshold check, so compressible values may fit inline even if the raw size exceeds the threshold.
+Values normally stay raw if compression does not reduce size. A raw value longer than five bytes that starts with `0xFE` is wrapped even if compression does not shrink it, so reads can distinguish the value from an envelope. Compression runs **before** the overflow threshold check, so compressible values may fit inline even if the raw size exceeds the threshold.
 
 ## Overflow pages
 

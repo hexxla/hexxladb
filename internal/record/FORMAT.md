@@ -1,6 +1,6 @@
 # Record envelope and v1 payloads
 
-Binary records are **big-endian** numeric fields (`encoding/binary`). Strings are **UTF-8** with a **uint32** byte-length prefix (see `MaxStringField` in code).
+Binary records are **big-endian** numeric fields (`encoding/binary`). Strings store Go string bytes with a **uint32** byte-length prefix. The codec enforces `MaxStringField` in bytes.
 
 ## Envelope (all families)
 

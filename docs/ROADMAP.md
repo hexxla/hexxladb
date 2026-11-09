@@ -1,44 +1,17 @@
 # Roadmap
 
-This file contains pending or deliberately deferred work. Completed work belongs in [`CHANGELOG.md`](../CHANGELOG.md); session-level tasks belong in [`TODO.md`](../TODO.md).
+This file tracks planned and deliberately deferred work. Completed changes
+belong in [the changelog](../CHANGELOG.md).
 
-## Active limitation-reduction programme
+## Release and adoption
 
-These workstreams are ordered by implementation dependency. “Active” means each
-is ready for bounded planning and evidence collection, not that an engine
-redesign ships without first demonstrating the need. Complete and move one
-workstream to `CHANGELOG.md` before beginning an overlapping implementation.
-Workstream numbers remain stable when completed items are removed.
-
-| README caveat | Active response |
-| --- | --- |
-| Serialized write throughput | Retain serialized correctness, use bounded caller batching, and rerun the write-path gates before considering commit-pipeline changes. |
-| Vector search scale | Compare exact scoring and HNSW at matched recall on representative distributions and cache budgets before adopting an automatic crossover or raising rebuild limits. |
-| Sparse coordinates | Retain sparsity as a logical property; use authenticated page reuse, bounded tail reclaim, and explicit compaction for physical storage. |
-| Caller-owned semantic placement | Retain this as a product boundary: applications own meaning and anchor selection; the database must not infer either. |
-| Extend-only storage | Authenticated v3 reuses generation-safe pages and supports explicit tail reclaim; plaintext v2 uses documented compaction. |
-| Pre-v1 API stability | Record intentional pre-v1 changes and guard against accidental API drift. |
-
-### 7. Eventual v1 graduation evidence
-
-**Outcome:** Graduate only after production and release evidence supports the
-already classified candidate API, without accelerating the version number.
-
-- Keep the exported API baseline current and document deliberate pre-v1
-  breaks and any required offline conversion.
-- Complete a named limited-production adoption, recovery drill,
-  deployment-specific supported-scale evidence, and signed release rehearsal on
-  the eventual candidate commit.
-
-**Completion evidence:** compatibility checks and migration notes pass, and
-every measurable v1 gate in
-[`VERSIONING.md`](../VERSIONING.md) has current evidence. Until then the project
-remains on the `v0.y.z` line.
-
-Sparse coordinates remain an intentional logical-namespace property: empty
-coordinates consume no records and existing coordinates are never renumbered
-for cosmetic density. Improvements belong in bounded allocation, diagnostics,
-page reuse, and compaction rather than coordinate-space rewriting.
+- Run the protected tag workflow with the production signing key. Record an
+  adopting operator's backup and restore drill and upgrade and rollback results
+  using the published artifacts.
+- Complete a limited-production pilot with a named owner, monitoring window,
+  and restore report.
+- Evaluate the [v1 release gates](../VERSIONING.md#v1-release-gates) on the
+  proposed release commit.
 
 ## Other near-term work
 
@@ -47,6 +20,12 @@ page reuse, and compaction rather than coordinate-space rewriting.
 - **Secondary-index contract isolation** — investigate the smallest test seam that exercises cell and seam secondary maintenance without requiring every assertion to construct a complete database. Keep receiver methods in the root package and avoid exporting raw transaction internals.
 
 ## Evidence-gated candidates
+
+- **Vector search scale** — compare exact scoring and HNSW at matched recall
+  across representative distributions and cache budgets before adopting an
+  automatic crossover or raising rebuild limits.
+- **Write throughput** — compare bounded caller batching with any proposed
+  commit-pipeline change under the existing durability and latency gates.
 
 These are plausible extensions, not commitments. Promote one only when a representative workload establishes requirements and a measurable benefit.
 
@@ -79,7 +58,7 @@ These experiments test research-derived hypotheses without committing to a publi
 ## Out of scope
 
 - Distributed replication and high availability; HexxlaDB is an embedded single-owner database.
-- Unbounded background primary-file rewriting or implicit compaction; maintenance remains explicit even if generation-safe page reuse and tail reclamation are added.
+- Unbounded background primary-file rewriting or implicit compaction; maintenance uses explicit pruning, reclamation, or compaction.
 - Online re-encryption; rotation is offline.
 - Pluggable SQLite or third-party key-value storage cores.
 - Automatic truth assessment, confidence decay, relationship reinforcement, or other product-policy mutation inside the database.
