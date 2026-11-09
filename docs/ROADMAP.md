@@ -5,9 +5,8 @@ belong in [the changelog](../CHANGELOG.md).
 
 ## Release and adoption
 
-- Run the protected tag workflow with the production signing key. Record an
-  adopting operator's backup and restore drill and upgrade and rollback results
-  using the published artifacts.
+- Record an adopting operator's backup and restore drill and upgrade and
+  rollback results using a build from the candidate source tag.
 - Complete a limited-production pilot with a named owner, monitoring window,
   and restore report.
 - Evaluate the [v1 release gates](../VERSIONING.md#v1-release-gates) on the

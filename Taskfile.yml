@@ -223,11 +223,6 @@ tasks:
     cmds:
       - scripts/tool.sh govulncheck ./...
 
-  complexity:
-    desc: Run cyclomatic, cognitive, and CRAP complexity checks
-    cmds:
-      - bash scripts/complexity.sh
-
   test:
     desc: Run all tests with the race detector
     cmds:
@@ -257,23 +252,3 @@ tasks:
     desc: Reconcile go.mod and go.sum with the module graph
     cmds:
       - go mod tidy
-
-  mutation-test:
-    desc: Run full Gremlins mutation testing; optionally set TARGET
-    preconditions:
-      - sh: command -v gremlins >/dev/null 2>&1
-        msg: "gremlins not found; install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0"
-    env:
-      TARGET: '{{.TARGET | default ""}}'
-    cmds:
-      - 'echo "==> Running Gremlins mutation testing${TARGET:+: $TARGET}"'
-      - GREMLINS_FULL=1 bash scripts/mutation-test.sh
-
-  mutation-test-dry:
-    desc: Run the fast Gremlins mutation dry-run
-    preconditions:
-      - sh: command -v gremlins >/dev/null 2>&1
-        msg: "gremlins not found; install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0"
-    cmds:
-      - 'echo "==> Running Gremlins mutation testing (dry-run)..."'
-      - bash scripts/mutation-test.sh

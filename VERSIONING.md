@@ -6,7 +6,8 @@ This document describes how **module versions**, **Go API stability**, and **on-
 
 ## Go module (semver)
 
-The module follows [Semantic Versioning 2.0.0](https://semver.org/):
+The module follows [Semantic Versioning 2.0.0](https://semver.org/).
+Publish versions as annotated Git tags on validated commits from `main`.
 
 ### Version format
 
@@ -93,10 +94,10 @@ site-specific service-level objectives.
 
 | Bounded production-readiness gate | Pass condition | Current status |
 | --- | --- | --- |
-| Candidate validation | `task ci`, `task integration`, fuzz smoke tests, and supported-platform builds pass on the same commit without skipped or unreconciled checks. | **Local v0.6.0 candidate gates pass on 2026-08-26; the protected tag workflow must repeat them on the exact published tag** |
+| Candidate validation | `task ci`, `task integration`, fuzz smoke tests, and supported-platform builds pass on the same commit without skipped or unreconciled checks. | **Local v0.6.0 candidate gates passed on 2026-08-26. Repeat them on the commit selected for the next adoption** |
 | Recovery set durability | Crash-barrier, combined encrypted backup/restore, migration, changelog-consumer, compaction, and required directory-durability checks pass on the candidate commit. | **Automated set and local synthetic restore rehearsal pass on the v0.6.0 candidate; adopting-operator restore drill pending** |
 | Performance and soak | Controlled, observation, vector-scale, and placement evidence passes on release hardware; a representative bounded workload meets the adopting deployment's declared targets. | **Reproducible evidence and the conservative five-minute, minimum-sample reference qualification pass; adopting deployments must declare and validate material deviations from that profile** |
-| Release operations | Reproducible artifacts, checksums, signing, SBOM generation, installation, upgrade, and rollback/refusal drills pass from the candidate commit. | **Cross-build, isolated Linux install, published-fixture migration, and newer-format refusal pass on the v0.6.0 candidate; final protected-tag workflow with signed checksums and adopting-operator rollback drill pending** |
+| Release operations | The operator can build from the candidate source, install, upgrade, and complete rollback and format refusal drills. | **Cross-build, isolated Linux install, published-fixture migration, and newer-format refusal passed on the v0.6.0 candidate. The adopting operator’s rollback drill is pending** |
 | Limited-production adoption | A named owner records the deployed profile, monitoring window, backup/restore drill, and upgrade report with no unresolved correctness or data-loss finding. | **Not met** |
 
 These gates do not promote provisional APIs to a v1 compatibility promise. A
@@ -151,7 +152,7 @@ recorded result, not permission to infer readiness from a version number.
 | Production adoption | At least one named production deployment has an owner-confirmed backup/restore drill and upgrade report. | No production deployment evidence is recorded in the repository. | **Not met** |
 | API commitment | Every root file in the inventory is v1-candidate or deprecated; no provisional row remains; all pre-v1 breaks have migration notes. | Every exported root file is classified above; consumer-facing signatures use root aliases and `task api-check` enforces the current candidate baseline. | **Pass on current candidate; repeat at release** |
 | Format upgrade and refusal | Retired and unknown formats are refused without modifying their recovery sets. Rotation preserves plaintext v2 and encrypted v3 history. | `TestRetiredFormatsLeaveRecoverySetIntact` and `TestRotateEncryptionPreservesMVCC` cover these paths. Rehearse pinned offline conversion for any legacy recovery sets used in the release drill. | Recheck on the exact v1 candidate. |
-| Supported toolchain policy | `task ci` validates formatting, lint, import boundaries, workflows, exported API, race tests, vulnerabilities, licenses, and module metadata. CI scans and builds with the reviewed patch release while `go.mod` defines the consumer baseline. | Recheck the CI, security, and release runs on the exact v1 candidate. |
+| Supported toolchain policy | `task ci` validates formatting, lint, import boundaries, workflows, exported API, race tests, and module metadata. `task govulncheck` checks the candidate for known reachable vulnerabilities. | Run both checks on the exact v1 candidate. |
 | Crash and recovery | `task integration` passes on the release commit, including named crash barriers; a recovery drill is recorded. | Test procedure exists in `CONTRIBUTING.md` and `OPERATIONS.md`; no v1-candidate run is recorded. | **Not met** |
 | Performance envelope | Seeded performance, vector-scale, and lattice-placement evidence is regenerated on release hardware and stays within documented thresholds. | Reproducible commands and current baselines exist in `PERFORMANCE_EVIDENCE.md`; no v1-candidate run is recorded. | **Not met** |
-| Release operations | Signed/tagged release rehearsal, SBOM generation, backup drill, and rollback/downgrade refusal drill complete from the candidate commit. | Workflows and drills exist; no v1-candidate rehearsal is recorded. | **Not met** |
+| Release operations | Build from the candidate source, then complete the backup, rollback, and downgrade refusal drills. | The operations guide documents the drills. A v1-candidate rehearsal is pending. | **Not met** |

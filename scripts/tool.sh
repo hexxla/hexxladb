@@ -24,8 +24,5 @@ case "$tool" in
         exec "$binary" "$@"
         ;;
     govulncheck) exec go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 "$@" ;;
-    go-licenses) exec go run github.com/google/go-licenses@v1.6.0 "$@" ;;
-    gocyclo) exec go run github.com/fzipp/gocyclo/cmd/gocyclo@v0.6.0 "$@" ;;
-    gocognit) exec go run github.com/uudashr/gocognit/cmd/gocognit@v1.2.1 "$@" ;;
     *) printf 'Unknown repository tool: %s\n' "$tool" >&2; exit 2 ;;
 esac

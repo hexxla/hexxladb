@@ -513,40 +513,17 @@ Tune retention and pruning for your workload and soak longer in staging if reten
 
 ## Release rehearsal and publication
 
-The tag workflow validates the tagged commit before it can publish. It requires
-the tag to be reachable from `main`, runs the complete CI and integration suites
-plus decoder fuzz smoke tests, validates `.goreleaser.yml`, and packages the
-CLI and TUI for Linux, macOS, and Windows on amd64 and arm64. Publication then
-creates SHA-256 checksums, a detached GPG signature for the checksum file, and
-an SPDX JSON SBOM for every release archive.
+HexxlaDB publishes source and Go module versions through Git tags. Build the
+CLI and Inspector from a checked-out tag with `task build`.
 
-Configure the GitHub `release` environment before creating a tag:
+For an operator-qualified release, run `task ci`, `task govulncheck`,
+`task integration`, and `task fuzz` on the candidate commit. Build for the
+adopting platform and run `hexxladb check` against a restored staging copy.
+Supply the matching environment credential for an encrypted backup. Record
+the candidate commit, build, restore result, and upgrade and refusal drills.
 
-1. require an approving reviewer and disallow administrator bypass;
-2. store an armored signing key as `GPG_PRIVATE_KEY` and its passphrase as
-   `GPG_PASSPHRASE` in environment secrets;
-3. retain the public key outside GitHub and publish its fingerprint through an
-   independently controlled channel;
-4. permit the workflow's release job to write repository contents only after
-   the validation job and environment approval succeed.
-
-Run the Release workflow manually on a candidate reachable from `main` to
-produce archives, checksums, and SBOMs without publishing. To rehearse signing
-locally with the trusted release key, install the pinned GoReleaser and Syft
-versions from the workflow and set `GPG_FINGERPRINT` in your shell:
-
-```sh
-goreleaser check
-goreleaser release --snapshot --clean
-```
-
-After the candidate evidence is reviewed, create and push an annotated tag.
-Do not move or reuse a published tag. Download the resulting archives on a
-clean Linux/amd64 staging host, verify the checksum signature and archive
-checksum and extract both binaries. Run `hexxladb check` against the restored
-copy. For an encrypted backup, supply the matching environment credential.
-Record the workflow run, signing-key fingerprint, installation result,
-backup/restore result, and upgrade/refusal drill with the release evidence.
+After the checks pass, create and push an annotated tag on the verified
+commit from `main`. Treat published tags as immutable.
 
 Rollback means deploying the previously verified application build against a
 recovery-set copy whose format it supports. Never open the sole upgraded data

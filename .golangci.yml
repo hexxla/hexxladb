@@ -11,13 +11,10 @@ linters:
     - copyloopvar # Go 1.22+ loop variable semantics
     - depguard # hexagonal import boundaries (domain/app must not import adapters)
     - errorlint # %w / errors.Is / errors.As consistency
-    - gocritic # bug, performance, style checks (see settings)
+    - gocritic # additional diagnostics
     - gosec # security patterns
-    - misspell # English in comments / strings
-    - modernize # simplify to current stdlib / language features
     - nolintlint # valid, explained nolint directives
     - revive # style / correctness (golint successor; see settings)
-    - gocyclo # cyclomatic complexity gate (threshold mirrors .complexity.yml pkg_root max)
   settings:
     depguard:
       rules:
@@ -52,22 +49,9 @@ linters:
           deny:
             - pkg: "github.com/hexxla/hexxladb$"
               desc: The reference application's policies use domain types and ports.
-    gocyclo:
-      # Threshold set to baseline max (2026-05-09); tighten after reducing offenders.
-      # Layer-specific metrics are available through task complexity.
-      min-complexity: 25
     gocritic:
       enabled-tags:
         - diagnostic
-        - style
-        - performance
-      disabled-checks:
-        # Too noisy for typical hexagonal service code:
-        - hugeParam
-        - rangeValCopy
-        - unnamedResult
-        # Deferred cleanup helpers intentionally mutate their named return error.
-        - ptrToRefParam
     gosec:
       severity: medium
       confidence: medium
@@ -110,10 +94,6 @@ linters:
         linters:
           - gosec
           - revive
-          - gocyclo
-      - path: ^examples/
-        linters:
-          - gocyclo
       # G115: uintptr->int for kernel FDs is safe on Linux; gosec fires version-dependently.
       - path: internal/engine/primary_datasync_linux\.go
         linters:

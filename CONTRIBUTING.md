@@ -5,8 +5,8 @@
 - **Go 1.27.3 or newer**, as required by [`go.mod`](go.mod). [Go toolchain selection](https://go.dev/doc/toolchain) can select the required version automatically.
 - **[Task](https://taskfile.dev)** v3 for local repository tasks. GitHub Actions runs the validation script directly.
 - Repository analyzers require no global installation. [`scripts/tool.sh`](scripts/tool.sh)
-  runs reviewed versions of golangci-lint, govulncheck, gocyclo, and
-  gocognit with the active Go toolchain. The first run needs network access.
+  runs reviewed versions of the CI tools with the active Go toolchain.
+  The first run needs network access.
   Subsequent runs use the Go module and toolchain caches.
 - Optional: the [staged secret-scanning Git hook](#optional-secret-scanning-hook).
 
@@ -43,18 +43,16 @@ Copy [`.env.example`](.env.example) to `.env` if you use a local env file (the b
 
 Run `task ci` before pushing. The [Required CI job](.github/workflows/ci.yml)
 uses the same [runner](scripts/ci.sh) and scans the pushed commit range for secrets.
-The runner validates module metadata, workflows, Go formatting and lint, import
-boundaries, the exported API baseline, known vulnerabilities, and dependency
-licenses. One serialized race run writes coverage to `.tmp/coverage.out`.
-GitHub Actions uses the Go version declared in `go.mod` for builds, tests,
-lint, and vulnerability scans.
+The runner checks module metadata, workflows, Go formatting and lint, import
+boundaries, the exported API baseline, and the serialized race suite. GitHub
+Actions uses the Go version declared in `go.mod`.
 
-The scheduled Security workflow runs `govulncheck`. Dispatch it manually
-for the broader Trivy inventory report. Re-enable the Security and
-Integration workflows in GitHub if their schedules are disabled for inactivity.
+The Security workflow runs `govulncheck` on a schedule and on demand. The
+Integration workflow runs the crash and recovery suite separately. Re-enable
+either workflow in GitHub if its schedule is disabled for inactivity.
 
-For the optional complexity report, run `task complexity` with that profile
-from the current source or set `COVERAGE_PROFILE` to an equivalent profile.
+Run `scripts/tool.sh golangci-lint run --enable modernize ./...` for an
+optional modernization pass.
 
 Shortcuts:
 
@@ -62,7 +60,7 @@ Shortcuts:
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `task test`         | Tests with `-race`                                                                                                                                                                                                                                                                                                                                                                                          |
 | `task vet`          | `go vet` only                                                                                                                                                                                                                                                                                                                                                                                               |
-| `task govulncheck`  | Vulnerability scan only (also part of `task ci`)                                                                                                                                                                                                                                                                                                                                                            |
+| `task govulncheck`  | Run the same vulnerability scanner as the Security workflow                                                                                                                                                                                                                                                                                                                                                            |
 | `task lint`         | Pinned golangci-lint through `scripts/tool.sh`                                                                                                                                                                                                                                                                                                                                                              |
 | `task fmt`          | `gofmt -w` on module `.go` files                                                                                                                                                                                                                                                                                                                                                                            |
 | `task api-check`    | Compare the exported root API and documentation with `api/public.txt`                                                                                                                                                                                                                                                                                                                                  |
@@ -73,14 +71,11 @@ Shortcuts:
 | `task bench`        | Benchmarks (`go test -bench=. -benchmem ./...`); **not** run in default CI                                                                                                                                                                                                                                                                                                                                  |
 | `task bench-stress` | Longer **`BenchmarkAPI_*`** (preload 512 / 2k / 10k per sub-bench); **not** in CI                                                                                                                                                                                                                                                                                                                           |
 | `task fuzz`         | Short fuzz smoke on internal decoders (~2s per target); **not** in default CI                                                                                                                                                                                                                                                                                                                               |
-| `task mutation-test-dry` | Gremlins analysis from a bounded, isolated source snapshot                                                                                                                                                                                                                                                                                                                     |
-| `task mutation-test` | Full mutation run with efficacy and coverage gates; optionally set `TARGET=./package`                                                                                                                                                                                                                                                                                                                       |
 
 ## Benchmarks and fuzzing
 
 - **`task bench`** runs all benchmarks in the module. For a single package: `go test -bench=. -benchmem ./internal/lattice`.
 - **`task fuzz`** runs a **short** smoke (`-fuzztime=2s` per target) on [`internal/record`](internal/record) and [`internal/engine`](internal/engine). For longer or corpus-updating runs, use e.g. `go test ./internal/record -fuzz=FuzzDecodeCell -fuzztime=30s` (see [Go fuzzing](https://go.dev/doc/security/fuzz/)).
-- Run Gremlins only through **`task mutation-test-dry`** or **`task mutation-test`**. The task wrapper keeps Gremlins worker storage outside a size-bounded source snapshot and refuses to start when an interrupted run left stale work under `.tmp`.
 
 Compatibility expectations for releases and on-disk format: **[`VERSIONING.md`](VERSIONING.md)**.
 

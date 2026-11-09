@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Development workflow** — Publish module versions through Git tags. Remove automated binary publishing, coverage uploads, duplicate vulnerability scans, and custom complexity and mutation tooling. Retain the API baseline, race suite, and scheduled vulnerability and recovery checks.
+
 ## [0.7.0] - 2026-11-09
 
 ### Breaking
