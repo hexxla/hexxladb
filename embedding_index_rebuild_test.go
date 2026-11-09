@@ -32,7 +32,7 @@ func TestEmbeddingIndexDisconnectedRebuildKeepsExactSearch(t *testing.T) {
 	checkExact := func() {
 		t.Helper()
 		if err := db.View(func(tx *hexxladb.Tx) error {
-			hits, stats, err := tx.SearchByEmbeddingWithStats(vector, hexxladb.EmbeddingSearchConfig{MaxResults: count})
+			hits, stats, err := tx.SearchByEmbeddingWithStats(t.Context(), vector, hexxladb.EmbeddingSearchConfig{MaxResults: count})
 			if err == nil && (len(hits) != count || stats.Path != hexxladb.EmbeddingSearchPathFlat) {
 				t.Errorf("search returned %d of %d vectors on path %q", len(hits), count, stats.Path)
 			}
@@ -204,7 +204,7 @@ func putRebuildVectors(t *testing.T, db *hexxladb.DB, count int, deferred bool) 
 func assertEmbeddingSearchPath(t *testing.T, db *hexxladb.DB, want hexxladb.EmbeddingSearchPath, wantResults int) {
 	t.Helper()
 	err := db.View(func(tx *hexxladb.Tx) error {
-		results, stats, err := tx.SearchByEmbeddingWithStats([]float32{1, 0, 0}, hexxladb.EmbeddingSearchConfig{MaxResults: 10})
+		results, stats, err := tx.SearchByEmbeddingWithStats(t.Context(), []float32{1, 0, 0}, hexxladb.EmbeddingSearchConfig{MaxResults: 10})
 		if err != nil {
 			return err
 		}

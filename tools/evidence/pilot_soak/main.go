@@ -485,7 +485,7 @@ func (w *workload) performOperation(ctx context.Context) error {
 	case selection < 70:
 		name, operation = "fov_read", func() error { return w.fovRead(ctx) }
 	case selection < 85:
-		name, operation = "vector_search", w.vectorSearch
+		name, operation = "vector_search", func() error { return w.vectorSearch(ctx) }
 	default:
 		name, operation = "tag_scan", func() error { return w.tagScan(ctx) }
 	}
@@ -527,10 +527,10 @@ func (w *workload) fovRead(ctx context.Context) error {
 	})
 }
 
-func (w *workload) vectorSearch() error {
+func (w *workload) vectorSearch(ctx context.Context) error {
 	index := w.rng.intn(w.cfg.cells)
 	return w.db.View(func(tx *hexxladb.Tx) error {
-		rows, stats, err := tx.SearchByEmbeddingWithStats(w.vectors[index], hexxladb.EmbeddingSearchConfig{MaxResults: 10})
+		rows, stats, err := tx.SearchByEmbeddingWithStats(ctx, w.vectors[index], hexxladb.EmbeddingSearchConfig{MaxResults: 10})
 		if err != nil {
 			return err
 		}
@@ -690,7 +690,7 @@ func validateDatabase(ctx context.Context, db *hexxladb.DB, cells int, expectedC
 		return fmt.Errorf("durable consumer cursor: found=%t got=%d want=%d", ok, cursor, expectedCursor)
 	}
 	return db.View(func(tx *hexxladb.Tx) error {
-		rows, stats, err := tx.SearchByEmbeddingWithStats(vector, hexxladb.EmbeddingSearchConfig{MaxResults: 10})
+		rows, stats, err := tx.SearchByEmbeddingWithStats(ctx, vector, hexxladb.EmbeddingSearchConfig{MaxResults: 10})
 		if err != nil {
 			return err
 		}

@@ -52,8 +52,7 @@ For an uncertain commit outcome, close and reopen before retrying.
 `ErrCommitDurable` identifies a known-durable primary commit that requires
 recovery. See [transaction failures](./TX.md#commit-finalization-failures).
 
-`DB.Batch` remains a compatibility spelling of `DB.Update`. For historical graph
-or vector requests, use a separate `DB.View` if current data is acceptable.
+For historical graph or vector requests, use a separate `DB.View` if current data is acceptable.
 See [snapshot semantics](./TX.md#mvcc-temporal-semantics).
 
 ## Coordinates and records
@@ -159,9 +158,17 @@ its validity window. HexxlaDB does not rank by confidence or count LLM tokens du
 [`Tx.QueryCells`](../../query_exec.go) is the main entry point for finding
 seeds. It returns ranked hits containing the primary cell fields. Use
 `AssembleCellView` for one enriched cell or `LoadContext` for expansion from
-one or more seeds. `SearchCells` is a compatibility wrapper whose default
-scope is 32 rings around its center and whose default result limit is 20.
-With `QueryCells`, a zero radius leaves spatial scope unrestricted.
+one or more seeds. `CellQuery.Radius` explicitly sets the spatial scope;
+zero leaves it unrestricted. Set a positive `MaxResults` for a bounded result
+set; non-positive values allow unlimited results. To retain the former bounded
+search defaults, use `CellQuery{Radius: 32, MaxResults: 20, SortBy: SortByScore}`.
+
+Lexical scores sum each whitespace-separated token's matches: exact tag +1.0,
+tag prefix +0.8, lowercased token found verbatim in content +0.6 (otherwise a
+case-insensitive match +0.5), and exact case-insensitive source +0.3. Each
+case-folded distinct tag contributes once per token. Confidence adds
+`0.1 * Confidence` once per cell. Embedding similarity contributes when supplied;
+a blank query disables the lexical filter.
 
 The query planner uses the exact coordinate-probe count to prefer a small
 spatial disk over an unknown-cardinality tag or source range; otherwise it uses
@@ -312,7 +319,7 @@ Embeddings are optional. Configure a dimension and distance metric with [`Option
 | [`Tx.ReindexEmbeddings`](../../embedding_reindex.go)                                | Recompute vectors transactionally; the first vector can establish an unset dimension.    |
 | [`DB.EmbeddingDimension`, `DB.EmbeddingMetric`](../../embedding.go)                  | Inspect persisted vector configuration; dimension is zero before the first auto-detected write. |
 
-`EmbeddingSearchConfig.EfSearch` trades HNSW latency and allocation for recall. Zero uses a bounded dimension-aware default; explicit values from 1 through 10,000 are accepted and are raised to at least `MaxResults`. `EmbeddingSearchStats` exposes the effective value. `CellQuery.Embedding` and `CellSearchConfig.Embedding` integrate vector similarity into the query and search paths. HexxlaDB remains usable without embeddings through explicit coordinates and indexed metadata.
+`EmbeddingSearchConfig.EfSearch` trades HNSW latency and allocation for recall. Zero uses a bounded dimension-aware default; explicit values from 1 through 10,000 are accepted and are raised to at least `MaxResults`. `EmbeddingSearchStats` exposes the effective value. `CellQuery.Embedding` integrates vector similarity into cell queries. Both `SearchByEmbedding(ctx, vec, cfg)` and `SearchByEmbeddingWithStats(ctx, vec, cfg)` honor cancellation during graph traversal and flat scans. HexxlaDB remains usable without embeddings through explicit coordinates and indexed metadata.
 
 For bulk ingestion, pass `EmbeddingWriteOptions{DeferIndexMaintenance: true}`
 to each write, then call `RebuildEmbeddingIndex`. The persisted index revision

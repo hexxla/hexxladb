@@ -56,15 +56,16 @@ type EmbeddingSearchResult struct {
 // it scores the authoritative embeddings with an exact flat scan.
 // Returns empty results if no embeddings have been stored yet (dimension not configured).
 // On historical snapshots it returns [ErrHistoricalDataUnavailable].
-func (tx *Tx) SearchByEmbedding(vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, error) {
-	results, _, err := tx.SearchByEmbeddingWithStats(vec, cfg)
+// Cancellation stops graph traversal or flat scoring and returns ctx.Err().
+func (tx *Tx) SearchByEmbedding(ctx context.Context, vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, error) {
+	results, _, err := tx.SearchByEmbeddingWithStats(ctx, vec, cfg)
 	return results, err
 }
 
 // SearchByEmbeddingWithStats is [Tx.SearchByEmbedding] with execution-path
 // observability for profiling and operational metrics.
-func (tx *Tx) SearchByEmbeddingWithStats(vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, EmbeddingSearchStats, error) {
-	return tx.searchByEmbedding(context.Background(), vec, cfg)
+func (tx *Tx) SearchByEmbeddingWithStats(ctx context.Context, vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, EmbeddingSearchStats, error) {
+	return tx.searchByEmbedding(ctx, vec, cfg)
 }
 
 func (tx *Tx) searchByEmbedding(ctx context.Context, vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, EmbeddingSearchStats, error) {

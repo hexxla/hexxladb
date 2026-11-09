@@ -92,7 +92,7 @@ func BenchmarkSearchByEmbedding_HNSW(b *testing.B) {
 			b.ResetTimer()
 			for b.Loop() {
 				if err := db.View(func(tx *hexxladb.Tx) error {
-					_, err := tx.SearchByEmbedding(query, hexxladb.EmbeddingSearchConfig{MaxResults: 10})
+					_, err := tx.SearchByEmbedding(b.Context(), query, hexxladb.EmbeddingSearchConfig{MaxResults: 10})
 					return err
 				}); err != nil {
 					b.Fatal(err)

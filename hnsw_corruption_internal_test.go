@@ -59,7 +59,7 @@ func TestSearchByEmbeddingRejectsCorruptHNSWStorage(t *testing.T) {
 			}
 
 			err = db.View(func(tx *Tx) error {
-				_, err := tx.SearchByEmbedding([]float32{1, 0}, EmbeddingSearchConfig{})
+				_, err := tx.SearchByEmbedding(t.Context(), []float32{1, 0}, EmbeddingSearchConfig{})
 				return err
 			})
 			if !errors.Is(err, ErrCorruptDatabase) {
@@ -90,7 +90,7 @@ func TestSearchByEmbeddingFallsBackWhenGraphUnderfills(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.View(func(tx *Tx) error {
-		hits, stats, err := tx.SearchByEmbeddingWithStats([]float32{0, 1}, EmbeddingSearchConfig{MaxResults: 2, MinScore: 0.5})
+		hits, stats, err := tx.SearchByEmbeddingWithStats(t.Context(), []float32{0, 1}, EmbeddingSearchConfig{MaxResults: 2, MinScore: 0.5})
 		if err == nil && (stats.Path != EmbeddingSearchPathFlat || len(hits) != 1 || hits[0].Coord != second) {
 			t.Errorf("search returned %v on path %q, want exact match at %v", hits, stats.Path, second)
 		}
@@ -145,7 +145,7 @@ func TestDeleteEmbeddingFallsBackWhenRepairDisconnectsGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.View(func(tx *Tx) error {
-		hits, stats, err := tx.SearchByEmbeddingWithStats([]float32{1, 0}, EmbeddingSearchConfig{MaxResults: 1})
+		hits, stats, err := tx.SearchByEmbeddingWithStats(t.Context(), []float32{1, 0}, EmbeddingSearchConfig{MaxResults: 1})
 		if err == nil && (stats.Path != EmbeddingSearchPathFlat || len(hits) != 1) {
 			t.Errorf("search returned %v on path %q, want one exact result", hits, stats.Path)
 		}
@@ -197,7 +197,7 @@ func TestEmbeddingChurnFailureAbortsStagedVector(t *testing.T) {
 				if err != nil || !found || len(vec) != 2 || vec[0] != 1 || vec[1] != 0 {
 					t.Errorf("target embedding = %v, %t, %v", vec, found, err)
 				}
-				_, err = tx.SearchByEmbedding([]float32{1, 0}, EmbeddingSearchConfig{MaxResults: 1})
+				_, err = tx.SearchByEmbedding(t.Context(), []float32{1, 0}, EmbeddingSearchConfig{MaxResults: 1})
 				return err
 			}); err != nil {
 				t.Fatal(err)

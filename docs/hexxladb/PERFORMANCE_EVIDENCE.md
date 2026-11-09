@@ -235,12 +235,17 @@ keep the suite bounded while giving short operations enough repetitions:
 ```bash
 go test -run '^$' -bench '^BenchmarkAPI_GetCell(_MVCC|_MVCC_Encrypted)?/cells_2000$' -benchmem -benchtime=10000x -count=5 .
 go test -run '^$' -bench '^BenchmarkAPI_(WalkRing|QueryCells|LoadContext|FindSeams)$' -benchmem -benchtime=100x -count=5 .
-go test -run '^$' -bench '^BenchmarkAPI_(SearchCells|LoadContextFOV|LoadContextVoronoi|MVCCVersionResolution|SnapshotDiff)$' -benchmem -benchtime=20x -count=5 .
+go test -run '^$' -bench '^BenchmarkAPI_(QueryCellsLexical|LoadContextFOV|LoadContextVoronoi|MVCCVersionResolution|SnapshotDiff)$' -benchmem -benchtime=20x -count=5 .
 go test -run '^$' -bench '^BenchmarkAPI_(PutCell|PutCell_MVCC|BatchPutCells)$' -benchmem -benchtime=20x -count=5 .
 go test -run '^$' -bench '^BenchmarkSearchByEmbedding_HNSW/500_32d$' -benchmem -benchtime=1x -count=5 .
 go test -run '^$' -bench '^BenchmarkAPI_QueryCells_Embedding/n500_dim32$' -benchmem -benchtime=1x -count=5 .
 go test -run '^$' -bench '^BenchmarkAPI_HealthCheck/cells_2000$' -benchmem -benchtime=10x -count=5 .
 ```
+
+`BenchmarkAPI_QueryCellsLexical` now calls `QueryCells` directly with the same
+32-ring scope and 20-result limit. The historical lexical measurements below
+were collected through the removed `SearchCells` wrapper; they are retained
+as recorded rather than presented as new measurements of the direct call.
 
 The host was an Intel Core i9-14900HX running Linux/amd64 and Go 1.27.0. The
 filesystem cache and CPU frequency were not reset between samples, so the
@@ -262,7 +267,7 @@ one number. Setup is outside the timed region.
 | `LoadContextFOV` | 132 µs | 125–142 µs | 671 | open radius 5, 2,000 cells |
 | `LoadContextVoronoi` | 604 µs | 505–729 µs | 2,733 | four seeds, radius 4, 2,000 cells |
 | `FindSeams` | 610 µs | 585–616 µs | 7,685 | 100 seams, radius 3 |
-| `SearchCells`, lexical | 4.84 ms | 4.41–5.34 ms | 18,981 | one term, 2,000 cells |
+| Historical `SearchCells` wrapper, bounded lexical | 4.84 ms | 4.41–5.34 ms | 18,981 | one term, 2,000 cells |
 | `SearchByEmbedding` | 2.05 ms | 1.83–2.38 ms | 3,719 | 500 random 32d vectors, top 10, 4 KiB pages |
 | `QueryCells`, embedding | 837 µs | 667 µs–1.04 ms | 975 | 500 identical 32d vectors, unfiltered top 10, 4 KiB pages |
 | `HealthCheck` | 1.26 ms | 1.18–1.36 ms | 30,463 | 2,000 cells, all optional checks enabled |

@@ -26,8 +26,8 @@
 //     (see docs/hexxladb/OPERATIONS.md). Encryption operations include [RotateEncryption].
 //   - [DB.SnapshotDiff] — retained MVCC cell/seam history between two commit sequences;
 //     use the logical changelog for complete CDC or audit processing.
-//   - [DB.View], [DB.ViewAt], [DB.ViewAtTime], [DB.Update], [DB.Batch], [Tx] —
-//     Bolt-style transactions; [DB.Batch] is an alias for [DB.Update]; see docs/hexxladb/TX.md.
+//   - [DB.View], [DB.ViewAt], [DB.ViewAtTime], [DB.Update], [Tx] —
+//     Bolt-style transactions; see docs/hexxladb/TX.md.
 //     [DB.WriteStats] and [DB.WALStats] expose cumulative write-phase timing and redo-sync counters.
 //   - [DB.StorageStats] — physical, live, reusable, and reclaimable storage accounting;
 //     [DB.ReclaimTail] safely truncates a contiguous authenticated-freelist suffix.

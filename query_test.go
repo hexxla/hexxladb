@@ -213,7 +213,7 @@ func TestQueryCells_HybridLexicalFilterAndCandidateLimit(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := db.View(func(tx *hexxladb.Tx) error {
-				_, stats, err := tx.SearchByEmbeddingWithStats(vec, hexxladb.EmbeddingSearchConfig{MaxResults: 1})
+				_, stats, err := tx.SearchByEmbeddingWithStats(t.Context(), vec, hexxladb.EmbeddingSearchConfig{MaxResults: 1})
 				if err != nil {
 					return err
 				}
@@ -892,28 +892,6 @@ func TestQueryCells_TagAndTemporalAndConfidence(t *testing.T) {
 		}
 		if len(results) > 0 && results[0].Cell.RawContent != "pass" {
 			t.Errorf("wrong cell: %s", results[0].Cell.RawContent)
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// Ensure existing SearchCells tests still pass (backward compat via wrapper).
-func TestSearchCells_StillWorks(t *testing.T) {
-	t.Parallel()
-	db := openQueryDB(t)
-
-	putQueryCell(t, db, hexxladb.Coord{Q: 0, R: 0}, "database search", "src", []string{"fact"}, 0.9, time.Time{})
-
-	ctx := t.Context()
-	if err := db.View(func(tx *hexxladb.Tx) error {
-		results, err := tx.SearchCells(ctx, hexxladb.CellSearchConfig{Query: "database"})
-		if err != nil {
-			return err
-		}
-		if len(results) == 0 {
-			t.Error("SearchCells returned 0 results after refactor")
 		}
 		return nil
 	}); err != nil {

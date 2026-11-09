@@ -878,9 +878,9 @@ func BenchmarkAPI_WalkRingAt(b *testing.B) {
 	}
 }
 
-// BenchmarkAPI_SearchCells measures [Tx.SearchCells] lexical search with varying query complexity.
+// BenchmarkAPI_QueryCellsLexical measures [Tx.QueryCells] lexical search with varying query complexity.
 // Sub-benchmarks: single-term hit, multi-term (two tokens), tag-filter-only.
-func BenchmarkAPI_SearchCells(b *testing.B) {
+func BenchmarkAPI_QueryCellsLexical(b *testing.B) {
 	for _, n := range apiBenchPreloadSizes(b) {
 		db, _ := benchAPIPreloadCells(b, n)
 		b.Cleanup(func() { _ = db.Close() })
@@ -892,9 +892,11 @@ func BenchmarkAPI_SearchCells(b *testing.B) {
 			b.ResetTimer()
 			for b.Loop() {
 				err := db.View(func(tx *hexxladb.Tx) error {
-					_, err := tx.SearchCells(ctx, hexxladb.CellSearchConfig{
+					_, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 						Query:      "bench",
 						MaxResults: 20,
+						Radius:     32,
+						SortBy:     hexxladb.SortByScore,
 					})
 					return err
 				})
@@ -910,9 +912,11 @@ func BenchmarkAPI_SearchCells(b *testing.B) {
 			b.ResetTimer()
 			for b.Loop() {
 				err := db.View(func(tx *hexxladb.Tx) error {
-					_, err := tx.SearchCells(ctx, hexxladb.CellSearchConfig{
+					_, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 						Query:      "bench preload",
 						MaxResults: 20,
+						Radius:     32,
+						SortBy:     hexxladb.SortByScore,
 					})
 					return err
 				})
@@ -928,9 +932,11 @@ func BenchmarkAPI_SearchCells(b *testing.B) {
 			b.ResetTimer()
 			for b.Loop() {
 				err := db.View(func(tx *hexxladb.Tx) error {
-					_, err := tx.SearchCells(ctx, hexxladb.CellSearchConfig{
+					_, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 						Query:      "zzz_nonexistent_xyzzy",
 						MaxResults: 20,
+						Radius:     32,
+						SortBy:     hexxladb.SortByScore,
 					})
 					return err
 				})

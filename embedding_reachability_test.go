@@ -45,7 +45,7 @@ func TestEmbeddingInsertDetectsLostReachability(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.View(func(tx *Tx) error {
-		hits, stats, err := tx.SearchByEmbeddingWithStats(query, EmbeddingSearchConfig{MaxResults: 40, EfSearch: 1000})
+		hits, stats, err := tx.SearchByEmbeddingWithStats(t.Context(), query, EmbeddingSearchConfig{MaxResults: 40, EfSearch: 1000})
 		if err != nil {
 			return err
 		}
@@ -90,7 +90,7 @@ func TestEmbeddingLegacyGraphUsesExactUntilRebuilt(t *testing.T) {
 			assertPath := func(want EmbeddingSearchPath) {
 				t.Helper()
 				if err := db.View(func(tx *Tx) error {
-					_, stats, err := tx.SearchByEmbeddingWithStats([]float32{1, 0, 0}, EmbeddingSearchConfig{MaxResults: 1})
+					_, stats, err := tx.SearchByEmbeddingWithStats(t.Context(), []float32{1, 0, 0}, EmbeddingSearchConfig{MaxResults: 1})
 					if err == nil && stats.Path != want {
 						t.Fatalf("search path %q, want %q", stats.Path, want)
 					}

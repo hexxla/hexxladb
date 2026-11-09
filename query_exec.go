@@ -14,8 +14,6 @@ import (
 	"github.com/hexxla/hexxladb/internal/record"
 )
 
-const defaultQueryMaxResults = 20
-const defaultQueryScanRadius = 32
 const preferredSpatialPlanProbeLimit = 4096
 
 // QueryCells executes a [CellQuery] against the transaction's snapshot and
@@ -29,6 +27,13 @@ const preferredSpatialPlanProbeLimit = 4096
 // positive [CellQuery.MaxScanRows] with a required tag, source, or radius
 // scores the bounded filter scan exactly. With unlimited results and neither
 // budget set, the query scores every stored vector exactly.
+//
+// Lexical scoring sums each token's contributions: exact tag +1.0, tag prefix
+// +0.8, a lowercased token found verbatim in content +0.6, otherwise a
+// case-insensitive content match +0.5, and exact case-insensitive source +0.3.
+// Each distinct case-folded tag contributes at most once per token. Confidence
+// adds 0.1 times its value once per cell; embedding similarity is added when
+// supplied. A blank query disables lexical filtering.
 //
 // Results are filtered, sorted, and capped to [CellQuery.MaxResults].
 // If the row budget is exhausted, the sorted partial results accompany

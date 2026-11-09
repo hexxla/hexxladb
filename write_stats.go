@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// WriteStats reports cumulative in-process timing for public [DB.Update] and [DB.Batch]
+// WriteStats reports cumulative in-process timing for public [DB.Update]
 // calls since the database was opened. Read two snapshots to calculate interval averages.
 // Durations include failed attempts that reached the corresponding phase.
 type WriteStats struct {

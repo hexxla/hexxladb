@@ -43,10 +43,9 @@ Exported entrypoints:
     include RotateEncryption.
   - DB.SnapshotDiff — retained MVCC cell/seam history between two commit
     sequences; use the logical changelog for complete CDC or audit processing.
-  - DB.View, DB.ViewAt, DB.ViewAtTime, DB.Update, DB.Batch, Tx — Bolt-style
-    transactions; DB.Batch is an alias for DB.Update; see docs/hexxladb/TX.md.
-    DB.WriteStats and DB.WALStats expose cumulative write-phase timing and
-    redo-sync counters.
+  - DB.View, DB.ViewAt, DB.ViewAtTime, DB.Update, Tx — Bolt-style transactions;
+    see docs/hexxladb/TX.md. DB.WriteStats and DB.WALStats expose cumulative
+    write-phase timing and redo-sync counters.
   - DB.StorageStats — physical, live, reusable, and reclaimable
     storage accounting; DB.ReclaimTail safely truncates a contiguous
     authenticated-freelist suffix.
@@ -672,61 +671,6 @@ func NewUserMessageCell(coord PackedCoord, content, sessionID string, confidence
     NewUserMessageCell returns a CellRecord pre-configured for a user message
     with standard tags.
 
-type CellSearchConfig struct {
-	// Query is matched against RawContent (case-insensitive substring),
-	// Tags (exact and prefix, case-insensitive), and SourceID (case-insensitive
-	// exact match). At least one whitespace-separated token must match.
-	// An empty query disables the lexical filter.
-	Query string
-
-	// RequireTags filters to cells that carry ALL of these tags (AND semantics).
-	RequireTags []string
-	// AnyTags filters to cells that carry AT LEAST ONE of these tags (OR semantics).
-	// If both RequireTags and AnyTags are set, both conditions must hold.
-	AnyTags []string
-
-	// MinConfidence excludes cells with Provenance.Confidence below this value.
-	// Zero means no lower bound.
-	MinConfidence float64
-	// MaxConfidence excludes cells with Provenance.Confidence above this value.
-	// Zero means no upper bound.
-	MaxConfidence float64
-
-	// SourceID restricts results to cells whose Provenance.SourceID matches exactly.
-	// Empty means no restriction.
-	SourceID string
-
-	// Center and Radius apply a spatial restriction: only cells within Radius rings
-	// of Center are considered. Zero Radius uses MaxScanRadius (default 32).
-	Center Coord
-	Radius int
-
-	// MaxResults caps the number of returned results (default 20; 0 uses default).
-	MaxResults int
-
-	// MaxScanRadius controls how far from Center to walk when Radius is zero
-	// (default 32). Increase for sparse or geographically wide databases.
-	MaxScanRadius int
-
-	// Embedding enables ANN-accelerated seed selection. When non-nil, the
-	// query planner uses [Tx.SearchByEmbedding] to narrow the candidate set
-	// and boosts scores by embedding similarity. The vector length must match
-	// the database's embedding dimension (auto-detected on first [Tx.PutEmbedding]).
-	Embedding []float32
-}
-    CellSearchConfig controls how Tx.SearchCells filters and scores cells.
-
-type CellSearchResult struct {
-	// Cell contains the primary fields of the matching cell.
-	Cell CellView
-	// Score is the composite relevance score (higher is more relevant).
-	// See the scoring table in the package documentation for breakdown.
-	Score float64
-}
-    CellSearchResult is one entry returned by Tx.SearchCells. The Cell.Coord
-    field can be used directly as a seed for Tx.LoadContext or collected into
-    LoadContextConfig.Seeds for multi-seed assembly.
-
 type CellValidator interface {
 	ValidateCell(rec CellRecord) error
 }
@@ -870,12 +814,6 @@ func (db *DB) BackupTo(ctx context.Context, destPath string) error
     the source credentials; restoring an encrypted backup requires the same
     encryption key or passphrase. Restore changelog-enabled backups with
     ChangelogEnabled set.
-
-func (db *DB) Batch(fn func(*Tx) error) error
-    Batch runs fn inside a read-write transaction. It is equivalent to
-    DB.Update; the name matches spec and Bolt-style expectations for a batched
-    write entrypoint. Semantics and locking are identical to Update (exclusive
-    writer).
 
 func (db *DB) BatchPutCells(ctx context.Context, cells []CellRecord, opts *BatchPutCellOptions) (BatchPutCellResult, error)
     BatchPutCells writes multiple cells in batched transactions with optional
@@ -1622,8 +1560,8 @@ type Tx struct {
 	// Has unexported fields.
 }
     Tx is a database transaction or snapshot view. Obtain it only from DB.View,
-    DB.ViewAt, DB.Update, or DB.Batch. A Tx is valid only for the duration of
-    the callback; do not store it past the callback return.
+    DB.ViewAt, or DB.Update. A Tx is valid only for the duration of the
+    callback; do not store it past the callback return.
 
 func (tx *Tx) AscendCellsBySource(ctx context.Context, sourceID string, fn func(CellRecord) bool) error
     AscendCellsBySource scans the source/ secondary index for sourceID and calls
@@ -1908,6 +1846,13 @@ func (tx *Tx) QueryCells(ctx context.Context, q CellQuery) ([]CellQueryResult, e
     scores the bounded filter scan exactly. With unlimited results and neither
     budget set, the query scores every stored vector exactly.
 
+    Lexical scoring sums each token's contributions: exact tag +1.0, tag
+    prefix +0.8, a lowercased token found verbatim in content +0.6, otherwise a
+    case-insensitive content match +0.5, and exact case-insensitive source +0.3.
+    Each distinct case-folded tag contributes at most once per token. Confidence
+    adds 0.1 times its value once per cell; embedding similarity is added when
+    supplied. A blank query disables lexical filtering.
+
     Results are filtered, sorted, and capped to CellQuery.MaxResults. If the row
     budget is exhausted, the sorted partial results accompany ErrQueryScanLimit.
 
@@ -1947,44 +1892,18 @@ func (tx *Tx) ScanContextRaw(ctx context.Context, center Coord, maxR, maxCells i
     maxCells existing cell records. Raw primitive; prefer Tx.LoadContext for new
     callers.
 
-func (tx *Tx) SearchByEmbedding(vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, error)
+func (tx *Tx) SearchByEmbedding(ctx context.Context, vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, error)
     SearchByEmbedding finds the cells whose embeddings are most similar to vec.
     Uses HNSW when the graph is current and supplies enough candidates.
     Otherwise it scores the authoritative embeddings with an exact
     flat scan. Returns empty results if no embeddings have been stored
     yet (dimension not configured). On historical snapshots it returns
-    ErrHistoricalDataUnavailable.
+    ErrHistoricalDataUnavailable. Cancellation stops graph traversal or flat
+    scoring and returns ctx.Err().
 
-func (tx *Tx) SearchByEmbeddingWithStats(vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, EmbeddingSearchStats, error)
+func (tx *Tx) SearchByEmbeddingWithStats(ctx context.Context, vec []float32, cfg EmbeddingSearchConfig) ([]EmbeddingSearchResult, EmbeddingSearchStats, error)
     SearchByEmbeddingWithStats is Tx.SearchByEmbedding with execution-path
     observability for profiling and operational metrics.
-
-func (tx *Tx) SearchCells(ctx context.Context, cfg CellSearchConfig) ([]CellSearchResult, error)
-    SearchCells scans visible cells and returns results ranked by relevance
-    score.
-
-    SearchCells is a convenience wrapper over Tx.QueryCells. For full control
-    over scope, sort order, temporal filters, ExcludeTags, and Explain mode use
-    Tx.QueryCells directly.
-
-    Multi-word queries are tokenized on whitespace. Each token is scored
-    independently and contributions are summed, including when an embedding is
-    supplied.
-
-    Scoring per token (contributions are additive across all tokens):
-      - Token matches a tag exactly (case-insensitive): +1.0
-      - Token is a prefix of a tag (case-insensitive): +0.8
-      - Lowercased token found verbatim in RawContent: +0.6
-      - Token found case-insensitively in RawContent: +0.5
-      - Token matches SourceID exactly (case-insensitive): +0.3
-      - Confidence bonus (once, not per token): +0.1 × Confidence
-
-    Each tag contributes at most once per token (exact beats prefix). Results
-    are sorted descending by Score; ties broken by Confidence descending.
-    An empty Query still applies all other filters and scores by Confidence plus
-    embedding similarity when supplied.
-
-    For new callers, prefer Tx.QueryCells with an explicit search scope.
 
 func (tx *Tx) TagCooccurrences(ctx context.Context, minCount int) ([]TagPair, error)
     TagCooccurrences returns pairs of tags that appear together on visible
@@ -2070,10 +1989,10 @@ type WriteStats struct {
 	Durability   time.Duration
 	Finalization time.Duration
 }
-    WriteStats reports cumulative in-process timing for public DB.Update
-    and DB.Batch calls since the database was opened. Read two snapshots to
-    calculate interval averages. Durations include failed attempts that reached
-    the corresponding phase.
+    WriteStats reports cumulative in-process timing for public DB.Update calls
+    since the database was opened. Read two snapshots to calculate interval
+    averages. Durations include failed attempts that reached the corresponding
+    phase.
 
 ALIASED TYPE DEFINITIONS
 

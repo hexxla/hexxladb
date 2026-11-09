@@ -6,7 +6,7 @@ import (
 	"github.com/hexxla/hexxladb"
 )
 
-func TestSearchCells_DuplicateTagsDoNotInflateScore(t *testing.T) {
+func TestQueryCellsLexical_DuplicateTagsDoNotInflateScore(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
 	ctx := t.Context()
@@ -24,10 +24,13 @@ func TestSearchCells_DuplicateTagsDoNotInflateScore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var results []hexxladb.CellSearchResult
+	var results []hexxladb.CellQueryResult
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		results, err = tx.SearchCells(ctx, hexxladb.CellSearchConfig{Query: "topic", MaxResults: 10})
+		results, err = tx.QueryCells(ctx, hexxladb.CellQuery{Query: "topic", MaxResults: 10,
+			Radius: 32,
+			SortBy: hexxladb.SortByScore,
+		})
 		return err
 	}); err != nil {
 		t.Fatal(err)

@@ -21,15 +21,19 @@ func openSearchDB(t *testing.T) *hexxladb.DB {
 	return db
 }
 
-func TestSearchCells_EmptyDB(t *testing.T) {
+func TestQueryCellsLexical_EmptyDB(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
 	ctx := t.Context()
 
-	var results []hexxladb.CellSearchResult
+	var results []hexxladb.CellQueryResult
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		results, err = tx.SearchCells(ctx, hexxladb.CellSearchConfig{Query: "anything"})
+		results, err = tx.QueryCells(ctx, hexxladb.CellQuery{Query: "anything",
+			Radius:     32,
+			MaxResults: 20,
+			SortBy:     hexxladb.SortByScore,
+		})
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -39,7 +43,7 @@ func TestSearchCells_EmptyDB(t *testing.T) {
 	}
 }
 
-func TestSearchCells_TagExactMatch(t *testing.T) {
+func TestQueryCellsLexical_TagExactMatch(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
 	ctx := t.Context()
@@ -58,10 +62,14 @@ func TestSearchCells_TagExactMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var results []hexxladb.CellSearchResult
+	var results []hexxladb.CellQueryResult
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		results, err = tx.SearchCells(ctx, hexxladb.CellSearchConfig{Query: "science"})
+		results, err = tx.QueryCells(ctx, hexxladb.CellQuery{Query: "science",
+			Radius:     32,
+			MaxResults: 20,
+			SortBy:     hexxladb.SortByScore,
+		})
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -79,7 +87,7 @@ func TestSearchCells_TagExactMatch(t *testing.T) {
 	}
 }
 
-func TestSearchCells_ContentSubstringMatch(t *testing.T) {
+func TestQueryCellsLexical_ContentSubstringMatch(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
 	ctx := t.Context()
@@ -93,10 +101,14 @@ func TestSearchCells_ContentSubstringMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var results []hexxladb.CellSearchResult
+	var results []hexxladb.CellQueryResult
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		results, err = tx.SearchCells(ctx, hexxladb.CellSearchConfig{Query: "france"})
+		results, err = tx.QueryCells(ctx, hexxladb.CellQuery{Query: "france",
+			Radius:     32,
+			MaxResults: 20,
+			SortBy:     hexxladb.SortByScore,
+		})
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -111,7 +123,7 @@ func TestSearchCells_ContentSubstringMatch(t *testing.T) {
 	}
 }
 
-func TestSearchCells_RequireTagsAND(t *testing.T) {
+func TestQueryCellsLexical_RequireTagsAND(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
 	ctx := t.Context()
@@ -132,11 +144,14 @@ func TestSearchCells_RequireTagsAND(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var results []hexxladb.CellSearchResult
+	var results []hexxladb.CellQueryResult
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		results, err = tx.SearchCells(ctx, hexxladb.CellSearchConfig{
+		results, err = tx.QueryCells(ctx, hexxladb.CellQuery{
 			RequireTags: []string{"fact", "science"},
+			Radius:      32,
+			MaxResults:  20,
+			SortBy:      hexxladb.SortByScore,
 		})
 		return err
 	}); err != nil {
@@ -151,7 +166,7 @@ func TestSearchCells_RequireTagsAND(t *testing.T) {
 	}
 }
 
-func TestSearchCells_AnyTagsOR(t *testing.T) {
+func TestQueryCellsLexical_AnyTagsOR(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
 	ctx := t.Context()
@@ -175,11 +190,14 @@ func TestSearchCells_AnyTagsOR(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var results []hexxladb.CellSearchResult
+	var results []hexxladb.CellQueryResult
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		results, err = tx.SearchCells(ctx, hexxladb.CellSearchConfig{
-			AnyTags: []string{"science", "history"},
+		results, err = tx.QueryCells(ctx, hexxladb.CellQuery{
+			AnyTags:    []string{"science", "history"},
+			Radius:     32,
+			MaxResults: 20,
+			SortBy:     hexxladb.SortByScore,
 		})
 		return err
 	}); err != nil {
@@ -191,7 +209,7 @@ func TestSearchCells_AnyTagsOR(t *testing.T) {
 	}
 }
 
-func TestSearchCells_MinConfidenceFilter(t *testing.T) {
+func TestQueryCellsLexical_MinConfidenceFilter(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
 	ctx := t.Context()
@@ -210,11 +228,14 @@ func TestSearchCells_MinConfidenceFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var results []hexxladb.CellSearchResult
+	var results []hexxladb.CellQueryResult
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		results, err = tx.SearchCells(ctx, hexxladb.CellSearchConfig{
+		results, err = tx.QueryCells(ctx, hexxladb.CellQuery{
 			MinConfidence: 0.8,
+			Radius:        32,
+			MaxResults:    20,
+			SortBy:        hexxladb.SortByScore,
 		})
 		return err
 	}); err != nil {
@@ -229,7 +250,7 @@ func TestSearchCells_MinConfidenceFilter(t *testing.T) {
 	}
 }
 
-func TestSearchCells_MaxResults(t *testing.T) {
+func TestQueryCellsLexical_MaxResults(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
 	ctx := t.Context()
@@ -248,12 +269,14 @@ func TestSearchCells_MaxResults(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var results []hexxladb.CellSearchResult
+	var results []hexxladb.CellQueryResult
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		results, err = tx.SearchCells(ctx, hexxladb.CellSearchConfig{
+		results, err = tx.QueryCells(ctx, hexxladb.CellQuery{
 			Query:      "mytag",
 			MaxResults: 3,
+			Radius:     32,
+			SortBy:     hexxladb.SortByScore,
 		})
 		return err
 	}); err != nil {
@@ -265,7 +288,7 @@ func TestSearchCells_MaxResults(t *testing.T) {
 	}
 }
 
-func TestSearchCells_SpatialRadiusFilter(t *testing.T) {
+func TestQueryCellsLexical_SpatialRadiusFilter(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
 	ctx := t.Context()
@@ -286,12 +309,14 @@ func TestSearchCells_SpatialRadiusFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var results []hexxladb.CellSearchResult
+	var results []hexxladb.CellQueryResult
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		results, err = tx.SearchCells(ctx, hexxladb.CellSearchConfig{
-			Center: hexxladb.Coord{},
-			Radius: 3, // only cells within 3 rings of origin
+		results, err = tx.QueryCells(ctx, hexxladb.CellQuery{
+			Center:     hexxladb.Coord{},
+			Radius:     3, // only cells within 3 rings of origin,
+			MaxResults: 20,
+			SortBy:     hexxladb.SortByScore,
 		})
 		return err
 	}); err != nil {
@@ -305,7 +330,7 @@ func TestSearchCells_SpatialRadiusFilter(t *testing.T) {
 	}
 }
 
-func TestSearchCells_MultiTermQuery_BothTermsScoreHigher(t *testing.T) {
+func TestQueryCellsLexical_MultiTermQuery_BothTermsScoreHigher(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
 	ctx := t.Context()
@@ -332,10 +357,13 @@ func TestSearchCells_MultiTermQuery_BothTermsScoreHigher(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var results []hexxladb.CellSearchResult
+	var results []hexxladb.CellQueryResult
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		results, err = tx.SearchCells(ctx, hexxladb.CellSearchConfig{Query: "machine learning", MaxResults: 10})
+		results, err = tx.QueryCells(ctx, hexxladb.CellQuery{Query: "machine learning", MaxResults: 10,
+			Radius: 32,
+			SortBy: hexxladb.SortByScore,
+		})
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -366,7 +394,7 @@ func TestSearchCells_MultiTermQuery_BothTermsScoreHigher(t *testing.T) {
 	}
 }
 
-func TestSearchCells_MultiTermQuery_TagAndContent(t *testing.T) {
+func TestQueryCellsLexical_MultiTermQuery_TagAndContent(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
 	ctx := t.Context()
@@ -387,10 +415,13 @@ func TestSearchCells_MultiTermQuery_TagAndContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var results []hexxladb.CellSearchResult
+	var results []hexxladb.CellQueryResult
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		results, err = tx.SearchCells(ctx, hexxladb.CellSearchConfig{Query: "go concurrency", MaxResults: 10})
+		results, err = tx.QueryCells(ctx, hexxladb.CellQuery{Query: "go concurrency", MaxResults: 10,
+			Radius: 32,
+			SortBy: hexxladb.SortByScore,
+		})
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -405,7 +436,7 @@ func TestSearchCells_MultiTermQuery_TagAndContent(t *testing.T) {
 	}
 }
 
-func TestSearchCells_SortedByScore(t *testing.T) {
+func TestQueryCellsLexical_SortedByScore(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
 	ctx := t.Context()
@@ -426,10 +457,13 @@ func TestSearchCells_SortedByScore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var results []hexxladb.CellSearchResult
+	var results []hexxladb.CellQueryResult
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		results, err = tx.SearchCells(ctx, hexxladb.CellSearchConfig{Query: "science", MaxResults: 10})
+		results, err = tx.QueryCells(ctx, hexxladb.CellQuery{Query: "science", MaxResults: 10,
+			Radius: 32,
+			SortBy: hexxladb.SortByScore,
+		})
 		return err
 	}); err != nil {
 		t.Fatal(err)

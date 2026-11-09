@@ -106,7 +106,7 @@ func TestDB_ViewUpdate_kv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = db.Batch(func(tx *hexxladb.Tx) error {
+	err = db.Update(func(tx *hexxladb.Tx) error {
 		return tx.Put([]byte("k2"), []byte("v2"))
 	})
 	if err != nil {
@@ -115,7 +115,7 @@ func TestDB_ViewUpdate_kv(t *testing.T) {
 	err = db.View(func(tx *hexxladb.Tx) error {
 		v, ok, err := tx.Get([]byte("k2"))
 		if err != nil || !ok || string(v) != "v2" {
-			t.Fatalf("after Batch Put: ok=%v v=%q err=%v", ok, v, err)
+			t.Fatalf("after Update Put: ok=%v v=%q err=%v", ok, v, err)
 		}
 		return nil
 	})
@@ -139,9 +139,9 @@ func TestDB_ViewClosed(t *testing.T) {
 	if !errors.Is(err, hexxladb.ErrDatabaseClosed) {
 		t.Fatalf("View: want ErrDatabaseClosed, got %v", err)
 	}
-	err = db.Batch(func(_ *hexxladb.Tx) error { return nil })
+	err = db.Update(func(_ *hexxladb.Tx) error { return nil })
 	if !errors.Is(err, hexxladb.ErrDatabaseClosed) {
-		t.Fatalf("Batch: want ErrDatabaseClosed, got %v", err)
+		t.Fatalf("Update: want ErrDatabaseClosed, got %v", err)
 	}
 }
 
@@ -155,9 +155,6 @@ func TestDB_UpdateNilFn(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	if err := db.Update(nil); !errors.Is(err, hexxladb.ErrNilCallback) {
 		t.Fatalf("got %v", err)
-	}
-	if err := db.Batch(nil); !errors.Is(err, hexxladb.ErrNilCallback) {
-		t.Fatalf("Batch nil: got %v", err)
 	}
 	if err := db.View(nil); !errors.Is(err, hexxladb.ErrNilCallback) {
 		t.Fatalf("got %v", err)
@@ -405,40 +402,5 @@ func TestDB_changelog_resumeAfterReopen(t *testing.T) {
 	}
 	if len(tail) != 0 {
 		t.Fatalf("after reopen ReadSince(lastSeq): want empty, got %d", len(tail))
-	}
-}
-
-func TestDB_batchBlocksView(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "bblock.db")
-	db, err := hexxladb.Open(path, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	started := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		_ = db.Batch(func(_ *hexxladb.Tx) error {
-			close(started)
-			<-done
-			return nil
-		})
-	}()
-	<-started
-	ch := make(chan error, 1)
-	go func() {
-		ch <- db.View(func(_ *hexxladb.Tx) error { return nil })
-	}()
-	select {
-	case err := <-ch:
-		t.Fatalf("View should block during Batch: %v", err)
-	case <-time.After(50 * time.Millisecond):
-	}
-	close(done)
-	if err := <-ch; err != nil {
-		t.Fatal(err)
 	}
 }

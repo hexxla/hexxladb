@@ -15,7 +15,7 @@ import (
 	"github.com/hexxla/hexxladb/internal/lattice"
 )
 
-// Tx is a database transaction or snapshot view. Obtain it only from [DB.View], [DB.ViewAt], [DB.Update], or [DB.Batch].
+// Tx is a database transaction or snapshot view. Obtain it only from [DB.View], [DB.ViewAt], or [DB.Update].
 // A Tx is valid only for the duration of the callback; do not store it past the callback return.
 type Tx struct {
 	db                     *DB
@@ -239,13 +239,6 @@ func (db *DB) Update(fn func(*Tx) error) error { //nolint:gocyclo // durability 
 		return err
 	}
 	return nil
-}
-
-// Batch runs fn inside a read-write transaction. It is equivalent to [DB.Update]; the name
-// matches spec and Bolt-style expectations for a batched write entrypoint. Semantics and
-// locking are identical to Update (exclusive writer).
-func (db *DB) Batch(fn func(*Tx) error) error {
-	return db.Update(fn)
 }
 
 // Get returns a physical key from the ordered store, or (nil, false, nil) if missing.

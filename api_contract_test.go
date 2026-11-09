@@ -35,7 +35,7 @@ func TestHistoricalViewRejectsCurrentGraphAndVectorData(t *testing.T) {
 		}
 		_, _, edgeErr := tx.GetEdge(key, toKey, "rel")
 		_, _, vecErr := tx.GetEmbedding(key)
-		_, annErr := tx.SearchByEmbedding([]float32{1, 0}, hexxladb.EmbeddingSearchConfig{})
+		_, annErr := tx.SearchByEmbedding(t.Context(), []float32{1, 0}, hexxladb.EmbeddingSearchConfig{})
 		_, hybridErr := tx.QueryCells(ctx, hexxladb.CellQuery{Embedding: []float32{1, 0}})
 		_, walkErr := tx.WalkEdges(ctx, from, "rel", 1, 1)
 		_, graphErr := tx.LoadContext(ctx, hexxladb.LoadContextConfig{Seeds: []hexxladb.Coord{from}, EdgeFilter: "rel"})
@@ -133,7 +133,7 @@ func TestRawPutProtectsDatabaseNamespaces(t *testing.T) {
 	}
 }
 
-func TestQueryCellsHitIncludesClusterHintAndSearchRetainsScope(t *testing.T) {
+func TestQueryCellsHitIncludesClusterHintAndExplicitScope(t *testing.T) {
 	t.Parallel()
 	db := openHookDB(t, nil)
 	coord, hint := hexxladb.Coord{Q: 40}, hexxladb.Coord{Q: 39}
@@ -150,9 +150,13 @@ func TestQueryCellsHitIncludesClusterHintAndSearchRetainsScope(t *testing.T) {
 		if err != nil || len(hits) != 1 || hits[0].Cell.ClusterHint == nil || *hits[0].Cell.ClusterHint != hint {
 			t.Fatalf("query hits = %+v, %v", hits, err)
 		}
-		legacy, err := tx.SearchCells(t.Context(), hexxladb.CellSearchConfig{Query: "needle"})
-		if err != nil || len(legacy) != 0 {
-			t.Fatalf("compatibility search scope = %+v, %v", legacy, err)
+		scoped, err := tx.QueryCells(t.Context(), hexxladb.CellQuery{Query: "needle",
+			Radius:     32,
+			MaxResults: 20,
+			SortBy:     hexxladb.SortByScore,
+		})
+		if err != nil || len(scoped) != 0 {
+			t.Fatalf("explicit query scope = %+v, %v", scoped, err)
 		}
 		return nil
 	}); err != nil {

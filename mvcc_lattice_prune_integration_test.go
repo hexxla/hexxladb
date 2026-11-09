@@ -82,7 +82,7 @@ func TestIntegration_MVCC_latticeAndHighChurnPrune(t *testing.T) {
 		}
 	}
 
-	if err := db.Batch(func(tx *hexxladb.Tx) error {
+	if err := db.Update(func(tx *hexxladb.Tx) error {
 		for i, coord := range coords {
 			packed, perr := hexxladb.Pack(coord)
 			if perr != nil {

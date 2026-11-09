@@ -152,7 +152,7 @@ func TestEmbedding_RejectsNonFiniteComponents(t *testing.T) {
 	}
 
 	if err := db.View(func(tx *hexxladb.Tx) error {
-		_, err := tx.SearchByEmbedding([]float32{1, float32(math.NaN()), 0}, hexxladb.EmbeddingSearchConfig{})
+		_, err := tx.SearchByEmbedding(t.Context(), []float32{1, float32(math.NaN()), 0}, hexxladb.EmbeddingSearchConfig{})
 		return err
 	}); !errors.Is(err, hexxladb.ErrInvalidArgument) {
 		t.Fatalf("SearchByEmbedding NaN: want ErrInvalidArgument, got %v", err)
@@ -183,7 +183,7 @@ func TestEmbedding_AutoDetectDimension(t *testing.T) {
 		if ok {
 			return fmt.Errorf("expected not found before any PutEmbedding")
 		}
-		results, err := tx.SearchByEmbedding([]float32{1, 2, 3}, hexxladb.EmbeddingSearchConfig{MaxResults: 5})
+		results, err := tx.SearchByEmbedding(t.Context(), []float32{1, 2, 3}, hexxladb.EmbeddingSearchConfig{MaxResults: 5})
 		if err != nil {
 			return fmt.Errorf("SearchByEmbedding: %w", err)
 		}
@@ -381,7 +381,7 @@ func TestEmbedding_SearchByEmbedding(t *testing.T) {
 	var stats hexxladb.EmbeddingSearchStats
 	err = db.View(func(tx *hexxladb.Tx) error {
 		var err error
-		results, stats, err = tx.SearchByEmbeddingWithStats(query, hexxladb.EmbeddingSearchConfig{MaxResults: 3})
+		results, stats, err = tx.SearchByEmbeddingWithStats(t.Context(), query, hexxladb.EmbeddingSearchConfig{MaxResults: 3})
 		return err
 	})
 	if err != nil {
@@ -416,7 +416,7 @@ func TestEmbedding_SearchByEmbedding_EmptyDB(t *testing.T) {
 	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
 
 	err := db.View(func(tx *hexxladb.Tx) error {
-		results, err := tx.SearchByEmbedding([]float32{1, 0, 0}, hexxladb.EmbeddingSearchConfig{})
+		results, err := tx.SearchByEmbedding(t.Context(), []float32{1, 0, 0}, hexxladb.EmbeddingSearchConfig{})
 		if err != nil {
 			return err
 		}
@@ -439,14 +439,14 @@ func TestEmbedding_SearchByEmbeddingWithStats_NoIndex(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	err = db.View(func(tx *hexxladb.Tx) error {
-		results, stats, err := tx.SearchByEmbeddingWithStats([]float32{1}, hexxladb.EmbeddingSearchConfig{})
+		results, stats, err := tx.SearchByEmbeddingWithStats(t.Context(), []float32{1}, hexxladb.EmbeddingSearchConfig{})
 		if err != nil {
 			return err
 		}
 		if len(results) != 0 || stats.Path != hexxladb.EmbeddingSearchPathNone {
 			t.Fatalf("empty search: results=%#v path=%q", results, stats.Path)
 		}
-		_, _, err = tx.SearchByEmbeddingWithStats([]float32{1}, hexxladb.EmbeddingSearchConfig{EfSearch: -1})
+		_, _, err = tx.SearchByEmbeddingWithStats(t.Context(), []float32{1}, hexxladb.EmbeddingSearchConfig{EfSearch: -1})
 		if !errors.Is(err, hexxladb.ErrInvalidArgument) {
 			t.Fatalf("empty search invalid EfSearch: want ErrInvalidArgument, got %v", err)
 		}
@@ -462,7 +462,7 @@ func TestEmbedding_SearchByEmbeddingRejectsInvalidEfSearch(t *testing.T) {
 	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
 	for _, efSearch := range []int{-1, 10_001} {
 		err := db.View(func(tx *hexxladb.Tx) error {
-			_, err := tx.SearchByEmbedding([]float32{1, 0, 0}, hexxladb.EmbeddingSearchConfig{EfSearch: efSearch})
+			_, err := tx.SearchByEmbedding(t.Context(), []float32{1, 0, 0}, hexxladb.EmbeddingSearchConfig{EfSearch: efSearch})
 			return err
 		})
 		if !errors.Is(err, hexxladb.ErrInvalidArgument) {
@@ -488,7 +488,7 @@ func TestEmbedding_SearchByEmbedding_MinScore(t *testing.T) {
 	}
 
 	err = db.View(func(tx *hexxladb.Tx) error {
-		results, err := tx.SearchByEmbedding([]float32{1, 0, 0}, hexxladb.EmbeddingSearchConfig{
+		results, err := tx.SearchByEmbedding(t.Context(), []float32{1, 0, 0}, hexxladb.EmbeddingSearchConfig{
 			MaxResults: 10,
 			MinScore:   0.5,
 		})
@@ -725,7 +725,7 @@ func TestEmbedding_PersistedAcrossReopen(t *testing.T) {
 	}
 }
 
-// ── QueryCells / SearchCells integration ──────────────────────────────────────
+// ── QueryCells integration ──────────────────────────────────────
 
 func TestQueryCells_Embedding(t *testing.T) {
 	t.Parallel()
@@ -839,7 +839,7 @@ func TestQueryCells_EmbeddingWithTagFilter(t *testing.T) {
 	}
 }
 
-func TestSearchCells_Embedding(t *testing.T) {
+func TestQueryCells_EmbeddingExplicitScope(t *testing.T) {
 	t.Parallel()
 	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
 	ctx := t.Context()
@@ -855,9 +855,11 @@ func TestSearchCells_Embedding(t *testing.T) {
 	}
 
 	if err := db.View(func(tx *hexxladb.Tx) error {
-		results, err := tx.SearchCells(ctx, hexxladb.CellSearchConfig{
+		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 			Embedding:  []float32{1, 0, 0},
 			MaxResults: 5,
+			Radius:     32,
+			SortBy:     hexxladb.SortByScore,
 		})
 		if err != nil {
 			return err

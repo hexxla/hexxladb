@@ -1,12 +1,13 @@
-# Transactions (`View` / `Update` / `Batch`)
+# Transactions (`View` / `Update`)
 
-**Audience:** Callers of **`package hexxladb`** using Bolt-style **[`DB.View`](../../db.go)**, **[`DB.Update`](../../db.go)**, and **[`DB.Batch`](../../db.go)**.
+**Audience:** Callers of **`package hexxladb`** using Bolt-style **[`DB.View`](../../tx.go)** and **[`DB.Update`](../../tx.go)**.
 
 ## Locking
 
-- **`View`** acquires a **read lock**: many concurrent **`View`** calls can run; they block while an **`Update`** or **`Batch`** holds the **database** lock.
-- **`Update`** acquires the **database** lock before beginning the engine write transaction and keeps it through the callback, synchronous engine commit, changelog projection, and durable-outbox acknowledgement. No concurrent **`View`**, **`Update`**, or **`Batch`** can observe or build on staged engine state. A successful return publishes the complete commit, including its **`CommitSeq`** and changefeed records.
-- **`Batch`** is **equivalent** to **`Update`** (same lock and semantics). It exists for alignment with the spec’s `Batch` name and ecosystem expectations. Each successful **`Update`** / **`Batch`** uses one engine **write transaction**; see **[`DURABILITY.md`](./DURABILITY.md)** for barrier ordering.
+- **`View`** acquires a **read lock**: many concurrent **`View`** calls can run; they block while an **`Update`** holds the **database** lock.
+- **`Update`** acquires the **database** lock before beginning the engine write transaction and keeps it through the callback, synchronous engine commit, changelog projection, and durable-outbox acknowledgement. No concurrent **`View`** or **`Update`** can observe or build on staged engine state. A successful return publishes the complete commit, including its **`CommitSeq`** and changefeed records.
+
+Each successful **`Update`** uses one engine **write transaction**; see **[`DURABILITY.md`](./DURABILITY.md)** for barrier ordering.
 
 [`DB.WriteStats`](../../write_stats.go) returns lock-free cumulative timings for accepted public write calls. `LockWait` measures time waiting to acquire the database lock; `Callback`, `Durability`, and `Finalization` measure work while that lock remains held. Read two samples to calculate interval counts and averages without installing an in-library metrics system.
 
@@ -36,7 +37,7 @@ backup for a downgrade that needs to write or prune.
 
 ## `Close`
 
-**[`DB.Close`](../../db.go)** takes the **exclusive** lock and waits for any in-flight **`View`**, **`Update`**, or **`Batch`** to finish before closing files. New **`View`** / **`Update`** / **`Batch`** after a successful close return **[`ErrDatabaseClosed`](../../errors.go)**.
+**[`DB.Close`](../../db.go)** takes the **exclusive** lock and waits for any in-flight **`View`** or **`Update`** to finish before closing files. New **`View`** / **`Update`** after a successful close return **[`ErrDatabaseClosed`](../../errors.go)**.
 
 ## Nesting and reentrancy
 
@@ -46,7 +47,7 @@ when a writer is waiting.
 
 ## Commit finalization failures
 
-`Update` / `Batch` use an authoritative commit followed by a recoverable projection:
+`Update` uses an authoritative commit followed by a recoverable projection:
 
 1. Run the callback. Sample the MVCC timeline timestamp at transaction start.
 2. After a successful callback, stage the MVCC timeline row, bounded changefeed intents under private `__meta/changelog-outbox/` keys, and the new header `CommitSeq`.
@@ -83,7 +84,7 @@ These read filters apply record validity to cells and seams visible in the trans
 
 ## MVCC temporal semantics
 
-For MVCC formats v2 and v3 the authoritative visibility clock is **`CommitSeq`** in the engine header (see [`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md)). Each successful [`Update`](../../tx.go) / [`Batch`](../../tx.go) advances `CommitSeq` atomically with its engine transaction; a reopened database therefore cannot expose versioned pages under an older reused sequence.
+For MVCC formats v2 and v3 the authoritative visibility clock is **`CommitSeq`** in the engine header (see [`ENGINE_FORMAT.md`](../../internal/engine/ENGINE_FORMAT.md)). Each successful [`Update`](../../tx.go) advances `CommitSeq` atomically with its engine transaction; a reopened database therefore cannot expose versioned pages under an older reused sequence.
 
 - **[`DB.ViewAt(readSeq)`](../../tx.go)** pins `read_seq` for the callback. Cell, facet, and seam point reads use the version suffix's byte ordering to seek directly to the largest stored `commit_seq <= read_seq`, then stop after one valid version. [`ErrReadSeqFuture`](../../errors.go) is returned if `read_seq` exceeds the header's `CommitSeq`.
 - **[`DB.ViewAtTime(asOf)`](../../tx.go)** maps UTC wall time to a `read_seq` using the commit timeline: during each MVCC `Update`, an `__meta/commit-time/` btree key records `(wall_unix_nano, writeSeq)` (wall timestamp sampled at transaction start). The resolver seeks to the latest signed timestamp at or before `asOf`, breaking ties by commit sequence. If no commit qualifies, it resolves to sequence zero subject to the retention boundary. Determinism requires stable UTC clock usage; the same `asOf` yields the same snapshot for a given database history.

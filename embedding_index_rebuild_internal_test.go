@@ -32,7 +32,7 @@ func TestEmbeddingIndexRebuildRejectsInterveningMutation(t *testing.T) {
 		t.Fatalf("error = %v, want ErrEmbeddingIndexChanged", err)
 	}
 	if err := db.View(func(tx *Tx) error {
-		_, stats, err := tx.SearchByEmbeddingWithStats([]float32{1, 0, 0}, EmbeddingSearchConfig{})
+		_, stats, err := tx.SearchByEmbeddingWithStats(t.Context(), []float32{1, 0, 0}, EmbeddingSearchConfig{})
 		if err != nil {
 			return err
 		}
@@ -67,7 +67,7 @@ func TestEmbeddingIndexRebuildPublishAbortRetainsOldGraph(t *testing.T) {
 		} else if !found {
 			return errors.New("old graph meta not found")
 		}
-		_, stats, err := tx.SearchByEmbeddingWithStats([]float32{1, 0, 0}, EmbeddingSearchConfig{})
+		_, stats, err := tx.SearchByEmbeddingWithStats(t.Context(), []float32{1, 0, 0}, EmbeddingSearchConfig{})
 		if err != nil {
 			return err
 		}
@@ -88,7 +88,7 @@ func TestEmbeddingIndexCorruptStateFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := db.View(func(tx *Tx) error {
-		_, _, err := tx.SearchByEmbeddingWithStats([]float32{1, 0, 0}, EmbeddingSearchConfig{})
+		_, _, err := tx.SearchByEmbeddingWithStats(t.Context(), []float32{1, 0, 0}, EmbeddingSearchConfig{})
 		return err
 	})
 	if !errors.Is(err, ErrCorruptDatabase) {

@@ -51,7 +51,7 @@ func TestPersistedEmbeddingCorruptionReturnsError(t *testing.T) {
 				return err
 			})
 			assertCorruptDatabase(t, db, func(tx *Tx) error {
-				_, err := tx.SearchByEmbedding([]float32{1, 2}, EmbeddingSearchConfig{})
+				_, err := tx.SearchByEmbedding(t.Context(), []float32{1, 2}, EmbeddingSearchConfig{})
 				return err
 			})
 			assertCorruptDatabase(t, db, func(tx *Tx) error {

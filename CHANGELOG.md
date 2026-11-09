@@ -10,6 +10,8 @@
 
 ### Breaking
 
+- **Native Go API simplification** — remove `DB.Batch`; replace calls with `DB.Update` with identical transaction semantics. Remove `CellSearchConfig`, `CellSearchResult`, and `Tx.SearchCells`; use `Tx.QueryCells(ctx, CellQuery)` and `CellQueryResult`. Preserve the former search scope with `Radius: 32` (or the former positive radius/scan radius), `MaxResults: 20` (or the former positive result limit), and `SortBy: SortByScore`; `CellQuery` uses unrestricted scope and unlimited results when these bounds are zero. Both vector search methods now require context first: `SearchByEmbedding(ctx, vec, cfg)` and `SearchByEmbeddingWithStats(ctx, vec, cfg)`, so scans and ANN traversal honor caller cancellation. Database files, storage encodings, scoring, and open compatibility are unchanged.
+
 - **Encrypted changelog and WAL framing** — encrypted changelogs upgrade from v2 to v3 with random per-frame nonces through a validated atomic replacement. Allow temporary space for the full sidecar and retain a pre-upgrade recovery set for older binaries. Current commits persist complete WAL framing and a plaintext-header checksum that older writers cannot maintain.
 
 - **Derived HNSW index state** — current builds read older graph metadata and use exact scoring until `DB.RebuildEmbeddingIndex` succeeds. After an embedding mutation or rebuild writes the updated derived state, use a pre-upgrade backup to return to a build that predates it. The primary data and embedding encodings are unchanged. See the [operator instructions](docs/hexxladb/OPERATIONS.md#deferred-embedding-ingestion-and-hnsw-rebuild).

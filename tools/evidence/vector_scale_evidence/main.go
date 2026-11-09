@@ -430,7 +430,7 @@ func applyChurn(db *hexxladb.DB, set *vectorSet, cfg config) ([]time.Duration, [
 func searchPath(db *hexxladb.DB, query []float32, topK int) (hexxladb.EmbeddingSearchPath, error) {
 	var path hexxladb.EmbeddingSearchPath
 	err := db.View(func(tx *hexxladb.Tx) error {
-		_, stats, err := tx.SearchByEmbeddingWithStats(query, hexxladb.EmbeddingSearchConfig{MaxResults: topK})
+		_, stats, err := tx.SearchByEmbeddingWithStats(context.Background(), query, hexxladb.EmbeddingSearchConfig{MaxResults: topK})
 		path = stats.Path
 		return err
 	})
@@ -448,7 +448,7 @@ func measureQueries(db *hexxladb.DB, set *vectorSet, queries [][]float32, topK i
 		started := time.Now()
 		err := db.View(func(tx *hexxladb.Tx) error {
 			var err error
-			results, stats, err = tx.SearchByEmbeddingWithStats(query, hexxladb.EmbeddingSearchConfig{MaxResults: topK})
+			results, stats, err = tx.SearchByEmbeddingWithStats(context.Background(), query, hexxladb.EmbeddingSearchConfig{MaxResults: topK})
 			return err
 		})
 		latencies = append(latencies, time.Since(started))

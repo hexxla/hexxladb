@@ -385,7 +385,7 @@ func evaluate(ctx context.Context, db *hexxladb.DB, docsByCoord map[hexxladb.Coo
 				}
 			}
 
-			results, err := tx.SearchByEmbedding(doc.vector, hexxladb.EmbeddingSearchConfig{MaxResults: cfg.semanticK + 1})
+			results, err := tx.SearchByEmbedding(ctx, doc.vector, hexxladb.EmbeddingSearchConfig{MaxResults: cfg.semanticK + 1})
 			if err != nil {
 				return err
 			}
