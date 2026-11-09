@@ -434,6 +434,48 @@ selection, with a reverse adjacency already available. HexxlaDB continues
 to use the outgoing edge index and forward Dijkstra.
 [Bidirectional search selection and stopping rules](https://arxiv.org/html/2410.14638v4#S2)
 
+### Algorithm follow-up
+
+Local Go 1.27.3 comparisons on Linux/amd64 used an Intel Core i9-14900HX
+with `GOMAXPROCS=1`. Three runs compared the same code paths before and
+after the changes. The FOV and super-hex fixture used a 100 × 100 grid of
+stored cells, a 20-cell FOV output cap, and a level-three summary index.
+
+| Operation | Before | After |
+| --- | ---: | ---: |
+| Open-field FOV at radius 64 | 1.59 ms | 0.25 ms |
+| Open-field FOV at radius 256 | 27.1 ms | 2.32 ms |
+| Level-three summary lookup | 109 ns | 42 ns |
+| Hex-distance A* fixture | 33.1 µs and 234 allocations | 25.3 µs and 105 allocations |
+
+Open-field FOV at radius 256 used 6.34 MB per operation, down from
+12.66 MB. The one-blocker radius-256 fixture still used about 14.24 MB and
+took 84–87 ms. The geometry tests check the full output order and opacity
+callback order. The A* fixture runs with
+`go test -run '^$' -bench '^BenchmarkAStar_HexDistanceHeuristic$' -benchmem ./internal/pathfind`.
+
+The online HNSW reachability check first looks for a short replacement path
+for each pruned edge in the final graph, then scans the full graph if needed.
+A single 500 × 32d synchronous run with the vector evidence tool took 1.39 s
+before validation, 2.31 s with a full scan on each risky insert, and 1.57 s
+with short-path checks. All three runs served HNSW queries at recall@10 of
+1.0 on that fixture. The numbers measure this build fixture, and insertion
+cost varies with graph topology.
+
+In a separate persisted cosine fixture, 24 held-out 32-dimensional queries
+at `EfSearch=100` reached recall@10 of 1.0 at both corpus sizes. Flat and
+HNSW p50 were 0.17 and 1.54 ms at 1,000 vectors and 0.80 and 2.84 ms at
+5,000 vectors. A separate 5,000-node in-memory beam trial held candidates
+and order constant. Two heaps slowed the `ef=100` and `ef=400` cases and
+allocated more at every tested width. The sorted beam remains in use.
+
+A 512-vertex persisted routing trial charged reverse adjacency construction
+to each bidirectional search. On the chain with a goal eight hops away,
+forward routing took about 23 µs, compared with about 448 µs with reverse
+construction. Materializing only outgoing adjacency also accounted for the
+observed gains on the long chain. The current outgoing traversal remains the
+default.
+
 ### Lattice-placement evidence
 
 The runner creates the same deterministic six-topic, 120-document corpus in two
@@ -681,6 +723,62 @@ across writers. Record per-call latency and the `WriteStats` delta for the
 completed batch. This workload shows where the queue forms. A representative
 mixed workload and a graph-mutation profile should determine whether a future
 change to callback work, graph repair, or commit scheduling pays off.
+
+## Storage audit regression evidence
+
+The 2026-11-09 audit used Go 1.27.3 on the local Linux checkout. A deterministic
+plaintext fixture inserted 512 distinct 256-byte keys with small values in one
+transaction. These counts measure structure and staged physical images.
+
+| Insertion order | Previous levels | Current levels | Previous data pages | Current data pages | Previous staged images | Current staged images |
+| --- | --- | --- | --- | --- | --- | --- |
+| Ascending | 3 | 3 | 39 | 40 | 898 | 40 |
+| Descending | 35 | 3 | 8,518 | 72 | 157,700 | 72 |
+
+Byte-balanced internal splits prevent cascading one-child siblings. Balanced
+leaf splits handle non-append insertion, while the rightmost append path keeps
+completed leaves packed. Final-image staging coalesces repeated writes to a
+physical page before WAL publication.
+
+The same-key staging regression records one retained image after 1,000 updates.
+Cache regressions verify whole-page capacity from one-page budgets through
+64 KiB pages and retention of four reused pages across a 64-page sequential
+scan in a 16-page shard. The previous scan fixture retained zero of those
+four pages.
+
+Reproduce current structural checks with the committed fixtures.
+
+```sh
+go test -count=1 -v ./internal/engine -run 'TestTreeMonotonicInsertHeight|TestPageCacheWholePageShards|TestPageCacheHotWorkingSetSurvivesScan'
+```
+
+Use the write-path runner and mixed-workload measurements above to measure
+durable throughput and latency separately from these structural counts.
+
+Two follow-up microbenchmarks used three 200 ms runs on the same Linux
+i9-14900HX host with Go 1.27.3. The baseline already included the correctness
+fixes and final-image staging.
+
+| Microbenchmark | Before | After |
+| --- | --- | --- |
+| Replace one of 32 parsed leaf entries | 67 allocations, 5,648 B/op, 1,532–1,825 ns/op | 3 allocations, 1,808 B/op, 357–407 ns/op |
+| Commit one physical page, median | 2.547 ms | 2.063 ms |
+| Commit eight physical pages, median | 2.751 ms | 2.205 ms |
+| Commit 32 physical pages, median | 3.093 ms | 2.317 ms |
+
+Replacement now copies the outer entry slices and the replacement bytes.
+WAL cleanup seeks to the extent end and skips truncation and its extra sync
+when the exact extent was already synced before primary publication. A
+shrinking extent retains both cleanup steps. Commit allocation counts stayed
+at 17, 41, and 129 for the three page counts.
+
+```sh
+go test -run '^$' -bench '^BenchmarkInsertSortedReplacement$' -benchmem -benchtime=200ms -count=3 ./internal/engine
+go test -run '^$' -bench '^BenchmarkCommitWriteTxn_multiPage$' -benchmem -benchtime=200ms -count=3 ./internal/engine
+```
+
+These are local component measurements. Use representative application
+workloads to establish end-to-end throughput and tail latency.
 
 ## Collect comparable evidence
 

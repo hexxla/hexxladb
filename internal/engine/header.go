@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"os"
 )
@@ -57,7 +58,27 @@ const FeatureIncompleteCompaction uint32 = 1 << 2
 // envelopes with a persisted rewrite generation and random nonce.
 const FeatureAuthenticatedDataPages uint32 = 1 << 3
 
+// FeatureWALFrameDigest requires complete commit framing in the WAL. V2 headers
+// also carry a checksum in their last four prefix bytes once this bit is set.
+const FeatureWALFrameDigest uint32 = 1 << 4
+
+const headerChecksumOffset = headerPrefixSize - 4
+const headerReservedOffset = HeaderInlineFreelistOffset + HeaderInlineFreelistCapacity*8
+
 func decodeHeaderPage(page []byte) (Header, error) {
+	h, err := decodeHeaderFields(page)
+	if err != nil {
+		return Header{}, err
+	}
+	if err := validateHeaderIntegrity(page, h); err != nil {
+		return Header{}, err
+	}
+	return h, nil
+}
+
+// decodeHeaderFields recovers the immutable identity even when publication tore
+// mutable fields. Callers must validate integrity or a complete WAL before use.
+func decodeHeaderFields(page []byte) (Header, error) {
 	if len(page) < headerPrefixSize {
 		return Header{}, fmt.Errorf("%w: short page", ErrCorruptHeader)
 	}
@@ -99,6 +120,32 @@ func decodeHeaderPage(page []byte) (Header, error) {
 	return h, nil
 }
 
+func validateHeaderIntegrity(page []byte, h Header) error {
+	end := headerPrefixSize
+	if h.FormatVersion == formatVersionV2 && h.Features&FeatureWALFrameDigest != 0 {
+		end = headerChecksumOffset
+		if binary.BigEndian.Uint32(page[end:headerPrefixSize]) != crc32.ChecksumIEEE(page[:end]) {
+			return fmt.Errorf("%w: header checksum", ErrCorruptHeader)
+		}
+	}
+	for _, b := range page[headerReservedOffset:end] {
+		if b != 0 {
+			return fmt.Errorf("%w: nonzero reserved header byte", ErrCorruptHeader)
+		}
+	}
+	if h.NextPageID == 0 || h.BTreeRoot >= h.NextPageID {
+		return fmt.Errorf("%w: invalid allocator boundary or root", ErrCorruptHeader)
+	}
+	physicalPageSize := int(h.PageSize)
+	if h.FormatVersion == formatVersionV3 {
+		physicalPageSize += AuthenticatedPageOverhead
+	}
+	if _, err := pageByteOffset(h.NextPageID, int(h.PageSize), physicalPageSize); err != nil {
+		return fmt.Errorf("%w: allocator boundary exceeds file offsets", ErrCorruptHeader)
+	}
+	return nil
+}
+
 func encodeHeaderPage(h Header) []byte {
 	page := make([]byte, h.PageSize)
 	copy(page[:8], headerMagic)
@@ -122,6 +169,9 @@ func encodeHeaderPage(h Header) []byte {
 	for i, pageID := range h.InlineFreelist {
 		off := HeaderInlineFreelistOffset + i*8
 		binary.BigEndian.PutUint64(page[off:off+8], pageID)
+	}
+	if h.FormatVersion == formatVersionV2 && h.Features&FeatureWALFrameDigest != 0 {
+		binary.BigEndian.PutUint32(page[headerChecksumOffset:headerPrefixSize], crc32.ChecksumIEEE(page[:headerChecksumOffset]))
 	}
 	return page
 }
@@ -180,4 +230,25 @@ func ReadHeaderFile(path string) (Header, error) {
 		return Header{}, err
 	}
 	return readHeaderAt(f, int(ps))
+}
+
+// ReadHeaderIdentityFile reads immutable layout and encryption identity for key
+// derivation before Open. Mutable metadata is untrusted until Open validates the
+// primary or repairs it from a complete identity-bound WAL commit.
+func ReadHeaderIdentityFile(path string) (Header, error) {
+	// #nosec G304 -- path is the caller-selected database, as for ReadHeaderFile.
+	f, err := os.Open(path)
+	if err != nil {
+		return Header{}, err
+	}
+	defer func() { _ = f.Close() }()
+	ps, err := bootstrapPageSize(f)
+	if err != nil {
+		return Header{}, err
+	}
+	page := make([]byte, ps)
+	if _, err := f.ReadAt(page, 0); err != nil {
+		return Header{}, err
+	}
+	return decodeHeaderFields(page)
 }

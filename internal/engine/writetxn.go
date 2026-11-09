@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"cmp"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/hexxla/hexxladb/internal/engine/crashtest"
 )
@@ -14,6 +16,7 @@ type writeTxnState struct {
 	pending []pendingRedo
 	// dirty holds on-disk form payload per key (pageID >= 1), same as WAL/plain from transformWrite.
 	dirty           map[uint64][]byte
+	pendingIndex    map[uint64]int
 	freePageIDs     []uint64
 	freePageSet     map[uint64]struct{}
 	freelistPageIDs []uint64
@@ -44,8 +47,9 @@ func (e *Engine) BeginWriteTxn() error {
 		return err
 	}
 	e.wtxn = &writeTxnState{
-		hdr:   hdr,
-		dirty: make(map[uint64][]byte),
+		hdr:          hdr,
+		dirty:        make(map[uint64][]byte),
+		pendingIndex: make(map[uint64]int),
 	}
 	if err := e.loadWriteTxnFreelist(); err != nil {
 		e.wtxn = nil
@@ -66,6 +70,7 @@ func (e *Engine) CommitWriteTxn() error {
 		return err
 	}
 	txn := e.wtxn
+	slices.SortFunc(txn.pending, func(a, b pendingRedo) int { return cmp.Compare(a.seq, b.seq) })
 	e.wtxn = nil
 	return e.commitPages(txn.hdr, txn.pending)
 }
@@ -74,6 +79,10 @@ func (e *Engine) CommitWriteTxn() error {
 func (e *Engine) WALStats() (commitAttempts, redoSyncs uint64) {
 	return e.walCommits.Load(), e.walCommitSyncs.Load()
 }
+
+// RecoveryRequired reports whether a failed engine commit fences this handle.
+// The database owner serializes access through its transaction lock.
+func (e *Engine) RecoveryRequired() bool { return e.commitFailed }
 
 func (e *Engine) commitPages(final Header, pending []pendingRedo) (err error) {
 	if e.commitFailed {
@@ -95,6 +104,10 @@ func (e *Engine) commitPages(final Header, pending []pendingRedo) (err error) {
 		final.LastWALSeq = e.nextWALSeq.Add(1)
 	} else {
 		final.LastWALSeq = pending[len(pending)-1].seq
+	}
+	final.Features |= FeatureWALFrameDigest
+	if err := validateHeaderIntegrity(encodeHeaderPage(final), final); err != nil {
+		return err
 	}
 	e.walCommits.Add(1)
 	if err := e.writeCommitWAL(final, pending); err != nil {
@@ -133,6 +146,7 @@ func (e *Engine) commitPages(final Header, pending []pendingRedo) (err error) {
 		return err
 	}
 	e.lastSeq = final.LastWALSeq
+	e.embeddingDim, e.embeddingMetric = final.EmbeddingDim, final.EmbeddingMetric
 	if len(pending) > 0 {
 		last := pending[len(pending)-1]
 		e.lastPageID, e.lastPageGeneration = last.pageID, last.seq
@@ -141,6 +155,17 @@ func (e *Engine) commitPages(final Header, pending []pendingRedo) (err error) {
 	written, err := e.wal.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return err
+	}
+	extent, err := e.wal.Seek(0, io.SeekEnd)
+	if err != nil {
+		return err
+	}
+	if extent == written {
+		// This exact extent was synced before primary publication.
+		return nil
+	}
+	if extent < written {
+		return ErrCorruptWAL
 	}
 	if err := e.wal.Truncate(written); err != nil {
 		return err
@@ -152,7 +177,7 @@ func (e *Engine) writeCommitWAL(final Header, pending []pendingRedo) error {
 	if _, err := e.wal.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	marker := e.encodeHeaderWALRecord(final, uint64(len(pending)))
+	marker := e.encodeFramedHeaderWALRecord(final, pending)
 	// Legacy readers reject a pending page-zero marker. Put it first for v2
 	// so those readers cannot apply new-format pages before detecting it.
 	if !e.headerMACEnabled {

@@ -2,6 +2,7 @@ package hexxladb_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -305,4 +306,39 @@ func TestSnapshotTags_PersistsAcrossReopen(t *testing.T) {
 	}
 
 	_ = os.Remove(path)
+}
+
+func TestSnapshotTagsPublishChangedTreeRoot(t *testing.T) {
+	t.Parallel()
+	db := openSnapTagDB(t)
+	putSnapCell(t, db, 1, 2)
+	coord, err := hexxladb.Pack(hexxladb.Coord{Q: 1, R: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkCell := func() {
+		t.Helper()
+		if err := db.View(func(tx *hexxladb.Tx) error {
+			_, ok, err := tx.GetCell(coord)
+			if err == nil && !ok {
+				t.Fatal("committed cell missing after snapshot tag mutation")
+			}
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const count = 150
+	for i := range count {
+		if err := db.TagSnapshot(fmt.Sprintf("tag-%03d", i)); err != nil {
+			t.Fatal(err)
+		}
+		checkCell()
+	}
+	for i := range count {
+		if err := db.DeleteSnapshotTag(fmt.Sprintf("tag-%03d", i)); err != nil {
+			t.Fatal(err)
+		}
+		checkCell()
+	}
 }

@@ -67,6 +67,9 @@ func parseLeafPage(page []byte) (*leafData, error) {
 		if err != nil {
 			return nil, err
 		}
+		if len(keys) > 0 && bytes.Compare(keys[len(keys)-1], k) >= 0 {
+			return nil, fmt.Errorf("%w: leaf keys out of order", ErrCorruptTree)
+		}
 		keys = append(keys, append([]byte(nil), k...))
 		vals = append(vals, append([]byte(nil), v...))
 	}
@@ -137,7 +140,7 @@ func lookupLeafValue(page, key []byte) ([]byte, bool, error) {
 		return nil, false, fmt.Errorf("%w: leaf nkeys", ErrCorruptTree)
 	}
 
-	var found []byte
+	var found, previous []byte
 	off := btreeHeaderSize
 	for range n {
 		if off+4 > len(page) {
@@ -153,6 +156,10 @@ func lookupLeafValue(page, key []byte) ([]byte, bool, error) {
 			return nil, false, fmt.Errorf("%w: leaf payload", ErrCorruptTree)
 		}
 		storedKey := page[off : off+keyLen]
+		if previous != nil && bytes.Compare(previous, storedKey) >= 0 {
+			return nil, false, fmt.Errorf("%w: leaf keys out of order", ErrCorruptTree)
+		}
+		previous = storedKey
 		off += keyLen
 		value := page[off : off+valueLen]
 		off += valueLen
@@ -246,6 +253,9 @@ func parseInternalPage(page []byte) (*internalData, error) {
 			return nil, fmt.Errorf("%w: internal key data", ErrCorruptTree)
 		}
 		k := append([]byte(nil), page[off:off+int(kl)]...)
+		if len(keys) > 0 && bytes.Compare(keys[len(keys)-1], k) >= 0 {
+			return nil, fmt.Errorf("%w: internal keys out of order", ErrCorruptTree)
+		}
 		off += int(kl)
 		p := binary.BigEndian.Uint64(page[off : off+8])
 		off += 8
@@ -289,6 +299,7 @@ func lookupInternalChildForSeek(page, key []byte, rightmost bool) (uint64, error
 	child := binary.BigEndian.Uint64(page[off : off+8])
 	off += 8
 	chooseRight := key != nil || rightmost
+	var previous []byte
 	for range n {
 		if off+2 > len(page) {
 			return 0, fmt.Errorf("%w: internal key len", ErrCorruptTree)
@@ -302,6 +313,10 @@ func lookupInternalChildForSeek(page, key []byte, rightmost bool) (uint64, error
 			return 0, fmt.Errorf("%w: internal key data", ErrCorruptTree)
 		}
 		separator := page[off : off+keyLen]
+		if previous != nil && bytes.Compare(previous, separator) >= 0 {
+			return 0, fmt.Errorf("%w: internal keys out of order", ErrCorruptTree)
+		}
+		previous = separator
 		off += keyLen
 		pointer := binary.BigEndian.Uint64(page[off : off+8])
 		off += 8

@@ -154,6 +154,8 @@ func (db *DB) AdvanceChangelogConsumer(consumerID string, expectedSeq, nextSeq u
 // matches. Deleting the final consumer removes retention protection; it does
 // not delete changelog records. Deletion is available on changelog-disabled
 // handles so an operator can explicitly re-bootstrap invalidated consumers.
+// Removing the final consumer on a disabled handle also clears the retained
+// history checkpoint, allowing an explicitly replaced sidecar on the next open.
 func (db *DB) DeleteChangelogConsumer(consumerID string, expectedSeq uint64) error {
 	if err := validateChangelogConsumerID(consumerID); err != nil {
 		return err
@@ -187,8 +189,51 @@ func (db *DB) DeleteChangelogConsumer(consumerID string, expectedSeq uint64) err
 		return fmt.Errorf("%w: consumer %q expected %d, current %d", ErrChangelogCursorConflict, consumerID, expectedSeq, currentSeq)
 	}
 	return db.commitChangelogConsumerMetadataLocked("delete", func() error {
-		return db.btree.Delete(index.ChangelogConsumerKey(consumerID))
+		if err := db.btree.Delete(index.ChangelogConsumerKey(consumerID)); err != nil {
+			return err
+		}
+		if db.changelog == nil && len(consumers) == 1 {
+			// Explicit offline re-bootstrap relinquishes the old history binding.
+			return db.btree.Delete(index.ChangelogProjectionCheckpointKey())
+		}
+		return nil
 	})
+}
+
+// ResetChangelogHistory relinquishes the primary's retained-history checkpoint.
+// It requires a changelog-disabled handle with no registered consumers. Archive
+// the old sidecar and rebuild downstream state before reopening with a fresh
+// sidecar. Database records, pending outbox intents, and sidecar files are
+// preserved. Resetting an absent checkpoint succeeds.
+func (db *DB) ResetChangelogHistory() error {
+	if db == nil || db.closed.Load() {
+		return ErrDatabaseClosed
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if db.activeEng() == nil {
+		return ErrDatabaseClosed
+	}
+	if db.recoveryRequired.Load() {
+		return fmt.Errorf("%w: close and reopen required", ErrCommitFinalization)
+	}
+	if db.changelog != nil {
+		return fmt.Errorf("%w: history reset requires changelog disabled", ErrInvalidArgument)
+	}
+	consumers, err := db.readChangelogConsumersLocked()
+	if err != nil {
+		return err
+	}
+	if len(consumers) != 0 {
+		return fmt.Errorf("%w: remove registered consumers before history reset", ErrInvalidArgument)
+	}
+	key := index.ChangelogProjectionCheckpointKey()
+	if _, exists, err := db.btree.Get(key); err != nil {
+		return mapEngineDataError(err)
+	} else if !exists {
+		return nil
+	}
+	return db.commitMetadataLocked("reset changelog history", func() error { return db.btree.Delete(key) })
 }
 
 func validateChangelogConsumerID(consumerID string) error {
@@ -232,23 +277,28 @@ func findChangelogConsumer(consumers []ChangelogConsumerCursor, consumerID strin
 }
 
 func (db *DB) validateChangelogConsumerHistoryLocked(consumers []ChangelogConsumerCursor) error {
-	if len(consumers) == 0 {
-		return nil
-	}
 	value, ok, err := db.btree.Get(index.ChangelogProjectionCheckpointKey())
 	if err != nil {
 		return fmt.Errorf("hexxladb: read changelog projection checkpoint: %w", err)
 	}
 	if !ok {
+		if len(consumers) == 0 {
+			// New databases and older releases may not have a checkpoint yet.
+			return nil
+		}
 		return fmt.Errorf("%w: registered consumers have no projection checkpoint", ErrCorruptDatabase)
 	}
 	checkpointSeq, wantDigest, ok := index.DecodeChangelogProjectionCheckpoint(value)
 	if !ok {
 		return fmt.Errorf("%w: invalid changelog projection checkpoint", ErrCorruptDatabase)
 	}
+	historyErr := ErrChangelogCorrupt
+	if len(consumers) != 0 {
+		historyErr = ErrChangelogConsumerInvalidated
+	}
 	actualHead := db.changelog.MaxSeq()
 	if checkpointSeq > actualHead {
-		return fmt.Errorf("%w: projected sequence %d exceeds changelog head %d", ErrChangelogConsumerInvalidated, checkpointSeq, actualHead)
+		return fmt.Errorf("%w: projected sequence %d exceeds changelog head %d", historyErr, checkpointSeq, actualHead)
 	}
 	for _, consumer := range consumers {
 		if consumer.Seq > actualHead {
@@ -260,7 +310,7 @@ func (db *DB) validateChangelogConsumerHistoryLocked(consumers []ChangelogConsum
 		return mapChangelogConsumerHistoryError(err)
 	}
 	if gotDigest != wantDigest {
-		return fmt.Errorf("%w: retained changelog history does not match the authoritative checkpoint", ErrChangelogConsumerInvalidated)
+		return fmt.Errorf("%w: retained changelog history does not match the authoritative checkpoint", historyErr)
 	}
 	return nil
 }
@@ -270,22 +320,5 @@ func mapChangelogConsumerHistoryError(err error) error {
 }
 
 func (db *DB) commitChangelogConsumerMetadataLocked(action string, mutate func() error) error {
-	if err := db.eng.BeginWriteTxn(); err != nil {
-		return err
-	}
-	if err := mutate(); err != nil {
-		db.eng.AbortWriteTxn()
-		return fmt.Errorf("hexxladb: changelog consumer %s: %w", action, err)
-	}
-	if err := db.eng.CommitWriteTxn(); err != nil {
-		db.recoveryRequired.Store(true)
-		return fmt.Errorf("%w: changelog consumer %s commit: %w", ErrCommitFinalization, action, err)
-	}
-	hdr, err := db.eng.ReadHeader()
-	if err != nil {
-		db.recoveryRequired.Store(true)
-		return durableCommitError("changelog consumer header refresh", err)
-	}
-	db.storeCachedHeader(hdr.CommitSeq, hdr.BTreeRoot)
-	return nil
+	return db.commitMetadataLocked("changelog consumer "+action, mutate)
 }

@@ -6,6 +6,9 @@ HexxlaDB uses a **configurable logical page size** (4/8/16/64 KiB; default **4 K
 
 - **Primary:** the path passed to `Open` (e.g. `dir/my.db`).
 - **WAL:** `{primary}-wal` (ASCII hyphen + `wal`).
+- The public database opener coordinates file-set replacement through a stable
+  `{primary}.lock` inode. It is recreated at restored paths and excluded from
+  backup data.
 
 ## Page size
 
@@ -32,7 +35,7 @@ HexxlaDB uses a **configurable logical page size** (4/8/16/64 KiB; default **4 K
 | 16     | 8    | **last_wal_seq** `uint64` — last WAL sequence applied to the primary file                                                                           |
 | 24     | 8    | **next_page_id** `uint64` — exclusive logical allocation boundary / next extension page id                                                           |
 | 32     | 8    | **btree_root_page** `uint64` — B+ tree root (**0** = empty); see [ORDERED_STORE.md](./ORDERED_STORE.md)                                             |
-| 40     | 4    | **features** `uint32` — bit **0** = encrypted pages; bit **1** = keyed WAL MAC; bit **2** = incomplete compaction candidate; bit **3** = authenticated v3 pages |
+| 40     | 4    | **features** `uint32` — bit **0** = encrypted pages; bit **1** = keyed WAL MAC; bit **2** = incomplete compaction candidate; bit **3** = authenticated v3 pages; bit **4** = complete WAL framing |
 | 44     | 16   | **encryption_salt** — used with Argon2id passphrase mode and keyed encryption verifier derivation                                                   |
 | 60     | 8    | **commit_seq** `uint64` — last committed logical sequence       |
 | 68     | 32   | **encryption_key_check** — keyed verifier for deterministic wrong-key detection on encrypted DBs                                                    |
@@ -45,7 +48,8 @@ HexxlaDB uses a **configurable logical page size** (4/8/16/64 KiB; default **4 K
 | 155    | 8    | **freelist_head_generation** `uint64` — expected rewrite generation for the external head, or zero                                                   |
 | 163    | 8    | **freelist_count** `uint64` — reusable data-page ids, excluding allocator metadata pages                                                             |
 | 171    | 320  | **inline_freelist** — forty `uint64` free page ids; unused slots are zero                                                                             |
-| 491    | 21   | **reserved** (zero)                                                                                                                                   |
+| 491    | 17   | **reserved** (zero) |
+| 508    | 4    | V2 IEEE CRC-32 over bytes 0–507 when feature bit 4 is set, otherwise reserved zero. V3 reserves these bytes as zero. |
 
 Retired and unknown engine formats fail with `ErrUnsupportedFormatVersion` before WAL replay. See [offline conversion](../../docs/hexxladb/OPERATIONS.md#offline-conversion-of-retired-files) for engine v1 and AES-XTS files.
 
@@ -63,8 +67,9 @@ Associated data binds the literal format label, database salt/identity, format v
 ## WAL file
 
 The WAL holds redo for one serialized write transaction. Recovery validates the
-entire file with a record-sized buffer before replaying active pages. Only
-records with `seq > last_wal_seq` in the primary header are active.
+entire file with a record-sized buffer before replaying active pages. For
+current commits, validation binds the complete transaction before trusting
+the primary header's watermark.
 
 - **V2 writes:** The first active record uses `page_id=0`. Its payload
   contains the final primary header in bytes 0–511 and a big-endian `uint64`
@@ -75,6 +80,20 @@ records with `seq > last_wal_seq` in the primary header are active.
   records. Its sequence is the last page sequence, or a newly allocated one
   for a header-only commit.
 - **Unmarked WAL:** A pending WAL without a commit header is refused.
+
+Current writers set feature bit 4 in the committed header. In both formats,
+the marker contains a page-record count at byte 512, `HXWAL002` at byte 520,
+and a 32-byte SHA-256 digest at byte 528. The digest covers the ordered
+concatenation of each page record's `seq || page_id || payload`.
+V3's marker MAC authenticates this descriptor. V2 uses its record CRC and
+digest to detect accidental corruption. A framed database rejects pending
+redo that strips the required descriptor.
+
+A complete framed WAL can repair a torn mutable primary header, provided its
+bootstrap format, page size, and encryption identity remain readable. A v2
+header checksum or v3 header authenticator must validate before recovery
+trusts its watermark. Keep a pre-upgrade recovery set for older writers once
+feature bit 4 has been persisted.
 
 Recovery writes pages, syncs the primary, publishes and syncs the validated
 header, then clears the WAL.
@@ -101,11 +120,11 @@ Values ≥ 64 bytes are transparently compressed before storage using DEFLATE (`
 | 1      | 4    | **uncompressed_length** `uint32` big-endian                                    |
 | 5..    | var  | DEFLATE-compressed payload (`compress/flate`, level 1)                         |
 
-Values normally stay raw if compression does not reduce size. A raw value longer than five bytes that starts with `0xFE` is wrapped even if compression does not shrink it, so reads can distinguish the value from an envelope. Compression runs **before** the overflow threshold check, so compressible values may fit inline even if the raw size exceeds the threshold.
+Values normally stay raw if compression does not reduce size. Raw values matching the compression marker or the exact 14-byte overflow-stub signature are wrapped even when that increases their size. Compression runs before the overflow threshold check. Reads bound the declared uncompressed length by the largest supported logical value size, independently of a subsequently lowered write limit.
 
 ## Overflow pages
 
-Values larger than the **inline threshold** (`pageSize - btreeHeaderSize - maxKeyBytes - 4`, typically ~3.7 KiB at 4 KiB page size) are stored in a chain of overflow pages. The leaf entry holds a 14-byte **overflow stub** instead of the raw value.
+Stored values larger than `max(pageSize/3, 256)` use overflow pages. The leaf entry holds a 14-byte overflow stub. Reads and releases validate the declared length and require exactly the corresponding number of pages. The stored-length limit allows bounded DEFLATE framing overhead for an escaped maximum-sized raw value.
 
 ### Overflow stub (in leaf)
 

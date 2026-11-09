@@ -61,7 +61,7 @@ The notation below describes logical identities. Concrete encodings use binary s
 | Embedding          | `embed/<packed_coord>` → fixed-dimension float32 vector              |
 | HNSW metadata      | `hnsw/meta`, `hnsw/entry` → graph configuration and entry point      |
 | HNSW node          | `hnsw/node/<packed_coord>` → graph layers and neighbor lists         |
-| HNSW lifecycle     | `hnsw/state` → revision and exact-fallback/graph-current state        |
+| HNSW lifecycle     | `hnsw/state` → revision and reachability-validated graph state        |
 | Changefeed head    | `__meta/changelog-head` → latest durable outbox commit identifier    |
 | Changefeed outbox  | `__meta/changelog-outbox/<commit>/<ordinal>/<key>` → bounded intent  |
 

@@ -25,16 +25,16 @@ type HeuristicFunc func(current, goal lattice.Coord) float64
 type Path []lattice.Coord
 
 // HexDistanceHeuristic returns the hex distance between two coordinates.
-// This is the standard admissible heuristic for hex grids.
+// It is admissible for six-neighbor movement with edge costs of at least one.
 func HexDistanceHeuristic(current, goal lattice.Coord) float64 {
 	return float64(current.Distance(goal))
 }
 
 // EuclideanHeuristic returns the Euclidean distance in the flat axial 2D embedding.
 // For pointy-top hex grids the metric is sqrt(dq² + dr² + dq·dr) which equals
-// the distance in 2D space when each hex is one unit across.
-// This is admissible for edge weights >= 1 and can expand fewer nodes than
-// HexDistanceHeuristic on diagonal paths by providing a tighter lower bound.
+// the Euclidean distance when neighboring centers are one unit apart. It is
+// admissible for six-neighbor movement with edge costs of at least one and
+// is bounded above by HexDistanceHeuristic.
 func EuclideanHeuristic(current, goal lattice.Coord) float64 {
 	dq := float64(goal.Q - current.Q)
 	dr := float64(goal.R - current.R)

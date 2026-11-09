@@ -131,17 +131,7 @@ func scoreCell(queryLow string, tags []string, content, sourceID string, confide
 		return score, true
 	}
 
-	// Repeated tags count only once per token, regardless of case.
-	tagsLow := make([]string, 0, len(tags))
-	seenTags := make(map[string]struct{}, len(tags))
-	for _, tag := range tags {
-		tagLow := strings.ToLower(tag)
-		if _, seen := seenTags[tagLow]; seen {
-			continue
-		}
-		seenTags[tagLow] = struct{}{}
-		tagsLow = append(tagsLow, tagLow)
-	}
+	tagsLow := distinctFoldedTags(tags)
 	contentLow := strings.ToLower(content)
 	sourceIDLow := strings.ToLower(sourceID)
 
@@ -176,6 +166,22 @@ func scoreCell(queryLow string, tags []string, content, sourceID string, confide
 	}
 
 	return score, matched
+}
+
+// distinctFoldedTags preserves input order for reproducible scoring and explanations.
+func distinctFoldedTags(tags []string) []string {
+	// Repeated tags count only once per token, regardless of case.
+	tagsLow := make([]string, 0, len(tags))
+	seenTags := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		tagLow := strings.ToLower(tag)
+		if _, seen := seenTags[tagLow]; seen {
+			continue
+		}
+		seenTags[tagLow] = struct{}{}
+		tagsLow = append(tagsLow, tagLow)
+	}
+	return tagsLow
 }
 
 // hasAllTags reports whether tags contains every element of required (case-sensitive).

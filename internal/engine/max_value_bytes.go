@@ -1,11 +1,13 @@
 package engine
 
+const maxSupportedValueBytes = 1 << 20
+
 const validMaxValueBytesText = "512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, or 1048576"
 
 // validMaxValueBytes lists the accepted per-database value size limits.
 // Values ≤ inlineThreshold(pageSize) fit in a single leaf entry; larger values
 // spill to overflow pages automatically.
-var validMaxValueBytes = [...]uint32{512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576}
+var validMaxValueBytes = [...]uint32{512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, maxSupportedValueBytes}
 
 // resolveMaxValueBytes validates opts.MaxValueBytes and returns the canonical
 // on-disk value (0 = use default; non-zero = explicit limit to persist).

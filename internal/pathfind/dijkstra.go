@@ -1,6 +1,10 @@
 package pathfind
 
-import "github.com/hexxla/hexxladb/internal/lattice"
+import (
+	"context"
+
+	"github.com/hexxla/hexxladb/internal/lattice"
+)
 
 // Dijkstra finds the shortest path from start to goal using uniform-cost search.
 // Equivalent to A* with a zero heuristic. Suitable when no good distance estimate
@@ -9,7 +13,12 @@ import "github.com/hexxla/hexxladb/internal/lattice"
 //
 // maxExpand limits the number of nodes expanded (0 = unlimited).
 func Dijkstra(start, goal lattice.Coord, neighbors NeighborFunc, cost CostFunc, maxExpand int) (Path, error) {
-	return shortestPath(start, goal, neighbors, cost, zeroHeuristic, maxExpand)
+	return DijkstraContext(context.Background(), start, goal, neighbors, cost, maxExpand)
+}
+
+// DijkstraContext stops between expansions and before each edge cost.
+func DijkstraContext(ctx context.Context, start, goal lattice.Coord, neighbors NeighborFunc, cost CostFunc, maxExpand int) (Path, error) {
+	return shortestPath(ctx, start, goal, neighbors, cost, zeroHeuristic, maxExpand)
 }
 
 func zeroHeuristic(_, _ lattice.Coord) float64 { return 0 }

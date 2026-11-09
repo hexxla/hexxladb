@@ -2,11 +2,13 @@ package engine
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -32,6 +34,7 @@ func TestAuthenticatedWALRecoversPublishedRootAndPages(t *testing.T) {
 	if e.wtxn.hdr.BTreeRoot == 0 || len(e.wtxn.pending) == 0 {
 		t.Fatal("transaction did not stage a root and redo pages")
 	}
+	slices.SortFunc(e.wtxn.pending, func(a, b pendingRedo) int { return cmp.Compare(a.seq, b.seq) })
 	final := e.wtxn.hdr
 	final.LastWALSeq = e.wtxn.pending[len(e.wtxn.pending)-1].seq
 	for i := range e.wtxn.pending {
@@ -93,6 +96,7 @@ func TestAuthenticatedWALPageIDTamperFailsClosed(t *testing.T) {
 	if err := OpenBTree(e).Put([]byte("key"), []byte("value")); err != nil {
 		t.Fatal(err)
 	}
+	slices.SortFunc(e.wtxn.pending, func(a, b pendingRedo) int { return cmp.Compare(a.seq, b.seq) })
 	final := e.wtxn.hdr
 	final.LastWALSeq = e.wtxn.pending[len(e.wtxn.pending)-1].seq
 	page := e.wtxn.pending[0]

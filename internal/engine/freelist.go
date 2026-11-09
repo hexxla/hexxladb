@@ -25,7 +25,7 @@ func (e *Engine) validateFreelistOnOpen(hdr Header) error {
 	return err
 }
 
-func (e *Engine) freelistMetadataIDs(hdr Header) ([]uint64, error) {
+func (e *Engine) freelistMetadataIDs(hdr Header, visitFree func(uint64) error) ([]uint64, error) {
 	if hdr.FormatVersion != formatVersionV3 || hdr.FreelistHead == 0 {
 		return nil, nil
 	}
@@ -52,6 +52,11 @@ func (e *Engine) freelistMetadataIDs(hdr Header) ([]uint64, error) {
 		}
 		if uint64(len(freeIDs)) > remaining {
 			return nil, fmt.Errorf("%w: freelist metadata exceeds declared count", ErrCorruptTree)
+		}
+		for _, id := range freeIDs {
+			if err := visitFree(id); err != nil {
+				return nil, err
+			}
 		}
 		remaining -= uint64(len(freeIDs))
 		ids = append(ids, pageID)
@@ -134,6 +139,9 @@ func (e *Engine) loadWriteTxnFreelist() error {
 func (txn *writeTxnState) addLoadedFreePage(pageID uint64) error {
 	if pageID == 0 || pageID >= txn.hdr.NextPageID {
 		return fmt.Errorf("%w: free page id %d outside allocator range", ErrCorruptTree, pageID)
+	}
+	if pageID == txn.hdr.BTreeRoot {
+		return fmt.Errorf("%w: root page %d is also free", ErrCorruptTree, pageID)
 	}
 	if _, duplicate := txn.freePageSet[pageID]; duplicate {
 		return fmt.Errorf("%w: duplicate free page id %d", ErrCorruptTree, pageID)

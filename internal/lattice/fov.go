@@ -41,9 +41,8 @@ func FieldOfViewContext(ctx context.Context, origin Coord, maxRadius int, opaque
 	}
 	numRays := 3 * maxRadius * (maxRadius + 1)
 	rays := WalkRings(make([]Coord, 0, numRays+1), Coord{}, maxRadius)[1:]
-	cells := make([]fovCell, numRays)
+	var cells []fovCell
 	done := ctx.Done()
-	hasBlocker := false
 	for i, offset := range rays {
 		select {
 		case <-done:
@@ -51,21 +50,25 @@ func FieldOfViewContext(ctx context.Context, origin Coord, maxRadius int, opaque
 		default:
 		}
 		blocked := opaque(Coord{Q: origin.Q + offset.Q, R: origin.R + offset.R})
+		if cells == nil {
+			if !blocked {
+				continue
+			}
+			cells = make([]fovCell, numRays)
+			for j, preceding := range rays[:i] {
+				cells[j].offset = preceding
+			}
+		}
 		cells[i] = fovCell{offset: offset, blocked: blocked}
-		hasBlocker = hasBlocker || blocked
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if cells == nil {
+		return openFieldCoords(ctx, origin, maxRadius, numRays+1)
+	}
 	visible := make([]Coord, 1, numRays+1)
 	visible[0] = origin
-	if !hasBlocker {
-		for _, cell := range cells {
-			visible = append(visible, Coord{Q: origin.Q + cell.offset.Q, R: origin.R + cell.offset.R})
-		}
-		sortFOVVisible(visible, origin)
-		return visible, ctx.Err()
-	}
 	slices.SortFunc(cells, func(a, b fovCell) int { return compareFOVDirections(a.offset, b.offset) })
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -93,6 +96,30 @@ func FieldOfViewContext(ctx context.Context, origin Coord, maxRadius int, opaque
 		}
 	}
 	sortFOVVisible(visible, origin)
+	return visible, ctx.Err()
+}
+
+// openFieldCoords emits the same distance/Q/R order as sortFOVVisible.
+// In each axial column of a ring, the two endpoints lie on the boundary;
+// at Q = ±ring, the whole column lies on the boundary.
+func openFieldCoords(ctx context.Context, origin Coord, radius, count int) ([]Coord, error) {
+	visible := make([]Coord, 1, count)
+	visible[0] = origin
+	for ring := 1; ring <= radius; ring++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		for q := -ring; q <= ring; q++ {
+			first, last := max(-ring, -ring-q), min(ring, ring-q)
+			if q == -ring || q == ring {
+				for r := first; r <= last; r++ {
+					visible = append(visible, Coord{Q: origin.Q + q, R: origin.R + r})
+				}
+			} else {
+				visible = append(visible, Coord{Q: origin.Q + q, R: origin.R + first}, Coord{Q: origin.Q + q, R: origin.R + last})
+			}
+		}
+	}
 	return visible, ctx.Err()
 }
 

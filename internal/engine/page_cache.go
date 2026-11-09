@@ -11,9 +11,8 @@ import (
 // Each shard runs an independent CLOCK-Pro eviction loop with three entry
 // states — hot, cold, and test (ghost). Ghost entries retain the page key
 // after eviction so that a re-access promotes the page directly to hot and
-// widens the cold budget. This prevents scan pollution: sequential
-// AscendRange walks that access many leaf pages once do not evict the hot
-// working set of internal B+ tree nodes.
+// widens the cold budget. Recently reused pages can stay hot across scans
+// while the cold set handles pages with no observed reuse.
 //
 // Key is a pageID (uint64). Value is a copy of the raw page bytes (plaintext
 // after transformRead / AfterRead decryption). The cache stores the
@@ -75,23 +74,28 @@ type pcShard struct {
 	maxSize    int64 // bytes budget for this shard (hot + cold only)
 }
 
-// newPageCache creates a pageCache with the given total byte budget. Returns
-// nil if budget == 0 (cache disabled). Shard count is
-// min(4*GOMAXPROCS, 16), same ratio as Pebble's internal/cache.
-func newPageCache(budgetBytes int64) *pageCache {
-	if budgetBytes <= 0 {
+// newPageCache distributes whole pages among shards. A budget smaller than
+// one page disables the cache.
+func newPageCache(budgetBytes int64, pageSize int) *pageCache {
+	pageBytes := int64(pageSize)
+	pages := budgetBytes / pageBytes
+	if pages <= 0 {
 		return nil
 	}
-	n := max(min(4*runtime.GOMAXPROCS(0), 16), 1)
-	shardSize := max(budgetBytes/int64(n), 1)
+	n := int(min(int64(4*runtime.GOMAXPROCS(0)), 16, pages))
+	shardPages, extra := pages/int64(n), pages%int64(n)
 	c := &pageCache{
 		shards:   make([]pcShard, n),
 		numShard: n,
 	}
 	for i := range c.shards {
+		size := shardPages * pageBytes
+		if int64(i) < extra {
+			size += pageBytes
+		}
 		c.shards[i].index = make(map[uint64]*pcEntry)
-		c.shards[i].maxSize = shardSize
-		c.shards[i].coldTarget = shardSize
+		c.shards[i].maxSize = size
+		c.shards[i].coldTarget = size / 2
 	}
 	return c
 }

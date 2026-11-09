@@ -3,6 +3,7 @@ package hexxladb
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"slices"
 
 	"github.com/hexxla/hexxladb/internal/lattice"
@@ -95,6 +96,9 @@ func (tx *Tx) TagCooccurrences(ctx context.Context, minCount int) ([]TagPair, er
 func (tx *Tx) UntaggedCells(ctx context.Context, center Coord, maxR int) ([]Coord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if maxR > MaxSpatialScanRadius {
+		return nil, fmt.Errorf("%w: radius must be between 0 and %d", ErrInvalidArgument, MaxSpatialScanRadius)
 	}
 	if err := validatePackedRadius(center, maxR); err != nil {
 		return nil, err

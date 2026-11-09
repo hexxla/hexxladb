@@ -23,6 +23,9 @@ func (tx *Tx) RingDensityMap(ctx context.Context, center Coord, maxR int) ([]Rin
 	if tx == nil || tx.db == nil {
 		return nil, ErrClosed
 	}
+	if maxR > MaxSpatialScanRadius {
+		return nil, fmt.Errorf("%w: radius must be between 0 and %d", ErrInvalidArgument, MaxSpatialScanRadius)
+	}
 	if err := validatePackedRadius(center, maxR); err != nil {
 		return nil, err
 	}
@@ -37,6 +40,9 @@ func (tx *Tx) RingDensityMap(ctx context.Context, center Coord, maxR int) ([]Rin
 		}
 		occupied := 0
 		for c := range lattice.RingSeq(center, ring) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			p, err := Pack(c)
 			if err != nil {
 				return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)

@@ -908,6 +908,9 @@ func (db *DB) DeleteChangelogConsumer(consumerID string, expectedSeq uint64) err
     matches. Deleting the final consumer removes retention protection; it does
     not delete changelog records. Deletion is available on changelog-disabled
     handles so an operator can explicitly re-bootstrap invalidated consumers.
+    Removing the final consumer on a disabled handle also clears the retained
+    history checkpoint, allowing an explicitly replaced sidecar on the next
+    open.
 
 func (db *DB) DeleteSnapshotTag(label string) error
     DeleteSnapshotTag removes the named snapshot tag. Returns
@@ -1003,6 +1006,13 @@ func (db *DB) ReclaimTail() (uint64, error)
     The returned value is the number of primary-file bytes removed. A committed
     allocator update always precedes truncation, so interruption can leave
     excess bytes for the next call to remove but cannot remove a reachable page.
+
+func (db *DB) ResetChangelogHistory() error
+    ResetChangelogHistory relinquishes the primary's retained-history
+    checkpoint. It requires a changelog-disabled handle with no registered
+    consumers. Archive the old sidecar and rebuild downstream state before
+    reopening with a fresh sidecar. Database records, pending outbox intents,
+    and sidecar files are preserved. Resetting an absent checkpoint succeeds.
 
 func (db *DB) SnapshotDiff(ctx context.Context, fromSeq, toSeq uint64, cfg SnapshotDiffConfig) (SnapshotDiff, error)
     SnapshotDiff returns retained cell and seam writes with commit_seq in the
@@ -1813,13 +1823,14 @@ func (tx *Tx) LoadContextVoronoi(ctx context.Context, seeds []Coord, cfg Voronoi
     LoadContextVoronoi partitions the area around multiple seeds using a Voronoi
     diagram using minimum traversal cost within MaxRadius hops, then loads cells
     for each region in cost order with deterministic seed and coordinate ties.
+    Finite weights and the unit hop costs are summed exactly as binary values.
 
     Unlike loading independent radial neighborhoods per seed (which causes
     overlap near adjacent seeds), Voronoi assigns each coordinate to exactly
     one seed. This gives each seed a fair, non-overlapping share of the context
     budget.
 
-    When VoronoiContextConfig.WeightFunc is set, the Dijkstra expansion uses
+    When VoronoiContextConfig.WeightFunc is set, the hop-bounded search uses
     the returned cost as an additional penalty, allowing callers to steer region
     boundaries using confidence, recency, or semantic similarity scores.
 
@@ -2176,9 +2187,8 @@ func SuperHexParent(c Coord) Coord
     hierarchy. Every parent owns exactly seven fine cells: the transformed
     center and its six immediate neighbors.
 
-    The parent lattice basis vectors are (2,1) and (-1,3), whose determinant
-    is seven. Candidate selection uses exact hex distance and a lexicographic
-    tie-break, avoiding floating-point rounding at cluster boundaries.
+    The parent lattice basis vectors are (2,1) and (-1,3), whose determinant is
+    seven. The child offset follows from the fine coordinate modulo seven.
 
 func SuperHexParentAtLevel(c Coord, levels int) Coord
     SuperHexParentAtLevel maps c through levels aperture-7 hierarchy levels.

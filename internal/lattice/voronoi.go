@@ -43,7 +43,7 @@ func Voronoi(seeds []Coord, maxRadius int, weightFn WeightFunc) (cells []Voronoi
 }
 
 type voronoiAssignment struct {
-	cost    float64
+	cost    voronoiCost
 	seedIdx int
 	hops    int
 }
@@ -147,16 +147,18 @@ func (search *voronoiSearch) expand(ctx context.Context, current voronoiState, n
 		if err != nil {
 			return nil, err
 		}
-		candidate := voronoiAssignment{
-			cost:    current.assignment.cost + 1 + penalty,
-			seedIdx: current.assignment.seedIdx,
-			hops:    current.assignment.hops + 1,
-		}
-		if math.IsInf(candidate.cost, 0) {
-			return nil, fmt.Errorf("%w: cumulative cost overflow at coordinate %+v", ErrInvalidWeight, neighbor)
+		candidate := current.assignment
+		candidate.hops++
+		if search.weightFn == nil {
+			candidate.cost.rounded++
+		} else {
+			candidate.cost = candidate.cost.advance(penalty)
+			if candidate.cost.overflows() {
+				return nil, fmt.Errorf("%w: cumulative cost overflow at coordinate %+v", ErrInvalidWeight, neighbor)
+			}
 		}
 		previous, seen := search.assignments[neighbor]
-		if seen && !betterVoronoiAssignment(candidate.cost, candidate.seedIdx, candidate.hops, previous.cost, previous.seedIdx, previous.hops) {
+		if seen && compareVoronoiAssignment(candidate, previous) >= 0 {
 			continue
 		}
 		if !seen {
@@ -201,28 +203,13 @@ func (search *voronoiSearch) result() []VoronoiCell {
 	}
 	slices.SortFunc(cells, func(a, b VoronoiCell) int {
 		left, right := search.assignments[a.Coord], search.assignments[b.Coord]
-		if betterVoronoiAssignment(left.cost, left.seedIdx, left.hops, right.cost, right.seedIdx, right.hops) {
-			return -1
-		}
-		if betterVoronoiAssignment(right.cost, right.seedIdx, right.hops, left.cost, left.seedIdx, left.hops) {
-			return 1
-		}
-		if a.Coord.Q != b.Coord.Q {
-			return cmp.Compare(a.Coord.Q, b.Coord.Q)
-		}
-		return cmp.Compare(a.Coord.R, b.Coord.R)
+		return cmp.Or(compareVoronoiAssignment(left, right), cmp.Compare(a.Coord.Q, b.Coord.Q), cmp.Compare(a.Coord.R, b.Coord.R))
 	})
 	return cells
 }
 
-func betterVoronoiAssignment(cost float64, seedIdx, hops int, oldCost float64, oldSeedIdx, oldHops int) bool {
-	if cost != oldCost {
-		return cost < oldCost
-	}
-	if seedIdx != oldSeedIdx {
-		return seedIdx < oldSeedIdx
-	}
-	return hops < oldHops
+func compareVoronoiAssignment(a, b voronoiAssignment) int {
+	return cmp.Or(a.cost.compare(b.cost), cmp.Compare(a.seedIdx, b.seedIdx), cmp.Compare(a.hops, b.hops))
 }
 
 // VoronoiRegion returns only the coordinates assigned to a specific seed index.

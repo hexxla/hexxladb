@@ -33,8 +33,10 @@ const (
 	encryptedHeaderSize = 48
 	headerMagicV1       = "HXCHGv01"
 	headerMagicV2       = "HXCHGv02"
+	headerMagicV3       = "HXCHGv03"
 	formatV1            = uint32(1)
 	formatV2            = uint32(2)
+	formatV3            = uint32(3)
 	flagEncrypted       = uint32(1)
 	headerTagSize       = 16
 	noncePrefixSize     = 16
@@ -128,6 +130,7 @@ type Log struct {
 	logicalDigest [32]byte
 	checkpoints   []checkpoint
 	dataOffset    int64
+	format        uint32
 	aead          cipher.AEAD
 	noncePrefix   [noncePrefixSize]byte
 	header        [encryptedHeaderSize]byte
@@ -145,6 +148,7 @@ func OpenRecoverable(path string, syncWrites bool) (*Log, error) {
 }
 
 // OpenEncrypted opens or creates an authenticated encrypted changelog file.
+// It atomically upgrades legacy encrypted v2 history before returning a v3 writer.
 // key must contain 32 bytes of changelog-specific key material.
 func OpenEncrypted(path string, syncWrites bool, key []byte) (*Log, error) {
 	if len(key) != chacha20poly1305.KeySize {
@@ -210,6 +214,14 @@ func openWithSync(
 		_ = f.Close()
 		return nil, err
 	}
+	if l.format == formatV2 {
+		upgraded, err := l.upgradeEncryptedV2(key, syncParents)
+		if err != nil {
+			_ = l.Close()
+			return nil, err
+		}
+		return upgraded, nil
+	}
 	return l, nil
 }
 
@@ -225,8 +237,9 @@ func (l *Log) writeHeader(key []byte) error {
 		l.logicalDigest = emptyLogicalDigest
 		l.checkpoints = []checkpoint{{seq: 0, offset: l.dataOffset, digest: l.logicalDigest}}
 	} else {
-		copy(l.header[:], headerMagicV2)
-		binary.BigEndian.PutUint32(l.header[8:12], formatV2)
+		l.format = formatV3
+		copy(l.header[:], headerMagicV3)
+		binary.BigEndian.PutUint32(l.header[8:12], formatV3)
 		binary.BigEndian.PutUint32(l.header[12:16], flagEncrypted)
 		if _, err := rand.Read(l.noncePrefix[:]); err != nil {
 			return err
@@ -255,7 +268,7 @@ func (l *Log) readHeaderAndScan(key []byte, repairIncompleteTail bool) error {
 	if _, err := l.f.ReadAt(prefix[:], 0); err != nil {
 		return fmt.Errorf("%w: truncated header: %w", ErrCorrupt, err)
 	}
-	if string(prefix[:8]) != headerMagicV1 && string(prefix[:8]) != headerMagicV2 {
+	if string(prefix[:8]) != headerMagicV1 && string(prefix[:8]) != headerMagicV2 && string(prefix[:8]) != headerMagicV3 {
 		return fmt.Errorf("%w: bad magic", ErrCorrupt)
 	}
 	switch string(prefix[:8]) {
@@ -267,7 +280,7 @@ func (l *Log) readHeaderAndScan(key []byte, repairIncompleteTail bool) error {
 			return ErrPlaintext
 		}
 		l.dataOffset = plaintextHeaderSize
-	case headerMagicV2:
+	case headerMagicV2, headerMagicV3:
 		if len(key) == 0 {
 			return ErrEncryptionRequired
 		}
@@ -286,7 +299,9 @@ func (l *Log) readEncryptedHeaderAndScan(key []byte, repairIncompleteTail bool) 
 	if _, err := l.f.ReadAt(l.header[:], 0); err != nil {
 		return fmt.Errorf("%w: truncated encrypted header: %w", ErrCorrupt, err)
 	}
-	if string(l.header[:8]) != headerMagicV2 || binary.BigEndian.Uint32(l.header[8:12]) != formatV2 {
+	l.format = binary.BigEndian.Uint32(l.header[8:12])
+	if (string(l.header[:8]) != headerMagicV2 || l.format != formatV2) &&
+		(string(l.header[:8]) != headerMagicV3 || l.format != formatV3) {
 		return fmt.Errorf("%w: unknown encrypted format", ErrCorrupt)
 	}
 	if binary.BigEndian.Uint32(l.header[12:16]) != flagEncrypted {
@@ -721,7 +736,11 @@ func deriveHeaderTag(master []byte, noncePrefix [noncePrefixSize]byte, headerPre
 }
 
 func (l *Log) configureEncryption(master []byte) error {
-	key := deriveSubkey(master, l.noncePrefix, "hexxladb-changelog-frame-aead-v2")
+	label := "hexxladb-changelog-frame-aead-v3"
+	if l.format == formatV2 {
+		label = "hexxladb-changelog-frame-aead-v2"
+	}
+	key := deriveSubkey(master, l.noncePrefix, label)
 	defer clear(key[:])
 	aead, err := chacha20poly1305.NewX(key[:])
 	if err != nil {
@@ -735,7 +754,14 @@ func (l *Log) minimumFrameBody() int {
 	if l.aead == nil {
 		return minimumPlainBody
 	}
-	return 8 + minimumPlainBody + l.aead.Overhead()
+	return l.encryptedFramePrefixSize() + minimumPlainBody + l.aead.Overhead()
+}
+
+func (l *Log) encryptedFramePrefixSize() int {
+	if l.format == formatV2 {
+		return 8
+	}
+	return 8 + chacha20poly1305.NonceSizeX
 }
 
 func (l *Log) frameNonce(seq uint64) [chacha20poly1305.NonceSizeX]byte {
@@ -757,15 +783,22 @@ func (l *Log) encodeFrame(seq uint64, inner []byte) ([]byte, error) {
 	if l.aead == nil {
 		return inner, nil
 	}
-	bodyLen := 8 + len(inner) + l.aead.Overhead()
+	if l.format != formatV3 {
+		return nil, errors.New("changelog: upgrade encrypted v2 before appending")
+	}
+	bodyLen := l.encryptedFramePrefixSize() + len(inner) + l.aead.Overhead()
 	if bodyLen > maxBodyBytes {
 		return nil, errors.New("changelog: record too large")
 	}
-	nonce := l.frameNonce(seq)
+	var nonce [chacha20poly1305.NonceSizeX]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return nil, err
+	}
 	// #nosec G115 -- bodyLen is checked against maxBodyBytes above.
 	aad := l.frameAAD(seq, uint32(bodyLen)) //nolint:gosec // bodyLen is bounded by maxBodyBytes
-	body := make([]byte, 8, bodyLen)
+	body := make([]byte, l.encryptedFramePrefixSize(), bodyLen)
 	binary.BigEndian.PutUint64(body, seq)
+	copy(body[8:], nonce[:])
 	body = l.aead.Seal(body, nonce[:], inner, aad[:])
 	return body, nil
 }
@@ -783,9 +816,12 @@ func (l *Log) decodeFrame(body []byte) (Record, error) {
 		return record, ErrCorrupt
 	}
 	nonce := l.frameNonce(seq)
+	if l.format == formatV3 {
+		copy(nonce[:], body[8:l.encryptedFramePrefixSize()])
+	}
 	// #nosec G115 -- callers cap frame bodies at maxBodyBytes before decode.
 	aad := l.frameAAD(seq, uint32(len(body))) //nolint:gosec // frame length is capped before decode
-	inner, err := l.aead.Open(nil, nonce[:], body[8:], aad[:])
+	inner, err := l.aead.Open(nil, nonce[:], body[l.encryptedFramePrefixSize():], aad[:])
 	if err != nil {
 		return record, fmt.Errorf("%w: frame authentication failed", ErrCorrupt)
 	}

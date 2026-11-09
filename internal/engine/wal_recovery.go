@@ -11,7 +11,7 @@ const maxWALReplayBytes = 16 << 30
 
 // openReplayWAL validates the full WAL before modifying the primary. Replay
 // makes a second bounded-memory pass under the exclusive database file lock.
-func openReplayWAL(db, wal *os.File, hdr *Header, opts *Options, pageSize, physicalPageSize int, usePrimaryFdatasync bool) (uint64, bool, [32]byte, error) {
+func openReplayWAL(db, wal *os.File, hdr *Header, opts *Options, pageSize, physicalPageSize int, usePrimaryFdatasync bool, primaryHeaderErr error) (uint64, bool, [32]byte, error) {
 	info, err := wal.Stat()
 	if err != nil {
 		return 0, false, [32]byte{}, err
@@ -28,9 +28,35 @@ func openReplayWAL(db, wal *os.File, hdr *Header, opts *Options, pageSize, physi
 		key, headerKey = opts.WALMACKey, opts.HeaderMACKey
 	}
 	if info.Size() != 0 {
-		if err := replayWAL(db, wal, hdr, pageSize, physicalPageSize, useMAC, key, headerKey, usePrimaryFdatasync); err != nil {
+		plan, err := inspectFramedWAL(wal, *hdr, useMAC, key, headerKey, physicalPageSize)
+		if err != nil {
 			return 0, false, key, err
 		}
+		if plan.framed {
+			legacyPrimary := hdr.FormatVersion == formatVersionV2 && hdr.Features&FeatureWALFrameDigest == 0
+			if primaryHeaderErr != nil || legacyPrimary || plan.final.LastWALSeq > hdr.LastWALSeq {
+				if primaryHeaderErr == nil && !legacyPrimary && plan.final.CommitSeq < hdr.CommitSeq {
+					return 0, false, key, ErrCorruptWAL
+				}
+				if err := replayFramedWAL(db, wal, hdr, plan, useMAC, key, headerKey, physicalPageSize, usePrimaryFdatasync); err != nil {
+					return 0, false, key, err
+				}
+				primaryHeaderErr = nil
+			}
+		} else {
+			if primaryHeaderErr != nil {
+				return 0, false, key, primaryHeaderErr
+			}
+			if _, err := wal.Seek(0, io.SeekStart); err != nil {
+				return 0, false, key, err
+			}
+			if err := replayWAL(db, wal, hdr, pageSize, physicalPageSize, useMAC, key, headerKey, usePrimaryFdatasync); err != nil {
+				return 0, false, key, err
+			}
+		}
+	}
+	if primaryHeaderErr != nil {
+		return 0, false, key, primaryHeaderErr
 	}
 	if err := openTruncateWAL(wal); err != nil {
 		return 0, false, key, err

@@ -10,7 +10,7 @@ New databases created with `EncryptionKey` or `Passphrase` use engine **format v
 - page 0 remains readable but carries a keyed HMAC-SHA256 authenticator;
 - WAL records contain the same authenticated physical page images plus a keyed MAC;
 - the final authenticated header is recorded as the v3 WAL commit marker; and
-- an enabled changelog uses its independent authenticated encrypted format v2.
+- an enabled changelog uses its independent authenticated encrypted format v3.
 
 Plaintext creation uses engine v2. Both profiles use MVCC.
 
@@ -68,7 +68,9 @@ Use least-privilege file ownership and independently authenticated, offline back
 ## Changelog policy
 
 - Plaintext databases use changelog format v1.
-- Encrypted databases use authenticated encrypted changelog format v2 and reject a plaintext sibling with [`ErrChangelogPlaintext`](../../errors.go).
+- Encrypted databases use authenticated encrypted changelog format v3 and reject a plaintext sibling with [`ErrChangelogPlaintext`](../../errors.go).
+- Each encrypted frame carries a fresh random 24-byte nonce. Restoring a backup and appending divergent history does not reuse a sequence-derived nonce.
+- Opening an existing encrypted v2 changelog validates and rewrites it to v3 in a synced same-directory candidate, verifies its logical history, then atomically replaces the sidecar and syncs the directory. Allow temporary space for one full sidecar copy and directory write permission. An interrupted conversion can leave an unreferenced `.hexxladb-changelog-upgrade-*` candidate. Retain a pre-upgrade recovery-set backup for older binaries, which reject changelog v3.
 - Frame sequences and lengths remain visible; logical keys, operations, timestamps, hashes, and inline payloads are encrypted.
 - Existing plaintext changelog history is never silently mixed with encrypted frames. Archive/reconcile it according to application retention policy, then create a new encrypted log.
 - [`RotateEncryption`](../../rotation.go) re-encrypts changelog history when both option sets enable the same effective changelog path. Its recovery marker makes interrupted filesystem swaps explicit through `ErrRotationIncomplete` and `RecoverInterruptedRotation`.

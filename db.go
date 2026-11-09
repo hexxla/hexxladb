@@ -85,6 +85,17 @@ func OpenExisting(path string, opts *Options) (*DB, error) {
 }
 
 func openDB(path string, opts *Options, createExclusive bool) (*DB, error) {
+	pathLock, err := engine.AcquirePathLock(path)
+	if err != nil {
+		return nil, mapEngineOpenError(path, err)
+	}
+	defer func() { _ = pathLock.Close() }()
+	return openDBWithPathLock(path, opts, createExclusive)
+}
+
+// openDBWithPathLock requires the caller to hold the stable path lock until
+// this call has acquired the primary lock and finished opening its recovery set.
+func openDBWithPathLock(path string, opts *Options, createExclusive bool) (*DB, error) {
 	pendingRotation, err := rotationPending(path)
 	if err != nil {
 		return nil, err
@@ -193,15 +204,16 @@ func (db *DB) openChangelog(path string, opts *Options, hdr engine.Header, maste
 		return mapChangelogOpenError(err)
 	}
 	db.changelog = cl
-	if err := db.recoverChangelogOutbox(); err != nil {
-		_ = cl.Close()
-		return err
-	}
+	// Validate acknowledged history before recovery can publish a new checkpoint.
 	consumers, err := db.readChangelogConsumersLocked()
 	if err == nil {
 		err = db.validateChangelogConsumerHistoryLocked(consumers)
 	}
 	if err != nil {
+		_ = cl.Close()
+		return err
+	}
+	if err := db.recoverChangelogOutbox(); err != nil {
 		_ = cl.Close()
 		return err
 	}

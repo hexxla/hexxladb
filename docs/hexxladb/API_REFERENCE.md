@@ -161,10 +161,10 @@ With `QueryCells`, a zero radius leaves spatial scope unrestricted.
 
 The query planner uses the exact coordinate-probe count to prefer a small
 spatial disk over an unknown-cardinality tag or source range; otherwise it uses
-the first required tag, source, or a scan. A non-vector query with time bounds
-and no cheaper index path scans primary cells so dates on either side of the
-Unix epoch are handled correctly. A radius can supply the scan when no earlier
-plan applies. The planner uses no persistent cardinality statistics.
+the first required tag or source, then a radius scan if present, and finally
+a primary scan. Time predicates are applied to visible records within the
+selected scope and handle dates on either side of the Unix epoch. The planner
+uses no persistent cardinality statistics.
 
 `CellQuery.MaxScanRows` bounds physical cell/tag/source rows or spatial
 coordinate probes. A positive `MaxResults` limits the retained results while
@@ -206,8 +206,10 @@ Use `WalkEdges` for reachability and `FindEdgePath` for weighted paths.
 raw cells grouped by seed index.
 
 Weighted Voronoi assigns each coordinate in the footprint to the seed with the
-lowest path cost within the hop radius. Seed order breaks cost ties. Invalid
-penalties or overflowing path costs return `ErrInvalidArgument`. FOV uses
+lowest path cost within the hop radius. The binary values of finite penalties
+and the unit hop costs are summed exactly, and seed order breaks exact ties.
+Invalid penalties or sums above the largest finite `float64` return
+`ErrInvalidArgument`. FOV uses
 symmetric center-to-center visibility, with an opaque hex boundary blocking
 sight through it. Both stop computing geometry when the context is cancelled.
 Graph context accepts a comma-separated set of relation names in a single
@@ -216,9 +218,9 @@ breadth-first traversal.
 `FindEdgePath` returns a nil path with no error when the goal is unreachable.
 Set `MaxExpand` to cap expanded nodes and `MaxEdgeRows` to cap adjacency rows
 examined across the entire search, including rows excluded by `Filter`. Zero
-means unlimited. Budget exhaustion returns `ErrSpatialScanLimit`. Negative
-budgets and reachable goals whose path costs all overflow `float64` return
-`ErrInvalidArgument`.
+means unlimited. Budget exhaustion returns `ErrSpatialScanLimit`. Coordinates
+outside the packable lattice, negative budgets, and reachable goals whose path
+costs all overflow `float64` return `ErrInvalidArgument`.
 
 For a current view with `requires` edges, this pack follows up to two hops
 from `start`, even when a target lies outside its geometric neighborhood.
@@ -318,7 +320,9 @@ point. It publishes all graph records in one commit only if no embedding changed
 after the snapshot. An unreachable vector prevents publication and returns
 `ErrEmbeddingIndexDisconnected`. Failed or cancelled rebuilds leave flat search
 active and preserve the previously published graph.
-Rebuild an existing index to apply the new neighbor policy across the graph.
+Online insertions that may remove existing layer-zero links or move the entry
+point recheck reachability before the graph can serve searches. Older graphs
+use exact search until rebuilt.
 The default rebuild limit is 10,000 vectors and the validated hard limit is
 20,000; raise neither service expectations nor resource budgets without
 representative evidence.
@@ -370,6 +374,11 @@ and public documentation changes receive deliberate review.
 `Tx.Get` and `Tx.AscendRange` expose physical rows. Use typed reads for MVCC
 visibility and typed writes for validation, indexes, and changefeed.
 
+New writes escape binary values matching internal storage markers. Older builds
+stored raw 14-byte values beginning `0xFF 0x4F` in the same representation as
+overflow stubs. Verify affected historical application values against trusted
+original bytes before rewriting them.
+
 ## Changefeed, health, and maintenance
 
 | API                                                                          | Use                                                    |
@@ -377,6 +386,7 @@ visibility and typed writes for validation, indexes, and changefeed.
 | [`DB.ReadChangelogSince`, `DB.ReadChangelogFiltered`](../../db_changelog.go) | Read the optional at-least-once logical changefeed.             |
 | [`DB.AdvanceChangelogConsumer`, `DB.GetChangelogConsumerCursor`](../../changelog_consumers.go) | Register and compare-and-advance a named durable cursor. |
 | [`DB.ListChangelogConsumers`, `DB.DeleteChangelogConsumer`, `DB.ChangelogRetentionFloor`](../../changelog_consumers.go) | Inspect/delete consumers and compute the advisory minimum acknowledged sequence. |
+| `DB.ResetChangelogHistory` | Explicitly clear the retained-history checkpoint on a disabled handle with zero consumers before re-bootstrap. |
 | [`DB.HealthCheck`](../../health.go)                                          | Fail closed on malformed visible records and optionally validate orphans and secondary indexes. |
 | [`DB.WALStats`](../../db.go)                                            | Observe WAL commit and redo-sync counters.                                    |
 | [`DB.WriteStats`](../../write_stats.go)                                      | Observe cumulative write contention and phase timing.         |

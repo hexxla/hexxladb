@@ -53,6 +53,9 @@ func (db *DB) View(fn func(*Tx) error) error {
 	if db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
+	if db.eng.RecoveryRequired() {
+		return fmt.Errorf("%w: close and reopen required", ErrCommitFinalization)
+	}
 	ch := db.cachedHdr.Load()
 	tx := &Tx{db: db, writable: false, readSeq: ch.commitSeq, cachedBTreeRoot: ch.btreeRoot}
 	return fn(tx)
@@ -74,6 +77,9 @@ func (db *DB) ViewAt(readSeq uint64, fn func(*Tx) error) error {
 	defer db.mu.RUnlock()
 	if db.activeEng() == nil {
 		return ErrDatabaseClosed
+	}
+	if db.eng.RecoveryRequired() {
+		return fmt.Errorf("%w: close and reopen required", ErrCommitFinalization)
 	}
 	ch := db.cachedHdr.Load()
 	if readSeq > ch.commitSeq {
@@ -99,6 +105,9 @@ func (db *DB) ViewAtTime(asOf time.Time, fn func(*Tx) error) error {
 	defer db.mu.RUnlock()
 	if db.activeEng() == nil {
 		return ErrDatabaseClosed
+	}
+	if db.eng.RecoveryRequired() {
+		return fmt.Errorf("%w: close and reopen required", ErrCommitFinalization)
 	}
 	ch := db.cachedHdr.Load()
 	readSeq, err := db.resolveReadSeqAtOrBefore(asOf)
@@ -172,7 +181,7 @@ func (db *DB) Update(fn func(*Tx) error) error { //nolint:gocyclo // durability 
 	fnErr := fn(tx)
 	db.writeStats.callback.Add(int64(time.Since(callbackStarted)))
 	if err := cmp.Or(fnErr, tx.stagedWriteErr); err != nil {
-		return err
+		return mapEngineDataError(err)
 	}
 	if !db.snapshotFloorStored {
 		if err := tx.stageSnapshotFloor(db.snapshotFloor); err != nil {
@@ -324,6 +333,12 @@ func (tx *Tx) ascendRangeSelected(from, to []byte, selectKey func([]byte) (bool,
 }
 
 func mapEngineDataError(err error) error {
+	if errors.Is(err, engine.ErrWALTooLarge) {
+		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	}
+	if errors.Is(err, engine.ErrRecoveryRequired) {
+		return fmt.Errorf("%w: close and reopen required: %w", ErrCommitFinalization, err)
+	}
 	if errors.Is(err, engine.ErrPageAuthentication) || errors.Is(err, engine.ErrCorruptTree) ||
 		errors.Is(err, engine.ErrBadPageSize) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return fmt.Errorf("%w: %w", ErrCorruptDatabase, err)

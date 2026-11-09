@@ -1,7 +1,7 @@
 package pathfind
 
 import (
-	"container/heap"
+	"context"
 	"errors"
 	"math"
 	"slices"
@@ -22,11 +22,14 @@ var ErrExpansionLimit = errors.New("pathfind: expansion limit reached")
 //
 // maxExpand limits the number of nodes expanded (0 = unlimited).
 func AStar(start, goal lattice.Coord, neighbors NeighborFunc, cost CostFunc, heuristic HeuristicFunc, maxExpand int) Path {
-	path, _ := shortestPath(start, goal, neighbors, cost, heuristic, maxExpand)
+	path, _ := shortestPath(context.Background(), start, goal, neighbors, cost, heuristic, maxExpand)
 	return path
 }
 
-func shortestPath(start, goal lattice.Coord, neighbors NeighborFunc, cost CostFunc, heuristic HeuristicFunc, maxExpand int) (Path, error) {
+func shortestPath(ctx context.Context, start, goal lattice.Coord, neighbors NeighborFunc, cost CostFunc, heuristic HeuristicFunc, maxExpand int) (Path, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if start == goal {
 		return Path{start}, nil
 	}
@@ -35,11 +38,14 @@ func shortestPath(start, goal lattice.Coord, neighbors NeighborFunc, cost CostFu
 		gScore:   map[lattice.Coord]float64{start: 0},
 		cameFrom: map[lattice.Coord]lattice.Coord{},
 	}
-	heap.Push(&s.open, &pqItem{coord: start, g: 0, f: heuristic(start, goal)})
+	s.open.push(pqItem{coord: start, g: 0, f: heuristic(start, goal)})
 	expanded := 0
 
-	for s.open.Len() > 0 {
-		cur := heap.Pop(&s.open).(*pqItem)
+	for len(s.open) > 0 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		cur := s.open.pop()
 		if best, ok := s.gScore[cur.coord]; !ok || cur.g != best {
 			continue
 		}
@@ -53,7 +59,9 @@ func shortestPath(start, goal lattice.Coord, neighbors NeighborFunc, cost CostFu
 			return nil, ErrExpansionLimit
 		}
 		expanded++
-		s.expandNode(cur, goal, neighbors, cost, heuristic)
+		if err := s.expandNode(ctx, cur, goal, neighbors, cost, heuristic); err != nil {
+			return nil, err
+		}
 	}
 	return nil, nil
 }
@@ -66,8 +74,11 @@ type astarState struct {
 }
 
 // expandNode processes all neighbors of cur, updating scores and the open set.
-func (s *astarState) expandNode(cur *pqItem, goal lattice.Coord, neighbors NeighborFunc, cost CostFunc, heuristic HeuristicFunc) {
+func (s *astarState) expandNode(ctx context.Context, cur pqItem, goal lattice.Coord, neighbors NeighborFunc, cost CostFunc, heuristic HeuristicFunc) error {
 	for _, nb := range neighbors(cur.coord) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		edgeCost := cost(cur.coord, nb)
 		if edgeCost < 0 {
 			continue
@@ -81,8 +92,9 @@ func (s *astarState) expandNode(cur *pqItem, goal lattice.Coord, neighbors Neigh
 		s.gScore[nb] = tentG
 		s.cameFrom[nb] = cur.coord
 		f := tentG + heuristic(nb, goal)
-		heap.Push(&s.open, &pqItem{coord: nb, g: tentG, f: f})
+		s.open.push(pqItem{coord: nb, g: tentG, f: f})
 	}
+	return ctx.Err()
 }
 
 func reconstructPath(cameFrom map[lattice.Coord]lattice.Coord, goal lattice.Coord) Path {

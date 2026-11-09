@@ -59,7 +59,9 @@ transaction, even when the callback ignores the returned error.
 A transaction that exceeds the WAL size limit returns `ErrInvalidArgument`
 before writing the WAL. When `ErrCommitFinalization` reports an uncertain
 storage outcome, close and reopen before inspecting authoritative state
-or retrying.
+or retrying. After an engine commit failure, storage reads also reject the
+handle with `ErrCommitFinalization`, preventing exposure of partially
+published primary pages.
 
 If the engine commit is known durable but changelog append, sync, or outbox cleanup fails, the error matches both **`ErrCommitFinalization`** and **[`ErrCommitDurable`](../../errors.go)**. Do **not** retry the mutation. Further writes on that handle are rejected; close and reopen with the same changelog configuration. `Open` projects remaining durable intents before returning a handle. A crash after changelog append but before outbox cleanup may redeliver the same logical mutation, so consumers must remain idempotent.
 

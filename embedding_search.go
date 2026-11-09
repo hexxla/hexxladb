@@ -107,7 +107,7 @@ func (tx *Tx) searchByEmbedding(ctx context.Context, vec []float32, cfg Embeddin
 	if err != nil {
 		return nil, EmbeddingSearchStats{}, err
 	}
-	if !stateFound || !state.dirty {
+	if stateFound && !state.dirty {
 		// Try HNSW graph first when the persisted lifecycle state says it is current.
 		if results, used, searchErr := tx.searchHNSW(ctx, vec, maxResults, cfg.MinScore, efSearch, metric); searchErr != nil {
 			return nil, EmbeddingSearchStats{}, searchErr

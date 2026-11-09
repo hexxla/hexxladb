@@ -40,18 +40,7 @@ func (db *DB) TagSnapshot(label string) error {
 	}
 	key := index.SnapTagKey(label)
 	val := index.EncodeSnapTagValue(hdr.CommitSeq)
-	if err := db.eng.BeginWriteTxn(); err != nil {
-		return err
-	}
-	if err := db.btree.Put(key, val); err != nil {
-		db.eng.AbortWriteTxn()
-		return fmt.Errorf("hexxladb: TagSnapshot put: %w", err)
-	}
-	if err := db.eng.CommitWriteTxn(); err != nil {
-		db.eng.AbortWriteTxn()
-		return fmt.Errorf("hexxladb: TagSnapshot commit: %w", err)
-	}
-	return nil
+	return db.commitMetadataLocked("TagSnapshot", func() error { return db.btree.Put(key, val) })
 }
 
 // ViewAtTag opens a read-only transaction pinned to the commit sequence recorded by [DB.TagSnapshot]
@@ -123,17 +112,32 @@ func (db *DB) DeleteSnapshotTag(label string) error {
 	if !ok || val == nil {
 		return ErrSnapshotTagNotFound
 	}
+	return db.commitMetadataLocked("DeleteSnapshotTag", func() error { return db.btree.Delete(key) })
+}
+
+// commitMetadataLocked commits tree metadata without advancing the logical
+// commit sequence. Metadata changes can still replace the physical root.
+func (db *DB) commitMetadataLocked(action string, mutate func() error) error {
+	if db.recoveryRequired.Load() {
+		return fmt.Errorf("%w: close and reopen required", ErrCommitFinalization)
+	}
 	if err := db.eng.BeginWriteTxn(); err != nil {
 		return err
 	}
-	if err := db.btree.Delete(key); err != nil {
+	if err := mutate(); err != nil {
 		db.eng.AbortWriteTxn()
-		return fmt.Errorf("hexxladb: DeleteSnapshotTag delete: %w", err)
+		return fmt.Errorf("hexxladb: %s: %w", action, err)
 	}
 	if err := db.eng.CommitWriteTxn(); err != nil {
-		db.eng.AbortWriteTxn()
-		return fmt.Errorf("hexxladb: DeleteSnapshotTag commit: %w", err)
+		db.recoveryRequired.Store(true)
+		return fmt.Errorf("%w: %s commit: %w", ErrCommitFinalization, action, err)
 	}
+	hdr, err := db.eng.ReadHeader()
+	if err != nil {
+		db.recoveryRequired.Store(true)
+		return durableCommitError(action+" header refresh", err)
+	}
+	db.storeCachedHeader(hdr.CommitSeq, hdr.BTreeRoot)
 	return nil
 }
 

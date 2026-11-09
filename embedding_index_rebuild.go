@@ -57,19 +57,19 @@ type embeddingRebuildFaultHooks struct {
 // [ErrEmbeddingIndexDisconnected] and the exact fallback remains active.
 func (db *DB) RebuildEmbeddingIndex(ctx context.Context, opts *EmbeddingIndexRebuildOptions) (EmbeddingIndexRebuildStats, error) {
 	var stats EmbeddingIndexRebuildStats
-	maxVectors, estimatedPeakBytes, err := db.preflightEmbeddingIndexRebuild(ctx, opts)
+	limits, err := db.preflightEmbeddingIndexRebuild(ctx, opts)
 	if err != nil {
 		return stats, err
 	}
-	stats.EstimatedPeakBytes = estimatedPeakBytes
 	if err := db.markEmbeddingIndexDirty(); err != nil {
 		return stats, err
 	}
 
-	candidates, revision, err := db.snapshotEmbeddingsForRebuild(ctx, maxVectors)
+	candidates, revision, estimatedPeakBytes, err := db.snapshotEmbeddingsForRebuild(ctx, limits)
 	if err != nil {
 		return stats, err
 	}
+	stats.EstimatedPeakBytes = estimatedPeakBytes
 	stats.Vectors = len(candidates)
 	stats.Revision = revision
 
@@ -111,39 +111,51 @@ func (db *DB) RebuildEmbeddingIndex(ctx context.Context, opts *EmbeddingIndexReb
 	return stats, nil
 }
 
-func (db *DB) preflightEmbeddingIndexRebuild(ctx context.Context, opts *EmbeddingIndexRebuildOptions) (int, uint64, error) {
+type embeddingRebuildLimits struct {
+	vectors int
+	memory  uint64
+}
+
+func (db *DB) preflightEmbeddingIndexRebuild(ctx context.Context, opts *EmbeddingIndexRebuildOptions) (embeddingRebuildLimits, error) {
 	if ctx == nil {
-		return 0, 0, fmt.Errorf("%w: nil context", ErrInvalidArgument)
+		return embeddingRebuildLimits{}, fmt.Errorf("%w: nil context", ErrInvalidArgument)
 	}
 	if db == nil || db.closed.Load() {
-		return 0, 0, ErrDatabaseClosed
+		return embeddingRebuildLimits{}, ErrDatabaseClosed
 	}
 	maxVectors, maxMemoryBytes, err := resolveEmbeddingIndexRebuildOptions(opts)
 	if err != nil {
-		return 0, 0, err
+		return embeddingRebuildLimits{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return 0, 0, err
+		return embeddingRebuildLimits{}, err
 	}
 	count, dimension, databasePath, err := db.countEmbeddings(ctx, maxVectors)
 	if err != nil {
-		return 0, 0, err
+		return embeddingRebuildLimits{}, err
 	}
 	if count > maxVectors {
-		return 0, 0, fmt.Errorf("%w: found more than %d vectors", ErrEmbeddingIndexTooLarge, maxVectors)
+		return embeddingRebuildLimits{}, fmt.Errorf("%w: found more than %d vectors", ErrEmbeddingIndexTooLarge, maxVectors)
 	}
 	estimatedPeakBytes := estimateEmbeddingIndexRebuildBytes(count, dimension)
 	if estimatedPeakBytes > maxMemoryBytes {
-		return 0, 0, fmt.Errorf("%w: estimated peak %d bytes exceeds MaxMemoryBytes %d", ErrEmbeddingIndexTooLarge, estimatedPeakBytes, maxMemoryBytes)
+		return embeddingRebuildLimits{}, fmt.Errorf("%w: estimated peak %d bytes exceeds MaxMemoryBytes %d", ErrEmbeddingIndexTooLarge, estimatedPeakBytes, maxMemoryBytes)
 	}
+	if err := checkEmbeddingIndexRebuildSpace(databasePath, estimatedPeakBytes); err != nil {
+		return embeddingRebuildLimits{}, err
+	}
+	return embeddingRebuildLimits{vectors: maxVectors, memory: maxMemoryBytes}, nil
+}
+
+func checkEmbeddingIndexRebuildSpace(databasePath string, estimate uint64) error {
 	available, known, err := fsutil.AvailableBytes(filepath.Dir(databasePath))
 	if err != nil {
-		return 0, 0, fmt.Errorf("embedding index rebuild capacity: %w", err)
+		return fmt.Errorf("embedding index rebuild capacity: %w", err)
 	}
-	if known && available < estimatedPeakBytes {
-		return 0, 0, fmt.Errorf("%w: embedding index rebuild requires %d bytes, %d available", ErrInsufficientSpace, estimatedPeakBytes, available)
+	if known && available < estimate {
+		return fmt.Errorf("%w: embedding index rebuild requires %d bytes, %d available", ErrInsufficientSpace, estimate, available)
 	}
-	return maxVectors, estimatedPeakBytes, nil
+	return nil
 }
 
 func resolveEmbeddingIndexRebuildOptions(opts *EmbeddingIndexRebuildOptions) (int, uint64, error) {
@@ -213,9 +225,10 @@ func (db *DB) markEmbeddingIndexDirty() error {
 	})
 }
 
-func (db *DB) snapshotEmbeddingsForRebuild(ctx context.Context, maxVectors int) ([]hnsw.Embedding, uint64, error) {
+func (db *DB) snapshotEmbeddingsForRebuild(ctx context.Context, limits embeddingRebuildLimits) ([]hnsw.Embedding, uint64, uint64, error) {
 	var candidates []hnsw.Embedding
-	var revision uint64
+	var revision, estimate uint64
+	var databasePath string
 	err := db.View(func(tx *Tx) error {
 		state, found, err := tx.loadEmbeddingIndexState()
 		if err != nil {
@@ -227,6 +240,7 @@ func (db *DB) snapshotEmbeddingsForRebuild(ctx context.Context, maxVectors int) 
 		revision = state.revision
 		var scanErr error
 		dimension := tx.db.eng.EmbeddingDim()
+		databasePath = tx.db.eng.Path()
 		err = tx.AscendRange([]byte(index.EmbedPrefix), index.EmbedKeyEnd(), func(k, value []byte) bool {
 			if err := ctx.Err(); err != nil {
 				scanErr = err
@@ -235,8 +249,13 @@ func (db *DB) snapshotEmbeddingsForRebuild(ctx context.Context, maxVectors int) 
 			if !bytes.HasPrefix(k, []byte(index.EmbedPrefix)) {
 				return false
 			}
-			if len(candidates) == maxVectors {
-				scanErr = fmt.Errorf("%w: found more than %d vectors", ErrEmbeddingIndexTooLarge, maxVectors)
+			if len(candidates) == limits.vectors {
+				scanErr = fmt.Errorf("%w: found more than %d vectors", ErrEmbeddingIndexTooLarge, limits.vectors)
+				return false
+			}
+			estimate = estimateEmbeddingIndexRebuildBytes(len(candidates)+1, dimension)
+			if estimate > limits.memory {
+				scanErr = fmt.Errorf("%w: estimated peak %d bytes exceeds MaxMemoryBytes %d", ErrEmbeddingIndexTooLarge, estimate, limits.memory)
 				return false
 			}
 			coord, parseErr := index.ParseEmbedKey(k)
@@ -257,7 +276,13 @@ func (db *DB) snapshotEmbeddingsForRebuild(ctx context.Context, maxVectors int) 
 		}
 		return scanErr
 	})
-	return candidates, revision, err
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	if err := checkEmbeddingIndexRebuildSpace(databasePath, estimate); err != nil {
+		return nil, 0, 0, err
+	}
+	return candidates, revision, estimate, nil
 }
 
 func (tx *Tx) replaceEmbeddingGraph(ctx context.Context, graph hnsw.BuiltGraph) error {

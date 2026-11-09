@@ -34,7 +34,7 @@ func Build(ctx context.Context, embeddings []Embedding, score func(a, b []float3
 		}
 		// A later insertion may connect a node that initially lost all
 		// reciprocal links. Validate the completed graph before publication.
-		if err := graph.Insert(embedding.Coord, embedding.Vector); err != nil && !errors.Is(err, ErrDisconnectedGraph) {
+		if err := graph.insert(embedding.Coord, embedding.Vector, false); err != nil && !errors.Is(err, ErrDisconnectedGraph) {
 			return BuiltGraph{}, fmt.Errorf("build embedding graph: %w", err)
 		}
 	}

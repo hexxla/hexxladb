@@ -37,6 +37,46 @@ func putCell(tx *hexxladb.Tx, c lattice.Coord, content string) error {
 	})
 }
 
+func TestFindEdgePathValidatesEndpointsAndStopsCallbacks(t *testing.T) {
+	t.Parallel()
+	db := openPathfindTestDB(t)
+	start := hexxladb.Coord{}
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		for i := 1; i <= 128; i++ {
+			if err := tx.LinkCells(start, hexxladb.Coord{Q: i}, "test", 1, record.ProvenanceWire{}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		invalid := hexxladb.Coord{Q: hexxladb.MaxAxialAbs, R: 1}
+		for _, pair := range [][2]hexxladb.Coord{{invalid, invalid}, {invalid, start}, {start, invalid}} {
+			if _, err := tx.FindEdgePath(t.Context(), pair[0], pair[1], hexxladb.FindEdgePathConfig{}); !errors.Is(err, hexxladb.ErrInvalidArgument) {
+				t.Fatalf("invalid path endpoints %v: got %v", pair, err)
+			}
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		calls := 0
+		_, err := tx.FindEdgePath(ctx, start, hexxladb.Coord{Q: 128}, hexxladb.FindEdgePathConfig{
+			CostFunc: func(_, _ hexxladb.Coord) float64 {
+				calls++
+				cancel()
+				return 1
+			},
+		})
+		if !errors.Is(err, context.Canceled) || calls != 1 {
+			t.Fatalf("cancelled path: %d callback calls, error %v", calls, err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFindEdgePath_basic(t *testing.T) {
 	t.Parallel()
 	db := openPathfindTestDB(t)

@@ -46,6 +46,12 @@ func NewGraph(s Storage, score func(a, b []float32) float64) *Graph {
 // Insert adds or updates a node in the HNSW graph for the given coord.
 // vec is the embedding vector for the coord.
 func (g *Graph) Insert(coord lattice.PackedCoord, vec []float32) error {
+	return g.insert(coord, vec, true)
+}
+
+// Build validates its final graph, so its intermediate inserts can skip the
+// per-mutation reachability walk.
+func (g *Graph) insert(coord lattice.PackedCoord, vec []float32, checkReachability bool) error {
 	meta, hasMeta, err := g.s.GetHNSWMeta()
 	if err != nil {
 		return err
@@ -95,7 +101,7 @@ func (g *Graph) Insert(coord lattice.PackedCoord, vec []float32) error {
 	}
 
 	// Phase 2: At insertion layer and below, search + connect.
-	linked, err := g.insertConnectLayers(coord, vec, ep, newNode, meta)
+	linked, removed, err := g.insertConnectLayers(coord, vec, ep, newNode, meta, checkReachability)
 	if err != nil {
 		return err
 	}
@@ -107,6 +113,10 @@ func (g *Graph) Insert(coord lattice.PackedCoord, vec []float32) error {
 	newEntry := nodeLayer > meta.MaxLayer
 	if newEntry {
 		meta.MaxLayer = nodeLayer
+		if checkReachability {
+			removed = append(removed, layerZeroArc{from: coord, to: entryCoord})
+		}
+		entryCoord = coord
 		if err := g.s.PutHNSWEntry(coord); err != nil {
 			return err
 		}
@@ -117,6 +127,17 @@ func (g *Graph) Insert(coord lattice.PackedCoord, vec []float32) error {
 	}
 	if !linked && !newEntry {
 		return fmt.Errorf("%w: inserted node has no incoming layer-zero link", ErrDisconnectedGraph)
+	}
+	// If each removed edge has a replacement path, every previous path
+	// still exists. A new entry must also be able to reach the old one.
+	for _, arc := range removed {
+		reachable, err := g.hasShortPath(arc)
+		if err != nil {
+			return err
+		}
+		if !reachable {
+			return g.validateStoredReachability(entryCoord, meta.Count)
+		}
 	}
 	return nil
 }
@@ -221,15 +242,14 @@ func (g *Graph) greedyDescend(ctx context.Context, vec []float32, ep lattice.Pac
 
 // insertConnectLayers handles Phase 2 of HNSW insertion: search + bidirectional connect
 // at each layer from min(nodeLayer, maxLayer) down to 0.
-func (g *Graph) insertConnectLayers(coord lattice.PackedCoord, vec []float32, ep lattice.PackedCoord, newNode *Node, meta *Meta) (bool, error) {
+func (g *Graph) insertConnectLayers(coord lattice.PackedCoord, vec []float32, ep lattice.PackedCoord, newNode *Node, meta *Meta, track bool) (linked bool, removed []layerZeroArc, err error) {
 	mMax0 := meta.M * 2
 	mMax := meta.M
 
-	var linked bool
 	for lc := min(int(newNode.MaxLayer), int(meta.MaxLayer)); lc >= 0; lc-- {
 		candidates, err := g.searchLayer(context.Background(), vec, ep, int(meta.EfC), lc)
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
 
 		limit := mMax
@@ -238,50 +258,100 @@ func (g *Graph) insertConnectLayers(coord lattice.PackedCoord, vec []float32, ep
 		}
 		selected, err := g.selectNeighbors(candidates, int(limit))
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
 		newNode.Neighbors[lc] = selected
 
-		linked, err = g.connectBidirectional(coord, selected, lc, limit)
+		linked, removed, err = g.connectBidirectional(coord, selected, lc, limit, track && lc == 0)
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
 
 		if len(candidates) > 0 {
 			ep = candidates[0].coord
 		}
 	}
-	return linked, nil
+	return linked, removed, nil
 }
 
 // connectBidirectional adds coord to each selected neighbor's list and prunes if needed.
-func (g *Graph) connectBidirectional(coord lattice.PackedCoord, selected []lattice.PackedCoord, layer int, limit uint16) (bool, error) {
-	linked := false
+func (g *Graph) connectBidirectional(coord lattice.PackedCoord, selected []lattice.PackedCoord, layer int, limit uint16, track bool) (linked bool, removed []layerZeroArc, err error) {
 	for _, sel := range selected {
 		nbrNode, nOk, nErr := g.s.GetHNSWNode(sel)
 		if nErr != nil {
-			return false, nErr
+			return false, nil, nErr
 		}
 		if !nOk {
-			return false, fmt.Errorf("%w: selected neighbor is missing", ErrCorruptGraph)
+			return false, nil, fmt.Errorf("%w: selected neighbor is missing", ErrCorruptGraph)
 		}
 		if len(nbrNode.Neighbors) <= layer {
-			return false, fmt.Errorf("%w: selected neighbor is missing layer %d", ErrCorruptGraph, layer)
+			return false, nil, fmt.Errorf("%w: selected neighbor is missing layer %d", ErrCorruptGraph, layer)
 		}
 		nbrNode.Neighbors[layer] = append(nbrNode.Neighbors[layer], coord)
 		if len(nbrNode.Neighbors[layer]) > int(limit) {
-			pruned, err := g.pruneNeighbors(sel, nbrNode.Neighbors[layer], int(limit))
+			before := nbrNode.Neighbors[layer]
+			pruned, err := g.pruneNeighbors(sel, before, int(limit))
 			if err != nil {
-				return false, err
+				return false, nil, err
 			}
 			nbrNode.Neighbors[layer] = pruned
+			if track {
+				for _, old := range before[:len(before)-1] {
+					if !slices.Contains(pruned, old) {
+						removed = append(removed, layerZeroArc{from: sel, to: old})
+					}
+				}
+			}
 		}
 		linked = linked || slices.Contains(nbrNode.Neighbors[layer], coord)
 		if err := g.s.PutHNSWNode(nbrNode); err != nil {
-			return false, err
+			return false, nil, err
 		}
 	}
-	return linked, nil
+	return linked, removed, nil
+}
+
+type layerZeroArc struct {
+	from lattice.PackedCoord
+	to   lattice.PackedCoord
+}
+
+// hasShortPath looks for a direct or two-hop replacement in the final graph.
+// A negative result requires a full reachability check.
+func (g *Graph) hasShortPath(arc layerZeroArc) (bool, error) {
+	neighbors, err := g.neighborsAtLayer(arc.from, 0)
+	if err != nil {
+		return false, err
+	}
+	if slices.Contains(neighbors, arc.to) {
+		return true, nil
+	}
+	for _, middle := range neighbors {
+		next, err := g.neighborsAtLayer(middle, 0)
+		if err != nil {
+			return false, err
+		}
+		if slices.Contains(next, arc.to) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (g *Graph) validateStoredReachability(entry lattice.PackedCoord, count uint64) error {
+	layerZero := make(map[lattice.PackedCoord][]lattice.PackedCoord)
+	if err := g.s.WalkHNSWNodes(func(node *Node) {
+		layerZero[node.Coord] = node.Neighbors[0]
+	}); err != nil {
+		return err
+	}
+	if uint64(len(layerZero)) != count {
+		return fmt.Errorf("%w: layer-zero node count does not match metadata", ErrCorruptGraph)
+	}
+	return validateReachability(context.Background(), entry, len(layerZero), func(coord lattice.PackedCoord) ([]lattice.PackedCoord, bool) {
+		neighbors, found := layerZero[coord]
+		return neighbors, found
+	})
 }
 
 // Search returns the top-K nearest neighbors to vec using HNSW graph traversal.

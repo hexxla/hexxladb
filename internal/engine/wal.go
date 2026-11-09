@@ -64,6 +64,16 @@ func scanWAL(
 	reader io.Reader, lastApplied uint64, apply func(seq, pageID uint64, payload []byte) error,
 	macKey [32]byte, useMAC bool, pageSize int,
 ) (uint64, error) {
+	return scanWALRecords(reader, func(seq, pageID uint64, payload []byte) error {
+		if seq <= lastApplied {
+			return nil
+		}
+		return apply(seq, pageID, payload)
+	}, macKey, useMAC, pageSize)
+}
+
+// scanWALRecords validates and visits every record, including sequence zero.
+func scanWALRecords(reader io.Reader, apply func(seq, pageID uint64, payload []byte) error, macKey [32]byte, useMAC bool, pageSize int) (uint64, error) {
 	recSize := walRecordSize(pageSize)
 	if useMAC {
 		recSize += walRecordMACSize
@@ -98,9 +108,6 @@ func scanWAL(
 		}
 		if seq > maxSeq {
 			maxSeq = seq
-		}
-		if seq <= lastApplied {
-			continue
 		}
 		if err := apply(seq, pageID, payload); err != nil {
 			return 0, err

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -107,14 +108,17 @@ func open(path string, opts *Options, syncParents func(...string) error) (*Engin
 		return nil, err
 	}
 
-	hdr, err := readHeaderAt(db, effectivePageSize)
+	hdr, primaryHeaderErr, err := readHeaderForRecovery(db, effectivePageSize)
 	if err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	if err := openValidateEncryptionKey(opts, hdr); err != nil {
-		_ = db.Close()
-		return nil, err
+		if !errors.Is(err, ErrPageAuthentication) {
+			_ = db.Close()
+			return nil, err
+		}
+		primaryHeaderErr = err
 	}
 	physicalPageSize, err := physicalPageSizeForHeader(hdr, hooks, opts)
 	if err != nil {
@@ -128,14 +132,14 @@ func open(path string, opts *Options, syncParents func(...string) error) (*Engin
 		return nil, err
 	}
 
-	newLast, walMACEnabled, walMACKey, err := openReplayWAL(db, wal, &hdr, opts, effectivePageSize, physicalPageSize, usePrimaryFdatasync)
+	newLast, walMACEnabled, walMACKey, err := openReplayWAL(db, wal, &hdr, opts, effectivePageSize, physicalPageSize, usePrimaryFdatasync, primaryHeaderErr)
 	if err != nil {
 		_ = db.Close()
 		_ = wal.Close()
 		return nil, err
 	}
 
-	effectiveMaxVal, err := openFinalizeHeader(db, &hdr, opts)
+	effectiveMaxVal, err := resolveOpenMaxValueBytes(hdr, opts)
 	if err != nil {
 		_ = db.Close()
 		_ = wal.Close()
@@ -187,9 +191,15 @@ func open(path string, opts *Options, syncParents func(...string) error) (*Engin
 		return nil, err
 	}
 	if opts != nil {
-		e.cache = newPageCache(opts.PageCacheSize)
+		e.cache = newPageCache(opts.PageCacheSize, e.pageSize)
 	}
 	e.nextWALSeq.Store(newLast)
+	if effectiveMaxVal != hdr.MaxValueBytes && opts != nil && opts.MaxValueBytes != 0 {
+		if err := e.UpdateHeader(func(h *Header) { h.MaxValueBytes = effectiveMaxVal }); err != nil {
+			_ = e.Close()
+			return nil, err
+		}
+	}
 	exclusiveComplete = true
 	return e, nil
 }
@@ -343,23 +353,15 @@ func openTruncateWAL(wal *os.File) error {
 	return wal.Sync()
 }
 
-// openFinalizeHeader updates MaxValueBytes in the header if needed and returns effective max.
-func openFinalizeHeader(db *os.File, hdr *Header, opts *Options) (uint32, error) {
-	if opts != nil && opts.MaxValueBytes != 0 && opts.MaxValueBytes != hdr.MaxValueBytes {
-		mvb, err := resolveMaxValueBytes(opts)
-		if err != nil {
-			return 0, err
-		}
-		hdr.MaxValueBytes = mvb
-		if err := writeHeaderAtAuthenticated(db, *hdr, opts.HeaderMACKey, opts.EnableHeaderMAC && hdr.FormatVersion == formatVersionV3); err != nil {
-			return 0, err
-		}
+// resolveOpenMaxValueBytes validates configuration without mutating persistent state.
+func resolveOpenMaxValueBytes(hdr Header, opts *Options) (uint32, error) {
+	if opts != nil && opts.MaxValueBytes != 0 {
+		return resolveMaxValueBytes(opts)
 	}
-	effective := hdr.MaxValueBytes
-	if effective == 0 {
-		effective = DefaultMaxValueBytes
+	if hdr.MaxValueBytes == 0 {
+		return DefaultMaxValueBytes, nil
 	}
-	return effective, nil
+	return hdr.MaxValueBytes, nil
 }
 
 // openValidateEmbedding checks embedding config consistency between opts and header on reopen.
@@ -420,6 +422,9 @@ func sliceSameBase(a, b []byte) bool {
 
 // visibleHeader returns the active write transaction header or the durable header.
 func (e *Engine) visibleHeader() (Header, error) {
+	if e.commitFailed {
+		return Header{}, ErrRecoveryRequired
+	}
 	if e.wtxn != nil {
 		return e.wtxn.hdr, nil
 	}
@@ -444,6 +449,9 @@ func (e *Engine) readDiskHeader() (Header, error) {
 // Release must be called exactly once after the returned slice is no longer used.
 // AfterRead hooks may return a freshly allocated slice; release is always safe to call.
 func (e *Engine) readPagePooled(pageID uint64) (data []byte, release func(), err error) {
+	if e.commitFailed {
+		return nil, releaseNothing, ErrRecoveryRequired
+	}
 	if e.db == nil {
 		return nil, releaseNothing, fmt.Errorf("engine: closed")
 	}
@@ -596,7 +604,20 @@ func (e *Engine) writePageWithGeneration(pageID uint64, data []byte) (uint64, er
 		if !sliceSameBase(plain, owned) {
 			plainCopy = slices.Clone(plain)
 		}
-		e.wtxn.pending = append(e.wtxn.pending, pendingRedo{seq: seq, pageID: pageID, plain: plainCopy})
+		page := pendingRedo{seq: seq, pageID: pageID, plain: plainCopy}
+		if i, ok := e.wtxn.pendingIndex[pageID]; ok {
+			e.wtxn.pending[i] = page
+		} else {
+			recordSize := walRecordSize(e.physicalPageSize)
+			if e.walMACEnabled {
+				recordSize += walRecordMACSize
+			}
+			if int64(len(e.wtxn.pending)+2) > maxWALReplayBytes/int64(recordSize) {
+				return 0, ErrWALTooLarge
+			}
+			e.wtxn.pendingIndex[pageID] = len(e.wtxn.pending)
+			e.wtxn.pending = append(e.wtxn.pending, page)
+		}
 		e.wtxn.dirty[pageID] = plainCopy
 		if pageID == e.wtxn.hdr.BTreeRoot {
 			e.wtxn.hdr.BTreeRootGeneration = seq

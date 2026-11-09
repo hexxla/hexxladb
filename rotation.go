@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/hexxla/hexxladb/internal/engine"
 	"github.com/hexxla/hexxladb/internal/fsutil"
 )
 
@@ -37,6 +38,10 @@ func RotateEncryption(path string, currentOpts, newOpts *Options) error {
 
 // RotateEncryptionWithOptions performs offline rotation with streaming copy and optional progress callback.
 func RotateEncryptionWithOptions(path string, currentOpts, newOpts *Options, ropts *RotateOptions) error {
+	return rotateEncryptionWithOptions(path, currentOpts, newOpts, ropts, nil)
+}
+
+func rotateEncryptionWithOptions(path string, currentOpts, newOpts *Options, ropts *RotateOptions, afterSourceClosed func()) error {
 	if path == "" {
 		return ErrInvalidArgument
 	}
@@ -47,6 +52,11 @@ func RotateEncryptionWithOptions(path string, currentOpts, newOpts *Options, rop
 	if err != nil {
 		return err
 	}
+	pathLock, err := engine.AcquirePathLock(path)
+	if err != nil {
+		return mapEngineOpenError(path, err)
+	}
+	defer func() { _ = pathLock.Close() }()
 	if pending, err := rotationPending(path); err != nil {
 		return err
 	} else if pending {
@@ -54,7 +64,12 @@ func RotateEncryptionWithOptions(path string, currentOpts, newOpts *Options, rop
 			return err
 		}
 	}
-	src, err := OpenExisting(path, currentOpts)
+	var existing Options
+	if currentOpts != nil {
+		existing = *currentOpts
+	}
+	existing.requireExistingPrimary = true
+	src, err := openDBWithPathLock(path, &existing, false)
 	if err != nil {
 		return err
 	}
@@ -119,6 +134,9 @@ func RotateEncryptionWithOptions(path string, currentOpts, newOpts *Options, rop
 		return err
 	}
 	src = nil
+	if afterSourceClosed != nil {
+		afterSourceClosed()
+	}
 
 	return rotateSwapFiles(path, tmpPath, changelogPath, tmpChangelogPath)
 }
@@ -184,7 +202,7 @@ func rotateSwapFiles(path, tmpPath, changelogPath, tmpChangelogPath string) (ret
 		Version:       rotationStateVersion,
 		ChangelogPath: changelogPath,
 	}
-	if err := writeRotationState(path, state); err != nil {
+	if err := prepareRotationState(path, state); err != nil {
 		return err
 	}
 	committed := false
@@ -198,18 +216,12 @@ func rotateSwapFiles(path, tmpPath, changelogPath, tmpChangelogPath string) (ret
 	}()
 
 	backupPath := path + ".rotate.bak"
-	if err := removeRotationFiles(backupPath); err != nil {
-		return fmt.Errorf("hexxladb: rotate remove stale backup: %w", err)
-	}
 	if err := renameRotationFile(path, backupPath); err != nil {
 		return fmt.Errorf("hexxladb: rotate backup: %w", err)
 	}
 	changelogBackupPath := ""
 	if changelogPath != "" {
 		changelogBackupPath = changelogPath + ".rotate.bak"
-		if err := removeRotationFiles(changelogBackupPath); err != nil {
-			return fmt.Errorf("hexxladb: rotate remove stale changelog backup: %w", err)
-		}
 		if err := renameRotationFile(changelogPath, changelogBackupPath); err != nil {
 			return fmt.Errorf("hexxladb: rotate changelog backup: %w", err)
 		}
@@ -253,6 +265,11 @@ func RecoverInterruptedRotation(path string, opts *Options) error {
 	if path == "" {
 		return ErrInvalidArgument
 	}
+	pathLock, err := engine.AcquirePathLock(path)
+	if err != nil {
+		return mapEngineOpenError(path, err)
+	}
+	defer func() { _ = pathLock.Close() }()
 	expectedChangelogPath := ""
 	if opts != nil && opts.ChangelogEnabled {
 		expectedChangelogPath = configuredChangelogPath(path, opts)
@@ -307,6 +324,20 @@ func rotationPending(path string) (bool, error) {
 	default:
 		return false, fmt.Errorf("hexxladb: inspect rotation state: %w", err)
 	}
+}
+
+// prepareRotationState removes leftovers from an already committed rotation
+// before publishing the new rollback marker. Once that marker exists, every
+// backup path must belong to this rotation: recovery treats it as authoritative.
+func prepareRotationState(path string, state rotationState) error {
+	backups := []string{path + ".rotate.bak"}
+	if state.ChangelogPath != "" {
+		backups = append(backups, state.ChangelogPath+".rotate.bak")
+	}
+	if err := removeRotationFiles(backups...); err != nil {
+		return fmt.Errorf("hexxladb: rotate remove stale backups: %w", err)
+	}
+	return writeRotationState(path, state)
 }
 
 func writeRotationState(path string, state rotationState) (retErr error) {

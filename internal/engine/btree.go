@@ -59,8 +59,31 @@ func (t *BTree) setParent(pageID, parentID uint64) error {
 		return err
 	}
 	defer release()
+	if binary.BigEndian.Uint64(page[16:24]) == parentID {
+		return nil
+	}
 	binary.BigEndian.PutUint64(page[16:24], parentID)
 	return t.eng.WritePage(pageID, page)
+}
+
+// treeWalk detects cycles using a checkpoint at exponentially spaced steps.
+type treeWalk struct {
+	checkpoint uint64
+	span       uint64
+	steps      uint64
+}
+
+func (w *treeWalk) visit(pid uint64) error {
+	if pid == 0 || pid == w.checkpoint {
+		return ErrCorruptTree
+	}
+	if w.steps == w.span {
+		w.checkpoint = pid
+		w.span = max(1, w.span*2)
+		w.steps = 0
+	}
+	w.steps++
+	return nil
 }
 
 // GetUsingRoot traverses from root without reading the database header on-disk.
@@ -69,8 +92,12 @@ func (t *BTree) GetUsingRoot(root uint64, key []byte) (val []byte, ok bool, err 
 	if root == 0 {
 		return nil, false, nil
 	}
+	var walk treeWalk
 	pid := root
 	for {
+		if err := walk.visit(pid); err != nil {
+			return nil, false, err
+		}
 		page, release, err := t.eng.readPagePooled(pid)
 		if err != nil {
 			return nil, false, err
@@ -132,7 +159,7 @@ func (t *BTree) Put(key, val []byte) error {
 	if len(key) > maxKeyBytes {
 		return ErrKeyTooLarge
 	}
-	if uint32(len(val)) > t.eng.maxValueBytes { //nolint:gosec // G115: len() is always non-negative; conversion is safe
+	if len(val) > int(t.eng.maxValueBytes) {
 		return ErrValueTooLarge
 	}
 
@@ -157,7 +184,7 @@ func (t *BTree) Put(key, val []byte) error {
 	if hdr.BTreeRoot == 0 {
 		return t.putFirst(key, leafVal)
 	}
-	oldOverflowPage, hadOldOverflow, err := t.storedOverflowPage(hdr.BTreeRoot, key)
+	oldOverflowStub, err := t.storedOverflowStub(hdr.BTreeRoot, key)
 	if err != nil {
 		return err
 	}
@@ -170,41 +197,42 @@ func (t *BTree) Put(key, val []byte) error {
 			return err
 		}
 	}
-	if hadOldOverflow {
-		return t.freeOverflowChain(oldOverflowPage)
-	}
-	return nil
+	return t.releaseDeletedOverflow(oldOverflowStub)
 }
 
-// storedOverflowPage returns the first overflow page for an existing raw leaf
-// value. It intentionally does not decode the value like GetUsingRoot.
-func (t *BTree) storedOverflowPage(root uint64, key []byte) (uint64, bool, error) {
+// storedOverflowStub returns the existing raw leaf value if it is an overflow
+// stub. It does not materialize the value referenced by the stub.
+func (t *BTree) storedOverflowStub(root uint64, key []byte) ([]byte, error) {
+	var walk treeWalk
 	pid := root
 	for {
+		if err := walk.visit(pid); err != nil {
+			return nil, err
+		}
 		page, release, err := t.eng.readPagePooled(pid)
 		if err != nil {
-			return 0, false, err
+			return nil, err
 		}
 		switch page[5] {
 		case btreeKindLeaf:
 			value, ok, lookupErr := lookupLeafValue(page, key)
 			if lookupErr != nil || !ok || !isOverflowStub(value) {
 				release()
-				return 0, false, lookupErr
+				return nil, lookupErr
 			}
-			_, firstPage := decodeOverflowStub(value)
+			stub := bytes.Clone(value)
 			release()
-			return firstPage, true, nil
+			return stub, nil
 		case btreeKindInternal:
 			child, lookupErr := lookupInternalChild(page, key)
 			release()
 			if lookupErr != nil {
-				return 0, false, lookupErr
+				return nil, lookupErr
 			}
 			pid = child
 		default:
 			release()
-			return 0, false, ErrCorruptTree
+			return nil, ErrCorruptTree
 		}
 	}
 }
@@ -348,8 +376,9 @@ func (t *BTree) AscendRangeSelected(root uint64, from, to []byte, selectKey func
 	if err != nil {
 		return err
 	}
+	var boundary leafBoundary
 	for pid != 0 {
-		next, done, err := t.ascendLeaf(pid, from, to, selectKey, fn)
+		next, done, err := t.ascendLeaf(pid, from, to, &boundary, selectKey, fn)
 		if err != nil || done {
 			return err
 		}
@@ -358,9 +387,34 @@ func (t *BTree) AscendRangeSelected(root uint64, from, to []byte, selectKey func
 	return nil
 }
 
+// leafBoundary checks order across leaves before a scan emits their entries.
+type leafBoundary struct {
+	key [maxKeyBytes]byte
+	n   int
+	set bool
+}
+
+func (b *leafBoundary) advance(first, last []byte, reverse bool) error {
+	if first == nil {
+		return ErrCorruptTree
+	}
+	if reverse {
+		first, last = last, first
+	}
+	if b.set {
+		order := bytes.Compare(b.key[:b.n], first)
+		if (!reverse && order >= 0) || (reverse && order <= 0) {
+			return ErrCorruptTree
+		}
+	}
+	b.n = copy(b.key[:], last)
+	b.set = true
+	return nil
+}
+
 // ascendLeaf validates the leaf before calling fn and materializes only
 // entries inside the requested range that the callback actually consumes.
-func (t *BTree) ascendLeaf(pid uint64, from, to []byte, selectKey func([]byte) (bool, error), fn func(k, v []byte) bool) (next uint64, done bool, err error) {
+func (t *BTree) ascendLeaf(pid uint64, from, to []byte, boundary *leafBoundary, selectKey func([]byte) (bool, error), fn func(k, v []byte) bool) (next uint64, done bool, err error) {
 	page, release, err := t.eng.readPagePooled(pid)
 	if err != nil {
 		return 0, false, err
@@ -371,11 +425,18 @@ func (t *BTree) ascendLeaf(pid uint64, from, to []byte, selectKey func([]byte) (
 		return 0, false, err
 	}
 	off, start, end := btreeHeaderSize, btreeHeaderSize, btreeHeaderSize
+	var first, last []byte
 	for range n {
 		key, _, err := readLeafEntry(page, &off)
 		if err != nil {
 			return 0, false, err
 		}
+		if last == nil {
+			first = key
+		} else if bytes.Compare(last, key) >= 0 {
+			return 0, false, ErrCorruptTree
+		}
+		last = key
 		switch {
 		case from != nil && bytes.Compare(key, from) < 0:
 			start, end = off, off
@@ -384,6 +445,9 @@ func (t *BTree) ascendLeaf(pid uint64, from, to []byte, selectKey func([]byte) (
 		default:
 			done = true
 		}
+	}
+	if err := boundary.advance(first, last, false); err != nil {
+		return 0, false, err
 	}
 	for off := start; off < end; {
 		key, value, err := readLeafEntry(page, &off)
@@ -433,8 +497,9 @@ func (t *BTree) DescendRangeFromRoot(root uint64, from, to []byte, fn func(k, v 
 	if err != nil {
 		return err
 	}
+	var boundary leafBoundary
 	for pid != 0 {
-		parent, done, err := t.descendLeaf(pid, from, to, fn)
+		parent, done, err := t.descendLeaf(pid, from, to, &boundary, fn)
 		if err != nil || done {
 			return err
 		}
@@ -448,7 +513,7 @@ func (t *BTree) DescendRangeFromRoot(root uint64, from, to []byte, fn func(k, v 
 
 // descendLeaf validates the entire serialized leaf, retaining only offsets.
 // Callers may retain callback data, so copy only the entries they actually see.
-func (t *BTree) descendLeaf(pid uint64, from, to []byte, fn func(k, v []byte) bool) (parent uint64, done bool, err error) {
+func (t *BTree) descendLeaf(pid uint64, from, to []byte, boundary *leafBoundary, fn func(k, v []byte) bool) (parent uint64, done bool, err error) {
 	page, release, err := t.eng.readPagePooled(pid)
 	if err != nil {
 		return 0, false, err
@@ -461,15 +526,25 @@ func (t *BTree) descendLeaf(pid uint64, from, to []byte, fn func(k, v []byte) bo
 	var scratch [128]int
 	offsets := scratch[:0]
 	off := btreeHeaderSize
+	var first, last []byte
 	for range n {
 		entryOffset := off
 		key, _, err := readLeafEntry(page, &off)
 		if err != nil {
 			return 0, false, err
 		}
+		if last == nil {
+			first = key
+		} else if bytes.Compare(last, key) >= 0 {
+			return 0, false, ErrCorruptTree
+		}
+		last = key
 		if to == nil || bytes.Compare(key, to) <= 0 {
 			offsets = append(offsets, entryOffset)
 		}
+	}
+	if err := boundary.advance(first, last, true); err != nil {
+		return 0, false, err
 	}
 	for _, entryOffset := range slices.Backward(offsets) {
 		key, value, err := readLeafEntry(page, &entryOffset)
@@ -522,8 +597,12 @@ func (t *BTree) DescendRange(from, to []byte, fn func(k, v []byte) bool) error {
 // seekLeaf finds the leaf for key. With no key, select the leftmost or
 // rightmost leaf according to rightmost.
 func (t *BTree) seekLeaf(root uint64, key []byte, rightmost bool) (uint64, error) {
+	var walk treeWalk
 	pid := root
 	for {
+		if err := walk.visit(pid); err != nil {
+			return 0, err
+		}
 		page, release, err := t.eng.readPagePooled(pid)
 		if err != nil {
 			return 0, err
@@ -544,28 +623,23 @@ func (t *BTree) seekLeaf(root uint64, key []byte, rightmost bool) (uint64, error
 // linked list (left sibling), or 0 if leafPID is the leftmost leaf. It uses the
 // parent pointer chain to find the left sibling without storing a prev pointer.
 func (t *BTree) prevLeaf(leafPID, parentPID, root uint64) (uint64, error) {
-	if parentPID == 0 || leafPID == root {
-		return 0, nil
-	}
-	page, release, err := t.eng.readPagePooled(parentPID)
-	if err != nil {
-		return 0, err
-	}
-	in, err := parseInternalPage(page)
-	parentParent := in.parent
-	release()
-	if err != nil {
-		return 0, err
-	}
-	for i, ptr := range in.ptrs {
-		if ptr == leafPID {
-			if i == 0 {
-				// No left sibling at this level — go up.
-				return t.prevLeaf(parentPID, parentParent, root)
-			}
-			// Descend into left sibling to find its rightmost leaf.
+	var walk treeWalk
+	for leafPID != root {
+		if err := walk.visit(parentPID); err != nil {
+			return 0, err
+		}
+		in, err := t.readInternal(parentPID)
+		if err != nil {
+			return 0, err
+		}
+		i := slices.Index(in.ptrs, leafPID)
+		switch {
+		case i < 0:
+			return 0, ErrCorruptTree
+		case i > 0:
 			return t.seekLeaf(in.ptrs[i-1], nil, true)
 		}
+		leafPID, parentPID = parentPID, in.parent
 	}
 	return 0, nil
 }

@@ -33,6 +33,11 @@ All fields on `hexxladb.Options`. Fields marked **immutable** are persisted in t
 | `MaxValueBytes` | `uint32`        | `8192`  | no        | Max encoded value size per B+ tree entry. Accepted: 512 to 1048576 (powers of 2). A non-zero value on reopen updates the persisted limit for subsequent writes; existing values are unchanged. |
 | `PageCacheSize` | `int64`         | `0`     | no        | In-process B+ tree page-cache budget. `0` selects 4 MiB, positive values set bytes, and `-1` disables the cache.                                   |
 
+The page-cache budget is divided into whole-page shards. A positive budget
+smaller than one logical page disables caching. Each shard initially reserves
+half its capacity for reused hot pages, with the balance adapting through
+ghost hits and eviction.
+
 ### Embeddings
 
 | Field                | Type             | Default          | Immutable | Description                                                                                                                                                                                                                                                                                                                   |
@@ -40,7 +45,7 @@ All fields on `hexxladb.Options`. Fields marked **immutable** are persisted in t
 | `EmbeddingDimension` | `uint16`         | `0`              | yes       | Optional pre-set vector dimension. When `0` (default), the dimension is **auto-detected from the first `PutEmbedding` call** and persisted in the file header. When non-zero, locked at creation time. Either way, once set all vectors must match. Common values: `384` (all-MiniLM), `768` (BERT), `1536` (OpenAI ada-002). |
 | `DistanceMetric`     | `DistanceMetric` | `DistanceCosine` | yes       | Similarity function. Set it with a nonzero `EmbeddingDimension` at creation. If the first vector establishes the dimension, the metric defaults to cosine.                                                                                                                                                                                                                         |
 
-A zero `EmbeddingDimension()` means the dimension is unset. An empty database can have a nonzero dimension configured at creation.
+A zero `EmbeddingDimension()` means the dimension is unset. An empty database can have a nonzero dimension configured at creation. Auto-detection becomes durable with the first successful embedding transaction. An aborted first write leaves the dimension unset.
 
 Ordinary `PutEmbedding` maintains a current HNSW graph synchronously. Detected
 disconnection switches retrieval to exact scoring until a successful rebuild.
@@ -77,7 +82,7 @@ for the on-disk stride. Engine v1 and AES-XTS files require [offline conversion]
 
 | Field              | Type     | Default | Description                                                                                                                                       |
 | ------------------ | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ChangelogEnabled` | `bool`   | `false` | Maintain a recoverable logical changefeed backed by durable primary outbox intents. Official database encryption selects authenticated format v2. |
+| `ChangelogEnabled` | `bool`   | `false` | Maintain a recoverable logical changefeed backed by durable primary outbox intents. Database encryption selects authenticated changelog format v3. |
 | `ChangelogPath`    | `string` | `""`    | Override path. Empty = `<dbpath>-changelog`. The file must match the database's encryption mode and key binding.                                  |
 | `ChangelogLazy`    | `bool`   | `false` | Defer sidecar fsync; durable primary intents are acknowledged after 256 pending records or clean close. Crash recovery may redeliver them.        |
 

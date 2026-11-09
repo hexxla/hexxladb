@@ -5,25 +5,17 @@ package lattice
 // and its six immediate neighbors.
 //
 // The parent lattice basis vectors are (2,1) and (-1,3), whose determinant is
-// seven. Candidate selection uses exact hex distance and a lexicographic
-// tie-break, avoiding floating-point rounding at cluster boundaries.
+// seven. The child offset follows from the fine coordinate modulo seven.
 func SuperHexParent(c Coord) Coord {
-	approxQ := floorDiv(3*c.Q+c.R, 7)
-	approxR := floorDiv(-c.Q+2*c.R, 7)
-	best := Coord{Q: approxQ, R: approxR}
-	bestDistance := c.Distance(SuperHexCenter(best))
-
-	for dq := -1; dq <= 1; dq++ {
-		for dr := -1; dr <= 1; dr++ {
-			candidate := Coord{Q: approxQ + dq, R: approxR + dr}
-			distance := c.Distance(SuperHexCenter(candidate))
-			if distance < bestDistance || distance == bestDistance && coordLess(candidate, best) {
-				best = candidate
-				bestDistance = distance
-			}
-		}
+	// The coarse centers satisfy 3q+r ≡ 0 (mod 7). The center and its six
+	// neighbors have distinct residues, so the residue selects one child offset.
+	residue := (3*c.Q + c.R) % 7
+	if residue < 0 {
+		residue += 7
 	}
-	return best
+	offset := superHexChildOffsets[residue]
+	q, r := c.Q-offset.Q, c.R-offset.R
+	return Coord{Q: (3*q + r) / 7, R: (-q + 2*r) / 7}
 }
 
 // SuperHexParentAtLevel maps c through levels aperture-7 hierarchy levels.
@@ -62,6 +54,12 @@ func SuperHexChildren(parent Coord) []Coord {
 	return RingInto(children, center, 1)
 }
 
-func coordLess(a, b Coord) bool {
-	return a.Q < b.Q || a.Q == b.Q && a.R < b.R
+var superHexChildOffsets = [7]Coord{
+	{},
+	{R: 1},
+	{Q: 1, R: -1},
+	{Q: 1},
+	{Q: -1},
+	{Q: -1, R: 1},
+	{R: -1},
 }

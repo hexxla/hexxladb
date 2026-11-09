@@ -12,7 +12,8 @@ database recovery.
 
 - Default path: **`<database-path>-changelog`** (same directory as the main DB file, sibling append-only file).
 - **Format v1:** plaintext binary framing for a plaintext database.
-- **Format v2:** automatically used with [`Options.EncryptionKey`](../../options.go) or [`Options.Passphrase`](../../options.go). Logical frame contents use XChaCha20-Poly1305 with database- and log-specific derived keys; frame sequence and length remain visible.
+- **Format v3** uses XChaCha20-Poly1305 with database- and log-specific derived keys and a fresh random nonce for every frame. It is selected by `Options.EncryptionKey` or `Options.Passphrase`. Frame sequence and length remain visible.
+- Existing encrypted format-v2 logs are validated and atomically rewritten to v3 before a writable handle is returned. The conversion needs space for a complete sidecar copy. Keep a pre-upgrade backup for rollback to an older binary. See the [encryption transition](./ENCRYPTION.md#changelog-policy).
 
 Formats are never mixed in one file. An encrypted database rejects a legacy format-v1 changelog with [`ErrChangelogPlaintext`](../../errors.go). Follow the reconciliation/archive procedure in [`ENCRYPTION.md`](./ENCRYPTION.md#changelog-policy), or use offline encryption rotation to convert a plaintext database and changelog together.
 
@@ -60,7 +61,16 @@ for _, change := range records {
 - [`DB.DeleteChangelogConsumer`](../../changelog_consumers.go) uses the same expected-sequence comparison. Deleting the last cursor removes retention protection but does not delete records. Inspection and deletion remain available on a changelog-disabled handle for explicit recovery administration; advances require an enabled sidecar.
 - Cursor persistence is not an exactly-once transaction with an external sink. Apply each record idempotently, then advance. A crash before the advance redelivers safely; a crash after it must not be allowed to precede the external effect's durable commit.
 
-The primary stores a rolling digest of canonical logical records, independent of plaintext/encrypted framing. When registered consumers exist, `Open` validates the retained sidecar against this checkpoint. A missing, shortened, or replaced history returns [`ErrChangelogConsumerInvalidated`](../../errors.go); malformed primary cursor metadata returns [`ErrCorruptDatabase`](../../errors.go). This binding survives backup and encryption rotation.
+The primary stores a rolling digest of canonical logical records, independent of plaintext/encrypted framing. `Open` validates an existing checkpoint before projecting pending outbox intents, including when no consumers are registered. A missing, shortened, or replaced history returns `ErrChangelogConsumerInvalidated` with registered consumers and `ErrChangelogCorrupt` without them. Malformed primary cursor metadata returns `ErrCorruptDatabase`. This binding survives backup and encryption rotation.
+
+Deleting the final consumer on a changelog-disabled handle explicitly clears the history checkpoint for re-bootstrap. Deleting it with changelog enabled retains the checkpoint. Older databases without a checkpoint and without consumers establish one through normal projection.
+
+`DB.ResetChangelogHistory` explicitly clears an existing checkpoint when the
+handle has changelog disabled and no registered consumers. It is idempotent
+and preserves database records, pending outbox intents, and sidecar files.
+Archive the old sidecar and rebuild downstream state before enabling a fresh
+sidecar. A reset on an enabled handle or with registered consumers returns
+`ErrInvalidArgument`.
 
 ## Payload policy
 
@@ -96,7 +106,7 @@ If reopen returns `ErrCommitFinalization`, primary intent remains preserved but 
 - When the primary contains durable outbox intents, open may truncate an **incomplete final frame** to the last validated boundary and reproject the intents. Without authoritative pending intent, the same truncation remains a terminal corruption error.
 - Full frames with invalid CRC/authentication, non-contiguous sequence numbers, or invalid primary outbox records fail closed. Recovery never silently discards an authenticated or structurally complete frame.
 - `ReadChangelogSince` seeks to the nearest checkpoint and scans forward. At most 255 records before the requested cursor are decoded, rather than the entire history.
-- Without matching durable primary intent, a corrupt/truncated format-v1 tail or authentication failure in a format-v2 frame returns **[`ErrChangelogCorrupt`](../../errors.go)**. Wrong database/key binding fails during open with [`ErrChangelogEncryptionKeyMismatch`](../../errors.go).
+- Without matching durable primary intent, a corrupt or truncated plaintext tail or an encrypted frame authentication failure returns `ErrChangelogCorrupt`. Wrong database/key binding fails during open with `ErrChangelogEncryptionKeyMismatch`.
 
 ## Backup
 
@@ -108,7 +118,16 @@ Named cursors and their logical-history checkpoint are part of the primary and a
 
 Copy-compaction preserves authoritative cursor and outbox keys but does not copy the sidecar. A compacted primary with registered consumers therefore opens with changelog enabled only when the operator supplies the matching retained logical history; a missing or replaced history fails with `ErrChangelogConsumerInvalidated` rather than silently moving a cursor.
 
-For a plaintext replacement, retain the existing sidecar at the configured path; reopening may redeliver an unacknowledged intent. An encrypted compacted primary receives a new encryption salt, so the old encrypted sidecar is intentionally incompatible. Either defer replacement when retained history is required, or explicitly re-bootstrap: open the candidate with changelog disabled, inspect and delete every named cursor at its expected sequence, rebuild downstream state from database truth, then enable a fresh sidecar and register new cursors at zero. Archive the original recovery set until validation completes. See [`OPERATIONS.md`](./OPERATIONS.md#compaction).
+For a plaintext replacement, retain the existing sidecar at the configured
+path. Reopening may redeliver an unacknowledged intent. An encrypted compacted
+primary receives a new encryption salt and needs history encrypted for that
+identity. Preserve the original recovery set when retained history is required.
+For an explicit re-bootstrap, open the candidate with changelog disabled,
+inspect and delete every named cursor at its expected sequence, then call
+`ResetChangelogHistory`. This also supports a database that never registered
+consumers. Archive the original sidecar, rebuild downstream state from database
+truth, then reopen with a fresh sidecar and register new cursors at zero.
+See [compaction operations](./OPERATIONS.md#compaction).
 
 ## Offline conversion
 

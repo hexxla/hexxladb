@@ -59,7 +59,23 @@ func (t *BTree) StorageStats() (StorageStats, error) {
 	}
 
 	visited := map[uint64]struct{}{0: {}}
-	freelistPages, err := t.eng.freelistMetadataIDs(hdr)
+	free := make(map[uint64]struct{})
+	markFree := func(id uint64) error {
+		if id == 0 || id >= hdr.NextPageID {
+			return fmt.Errorf("%w: invalid free page %d", ErrCorruptTree, id)
+		}
+		if _, duplicate := free[id]; duplicate {
+			return fmt.Errorf("%w: duplicate free page %d", ErrCorruptTree, id)
+		}
+		free[id] = struct{}{}
+		return nil
+	}
+	for i := range min(hdr.FreelistCount, uint64(HeaderInlineFreelistCapacity)) {
+		if err := markFree(hdr.InlineFreelist[i]); err != nil {
+			return StorageStats{}, err
+		}
+	}
+	freelistPages, err := t.eng.freelistMetadataIDs(hdr, markFree)
 	if err != nil {
 		return StorageStats{}, err
 	}
@@ -72,6 +88,14 @@ func (t *BTree) StorageStats() (StorageStats, error) {
 		if err := t.walkReachableTreePage(hdr.BTreeRoot, hdr.NextPageID, visited); err != nil {
 			return StorageStats{}, err
 		}
+	}
+	for id := range free {
+		if _, live := visited[id]; live {
+			return StorageStats{}, fmt.Errorf("%w: live page %d is also free", ErrCorruptTree, id)
+		}
+	}
+	if uint64(len(free)) != hdr.FreelistCount { //nolint:gosec // the count is bounded by physical pages.
+		return StorageStats{}, fmt.Errorf("%w: freelist count mismatch", ErrCorruptTree)
 	}
 	reachablePages := uint64(len(visited)) //nolint:gosec // cannot exceed the validated physical page count.
 	if reachablePages > allocatedPages {

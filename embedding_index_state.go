@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	embeddingIndexStateVersion = 1
+	embeddingIndexStateVersion = 2
 	embeddingIndexStateSize    = 10
 	embeddingIndexDirtyFlag    = 1
 )
@@ -32,12 +32,12 @@ func (tx *Tx) loadEmbeddingIndexState() (embeddingIndexState, bool, error) {
 	if err != nil || !found {
 		return embeddingIndexState{}, found, err
 	}
-	if len(encoded) != embeddingIndexStateSize || encoded[0] != embeddingIndexStateVersion || encoded[1]&^byte(embeddingIndexDirtyFlag) != 0 {
+	if len(encoded) != embeddingIndexStateSize || (encoded[0] != 1 && encoded[0] != embeddingIndexStateVersion) || encoded[1]&^byte(embeddingIndexDirtyFlag) != 0 {
 		return embeddingIndexState{}, false, fmt.Errorf("%w: invalid embedding index state", ErrCorruptDatabase)
 	}
 	return embeddingIndexState{
 		revision: binary.BigEndian.Uint64(encoded[2:]),
-		dirty:    encoded[1]&embeddingIndexDirtyFlag != 0,
+		dirty:    encoded[0] != embeddingIndexStateVersion || encoded[1]&embeddingIndexDirtyFlag != 0,
 	}, true, nil
 }
 
@@ -60,7 +60,13 @@ func (tx *Tx) recordEmbeddingMutation(deferIndex bool) (bool, error) {
 		return false, err
 	}
 	if !found && !deferIndex {
-		return true, nil
+		// Graphs built before online reachability validation had no state
+		// record or a version-1 record. Only a new graph starts clean.
+		_, hasGraph, err := (&txHNSWStorage{tx: tx}).GetHNSWMeta()
+		if err != nil {
+			return false, err
+		}
+		state.dirty = hasGraph
 	}
 	if err := advanceEmbeddingIndexRevision(&state); err != nil {
 		return false, err

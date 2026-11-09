@@ -58,6 +58,15 @@ func (t *BTree) insertIntoLeafCascade(pid uint64, page, key, val []byte) (didSpl
 	if err != nil {
 		return false, nil, err
 	}
+	if ld.next == 0 && len(ld.keys) > 0 && bytes.Compare(key, ld.keys[len(ld.keys)-1]) > 0 {
+		// Ordered ingestion and compaction append at the right edge. Keep the
+		// already-fitting original leaf packed and start its new sibling.
+		last := len(newKeys) - 1
+		splits = []leafSplit{
+			makeLeafSplit(newKeys[:last], newVals[:last]),
+			makeLeafSplit(newKeys[last:], newVals[last:]),
+		}
+	}
 
 	// Build cascade result
 	result = &cascadeSplitResult{
@@ -122,7 +131,7 @@ func (t *BTree) insertIntoLeafCascade(pid uint64, page, key, val []byte) (didSpl
 }
 
 // insertSorted inserts a key/value into sorted position.
-// Returns new slices (does not modify input).
+// Returns new outer slices, borrowing unchanged entries and copying new bytes.
 // Complexity: O(n) for find position + O(n) for copy = O(n).
 func insertSorted(keys, vals [][]byte, newKey, newVal []byte) (outKeys, outVals [][]byte, err error) {
 	n := len(keys)
@@ -136,9 +145,9 @@ func insertSorted(keys, vals [][]byte, newKey, newVal []byte) (outKeys, outVals 
 	// Check for duplicate
 	if pos < n && bytes.Equal(keys[pos], newKey) {
 		// Replace existing value
-		newKeys := cloneSliceOfSlices(keys)
-		newVals := cloneSliceOfSlices(vals)
-		newVals[pos] = append([]byte(nil), newVal...)
+		newKeys := slices.Clone(keys)
+		newVals := slices.Clone(vals)
+		newVals[pos] = bytes.Clone(newVal)
 		return newKeys, newVals, nil
 	}
 

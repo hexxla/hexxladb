@@ -7,11 +7,35 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/hexxla/hexxladb"
 )
+
+func TestQueryCells_TemporalSpatialBudgetAndExplanation(t *testing.T) {
+	t.Parallel()
+	db := openQueryDB(t)
+	center := hexxladb.Coord{Q: 1000, R: 1000}
+	for _, c := range []hexxladb.Coord{{}, center} {
+		putQueryCell(t, db, c, "", "shared", []string{"topic", "TOPIC"}, 0, time.Unix(1, 0))
+	}
+	if err := db.View(func(tx *hexxladb.Tx) error {
+		results, err := tx.QueryCells(t.Context(), hexxladb.CellQuery{
+			Center: center, Radius: 1, MaxScanRows: 1, After: time.Unix(0, 0), Query: "topic", Explain: true,
+		})
+		if !errors.Is(err, hexxladb.ErrQueryScanLimit) || len(results) != 1 || results[0].Cell.Coord != center {
+			t.Fatalf("query = %+v, %v, want partial result at the center", results, err)
+		}
+		if results[0].Score != 1 || strings.Count(results[0].Explanation, "[tag:exact:topic]") != 1 {
+			t.Fatalf("score and explanation disagree: %+v", results[0])
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestQueryCells_CappedResultsMatchUncapped(t *testing.T) {
 	t.Parallel()

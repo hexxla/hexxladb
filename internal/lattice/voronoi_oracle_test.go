@@ -3,6 +3,7 @@ package lattice_test
 import (
 	"errors"
 	"math"
+	"math/big"
 	"math/rand/v2"
 	"testing"
 
@@ -10,7 +11,7 @@ import (
 )
 
 type oracleVoronoiPath struct {
-	cost float64
+	cost *big.Rat
 	seed int
 	hops int
 }
@@ -20,19 +21,20 @@ type oracleVoronoiPath struct {
 func boundedVoronoiOracle(seeds []lattice.Coord, radius int, weights map[lattice.Coord]float64) map[lattice.Coord]oracleVoronoiPath {
 	best := map[lattice.Coord]oracleVoronoiPath{}
 	for seed, coord := range seeds {
-		layer := map[lattice.Coord]float64{coord: 0}
+		layer := map[lattice.Coord]*big.Rat{coord: new(big.Rat)}
 		for hops := range radius + 1 {
 			for point, cost := range layer {
 				old, exists := best[point]
-				if !exists || cost < old.cost || cost == old.cost && (seed < old.seed || seed == old.seed && hops < old.hops) {
+				if !exists || cost.Cmp(old.cost) < 0 || cost.Cmp(old.cost) == 0 && (seed < old.seed || seed == old.seed && hops < old.hops) {
 					best[point] = oracleVoronoiPath{cost: cost, seed: seed, hops: hops}
 				}
 			}
-			next := map[lattice.Coord]float64{}
+			next := map[lattice.Coord]*big.Rat{}
 			for point, cost := range layer {
 				for _, neighbor := range point.Neighbors() {
-					candidate := cost + 1 + weights[neighbor]
-					if old, exists := next[neighbor]; !exists || candidate < old {
+					candidate := new(big.Rat).Add(cost, big.NewRat(1, 1))
+					candidate.Add(candidate, new(big.Rat).SetFloat64(weights[neighbor]))
+					if old, exists := next[neighbor]; !exists || candidate.Cmp(old) < 0 {
 						next[neighbor] = candidate
 					}
 				}
@@ -54,6 +56,12 @@ func TestVoronoiCheckedHopBudgetOracle(t *testing.T) {
 			seeds[i] = lattice.Coord{Q: rng.IntN(9) - 4, R: rng.IntN(9) - 4}
 			for _, coord := range lattice.WalkRings(nil, seeds[i], radius) {
 				weights[coord] = float64(rng.IntN(10)) / 2
+				switch trial % 4 {
+				case 1:
+					weights[coord] /= 5
+				case 2:
+					weights[coord] = math.Ldexp(weights[coord], rng.IntN(220)-120)
+				}
 			}
 		}
 		if trial == 0 {
@@ -83,5 +91,28 @@ func TestVoronoiCheckedCostOverflow(t *testing.T) {
 	_, _, err := lattice.VoronoiChecked([]lattice.Coord{{}}, 2, func(lattice.Coord) float64 { return math.MaxFloat64 })
 	if !errors.Is(err, lattice.ErrInvalidWeight) {
 		t.Fatalf("error=%v, want ErrInvalidWeight for cumulative overflow", err)
+	}
+}
+
+func TestVoronoiComparesExactBinaryCosts(t *testing.T) {
+	t.Parallel()
+	seeds := []lattice.Coord{{Q: -3}, {Q: 3}}
+	// To reach the origin in three hops, each seed has one possible route.
+	// Moving 2^53 to the first step used to round away the right route's
+	// later unit costs, giving the right seed an incorrectly cheaper path.
+	for _, rightPenalty := range []float64{0, 1} {
+		_, owners, err := lattice.VoronoiChecked(seeds, 3, func(c lattice.Coord) float64 {
+			switch c {
+			case lattice.Coord{Q: -1}, lattice.Coord{Q: 2}:
+				return 1 << 53
+			case lattice.Coord{Q: 1}:
+				return rightPenalty
+			default:
+				return 0
+			}
+		})
+		if err != nil || owners[lattice.Coord{}] != 0 {
+			t.Fatalf("right penalty %v: owner %v, error %v, want first seed", rightPenalty, owners[lattice.Coord{}], err)
+		}
 	}
 }

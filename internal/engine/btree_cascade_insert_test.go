@@ -3,9 +3,45 @@
 package engine
 
 import (
+	"bytes"
+	"fmt"
 	"path/filepath"
 	"testing"
 )
+
+func BenchmarkInsertSortedReplacement(b *testing.B) {
+	keys, vals := make([][]byte, 32), make([][]byte, 32)
+	for i := range keys {
+		keys[i] = fmt.Appendf(nil, "key%04d", i)
+		vals[i] = bytes.Repeat([]byte{byte(i)}, 100)
+	}
+	value := []byte("replacement")
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, _, err := insertSorted(keys, vals, keys[16], value); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestInsertSortedReplacementPreservesInputs(t *testing.T) {
+	keys := [][]byte{[]byte("a"), []byte("b")}
+	vals := [][]byte{[]byte("original-a"), []byte("original-b")}
+	replacement := []byte("replacement")
+	gotKeys, gotVals, err := insertSorted(keys, vals, []byte("a"), replacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clear(replacement)
+	if string(gotVals[0]) != "replacement" || string(vals[0]) != "original-a" {
+		t.Fatal("replacement aliases caller bytes or overwrites the old value")
+	}
+	gotKeys[0] = []byte("other")
+	gotVals[1] = []byte("other")
+	if string(keys[0]) != "a" || string(vals[1]) != "original-b" {
+		t.Fatal("replacement modifies input slice headers")
+	}
+}
 
 // createTestEngine creates a temporary engine for testing.
 func createTestEngine(t *testing.T) (eng *Engine, cleanup func()) {
@@ -68,7 +104,7 @@ func TestInsertIntoLeafCascade_TwoPages(t *testing.T) {
 	keys := make([][]byte, 6)
 	vals := make([][]byte, 6)
 	for i := range 6 {
-		keys[i] = []byte("key00000000000000000")
+		keys[i] = fmt.Appendf(nil, "key%017d", i)
 		vals[i] = make([]byte, 600)
 	}
 

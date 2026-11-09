@@ -43,12 +43,13 @@ func (cfg *VoronoiContextConfig) withDefaults() {
 // LoadContextVoronoi partitions the area around multiple seeds using a Voronoi
 // diagram using minimum traversal cost within MaxRadius hops, then loads cells
 // for each region in cost order with deterministic seed and coordinate ties.
+// Finite weights and the unit hop costs are summed exactly as binary values.
 //
 // Unlike loading independent radial neighborhoods per seed (which causes overlap
 // near adjacent seeds), Voronoi assigns each coordinate to exactly one seed.
 // This gives each seed a fair, non-overlapping share of the context budget.
 //
-// When [VoronoiContextConfig.WeightFunc] is set, the Dijkstra expansion uses
+// When [VoronoiContextConfig.WeightFunc] is set, the hop-bounded search uses
 // the returned cost as an additional penalty, allowing callers to steer region
 // boundaries using confidence, recency, or semantic similarity scores.
 //

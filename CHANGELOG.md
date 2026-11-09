@@ -6,9 +6,36 @@
 
 - **Development workflow** — Publish module versions through Git tags. Remove automated binary publishing, coverage uploads, duplicate vulnerability scans, and custom complexity and mutation tooling. Retain the API baseline, race suite, and scheduled vulnerability and recovery checks.
 
+### Breaking
+
+- **Encrypted changelog and WAL framing** — encrypted changelogs upgrade from v2 to v3 with random per-frame nonces through a validated atomic replacement. Allow temporary space for the full sidecar and retain a pre-upgrade recovery set for older binaries. Current commits persist complete WAL framing and a plaintext-header checksum that older writers cannot maintain.
+
+- **Derived HNSW index state** — current builds read older graph metadata and use exact scoring until `DB.RebuildEmbeddingIndex` succeeds. After an embedding mutation or rebuild writes the updated derived state, use a pre-upgrade backup to return to a build that predates it. The primary data and embedding encodings are unchanged. See the [operator instructions](docs/hexxladb/OPERATIONS.md#deferred-embedding-ingestion-and-hnsw-rebuild).
+
+### Fixed
+
+- **Storage recovery** — repair torn mutable headers from complete identity-bound WAL commits, bind redo routing and the complete page set to the commit descriptor, validate allocator boundaries, and fence storage reads after uncertain engine commits.
+- **Encrypted history** — prevent nonce reuse after backup restore or valid-boundary truncation, and validate existing changelog checkpoints before outbox replay even without registered consumers.
+- **Changelog re-bootstrap** — add `DB.ResetChangelogHistory` for an explicit checkpoint reset with changelog disabled and zero consumers, preserving records, pending intents, and sidecar files.
+- **Rotation recovery** — remove stale backups before publishing a new recovery marker and hold a stable path lock across source close, swap, and interrupted recovery.
+- **Transaction metadata** — publish embedding configuration only after commit, preserve it across abort/retry, and refresh the cached root after snapshot-tag mutations.
+- **Storage integrity** — escape binary values matching storage markers, bound decompression and overflow chains, detect malformed traversal cycles and ordering, and reject root/freelist conflicts.
+
+- **HNSW reachability** — check whether online pruning or a new entry point disconnects existing vectors. Use exact search on disconnection and for graphs built before these checks, until a successful rebuild.
+- **HNSW rebuild budget** — enforce the memory estimate against the actual snapshot and recheck filesystem space before building.
+- **Spatial and graph reads** — enforce analytics radius limits, validate path endpoints, stop path cost callbacks on cancellation, and keep temporal filters within the chosen spatial scan. Query explanations reflect the same case-folded tags as scoring.
+- **Weighted Voronoi** — compare exact sums of finite binary weights and unit hop costs before applying seed tie order.
+- **Super-hex summaries** — acquire the database lock before the summary lock, preventing a deadlock with summary reads in transaction callbacks.
+
 ### Performance
 
+- **Storage write amplification** — retain only the final staged image of each physical page, avoid rewriting unchanged child-parent pointers, and skip WAL cleanup sync when the synced extent already matches.
+- **Leaf replacement allocations** — reuse owned unchanged entry bytes and copy only the outer slices and replacement payload.
+- **Tree and cache layout** — balance internal and non-append leaf splits, preserve right-edge ingestion density, size cache shards in whole pages, and reserve an initial hot-page budget.
+
 - **Cell query ranking** — cap retained matches at `MaxResults` and build explanations only for returned cells. Partial results retain the same ordering rules.
+
+- **FOV, super-hex, and pathfinding** — emit open-field visibility in nearest-first order without sorting, select super-hex parents by modular arithmetic, and store path heap entries by value.
 
 ## [0.7.0] - 2026-11-09
 

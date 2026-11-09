@@ -39,12 +39,10 @@ func isCompressedValue(val []byte) bool {
 // compressValue compresses val using DEFLATE. Returns the original val unchanged
 // if the input is too short or compression didn't shrink it.
 //
-// Exception: a raw value that would itself be misread as a compression envelope
-// (starts with compressMagic and is long enough for isCompressedValue) MUST be
-// wrapped in the envelope even when compression does not shrink it, otherwise
-// decompressValue would try to inflate raw bytes on read and corrupt the value.
+// Wrap raw values that match either storage marker, even if the envelope
+// makes them larger. Decoding the envelope returns the original bytes.
 func compressValue(val []byte) []byte {
-	mustWrap := isCompressedValue(val)
+	mustWrap := isCompressedValue(val) || isOverflowStub(val)
 
 	if len(val) < compressMinInput && !mustWrap {
 		return val
@@ -93,6 +91,9 @@ func (e *Engine) decompressValue(val []byte) ([]byte, error) {
 		return nil, fmt.Errorf("%w: compressed value too short", ErrCorruptTree)
 	}
 	uncompLen := binary.BigEndian.Uint32(val[1:5])
+	if uncompLen > maxSupportedValueBytes {
+		return nil, fmt.Errorf("%w: compressed value length %d exceeds supported limit", ErrCorruptTree, uncompLen)
+	}
 	inflater, _ := e.inflatePool.Get().(*valueInflater)
 	if inflater == nil {
 		inflater = &valueInflater{}
@@ -103,7 +104,7 @@ func (e *Engine) decompressValue(val []byte) ([]byte, error) {
 	} else {
 		resetter := inflater.decoder.(flate.Resetter) //nolint:forcetypeassert // flate.NewReader always returns a Resetter.
 		if err := resetter.Reset(&inflater.source, nil); err != nil {
-			return nil, fmt.Errorf("reset decompressor: %w", err)
+			return nil, fmt.Errorf("%w: reset decompressor: %w", ErrCorruptTree, err)
 		}
 	}
 	defer func() {
@@ -114,7 +115,7 @@ func (e *Engine) decompressValue(val []byte) ([]byte, error) {
 
 	out, err := io.ReadAll(io.LimitReader(inflater.decoder, int64(uncompLen)+1))
 	if err != nil {
-		return nil, fmt.Errorf("decompress: %w", err)
+		return nil, fmt.Errorf("%w: decompress: %w", ErrCorruptTree, err)
 	}
 	if uint32(len(out)) != uncompLen { //nolint:gosec // len bounded by uncompLen
 		return nil, fmt.Errorf("%w: decompressed length mismatch: got %d want %d", ErrCorruptTree, len(out), uncompLen)

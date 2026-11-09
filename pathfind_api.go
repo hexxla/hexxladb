@@ -50,6 +50,12 @@ func (tx *Tx) FindEdgePath(ctx context.Context, start, goal Coord, cfg FindEdgeP
 	if cfg.MaxExpand < 0 || cfg.MaxEdgeRows < 0 {
 		return nil, fmt.Errorf("%w: path budgets must be non-negative", ErrInvalidArgument)
 	}
+	if _, err := lattice.Pack(start); err != nil {
+		return nil, fmt.Errorf("%w: path start: %w", ErrInvalidArgument, err)
+	}
+	if _, err := lattice.Pack(goal); err != nil {
+		return nil, fmt.Errorf("%w: path goal: %w", ErrInvalidArgument, err)
+	}
 	if start == goal {
 		return []Coord{start}, nil
 	}
@@ -58,7 +64,7 @@ func (tx *Tx) FindEdgePath(ctx context.Context, start, goal Coord, cfg FindEdgeP
 		tx: tx, ctx: ctx, filter: cfg.Filter, override: cfg.CostFunc,
 		weights: make(map[lattice.Coord]float64), maxEdgeRows: cfg.MaxEdgeRows,
 	}
-	path, pathErr := pathfind.Dijkstra(start, goal, traversal.neighbors, traversal.cost, cfg.MaxExpand)
+	path, pathErr := pathfind.DijkstraContext(ctx, start, goal, traversal.neighbors, traversal.cost, cfg.MaxExpand)
 	if traversal.err != nil {
 		return nil, traversal.err
 	}
@@ -86,8 +92,8 @@ func (tx *Tx) WalkEdges(ctx context.Context, start Coord, filter string, maxHops
 		return nil, err
 	}
 	var result []Coord
-	err := walkEdgeCoords(ctx, start, maxHops, matchExactRelation(filter), func(from PackedCoord, fn func(EdgeWalkRecord) bool) error {
-		return tx.ascendEdgesFrom(from, "", ctx.Err, fn)
+	err := walkEdgeCoords(ctx, start, maxHops, nil, func(from PackedCoord, fn func(EdgeWalkRecord) bool) error {
+		return tx.ascendEdgesFrom(from, filter, ctx.Err, fn)
 	}, func(coord Coord) bool {
 		result = append(result, coord)
 		return maxNodes <= 0 || len(result) < maxNodes

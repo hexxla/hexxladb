@@ -117,11 +117,6 @@ func (tx *Tx) scanQueryCells(ctx context.Context, q CellQuery, yield func(record
 		return tx.scanByTagFused(ctx, q.RequireTags[0], q.MaxScanRows, yield)
 	case indexSourceID != "":
 		return tx.scanBySourceFused(ctx, indexSourceID, q.MaxScanRows, yield)
-	case len(q.Embedding) == 0 && (!q.After.IsZero() || !q.Before.IsZero()):
-		// A signed week bucket is not lexicographically ordered by its
-		// on-disk uint64 representation. Scan primary cells so ranges that
-		// cross the Unix epoch remain complete without changing the format.
-		return tx.scanAllCellsFused(ctx, q.MaxScanRows, yield)
 	case q.Radius > 0:
 		return tx.scanByRadiusFused(ctx, q.Center, q.Radius, q.MaxScanRows, yield)
 	default:
@@ -455,9 +450,9 @@ func buildExplanation(q CellQuery, rec record.CellRecord, c Coord, score float64
 		fmt.Fprintf(&sb, " query=%q", queryLow)
 		contentLow := strings.ToLower(rec.RawContent)
 		sourceIDLow := strings.ToLower(rec.Provenance.SourceID)
+		tagsLow := distinctFoldedTags(rec.Tags)
 		for tok := range strings.FieldsSeq(queryLow) {
-			for _, tag := range rec.Tags {
-				tagLow := strings.ToLower(tag)
+			for _, tagLow := range tagsLow {
 				if tagLow == tok {
 					fmt.Fprintf(&sb, " [tag:exact:%s]", tok)
 				} else if strings.HasPrefix(tagLow, tok) {

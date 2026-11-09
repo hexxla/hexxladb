@@ -14,7 +14,7 @@ func makeTestCache(budgetBytes int64) *pageCache {
 	}
 	c.shards[0].index = make(map[uint64]*pcEntry)
 	c.shards[0].maxSize = budgetBytes
-	c.shards[0].coldTarget = budgetBytes
+	c.shards[0].coldTarget = budgetBytes / 2
 	return c
 }
 
@@ -148,7 +148,7 @@ func TestPageCacheGhostPromotion(t *testing.T) {
 
 func TestPageCacheMultipleShardsNoRace(t *testing.T) {
 	// Use the real constructor so multiple shards are exercised.
-	c := newPageCache(512 << 10)
+	c := newPageCache(512<<10, 4096)
 	if c == nil {
 		t.Skip("cache disabled (budget=0)")
 	}
@@ -189,11 +189,68 @@ func TestPageCacheGetDoesNotAllocate(t *testing.T) {
 
 // TestPageCacheDisabled verifies that newPageCache(0) returns nil.
 func TestPageCacheDisabled(t *testing.T) {
-	if c := newPageCache(0); c != nil {
+	if c := newPageCache(0, 4096); c != nil {
 		t.Fatal("expected nil cache for zero budget")
 	}
-	if c := newPageCache(-1); c != nil {
+	if c := newPageCache(-1, 4096); c != nil {
 		t.Fatal("expected nil cache for negative budget")
+	}
+}
+
+func TestPageCacheWholePageShards(t *testing.T) {
+	for _, pageSize := range []int{4096, 16384, 65536} {
+		for _, pages := range []int64{1, 2, 8, 32} {
+			budget := pages*int64(pageSize) + 17
+			c := newPageCache(budget, pageSize)
+			if c == nil {
+				t.Fatal("whole-page budget disabled cache")
+			}
+			var total int64
+			for i := range c.shards {
+				size := c.shards[i].maxSize
+				if size < int64(pageSize) || size%int64(pageSize) != 0 {
+					t.Fatalf("page size %d, invalid shard budget %d", pageSize, size)
+				}
+				total += size
+			}
+			if total > budget {
+				t.Fatalf("cache capacity %d exceeds budget %d", total, budget)
+			}
+			page := bytes.Repeat([]byte{42}, pageSize)
+			c.set(1, page)
+			if !c.get(1, make([]byte, pageSize)) {
+				t.Fatalf("%d pages of %d bytes cannot cache one page", pages, pageSize)
+			}
+		}
+		if newPageCache(int64(pageSize-1), pageSize) != nil {
+			t.Fatal("sub-page budget should disable cache")
+		}
+	}
+}
+
+func TestPageCacheHotWorkingSetSurvivesScan(t *testing.T) {
+	const pageSize = 4096
+	c := makeTestCache(16 * pageSize)
+	data := make([]byte, pageSize)
+	for range 3 {
+		for id := range uint64(4) {
+			c.set(id, data)
+			if !c.get(id, data) {
+				t.Fatal("warming cache missed")
+			}
+		}
+	}
+	for id := uint64(100); id < 164; id++ {
+		c.set(id, data)
+	}
+	hits := 0
+	for id := range uint64(4) {
+		if c.get(id, data) {
+			hits++
+		}
+	}
+	if hits != 4 {
+		t.Fatalf("retained %d of 4 reused pages across scan", hits)
 	}
 }
 

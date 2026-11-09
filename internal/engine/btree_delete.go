@@ -118,8 +118,8 @@ func (t *BTree) releaseDeletedOverflow(value []byte) error {
 	if !isOverflowStub(value) {
 		return nil
 	}
-	_, firstPage := decodeOverflowStub(value)
-	return t.freeOverflowChain(firstPage)
+	length, firstPage := decodeOverflowStub(value)
+	return t.freeOverflowChain(firstPage, length)
 }
 
 // leafPath is the internal-node path to a leaf: parentPIDs[k] chooses child childIdxs[k].
@@ -130,8 +130,12 @@ type leafPath struct {
 
 // findLeafWithKey locates the leaf containing key.
 func (t *BTree) findLeafWithKey(root uint64, key []byte) (path leafPath, leafPID uint64, keyIdx int, ok bool, err error) {
+	var walk treeWalk
 	pid := root
 	for {
+		if err := walk.visit(pid); err != nil {
+			return leafPath{}, 0, 0, false, err
+		}
 		page, release, err := t.eng.readPagePooled(pid)
 		if err != nil {
 			return leafPath{}, 0, 0, false, err

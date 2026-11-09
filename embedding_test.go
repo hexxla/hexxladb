@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/hexxla/hexxladb"
@@ -909,5 +910,52 @@ func TestEmbedding_AccessorsAfterClose(t *testing.T) {
 	}
 	if got := db.EmbeddingMetric(); got != hexxladb.DistanceCosine {
 		t.Fatalf("EmbeddingMetric after Close: got %v, want DistanceCosine", got)
+	}
+}
+
+func TestEmbeddingFirstWriteAbortLeavesConfigUnchanged(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "embedding.db")
+	db, err := hexxladb.Open(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	coord := mustPackEmb(t, 1, 2)
+	abort := errors.New("abort embedding")
+	if err := db.Update(func(tx *hexxladb.Tx) error {
+		if err := tx.PutEmbedding(coord, []float32{1, 2}); err != nil {
+			return err
+		}
+		return abort
+	}); !errors.Is(err, abort) {
+		t.Fatalf("abort: %v", err)
+	}
+	if got := db.EmbeddingDimension(); got != 0 {
+		t.Errorf("aborted dimension = %d, want 0", got)
+	}
+	want := []float32{1, 2, 3}
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutEmbedding(coord, want) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := hexxladb.OpenExisting(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	if got := reopened.EmbeddingDimension(); got != 3 {
+		t.Fatalf("reopened dimension = %d, want 3", got)
+	}
+	if err := reopened.View(func(tx *hexxladb.Tx) error {
+		got, ok, err := tx.GetEmbedding(coord)
+		if err == nil && (!ok || !slices.Equal(got, want)) {
+			t.Errorf("embedding = %v, found %t", got, ok)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

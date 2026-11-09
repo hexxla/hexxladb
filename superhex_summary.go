@@ -78,13 +78,10 @@ func (s *SuperHexSummaryIndex) Rebuild(ctx context.Context, db *DB) error {
 		return err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	cells := make(map[PackedCoord]Coord)
 	summaries := make(map[Coord]SuperHexSummary)
-	var cursor uint64
 	var scanErr error
-	err := db.View(func(tx *Tx) error {
+	return db.View(func(tx *Tx) error {
 		if db.changelog == nil {
 			return ErrChangelogDisabled
 		}
@@ -112,21 +109,20 @@ func (s *SuperHexSummaryIndex) Rebuild(ctx context.Context, db *DB) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		cursor = db.changelog.MaxSeq()
+		cursor := db.changelog.MaxSeq()
+		for parent, summary := range summaries {
+			summary.LastUpdatedSeq = cursor
+			summaries[parent] = summary
+		}
+		// Publish under the same database read lock used to obtain the cursor.
+		s.mu.Lock()
+		s.source = db
+		s.lastSeq = cursor
+		s.cellParent = cells
+		s.summaries = summaries
+		s.mu.Unlock()
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-	for parent, summary := range summaries {
-		summary.LastUpdatedSeq = cursor
-		summaries[parent] = summary
-	}
-	s.source = db
-	s.lastSeq = cursor
-	s.cellParent = cells
-	s.summaries = summaries
-	return nil
 }
 
 // Sync applies up to limit changelog records after the last processed sequence.
@@ -149,15 +145,27 @@ func (s *SuperHexSummaryIndex) Sync(ctx context.Context, db *DB, limit int) (pro
 		limit = 256
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.source == nil || s.source != db {
-		return 0, fmt.Errorf("%w: rebuild the super-hex index from this database before syncing", ErrInvalidArgument)
-	}
-	records, err := db.ReadChangelogSince(s.lastSeq, limit)
-	if err != nil {
-		return 0, err
-	}
+	// Acquire the database lock before the summary lock, as Rebuild does.
+	err = db.View(func(*Tx) error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.source != db {
+			return fmt.Errorf("%w: rebuild the super-hex index from this database before syncing", ErrInvalidArgument)
+		}
+		if db.changelog == nil {
+			return ErrChangelogDisabled
+		}
+		records, err := db.changelog.ReadSince(s.lastSeq, limit)
+		if err != nil {
+			return err
+		}
+		processed, err = s.applyChanges(ctx, records)
+		return err
+	})
+	return processed, err
+}
+
+func (s *SuperHexSummaryIndex) applyChanges(ctx context.Context, records []ChangelogRecord) (processed int, err error) {
 	for i := range records {
 		if err := ctx.Err(); err != nil {
 			return processed, err

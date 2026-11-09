@@ -115,6 +115,18 @@ compatible model and inspect up to 2,000 embedding candidates. Use
 
 ## Backup and copy
 
+Public opens, key rotation, and interrupted-rotation recovery coordinate through
+a stable `<database-path>.lock` file, followed by the primary file lock. The
+path lock excludes new owners across primary-file renames. The first open
+creates it with mode `0600` and therefore requires directory write permission.
+Keep this inode in place while any process may open the database. Backups
+exclude it and a restored path creates its own lock file.
+
+Opening an encrypted format-v2 changelog upgrades it to format v3 through a
+validated atomic replacement. Allow temporary space equal to the changelog
+size and retain a pre-upgrade recovery set if an older binary may be needed.
+See the [encrypted changelog policy](./ENCRYPTION.md#changelog-policy).
+
 HexxlaDB permits exactly one open handle per primary database file, across handles and processes. A competing [`Open`](../../db.go) fails immediately with [`ErrDatabaseLocked`](../../errors.go); do not bypass this lock or independently manipulate the WAL. Close the owning handle before using offline tools such as [`CompactTo`](../../compact.go) or encryption rotation.
 
 ## Remote access boundary
@@ -201,7 +213,7 @@ the candidate and its backup have passed a restore drill.
 
 Official encryption on a new database creates authenticated engine format v3
 with XChaCha20-Poly1305 data pages, an authenticated header, keyed WAL, and—when
-enabled—authenticated encrypted changelog format v2. See
+enabled—authenticated encrypted changelog format v3. See
 [`ENCRYPTION.md`](./ENCRYPTION.md) for the exact threat model, physical overhead,
 and residual same-slot/whole-set rollback limits.
 
@@ -400,15 +412,19 @@ stats, err := db.RebuildEmbeddingIndex(ctx, &hexxladb.EmbeddingIndexRebuildOptio
 The first deferred write marks the persisted graph stale; queries remain
 correct through exact flat search, as reported by `SearchByEmbeddingWithStats`.
 Rebuild preflight counts vectors, estimates peak heap/transient WAL, and checks
-free space before advancing the stale revision. It then snapshots authoritative
-vectors, builds outside the write transaction, verifies layer-zero
+free space before advancing the stale revision. It rechecks the vector count
+and memory estimate on the actual snapshot and filesystem space before building.
+It then builds outside the write transaction, verifies layer-zero
 reachability from the entry point, and publishes the graph in one commit. Normal readers and writers may run
 during graph construction. Any embedding mutation advances the revision and
 causes publication to return `ErrEmbeddingIndexChanged`; retry from the
 preflight. If the build leaves unreachable vectors, it returns
 `ErrEmbeddingIndexDisconnected` and exact search stays active. Failed or
-cancelled rebuilds preserve the prior graph records. Rebuild an existing
-index to apply the new neighbor-selection policy across the graph.
+cancelled rebuilds preserve the prior graph records. Graphs written before
+online reachability validation automatically use exact search. Run a rebuild
+to re-enable HNSW for those databases. The newer derived index state requires
+a build with these checks. Use the pre-upgrade backup if rolling back to a
+build that predates them.
 
 Zero options use a 10,000-vector and 2 GiB estimate ceiling. The hard supported
 rebuild limit is 20,000 vectors, based on the retained 32-dimensional evidence;

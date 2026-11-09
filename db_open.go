@@ -19,7 +19,9 @@ func buildEngineOptions(path string, opts *Options) (*engine.Options, []byte, er
 		return nil, nil, ErrEncryptionOptions
 	}
 
-	header, err := engine.ReadHeaderFile(path)
+	// Derive credentials from immutable identity before the engine repairs a
+	// torn mutable header from a complete, identity-bound WAL transaction.
+	header, err := engine.ReadHeaderIdentityFile(path)
 	if len(rawKey) == 0 && passphrase == "" {
 		if err == nil && header.FormatVersion == engine.AuthenticatedFormatVersion {
 			return nil, nil, ErrEncryptionKeyRequired

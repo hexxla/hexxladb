@@ -63,8 +63,8 @@ Underfull leaves remain valid when neither sibling fits.
 
 ## Capacity and splits
 
-- Leaf and internal node capacity is **dynamic**, derived from the database's page size. Inserts split only when the serialized node no longer fits; cascading splits greedily left-fill every emitted page and propagate all promoted children until the root fits.
-- **Overflow pages:** values larger than the **inline threshold** (`pageSize - btreeHeaderSize - maxKeyBytes - 4`) are stored in a chain of overflow pages; the leaf entry holds a 14-byte stub (`0xFF 0x4F` magic + `uint32` logical length + `uint64` first page ID). See `overflow.go` and `ENGINE_FORMAT.md` for the on-disk layout.
+- Leaf and internal node capacity is derived from the database's page size. Inserts split only when the serialized node no longer fits. Splits prefer two byte-balanced pages and use additional fitting groups when indivisible entry sizes require them. An append beyond the rightmost leaf keeps the original leaf packed and starts a new sibling, preserving ordered-ingestion density. Internal splits remain balanced. Promotions propagate until the root fits.
+- Values larger than `max(pageSize/3, 256)` after compression use overflow pages. The leaf stores a 14-byte stub with `0xFF 0x4F`, the stored length, and the first page ID. Raw values matching either the overflow or compression marker are escaped through the compression envelope. Reads and releases reject chains whose page count disagrees with the bounded stored length. See `overflow.go` and [the physical format](ENGINE_FORMAT.md).
 - **Root:** when the root splits, a new internal node becomes the root; **`btree_root_page`** in the file header is updated.
 
 ## Allocator

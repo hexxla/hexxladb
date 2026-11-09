@@ -83,9 +83,16 @@ func (t *BTree) writeInternal(pid, parent uint64, ptrs []uint64, keys [][]byte) 
 
 // splitInternalGroups partitions an over-full internal node into groups that
 // each fit within pageSize, promoting the separating key between consecutive
-// groups (B+ tree internal split promotes, not copies). Uses a greedy left-fill
-// so every group is guaranteed to fit. len(promoted) == len(groups)-1.
+// groups. Prefer a byte-balanced pair and spill into more groups only when
+// no two groups fit. len(promoted) == len(groups)-1.
 func splitInternalGroups(ptrs []uint64, keys [][]byte, pageSize int) (groups []internalGroup, promoted [][]byte) {
+	if pivot := balancedInternalPivot(keys, pageSize); pivot >= 0 {
+		return []internalGroup{
+			{ptrs: ptrs[:pivot+1], keys: keys[:pivot]},
+			{ptrs: ptrs[pivot+1:], keys: keys[pivot+1:]},
+		}, [][]byte{keys[pivot]}
+	}
+
 	i := 0
 	for i < len(ptrs) {
 		g := internalGroup{ptrs: []uint64{ptrs[i]}}
@@ -107,4 +114,21 @@ func splitInternalGroups(ptrs []uint64, keys [][]byte, pageSize int) (groups []i
 		groups = append(groups, g)
 	}
 	return groups, promoted
+}
+
+// balancedInternalPivot finds a separator whose removal leaves two fitting
+// pages. Each side needs a header and its first child pointer.
+func balancedInternalPivot(keys [][]byte, pageSize int) int {
+	base := btreeHeaderSize + 8
+	best, balance := -1, -1
+	left, right := base, internalSerializedSize(keys)
+	for i, key := range keys {
+		size := 2 + len(key) + 8
+		right -= size
+		if left <= pageSize && right <= pageSize && min(left, right) > balance {
+			best, balance = i, min(left, right)
+		}
+		left += size
+	}
+	return best
 }

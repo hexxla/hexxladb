@@ -229,7 +229,7 @@ func TestLog_encryptedRoundTripReopenAndCiphertext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.HasPrefix(raw, []byte("HXCHGv02")) {
+	if !bytes.HasPrefix(raw, []byte("HXCHGv03")) {
 		t.Fatalf("encrypted header magic = %q", raw[:8])
 	}
 	if bytes.Contains(raw, secretKey) || bytes.Contains(raw, secretPayload) {
@@ -298,7 +298,8 @@ func TestLog_encryptedTamperFailsClosed(t *testing.T) {
 	}{
 		{name: "header", offset: 16},
 		{name: "clear sequence", offset: encryptedHeaderSizeForTest + 4},
-		{name: "ciphertext", offset: encryptedHeaderSizeForTest + 4 + 8},
+		{name: "nonce", offset: encryptedHeaderSizeForTest + 4 + 8},
+		{name: "ciphertext", offset: encryptedHeaderSizeForTest + 4 + 8 + 24},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "tamper")

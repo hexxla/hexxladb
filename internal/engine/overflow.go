@@ -12,8 +12,7 @@ import (
 //
 // Overflow stub stored in leaf value:
 //
-//	[0..1]   0xFF 0x4F (overflow magic; 0xFF cannot be the first byte of any
-//	          record envelope ('H'=0x48) or empty secondary index value)
+//	[0..1]   0xFF 0x4F (overflow magic, escaped when present in raw values)
 //	[2..5]   uint32 big-endian — logical value length
 //	[6..13]  uint64 big-endian — first overflow page ID
 //
@@ -132,53 +131,71 @@ func (t *BTree) writeOverflowChain(data []byte) (uint64, error) {
 	return pageIDs[0], nil
 }
 
-// readOverflowChain reads an overflow chain starting at firstPageID and returns
-// the reassembled value. logicalLen is used to pre-allocate the result buffer.
-func (t *BTree) readOverflowChain(firstPageID uint64, logicalLen uint32) ([]byte, error) {
-	ps := t.pageSize()
-	chunkSize := overflowPayloadPerPage(ps)
-	result := make([]byte, 0, logicalLen)
-
-	pid := firstPageID
-	for pid != 0 {
-		page, release, err := t.eng.readPagePooled(pid)
-		if err != nil {
-			return nil, fmt.Errorf("overflow read page %d: %w", pid, err)
-		}
-		nextID := binary.BigEndian.Uint64(page[0:8])
-		chunk := page[overflowPtrSize:]
-		remaining := int(logicalLen) - len(result)
-		if remaining < chunkSize {
-			chunk = chunk[:remaining]
-		}
-		result = append(result, chunk...)
-		release()
-		pid = nextID
+// overflowLength validates a stored length before any allocation. An escaped
+// maximum-sized raw value can be larger than the logical write limit after
+// DEFLATE framing. Even incompressible DEFLATE blocks fit under twice that limit.
+func overflowLength(logicalLen uint32) (int, error) {
+	if logicalLen == 0 || logicalLen > 2*maxSupportedValueBytes {
+		return 0, fmt.Errorf("%w: invalid overflow length %d", ErrCorruptTree, logicalLen)
 	}
+	return int(logicalLen), nil
+}
 
-	if len(result) != int(logicalLen) {
-		return nil, fmt.Errorf("%w: overflow chain length mismatch: got %d want %d", ErrCorruptTree, len(result), logicalLen)
+func (t *BTree) readOverflowChain(firstPageID uint64, logicalLen uint32) ([]byte, error) {
+	length, err := overflowLength(logicalLen)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]byte, 0, length)
+	err = t.walkOverflowChain(firstPageID, length, func(_ uint64, chunk []byte) {
+		result = append(result, chunk...)
+	})
+	if err != nil {
+		return nil, err
 	}
 	return result, nil
 }
 
-// freeOverflowChain walks an overflow chain, queues authenticated pages for
-// transactional reuse.
-func (t *BTree) freeOverflowChain(firstPageID uint64) error {
-	pid := firstPageID
-	for pid != 0 {
+// walkOverflowChain requires the physical chain to contain exactly the number
+// of pages implied by length. A cycle cannot satisfy the terminal check.
+func (t *BTree) walkOverflowChain(pid uint64, length int, visit func(uint64, []byte)) error {
+	chunkSize := overflowPayloadPerPage(t.pageSize())
+	for length > 0 {
+		if pid == 0 {
+			return fmt.Errorf("%w: short overflow chain", ErrCorruptTree)
+		}
 		page, release, err := t.eng.readPagePooled(pid)
 		if err != nil {
+			return fmt.Errorf("overflow read page %d: %w", pid, err)
+		}
+		next := binary.BigEndian.Uint64(page[:overflowPtrSize])
+		size := min(length, chunkSize)
+		visit(pid, page[overflowPtrSize:overflowPtrSize+size])
+		release()
+		pid, length = next, length-size
+	}
+	if pid != 0 {
+		return fmt.Errorf("%w: excess pages in overflow chain", ErrCorruptTree)
+	}
+	return nil
+}
+
+// freeOverflowChain validates the full chain before making any page reusable.
+func (t *BTree) freeOverflowChain(firstPageID uint64, logicalLen uint32) error {
+	length, err := overflowLength(logicalLen)
+	if err != nil {
+		return err
+	}
+	var pages []uint64
+	if err := t.walkOverflowChain(firstPageID, length, func(id uint64, _ []byte) {
+		pages = append(pages, id)
+	}); err != nil {
+		return err
+	}
+	for _, id := range pages {
+		if err := t.eng.releasePageID(id); err != nil {
 			return err
 		}
-		nextID := binary.BigEndian.Uint64(page[0:8])
-		release()
-		if t.eng.wtxn != nil && t.eng.wtxn.hdr.FormatVersion == formatVersionV3 {
-			if err := t.eng.releasePageID(pid); err != nil {
-				return err
-			}
-		}
-		pid = nextID
 	}
 	return nil
 }

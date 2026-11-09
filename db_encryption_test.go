@@ -555,8 +555,8 @@ func TestRotateEncryption_encryptsPlaintextChangelog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(raw, []byte(secret)) || !bytes.HasPrefix(raw, []byte("HXCHGv02")) {
-		t.Fatal("rotation did not replace the plaintext changelog with encrypted format v2")
+	if bytes.Contains(raw, []byte(secret)) || !bytes.HasPrefix(raw, []byte("HXCHGv03")) {
+		t.Fatal("rotation did not replace the plaintext changelog with encrypted format v3")
 	}
 	db, err = hexxladb.Open(path, newOpts)
 	if err != nil {

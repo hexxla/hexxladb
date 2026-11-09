@@ -14,76 +14,53 @@ type leafSplit struct {
 	sepKey []byte   // Separator key (first key of this page, used by parent)
 }
 
-// cascadingLeafSplit splits a leaf node's entries into multiple pages.
-//
-// When entry sizes are highly variable, a single split may leave the right side
-// overflowing. This function recursively splits until all pages fit within pageSize.
-//
-// Hexagonal Architecture: Pure function with no side effects. All I/O (page allocation,
-// writing) is handled by the caller via returned split definitions.
-//
-// Parameters:
-//   - keys: sorted keys to distribute across pages
-//   - vals: values corresponding to keys
-//   - pageSize: maximum bytes per page
-//
-// Returns:
-//   - []leafSplit: ordered list of pages (left to right), empty on error
-//   - error: if entries cannot be split (e.g., single entry exceeds pageSize)
-//
-// Complexity: O(n*k) where n=entries, k=pages created. Typically k <= 3.
+// cascadingLeafSplit partitions an overfull leaf into ordered, page-sized
+// groups. Prefer a byte-balanced split when two pages can hold the entries.
 func cascadingLeafSplit(keys, vals [][]byte, pageSize int) ([]leafSplit, error) {
 	if len(keys) == 0 {
 		return nil, nil
 	}
-
-	// Validate: single entry must fit (overflow pages handled separately via MaxValueBytes)
-	if len(keys) == 1 {
-		size := entrySize(keys[0], vals[0])
-		if size > pageSize {
-			return nil, fmt.Errorf("single entry size %d exceeds pageSize %d", size, pageSize)
+	capacity := pageSize - btreeHeaderSize
+	total := 0
+	for i, key := range keys {
+		size := entrySize(key, vals[i])
+		if size > capacity {
+			return nil, fmt.Errorf("single entry size %d exceeds page capacity %d", size, capacity)
 		}
-		return []leafSplit{{keys: keys, vals: vals, sepKey: keys[0]}}, nil
+		total += size
+	}
+	if total <= capacity {
+		return []leafSplit{makeLeafSplit(keys, vals)}, nil
 	}
 
-	return splitRecursively(keys, vals, pageSize, make([]leafSplit, 0))
+	best, balance, left := 0, 0, 0
+	for i, key := range keys[:len(keys)-1] {
+		left += entrySize(key, vals[i])
+		right := total - left
+		if left <= capacity && right <= capacity && min(left, right) > balance {
+			best, balance = i+1, min(left, right)
+		}
+	}
+	if best != 0 {
+		return []leafSplit{makeLeafSplit(keys[:best], vals[:best]), makeLeafSplit(keys[best:], vals[best:])}, nil
+	}
+
+	// Some indivisible entry sizes require more than two pages.
+	var groups []leafSplit
+	start, used := 0, 0
+	for i, key := range keys {
+		size := entrySize(key, vals[i])
+		if used+size > capacity {
+			groups = append(groups, makeLeafSplit(keys[start:i], vals[start:i]))
+			start, used = i, 0
+		}
+		used += size
+	}
+	return append(groups, makeLeafSplit(keys[start:], vals[start:])), nil
 }
 
-// splitRecursively splits entries into pages that each fit within pageSize.
-//
-// Design: greedy left-fill (bbolt-style). It packs as many leading entries as
-// fit into the left page, then recurses on the remainder. This guarantees the
-// crucial invariant that EVERY emitted page serializes within pageSize — unlike
-// a midpoint split, which can leave either half overflowing when entry sizes are
-// highly variable. The accumulator pattern keeps it allocation-light.
-//
-// The only error condition is a single entry larger than pageSize; callers spill
-// such values to overflow pages before reaching here, so inline entries are
-// always bounded below pageSize.
-func splitRecursively(keys, vals [][]byte, pageSize int, acc []leafSplit) ([]leafSplit, error) {
-	size := btreeHeaderSize
-	i := 0
-	for i < len(keys) {
-		entry := entrySize(keys[i], vals[i])
-		// Always place at least one entry per page; stop before overflowing.
-		if i > 0 && size+entry > pageSize {
-			break
-		}
-		size += entry
-		i++
-		if i == 1 && size > pageSize {
-			return nil, fmt.Errorf("single entry size %d exceeds pageSize %d", entry, pageSize)
-		}
-	}
-
-	leftKeys := cloneSliceOfSlices(keys[:i])
-	leftVals := cloneSliceOfSlices(vals[:i])
-	acc = append(acc, leafSplit{keys: leftKeys, vals: leftVals, sepKey: leftKeys[0]})
-
-	if i == len(keys) {
-		return acc, nil
-	}
-	return splitRecursively(keys[i:], vals[i:], pageSize, acc)
+func makeLeafSplit(keys, vals [][]byte) leafSplit {
+	return leafSplit{keys: cloneSliceOfSlices(keys), vals: cloneSliceOfSlices(vals), sepKey: keys[0]}
 }
 
 // entrySize calculates the serialized size of one key-value pair.

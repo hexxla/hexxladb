@@ -1,6 +1,7 @@
 package lattice_test
 
 import (
+	"cmp"
 	"slices"
 	"testing"
 
@@ -14,6 +15,31 @@ func TestFieldOfView_noOpaque(t *testing.T) {
 	// 3*4+6+1 = 19 cells in radius 2.
 	if len(visible) != 19 {
 		t.Fatalf("expected 19 visible cells, got %d", len(visible))
+	}
+}
+
+func TestFieldOfViewOpenFieldPreservesNearestFirstOrder(t *testing.T) {
+	t.Parallel()
+	origin := lattice.Coord{Q: -31, R: 47}
+	for _, radius := range []int{1, 5, 64, 256} {
+		want := lattice.WalkRings(nil, origin, radius)
+		seen := 1
+		got, err := lattice.FieldOfViewContext(t.Context(), origin, radius, func(c lattice.Coord) bool {
+			if c != want[seen] {
+				t.Fatalf("radius %d, opacity callback %d: got %v, want %v", radius, seen, c, want[seen])
+			}
+			seen++
+			return false
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		slices.SortFunc(want, func(a, b lattice.Coord) int {
+			return cmp.Or(cmp.Compare(origin.Distance(a), origin.Distance(b)), cmp.Compare(a.Q, b.Q), cmp.Compare(a.R, b.R))
+		})
+		if seen != len(want) || !slices.Equal(got, want) {
+			t.Fatalf("radius %d: callbacks %d, output %d cells, want %d", radius, seen-1, len(got), len(want))
+		}
 	}
 }
 

@@ -29,6 +29,15 @@ func TestReplay_restoresStalePrimaryWhenWALAhead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Model a genuine pre-framing writer, including its already-applied extent.
+	header.Features &^= FeatureWALFrameDigest
+	if err := writeHeaderAt(e.db, header); err != nil {
+		t.Fatal(err)
+	}
+	oldWAL := append(e.encodeHeaderWALRecord(header, 1), encodeWALRecord(header.LastWALSeq, 1, oldP, DefaultPageSize)...)
+	if err := os.WriteFile(WalPath(path), oldWAL, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	header.LastWALSeq++
 	marker := e.encodeHeaderWALRecord(header, 1)
 	if err := e.Close(); err != nil {

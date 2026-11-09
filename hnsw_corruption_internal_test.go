@@ -50,6 +50,9 @@ func TestSearchByEmbeddingRejectsCorruptHNSWStorage(t *testing.T) {
 				if err := tx.putDirect(index.EmbedKey(coord), encodeFloat32s([]float32{1, 0})); err != nil {
 					return err
 				}
+				if err := tx.putEmbeddingIndexState(embeddingIndexState{}); err != nil {
+					return err
+				}
 				return corrupt(tx, coord)
 			}); err != nil {
 				t.Fatal(err)
@@ -133,6 +136,9 @@ func TestDeleteEmbeddingFallsBackWhenRepairDisconnectsGraph(t *testing.T) {
 			if err := storage.PutHNSWNode(&hnsw.Node{Coord: key, Neighbors: [][]PackedCoord{links}}); err != nil {
 				return err
 			}
+		}
+		if err := tx.putEmbeddingIndexState(embeddingIndexState{}); err != nil {
+			return err
 		}
 		return tx.DeleteEmbedding(keys[1])
 	}); err != nil {
