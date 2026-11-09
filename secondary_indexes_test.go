@@ -34,10 +34,10 @@ func TestPutCell_secondaryIndexes(t *testing.T) {
 		Validity:   record.ValidityWire{ValidFrom: &vf},
 		Tags:       []string{"tag-a"},
 	}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(t.Context(), rec) }); err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	var bySource int
 	err = db.View(func(tx *hexxladb.Tx) error {
 		return tx.AscendCellsBySource(ctx, "src-a", func(r record.CellRecord) bool {
@@ -88,7 +88,7 @@ func TestPutCell_secondaryIndexes(t *testing.T) {
 	vf2 := int64(10 * index.WeekNanos)
 	rec2.Validity.ValidFrom = &vf2
 	rec2.Tags = []string{"tag-b"}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec2) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(t.Context(), rec2) }); err != nil {
 		t.Fatal(err)
 	}
 	bySource = 0
@@ -183,15 +183,15 @@ func TestTx_AscendCellsBySource_mvccSnapshotIsolation(t *testing.T) {
 		RawContent: "snap",
 		Provenance: record.ProvenanceWire{SourceID: "old-src"},
 	}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(t.Context(), rec) }); err != nil {
 		t.Fatal(err)
 	}
 	rec.Provenance.SourceID = "new-src"
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(t.Context(), rec) }); err != nil {
 		t.Fatal(err)
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	countOld := 0
 	if err := db.ViewAt(1, func(tx *hexxladb.Tx) error {
 		return tx.AscendCellsBySource(ctx, "old-src", func(record.CellRecord) bool {
@@ -239,15 +239,15 @@ func TestTx_AscendCellsByTag_mvccSnapshotIsolation(t *testing.T) {
 		Provenance: record.ProvenanceWire{SourceID: "s"},
 		Tags:       []string{"alpha"},
 	}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(t.Context(), rec) }); err != nil {
 		t.Fatal(err)
 	}
 	rec.Tags = []string{"beta"}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(t.Context(), rec) }); err != nil {
 		t.Fatal(err)
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	countAlpha := 0
 	if err := db.ViewAt(1, func(tx *hexxladb.Tx) error {
 		return tx.AscendCellsByTag(ctx, "alpha", func(record.CellRecord) bool {
@@ -296,14 +296,14 @@ func TestTx_ListExistingTopics_distinctSorted(t *testing.T) {
 			Provenance: record.ProvenanceWire{SourceID: "s"},
 			Tags:       tags,
 		}
-		if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+		if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(t.Context(), rec) }); err != nil {
 			t.Fatal(err)
 		}
 	}
 	put(0, 0, "zebra", "alpha")
 	put(1, 0, "alpha", "beta")
 
-	ctx := context.Background()
+	ctx := t.Context()
 	var topics []string
 	err = db.View(func(tx *hexxladb.Tx) error {
 		var inner error
@@ -344,15 +344,15 @@ func TestTx_ListExistingTopics_mvccViewAt(t *testing.T) {
 		Provenance: record.ProvenanceWire{SourceID: "s"},
 		Tags:       []string{"alpha"},
 	}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(t.Context(), rec) }); err != nil {
 		t.Fatal(err)
 	}
 	rec.Tags = []string{"beta"}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(t.Context(), rec) }); err != nil {
 		t.Fatal(err)
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	topicsAt1, err := listTopicsAt(db, ctx, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -396,10 +396,10 @@ func TestAscendCellsBySource_contextCanceled(t *testing.T) {
 		RawContent: "x",
 		Provenance: record.ProvenanceWire{SourceID: "src-a"},
 	}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(t.Context(), rec) }); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	err = db.View(func(tx *hexxladb.Tx) error {
 		return tx.AscendCellsBySource(ctx, "src-a", func(record.CellRecord) bool { return true })

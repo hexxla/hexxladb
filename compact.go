@@ -2,6 +2,7 @@ package hexxladb
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"os"
@@ -170,9 +171,7 @@ func resolveCompactOptions(opts *CompactOptions) (CompactOptions, error) {
 		return CompactOptions{}, fmt.Errorf("%w: compact BatchSize must be zero or between 1 and %d", ErrInvalidArgument, compactBatchSize)
 	}
 	resolved := *opts
-	if resolved.BatchSize == 0 {
-		resolved.BatchSize = compactBatchSize
-	}
+	resolved.BatchSize = cmp.Or(resolved.BatchSize, compactBatchSize)
 	return resolved, nil
 }
 

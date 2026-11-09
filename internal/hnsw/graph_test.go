@@ -108,13 +108,11 @@ func (m *memStorage) GetHNSWMeta() (*Meta, bool, error) {
 	if m.meta == nil {
 		return nil, false, nil
 	}
-	cp := *m.meta
-	return &cp, true, nil
+	return new(*m.meta), true, nil
 }
 
 func (m *memStorage) PutHNSWMeta(meta *Meta) error {
-	cp := *meta
-	m.meta = &cp
+	m.meta = new(*meta)
 	return nil
 }
 

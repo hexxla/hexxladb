@@ -261,9 +261,7 @@ func nearestSeedDistance(coord lattice.Coord, seeds []lattice.Coord) int {
 func buildContextPack(items []contextCandidate, explanations []CellExplanation, candidatesScanned, maxCells int, cfg ContextAssemblyConfig) ContextPack {
 	maxRingUsed := 0
 	for i := range items {
-		if items[i].ring > maxRingUsed {
-			maxRingUsed = items[i].ring
-		}
+		maxRingUsed = max(maxRingUsed, items[i].ring)
 	}
 	if cfg.Explain {
 		for i := range items {

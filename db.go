@@ -2,8 +2,10 @@ package hexxladb
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -180,10 +182,7 @@ func (db *DB) openChangelog(path string, opts *Options, hdr engine.Header, maste
 		return err
 	}
 	recoverableTail := len(pendingOutbox) > 0
-	clPath := opts.ChangelogPath
-	if clPath == "" {
-		clPath = path + "-changelog"
-	}
+	clPath := cmp.Or(opts.ChangelogPath, path+"-changelog")
 	syncWrites := !opts.ChangelogLazy
 	var cl *changelog.Log
 	switch {
@@ -271,6 +270,8 @@ func mapChangelogOpenError(err error) error {
 
 // Close releases resources associated with the database.
 // It waits for any in-flight [View], [Update], or [Batch] to finish.
+// Multiple cleanup failures are joined and remain inspectable with errors.Is
+// and errors.As. A single failure is returned directly.
 func (db *DB) Close() error {
 	if db == nil {
 		return nil
@@ -281,22 +282,22 @@ func (db *DB) Close() error {
 		return nil
 	}
 	db.closed.Store(true)
-	var err error
+	var errs []error
 	if db.changelog != nil && db.changelogLazy && db.pendingOutboxEntries > 0 && !db.recoveryRequired.Load() {
-		err = db.syncAndCleanupPendingChangelog()
+		errs = append(errs, db.syncAndCleanupPendingChangelog())
 	}
 	if db.changelog != nil {
-		if closeErr := db.changelog.Close(); closeErr != nil && err == nil {
-			err = closeErr
-		}
+		errs = append(errs, db.changelog.Close())
 		db.changelog = nil
 	}
-	if e := db.eng.Close(); e != nil && err == nil {
-		err = e
-	}
+	errs = append(errs, db.eng.Close())
 	db.eng = nil
 	db.btree = nil
-	return err
+	errs = slices.DeleteFunc(errs, func(err error) bool { return err == nil })
+	if len(errs) == 1 {
+		return errs[0]
+	}
+	return errors.Join(errs...)
 }
 
 func (db *DB) activeEng() *engine.Engine {

@@ -106,9 +106,7 @@ func scanWALRecords(reader io.Reader, apply func(seq, pageID uint64, payload []b
 		if crc32.ChecksumIEEE(payload) != wantCRC {
 			return 0, ErrCorruptWAL
 		}
-		if seq > maxSeq {
-			maxSeq = seq
-		}
+		maxSeq = max(maxSeq, seq)
 		if err := apply(seq, pageID, payload); err != nil {
 			return 0, err
 		}

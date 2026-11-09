@@ -1,7 +1,6 @@
 package hexxladb_test
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 
@@ -25,7 +24,7 @@ func openSearchDB(t *testing.T) *hexxladb.DB {
 func TestSearchCells_EmptyDB(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	var results []hexxladb.CellSearchResult
 	if err := db.View(func(tx *hexxladb.Tx) error {
@@ -43,7 +42,7 @@ func TestSearchCells_EmptyDB(t *testing.T) {
 func TestSearchCells_TagExactMatch(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	coordA := hexxladb.Coord{Q: 0, R: 0}
 	coordB := hexxladb.Coord{Q: 1, R: 0}
@@ -83,7 +82,7 @@ func TestSearchCells_TagExactMatch(t *testing.T) {
 func TestSearchCells_ContentSubstringMatch(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	coord := hexxladb.Coord{Q: 0, R: 0}
 	pk := mustPackTest(t, coord)
@@ -115,7 +114,7 @@ func TestSearchCells_ContentSubstringMatch(t *testing.T) {
 func TestSearchCells_RequireTagsAND(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	coordA := hexxladb.Coord{Q: 0, R: 0}
 	coordB := hexxladb.Coord{Q: 1, R: 0}
@@ -155,7 +154,7 @@ func TestSearchCells_RequireTagsAND(t *testing.T) {
 func TestSearchCells_AnyTagsOR(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	coordA := hexxladb.Coord{Q: 0, R: 0}
 	coordB := hexxladb.Coord{Q: 1, R: 0}
@@ -195,7 +194,7 @@ func TestSearchCells_AnyTagsOR(t *testing.T) {
 func TestSearchCells_MinConfidenceFilter(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	coordA := hexxladb.Coord{Q: 0, R: 0}
 	coordB := hexxladb.Coord{Q: 1, R: 0}
@@ -233,7 +232,7 @@ func TestSearchCells_MinConfidenceFilter(t *testing.T) {
 func TestSearchCells_MaxResults(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Write 5 cells, all with matching tag.
 	coords := []hexxladb.Coord{{Q: 0, R: 0}, {Q: 1, R: 0}, {Q: 2, R: 0}, {Q: 0, R: 1}, {Q: 1, R: 1}}
@@ -269,7 +268,7 @@ func TestSearchCells_MaxResults(t *testing.T) {
 func TestSearchCells_SpatialRadiusFilter(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Near origin.
 	nearCoord := hexxladb.Coord{Q: 1, R: 0}
@@ -309,7 +308,7 @@ func TestSearchCells_SpatialRadiusFilter(t *testing.T) {
 func TestSearchCells_MultiTermQuery_BothTermsScoreHigher(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// A: content contains both "machine" and "learning".
 	// B: content contains only "machine".
@@ -370,7 +369,7 @@ func TestSearchCells_MultiTermQuery_BothTermsScoreHigher(t *testing.T) {
 func TestSearchCells_MultiTermQuery_TagAndContent(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// A: tag matches "go", content matches "concurrency" → two token hits.
 	// B: only content matches "go" → one token hit.
@@ -409,7 +408,7 @@ func TestSearchCells_MultiTermQuery_TagAndContent(t *testing.T) {
 func TestSearchCells_SortedByScore(t *testing.T) {
 	t.Parallel()
 	db := openSearchDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// A: has "science" tag (exact match) → higher score.
 	// B: "science" only in content → lower score.

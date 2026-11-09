@@ -1,7 +1,6 @@
 package hexxladb_test
 
 import (
-	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -41,7 +40,7 @@ func seedCellForDelete(t *testing.T, db *hexxladb.DB, c lattice.Coord, content s
 		Validity:   record.ValidityWire{ValidFrom: &vf},
 	}
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutCell(context.Background(), rec)
+		return tx.PutCell(t.Context(), rec)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +56,7 @@ func TestDeleteCell_idempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		return tx.DeleteCell(context.Background(), p)
+		return tx.DeleteCell(t.Context(), p)
 	}); err != nil {
 		t.Fatalf("idempotent delete should return nil, got %v", err)
 	}
@@ -65,7 +64,7 @@ func TestDeleteCell_idempotent(t *testing.T) {
 
 func TestDeleteCellWithOutcome_reports_removed(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("mvcc_miss_then_hit", func(t *testing.T) {
 		t.Parallel()
@@ -146,7 +145,7 @@ func TestDeleteCell_readOnlyTx(t *testing.T) {
 	p, _ := lattice.Pack(lattice.Coord{Q: 0, R: 0})
 	var gotErr error
 	_ = db.View(func(tx *hexxladb.Tx) error {
-		gotErr = tx.DeleteCell(context.Background(), p)
+		gotErr = tx.DeleteCell(t.Context(), p)
 		return nil
 	})
 	if !errors.Is(gotErr, hexxladb.ErrTxReadOnly) {
@@ -158,7 +157,7 @@ func TestDeleteCell_readOnlyTx(t *testing.T) {
 func TestDeleteCell_withFacets(t *testing.T) {
 	t.Parallel()
 	db := openDeleteTestDB(t, false)
-	ctx := context.Background()
+	ctx := t.Context()
 	p := seedCellForDelete(t, db, lattice.Coord{Q: 3, R: 0}, "facet-test", nil, "")
 
 	// Write facets.
@@ -201,7 +200,7 @@ func TestDeleteCell_withFacets(t *testing.T) {
 func TestDeleteCell_withEdges(t *testing.T) {
 	t.Parallel()
 	db := openDeleteTestDB(t, false)
-	ctx := context.Background()
+	ctx := t.Context()
 	c1 := lattice.Coord{Q: 0, R: 0}
 	c2 := lattice.Coord{Q: 1, R: 0}
 	p1 := seedCellForDelete(t, db, c1, "from", nil, "")
@@ -240,7 +239,7 @@ func TestDeleteCell_withEdges(t *testing.T) {
 func TestDeleteCell_MVCC_tombstoneAndSnapshot(t *testing.T) {
 	t.Parallel()
 	db := openDeleteTestDB(t, true)
-	ctx := context.Background()
+	ctx := t.Context()
 	p := seedCellForDelete(t, db, lattice.Coord{Q: 0, R: 0}, "versioned", []string{"v"}, "src-v")
 
 	// Capture commit_seq before delete.
@@ -293,7 +292,7 @@ func TestDeleteCell_MVCC_tombstoneAndSnapshot(t *testing.T) {
 func TestDeleteCell_MVCC_facetTombstone(t *testing.T) {
 	t.Parallel()
 	db := openDeleteTestDB(t, true)
-	ctx := context.Background()
+	ctx := t.Context()
 	p := seedCellForDelete(t, db, lattice.Coord{Q: 2, R: -1}, "facet-mvcc", nil, "")
 
 	if err := db.Update(func(tx *hexxladb.Tx) error {
@@ -326,7 +325,7 @@ func TestDeleteCell_MVCC_facetTombstone(t *testing.T) {
 func TestDeleteCell_thenReput(t *testing.T) {
 	t.Parallel()
 	db := openDeleteTestDB(t, true)
-	ctx := context.Background()
+	ctx := t.Context()
 	c := lattice.Coord{Q: 5, R: 5}
 	p := seedCellForDelete(t, db, c, "original", nil, "")
 
@@ -366,7 +365,7 @@ func TestDeleteCell_thenReput(t *testing.T) {
 func TestDeleteCell_sameTx_overlay(t *testing.T) {
 	t.Parallel()
 	db := openDeleteTestDB(t, true)
-	ctx := context.Background()
+	ctx := t.Context()
 	p, err := lattice.Pack(lattice.Coord{Q: 7, R: -3})
 	if err != nil {
 		t.Fatal(err)
@@ -414,7 +413,7 @@ func TestDeleteCell_sameTx_overlay(t *testing.T) {
 func TestDeleteCell_healthCheckClean(t *testing.T) {
 	t.Parallel()
 	db := openDeleteTestDB(t, false)
-	ctx := context.Background()
+	ctx := t.Context()
 	p := seedCellForDelete(t, db, lattice.Coord{Q: 0, R: 0}, "health", []string{"h"}, "src-h")
 
 	// Add a facet and edge to exercise cleanup.

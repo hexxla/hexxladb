@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/hexxla/hexxladb/internal/index"
@@ -361,6 +360,6 @@ func (tx *Tx) ListExistingTopics(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, nil
 }

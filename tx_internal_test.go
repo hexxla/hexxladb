@@ -1,7 +1,6 @@
 package hexxladb
 
 import (
-	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -9,6 +8,41 @@ import (
 	"github.com/hexxla/hexxladb/internal/lattice"
 	"github.com/hexxla/hexxladb/internal/record"
 )
+
+func TestClosePreservesLazyCleanupError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "close.db")
+	opts := &Options{ChangelogEnabled: true, ChangelogLazy: true}
+	db, err := Open(path, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Update(func(tx *Tx) error {
+		return tx.PutCell(t.Context(), CellRecord{Key: PackedCoord{}, RawContent: "pending"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("outbox cleanup failed")
+	db.commitFaults = &commitFaultHooks{beforeOutboxCleanup: func() error { return failure }}
+	err = db.Close()
+	if !errors.Is(err, failure) || !errors.Is(err, ErrCommitDurable) || !errors.Is(err, ErrCommitFinalization) {
+		t.Fatalf("close lost cleanup error identity: %v", err)
+	}
+	if db.eng != nil || db.changelog != nil || db.btree != nil {
+		t.Fatal("close retained database resources after cleanup failure")
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("repeated close = %v", err)
+	}
+	reopened, err := OpenExisting(path, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	if pending, err := reopened.readPendingChangelogIntents(); err != nil || len(pending) != 0 {
+		t.Fatalf("pending intents after recovery = %d, %v", len(pending), err)
+	}
+}
 
 func TestUpdate_changelogFailureRecoversCommittedStateAndEventAfterReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "recover-finalization.db")
@@ -24,7 +58,7 @@ func TestUpdate_changelogFailureRecoversCommittedStateAndEventAfterReopen(t *tes
 	cellRecord := record.CellRecord{Key: coord, RawContent: "recoverable-event"}
 
 	err = db.Update(func(tx *Tx) error {
-		if err := tx.PutCell(context.Background(), cellRecord); err != nil {
+		if err := tx.PutCell(t.Context(), cellRecord); err != nil {
 			return err
 		}
 		return tx.db.changelog.Close()

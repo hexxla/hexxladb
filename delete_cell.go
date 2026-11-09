@@ -103,7 +103,7 @@ func (tx *Tx) deleteCellMVCC(ctx context.Context, key lattice.PackedCoord) (remo
 
 // tombstoneFacetsForCell writes zero-length tombstones for each visible facet (MVCC path).
 func (tx *Tx) tombstoneFacetsForCell(_ context.Context, key lattice.PackedCoord) error {
-	for facetID := byte(0); facetID <= index.MaxFacetID; facetID++ {
+	for facetID := range byte(index.MaxFacetID + 1) {
 		_, ok, err := tx.getFacetVisibleRaw(key, facetID)
 		if err != nil {
 			return err
@@ -130,7 +130,7 @@ func (tx *Tx) deleteOutboundEdges(key lattice.PackedCoord) error {
 		if !bytes.HasPrefix(k, prefix) {
 			return false
 		}
-		keys = append(keys, append([]byte(nil), k...))
+		keys = append(keys, bytes.Clone(k))
 		return true
 	}); err != nil {
 		return err

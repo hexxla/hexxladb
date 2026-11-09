@@ -1,6 +1,7 @@
 package lattice
 
 import (
+	"maps"
 	"math"
 	"slices"
 )
@@ -19,11 +20,7 @@ func FieldOfViewRaycast(origin Coord, maxRadius int, opaque func(Coord) bool) []
 			visible[target] = struct{}{}
 		}
 	}
-	out := make([]Coord, 0, len(visible))
-	for c := range visible {
-		out = append(out, c)
-	}
-	return out
+	return slices.Collect(maps.Keys(visible))
 }
 
 // checkLOS returns true if target is visible from origin using raycasting.

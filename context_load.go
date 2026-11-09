@@ -1,6 +1,7 @@
 package hexxladb
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -187,10 +188,7 @@ func validateLoadContextConfig(cfg LoadContextConfig) error {
 		return fmt.Errorf("%w: LoadContext seam radius must be between 0 and %d", ErrInvalidArgument, MaxSeamSearchRadius)
 	}
 
-	maxRing := cfg.MaxRing
-	if maxRing == 0 {
-		maxRing = 5
-	}
+	maxRing := cmp.Or(cfg.MaxRing, 5)
 	var work int64
 	if cfg.EdgeFilter == "" {
 		work = int64(len(cfg.Seeds)) * int64(hexDiskCellCount(maxRing))
@@ -205,10 +203,7 @@ func validateLoadContextConfig(cfg LoadContextConfig) error {
 		}
 	}
 	if cfg.Assembly.IncludeSeams {
-		seamRadius := cfg.Assembly.SeamRadius
-		if seamRadius == 0 {
-			seamRadius = maxRing
-		}
+		seamRadius := cmp.Or(cfg.Assembly.SeamRadius, maxRing)
 		if seamRadius > MaxSeamSearchRadius {
 			return fmt.Errorf("%w: LoadContext seam radius must not exceed %d", ErrInvalidArgument, MaxSeamSearchRadius)
 		}

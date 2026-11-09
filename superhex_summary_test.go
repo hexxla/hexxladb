@@ -1,7 +1,6 @@
 package hexxladb_test
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -32,7 +31,7 @@ func TestSuperHexSummaryIndex_RebuildAndSync(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				if err := tx.PutCell(context.Background(), record.CellRecord{Key: packed, RawContent: "cell"}); err != nil {
+				if err := tx.PutCell(t.Context(), record.CellRecord{Key: packed, RawContent: "cell"}); err != nil {
 					return err
 				}
 			}

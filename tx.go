@@ -370,6 +370,7 @@ func (tx *Tx) noteChangelog(op byte, key, encoded []byte) {
 	if tx == nil || !tx.writable || tx.db == nil || tx.db.changelog == nil {
 		return
 	}
+	// Take owned copies while normalizing zero-length inputs to nil.
 	tx.clog = append(tx.clog, changelog.Entry{
 		Op:      op,
 		Key:     append([]byte(nil), key...),

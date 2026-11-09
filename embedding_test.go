@@ -293,7 +293,7 @@ func TestEmbedding_DeleteCellCascade(t *testing.T) {
 	t.Parallel()
 	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
 	coord := mustPackEmb(t, 1, 2)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	err := db.Update(func(tx *hexxladb.Tx) error {
 		rec := record.CellRecord{
@@ -508,7 +508,7 @@ func TestEmbedding_SearchByEmbedding_MinScore(t *testing.T) {
 func TestEmbedding_ReindexEmbeddings(t *testing.T) {
 	t.Parallel()
 	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
-	ctx := context.Background()
+	ctx := t.Context()
 	coord1 := mustPackEmb(t, 1, 0)
 	coord2 := mustPackEmb(t, 2, 0)
 
@@ -564,7 +564,7 @@ func TestEmbedding_ReindexEmbeddings(t *testing.T) {
 func TestEmbedding_ReindexSkipRemoves(t *testing.T) {
 	t.Parallel()
 	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
-	ctx := context.Background()
+	ctx := t.Context()
 	coord := mustPackEmb(t, 1, 0)
 
 	err := db.Update(func(tx *hexxladb.Tx) error {
@@ -730,7 +730,7 @@ func TestEmbedding_PersistedAcrossReopen(t *testing.T) {
 func TestQueryCells_Embedding(t *testing.T) {
 	t.Parallel()
 	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Insert cells with embeddings.
 	type cell struct {
@@ -791,7 +791,7 @@ func TestQueryCells_Embedding(t *testing.T) {
 func TestQueryCells_EmbeddingWithTagFilter(t *testing.T) {
 	t.Parallel()
 	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if err := db.Update(func(tx *hexxladb.Tx) error {
 		// Two animal cells, one science cell.
@@ -829,13 +829,7 @@ func TestQueryCells_EmbeddingWithTagFilter(t *testing.T) {
 			return err
 		}
 		for _, r := range results {
-			found := false
-			for _, tag := range r.Cell.Tags {
-				if tag == "animal" {
-					found = true
-				}
-			}
-			if !found {
+			if !slices.Contains(r.Cell.Tags, "animal") {
 				t.Fatalf("result %v missing 'animal' tag", r.Cell.Coord)
 			}
 		}
@@ -848,7 +842,7 @@ func TestQueryCells_EmbeddingWithTagFilter(t *testing.T) {
 func TestSearchCells_Embedding(t *testing.T) {
 	t.Parallel()
 	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if err := db.Update(func(tx *hexxladb.Tx) error {
 		pk := mustPackEmb(t, 1, 0)

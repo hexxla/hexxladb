@@ -229,7 +229,7 @@ func (tx *Tx) WalkRingFacets(ctx context.Context, center Coord, ring int, facetM
 // collectFacetsForMask collects facet records for all bits set in mask.
 func (tx *Tx) collectFacetsForMask(p lattice.PackedCoord, mask uint8) ([]record.FacetRecord, error) {
 	var facets []record.FacetRecord
-	for id := byte(0); id <= index.MaxFacetID; id++ {
+	for id := range byte(index.MaxFacetID + 1) {
 		if mask&(1<<id) == 0 {
 			continue
 		}

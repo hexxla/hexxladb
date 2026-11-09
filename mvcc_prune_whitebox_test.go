@@ -1,7 +1,6 @@
 package hexxladb
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -31,7 +30,7 @@ func TestMVCC_whiteboxBtreeKeyShapeAfterRepeatedPutCell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	for i := range iterations {
 		raw := fmt.Sprintf("payload-%08d", i)
 		if err := db.Update(func(tx *Tx) error {

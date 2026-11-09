@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/binary"
 	"fmt"
+	"maps"
 	"slices"
 )
 
@@ -247,11 +248,7 @@ func (e *Engine) prepareFreelistCommit() error {
 	for _, pageID := range txn.freelistPageIDs {
 		poolSet[pageID] = struct{}{}
 	}
-	pool := make([]uint64, 0, len(poolSet))
-	for pageID := range poolSet {
-		pool = append(pool, pageID)
-	}
-	slices.Sort(pool)
+	pool := slices.Sorted(maps.Keys(poolSet))
 
 	capacity := freelistPageCapacity(e.pageSize)
 	metadataCount := 0

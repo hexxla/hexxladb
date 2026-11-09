@@ -319,8 +319,7 @@ func newReport(cfg config) report {
 			case "vcs.revision":
 				result.Runtime.VCSRevision = setting.Value
 			case "vcs.modified":
-				modified := setting.Value == "true"
-				result.Runtime.VCSModified = &modified
+				result.Runtime.VCSModified = new(setting.Value == "true")
 			}
 		}
 	}
@@ -328,8 +327,7 @@ func newReport(cfg config) report {
 		result.Runtime.VCSRevision = cfg.vcsRevision
 	}
 	if cfg.vcsModified != "" {
-		modified := cfg.vcsModified == "true"
-		result.Runtime.VCSModified = &modified
+		result.Runtime.VCSModified = new(cfg.vcsModified == "true")
 	}
 	result.Profile.DurationNS = cfg.duration.Nanoseconds()
 	result.Profile.Cells = cfg.cells

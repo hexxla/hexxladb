@@ -1,5 +1,7 @@
 package engine
 
+import "slices"
+
 const maxSupportedValueBytes = 1 << 20
 
 const validMaxValueBytesText = "512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, or 1048576"
@@ -16,10 +18,8 @@ func resolveMaxValueBytes(opts *Options) (uint32, error) {
 	if opts == nil || opts.MaxValueBytes == 0 {
 		return 0, nil // zero → header stores 0 → Open uses DefaultMaxValueBytes
 	}
-	for _, v := range validMaxValueBytes {
-		if opts.MaxValueBytes == v {
-			return opts.MaxValueBytes, nil
-		}
+	if slices.Contains(validMaxValueBytes[:], opts.MaxValueBytes) {
+		return opts.MaxValueBytes, nil
 	}
 	return 0, ErrInvalidMaxValueBytes
 }

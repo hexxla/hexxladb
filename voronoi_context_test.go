@@ -42,7 +42,7 @@ func TestLoadContextVoronoi_CancelsDuringPartition(t *testing.T) {
 func TestLoadContextVoronoi_singleSeed(t *testing.T) {
 	t.Parallel()
 	db := openVoronoiTestDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	err := db.Update(func(tx *hexxladb.Tx) error {
 		for _, c := range lattice.WalkRings(nil, lattice.Coord{Q: 0, R: 0}, 3) {
@@ -89,7 +89,7 @@ func TestLoadContextVoronoi_singleSeed(t *testing.T) {
 func TestLoadContextVoronoi_twoSeeds_noOverlap(t *testing.T) {
 	t.Parallel()
 	db := openVoronoiTestDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Populate a wide area.
 	err := db.Update(func(tx *hexxladb.Tx) error {
@@ -145,7 +145,7 @@ func TestLoadContextVoronoi_twoSeeds_noOverlap(t *testing.T) {
 func TestLoadContextVoronoi_maxCellsPerSeed(t *testing.T) {
 	t.Parallel()
 	db := openVoronoiTestDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	err := db.Update(func(tx *hexxladb.Tx) error {
 		for _, c := range lattice.WalkRings(nil, lattice.Coord{Q: 0, R: 0}, 4) {
@@ -188,7 +188,7 @@ func TestLoadContextVoronoi_emptySeeds(t *testing.T) {
 	t.Parallel()
 	db := openVoronoiTestDB(t)
 	err := db.View(func(tx *hexxladb.Tx) error {
-		result, err := tx.LoadContextVoronoi(context.Background(), nil, hexxladb.VoronoiContextConfig{})
+		result, err := tx.LoadContextVoronoi(t.Context(), nil, hexxladb.VoronoiContextConfig{})
 		if err != nil {
 			return err
 		}
@@ -205,7 +205,7 @@ func TestLoadContextVoronoi_emptySeeds(t *testing.T) {
 func TestLoadContextVoronoi_nilTx(t *testing.T) {
 	t.Parallel()
 	var tx *hexxladb.Tx
-	_, err := tx.LoadContextVoronoi(context.Background(), []lattice.Coord{{Q: 0, R: 0}}, hexxladb.VoronoiContextConfig{})
+	_, err := tx.LoadContextVoronoi(t.Context(), []lattice.Coord{{Q: 0, R: 0}}, hexxladb.VoronoiContextConfig{})
 	if err == nil {
 		t.Fatal("expected error on nil tx")
 	}
@@ -214,7 +214,7 @@ func TestLoadContextVoronoi_nilTx(t *testing.T) {
 func TestLoadContextVoronoi_weightFunc(t *testing.T) {
 	t.Parallel()
 	db := openVoronoiTestDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Seeds: A=(0,0), B=(4,0).
 	// Cell (2,0) is given high cost so A cannot cheaply claim it.

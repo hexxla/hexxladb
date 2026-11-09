@@ -889,7 +889,9 @@ func (db *DB) ChangelogRetentionFloor() (uint64, bool, error)
 
 func (db *DB) Close() error
     Close releases resources associated with the database. It waits for any
-    in-flight [View], [Update], or [Batch] to finish.
+    in-flight [View], [Update], or [Batch] to finish. Multiple cleanup failures
+    are joined and remain inspectable with errors.Is and errors.As. A single
+    failure is returned directly.
 
 func (db *DB) Compact(ctx context.Context, destPath string) error
     Compact creates a compacted copy of the open database at destPath.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 
@@ -79,10 +80,7 @@ func (v *seamsView) loadCmd() tea.Cmd {
 				if err1 != nil || err2 != nil {
 					return true
 				}
-				status := r.ResolutionStatus
-				if status == "" {
-					status = "unresolved"
-				}
+				status := cmp.Or(r.ResolutionStatus, "unresolved")
 				rows = append(rows, seamRow{
 					coordA: aCoord,
 					coordB: bCoord,

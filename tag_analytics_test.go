@@ -1,7 +1,6 @@
 package hexxladb_test
 
 import (
-	"context"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -19,7 +18,7 @@ func TestTagCooccurrences_CountsEachCellOnce(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	p := mustPackTest(t, hexxladb.Coord{})
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutCell(context.Background(), record.CellRecord{Key: p, Tags: []string{"alpha", "beta"}})
+		return tx.PutCell(t.Context(), record.CellRecord{Key: p, Tags: []string{"alpha", "beta"}})
 	}); err != nil {
 		t.Fatal(err)
 	}

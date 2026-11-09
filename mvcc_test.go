@@ -1,7 +1,6 @@
 package hexxladb_test
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -44,12 +43,12 @@ func TestMVCC_ViewAt_visibility(t *testing.T) {
 
 	p := mustPackTest(t, lattice.Coord{Q: 1, R: 2})
 	rec := record.CellRecord{Key: p, RawContent: "a"}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(t.Context(), rec) }); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Update(func(tx *hexxladb.Tx) error {
 		rec2 := record.CellRecord{Key: p, RawContent: "b"}
-		return tx.PutCell(context.Background(), rec2)
+		return tx.PutCell(t.Context(), rec2)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +111,7 @@ func TestMVCC_reopen_seesHistory(t *testing.T) {
 		}
 		p := mustPackTest(t, lattice.Coord{Q: 3, R: 4})
 		if err := db.Update(func(tx *hexxladb.Tx) error {
-			return tx.PutCell(context.Background(), record.CellRecord{Key: p, RawContent: "x"})
+			return tx.PutCell(t.Context(), record.CellRecord{Key: p, RawContent: "x"})
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -153,7 +152,7 @@ func TestMVCC_StatsAndPruneCellVersions(t *testing.T) {
 	p := mustPackTest(t, lattice.Coord{Q: 9, R: 9})
 	for _, raw := range []string{"v1", "v2", "v3"} {
 		r := record.CellRecord{Key: p, RawContent: raw}
-		if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), r) }); err != nil {
+		if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(t.Context(), r) }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -209,7 +208,7 @@ func TestMVCC_SuggestedPruneBeforeSeq_andPlan(t *testing.T) {
 	for i := range 60 {
 		raw := fmt.Sprintf("v%d", i)
 		if err := db.Update(func(tx *hexxladb.Tx) error {
-			return tx.PutCell(context.Background(), record.CellRecord{Key: p, RawContent: raw})
+			return tx.PutCell(t.Context(), record.CellRecord{Key: p, RawContent: raw})
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -253,7 +252,7 @@ func TestMVCC_PruneCellVersionsByProfile(t *testing.T) {
 	p := mustPackTest(t, lattice.Coord{Q: 7, R: 7})
 	for _, raw := range []string{"v1", "v2", "v3"} {
 		r := record.CellRecord{Key: p, RawContent: raw}
-		if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), r) }); err != nil {
+		if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(t.Context(), r) }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -283,7 +282,7 @@ func TestMVCC_ViewAtTime_visibility(t *testing.T) {
 	beforeFirst := time.Now().UTC()
 	time.Sleep(2 * time.Millisecond)
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutCell(context.Background(), record.CellRecord{Key: p, RawContent: "v1"})
+		return tx.PutCell(t.Context(), record.CellRecord{Key: p, RawContent: "v1"})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +290,7 @@ func TestMVCC_ViewAtTime_visibility(t *testing.T) {
 	between := time.Now().UTC()
 	time.Sleep(2 * time.Millisecond)
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutCell(context.Background(), record.CellRecord{Key: p, RawContent: "v2"})
+		return tx.PutCell(t.Context(), record.CellRecord{Key: p, RawContent: "v2"})
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -1,7 +1,6 @@
 package hexxladb_test
 
 import (
-	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -32,7 +31,7 @@ func TestTx_MarkConflict(t *testing.T) {
 	pa, _ := lattice.Pack(a)
 	pb, _ := lattice.Pack(b)
 	err = db.View(func(tx *hexxladb.Tx) error {
-		seams, err := tx.FindSeams(context.Background(), a, 2, true)
+		seams, err := tx.FindSeams(t.Context(), a, 2, true)
 		if err != nil {
 			return err
 		}
@@ -54,7 +53,7 @@ func TestTx_MarkConflict(t *testing.T) {
 
 	// Swapped endpoints should still find the same seam (canonical pair).
 	if err := db.View(func(tx *hexxladb.Tx) error {
-		seams, err := tx.FindSeams(context.Background(), b, 2, true)
+		seams, err := tx.FindSeams(t.Context(), b, 2, true)
 		if err != nil {
 			return err
 		}
@@ -88,7 +87,7 @@ func TestTx_UpdateFacet(t *testing.T) {
 		Provenance: record.ProvenanceWire{SourceID: "s", Confidence: 1, CreatedAt: 1, UpdatedAt: 1},
 		Validity:   record.ValidityWire{},
 	}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), cell) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(t.Context(), cell) }); err != nil {
 		t.Fatal(err)
 	}
 

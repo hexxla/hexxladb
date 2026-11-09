@@ -1,7 +1,6 @@
 package hexxladb_test
 
 import (
-	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -26,7 +25,7 @@ func openMultiCtxDB(t *testing.T) *hexxladb.DB {
 func TestLoadContext_NoSeeds(t *testing.T) {
 	t.Parallel()
 	db := openMultiCtxDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		pack, err := tx.LoadContext(ctx, hexxladb.LoadContextConfig{})
@@ -60,7 +59,7 @@ func TestLoadContext_NegativeMaxCells(t *testing.T) {
 func TestLoadContext_SingleSeed(t *testing.T) {
 	t.Parallel()
 	db := openMultiCtxDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	center := hexxladb.Coord{Q: 0, R: 0}
 	pk := mustPackTest(t, center)
@@ -91,7 +90,7 @@ func TestLoadContext_SingleSeed(t *testing.T) {
 func TestLoadContext_MultiSeed_DeduplicateCoords(t *testing.T) {
 	t.Parallel()
 	db := openMultiCtxDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Two seeds that share a neighbour at (1,0).
 	seedA := hexxladb.Coord{Q: 0, R: 0}
@@ -146,7 +145,7 @@ func TestLoadContext_MultiSeed_DeduplicateCoords(t *testing.T) {
 func TestLoadContext_SharedResultLimit(t *testing.T) {
 	t.Parallel()
 	db := openMultiCtxDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	coords := []hexxladb.Coord{{Q: 0, R: 0}, {Q: 1, R: 0}, {Q: 2, R: 0}, {Q: 0, R: 1}, {Q: 1, R: 1}}
 	for _, c := range coords {
@@ -211,7 +210,7 @@ func TestLoadContext_SharedResultLimit(t *testing.T) {
 func TestLoadContext_StatsAccumulated(t *testing.T) {
 	t.Parallel()
 	db := openMultiCtxDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	coord := hexxladb.Coord{Q: 0, R: 0}
 	pk := mustPackTest(t, coord)

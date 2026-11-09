@@ -49,10 +49,10 @@ func TestTx_PutSeam_secondaryIndexes(t *testing.T) {
 		Validity:         record.ValidityWire{ValidFrom: &vf},
 		Provenance:       record.ProvenanceWire{SourceID: "seam-src"},
 	}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(context.Background(), rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(t.Context(), rec) }); err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	var nSrc, nTime int
 	err = db.View(func(tx *hexxladb.Tx) error {
 		err := tx.AscendSeamsBySource(ctx, "seam-src", func(r record.SeamRecord) bool {
@@ -84,7 +84,7 @@ func TestTx_PutSeam_secondaryIndexes(t *testing.T) {
 	rec2.Provenance.SourceID = "seam-other"
 	vf2 := int64(12 * index.WeekNanos)
 	rec2.Validity.ValidFrom = &vf2
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(context.Background(), rec2) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(t.Context(), rec2) }); err != nil {
 		t.Fatal(err)
 	}
 	nSrc = 0
@@ -123,7 +123,7 @@ func TestTx_AscendSeamsBySource_contextCanceled(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	err = db.View(func(tx *hexxladb.Tx) error {
 		return tx.AscendSeamsBySource(ctx, "seam-src", func(record.SeamRecord) bool { return true })
@@ -161,15 +161,15 @@ func TestTx_AscendSeamsBySource_mvccSnapshotIsolation(t *testing.T) {
 		DetectedAt: 1,
 		Provenance: record.ProvenanceWire{SourceID: "old-src"},
 	}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(context.Background(), rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(t.Context(), rec) }); err != nil {
 		t.Fatal(err)
 	}
 	rec.Provenance.SourceID = "new-src"
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(context.Background(), rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(t.Context(), rec) }); err != nil {
 		t.Fatal(err)
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	countOld := 0
 	if err := db.ViewAt(1, func(tx *hexxladb.Tx) error {
 		return tx.AscendSeamsBySource(ctx, "old-src", func(record.SeamRecord) bool {

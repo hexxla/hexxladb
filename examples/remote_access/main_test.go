@@ -19,6 +19,22 @@ import (
 
 var testToken = []byte("0123456789abcdef0123456789abcdef")
 
+func TestCellAPITokenOwnershipAndEmptyValues(t *testing.T) {
+	t.Parallel()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for _, token := range [][]byte{nil, {}} {
+		if got := newCellAPI(nil, token, 120, 1, logger).token; got != nil {
+			t.Fatalf("empty token became non-nil: %v", got)
+		}
+	}
+	token := bytes.Clone(testToken)
+	api := newCellAPI(nil, token, 120, 1, logger)
+	clear(token)
+	if !bytes.Equal(api.token, testToken) {
+		t.Fatal("API token aliases cleared configuration bytes")
+	}
+}
+
 func TestRemoteAccessRequiresAuthentication(t *testing.T) {
 	t.Parallel()
 	_, _, handler := openTestAPI(t, 10)

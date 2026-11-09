@@ -1,7 +1,6 @@
 package hexxladb_test
 
 import (
-	"context"
 	"math"
 	"math/rand/v2"
 	"path/filepath"
@@ -48,7 +47,7 @@ func TestPutEmbedding_HighCount_32d(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	rng := rand.New(rand.NewPCG(42, 7))
 
 	for i := range n {
@@ -87,7 +86,7 @@ func TestPutEmbedding_HighCount_128d(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	rng := rand.New(rand.NewPCG(42, 13))
 
 	for i := range n {

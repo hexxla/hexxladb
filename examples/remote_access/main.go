@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"crypto/subtle"
 	"encoding/base64"
@@ -77,12 +79,11 @@ func run(logger *slog.Logger) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), shutdownSignals()...)
 	shutdownDone := make(chan error, 1)
-	go func() {
-		<-ctx.Done()
+	context.AfterFunc(ctx, func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		shutdownDone <- server.Shutdown(shutdownCtx)
-	}()
+	})
 	logger.Info("remote access example listening", "address", listener.Addr().String())
 	serveErr := server.Serve(listener)
 	stop()
@@ -104,14 +105,11 @@ func clearConfigSecrets(cfg *config) {
 
 func loadConfig(getenv func(string) string) (config, error) {
 	cfg := config{
-		address:           strings.TrimSpace(getenv("HEXXLA_REMOTE_ADDR")),
+		address:           cmp.Or(strings.TrimSpace(getenv("HEXXLA_REMOTE_ADDR")), defaultListenAddress),
 		databasePath:      strings.TrimSpace(getenv("HEXXLA_DB_PATH")),
 		bearerToken:       []byte(getenv("HEXXLA_REMOTE_TOKEN")),
 		requestsPerMinute: 120,
 		maxConcurrent:     16,
-	}
-	if cfg.address == "" {
-		cfg.address = defaultListenAddress
 	}
 	if err := validateLoopbackAddress(cfg.address); err != nil {
 		return config{}, err
@@ -151,9 +149,12 @@ type cellAPI struct {
 }
 
 func newCellAPI(db *hexxladb.DB, token []byte, requestsPerMinute, maxConcurrent int, logger *slog.Logger) *cellAPI {
+	if len(token) == 0 {
+		token = nil
+	}
 	return &cellAPI{
 		db:      db,
-		token:   append([]byte(nil), token...),
+		token:   bytes.Clone(token),
 		limiter: newFixedWindowLimiter(requestsPerMinute, time.Minute),
 		slots:   make(chan struct{}, maxConcurrent),
 		logger:  logger,

@@ -43,7 +43,7 @@ func TestExportedWalkAliasesAndTemplateHelpers(t *testing.T) {
 	}
 
 	rot := time.Now().UTC().UnixNano()
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.Update(func(tx *hexxladb.Tx) error {
 		if err := tx.PutCell(ctx, hexxladb.NewFactCell(pkA, "cell-a", "test", "kind", 0.9)); err != nil {
 			return err

@@ -27,9 +27,7 @@ func RenderHexGrid(ctx context.Context, center Coord, maxR int, labelFn func(Coo
 	if maxR < 0 {
 		return ""
 	}
-	if maxR > MaxRenderRadius {
-		maxR = MaxRenderRadius
-	}
+	maxR = min(maxR, MaxRenderRadius)
 
 	cells, bounds, cancelled := collectHexPositions(ctx, center, maxR, labelFn)
 	if cancelled {
@@ -74,18 +72,10 @@ func collectHexPositions(ctx context.Context, center Coord, maxR int, labelFn fu
 			label = string(labelRunes[:5])
 		}
 		cells = append(cells, hexPos{col: col, row: row, label: label})
-		if col < b.minCol {
-			b.minCol = col
-		}
-		if col > b.maxCol {
-			b.maxCol = col
-		}
-		if row < b.minRow {
-			b.minRow = row
-		}
-		if row > b.maxRow {
-			b.maxRow = row
-		}
+		b.minCol = min(b.minCol, col)
+		b.maxCol = max(b.maxCol, col)
+		b.minRow = min(b.minRow, row)
+		b.maxRow = max(b.maxRow, row)
 	}
 	return cells, b, false
 }
@@ -135,9 +125,7 @@ func (tx *Tx) RenderHexGridFromDB(ctx context.Context, center Coord, maxR int) (
 	if tx == nil || tx.db == nil {
 		return "", ErrClosed
 	}
-	if maxR > MaxRenderRadius {
-		maxR = MaxRenderRadius
-	}
+	maxR = min(maxR, MaxRenderRadius)
 	if err := validatePackedRadius(center, maxR); err != nil {
 		return "", err
 	}

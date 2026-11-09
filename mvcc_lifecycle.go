@@ -2,6 +2,7 @@ package hexxladb
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 
 	"github.com/hexxla/hexxladb/internal/index"
@@ -25,10 +26,7 @@ func (s PruneScheduler) Tick(db *DB) (deleted int, err error) {
 	if db == nil {
 		return 0, ErrDatabaseClosed
 	}
-	p := s.Profile
-	if p == "" {
-		p = MVCCPruneBalanced
-	}
+	p := cmp.Or(s.Profile, MVCCPruneBalanced)
 	beforeSeq, maxDel, ok, err := db.MVCCPrunePlan(p)
 	if err != nil {
 		return 0, err

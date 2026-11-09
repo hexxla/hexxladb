@@ -105,9 +105,8 @@ func TestSnapshotDiff_CellsOnly(t *testing.T) {
 	stats2, _ := db.StatsMVCC()
 	toSeq := stats2.CommitSeq
 
-	f := false
 	diff, err := db.SnapshotDiff(t.Context(), fromSeq, toSeq, hexxladb.SnapshotDiffConfig{
-		IncludeSeams: &f,
+		IncludeSeams: new(false),
 	})
 	if err != nil {
 		t.Fatalf("SnapshotDiff: %v", err)
@@ -150,9 +149,8 @@ func TestSnapshotDiff_SeamsOnly(t *testing.T) {
 	stats2, _ := db.StatsMVCC()
 	toSeq := stats2.CommitSeq
 
-	f := false
 	diff, err := db.SnapshotDiff(t.Context(), fromSeq, toSeq, hexxladb.SnapshotDiffConfig{
-		IncludeCells: &f,
+		IncludeCells: new(false),
 	})
 	if err != nil {
 		t.Fatalf("SnapshotDiff: %v", err)
@@ -336,7 +334,7 @@ func TestSnapshotDiff_ContextCancellation(t *testing.T) {
 	}
 	stats, _ := db.StatsMVCC()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err := db.SnapshotDiff(ctx, 0, stats.CommitSeq, hexxladb.SnapshotDiffConfig{})
 	if !errors.Is(err, context.Canceled) {

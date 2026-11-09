@@ -1,6 +1,9 @@
 package engine
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // DefaultPageSize is the page size for newly created databases (4 KiB).
 const DefaultPageSize = 4 << 10
@@ -17,12 +20,7 @@ var validPageSizes = [...]uint32{4096, 8192, 16384, 65536}
 
 // IsValidPageSize reports whether ps is a supported page size.
 func IsValidPageSize(ps uint32) bool {
-	for _, v := range validPageSizes {
-		if ps == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(validPageSizes[:], ps)
 }
 
 // resolvePageSize returns the effective page size from Options.

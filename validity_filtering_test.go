@@ -1,7 +1,6 @@
 package hexxladb_test
 
 import (
-	"context"
 	"crypto/rand"
 	"errors"
 	"path/filepath"
@@ -49,10 +48,10 @@ func TestTx_FindSeamsAt_validityFilter(t *testing.T) {
 		ResolutionNote:   "",
 		Validity:         record.ValidityWire{ValidFrom: &lo, ValidTo: &hi},
 	}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(context.Background(), seam) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutSeam(t.Context(), seam) }); err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	asOfInside := time.Unix(0, 150).UTC()
 	err = db.View(func(tx *hexxladb.Tx) error {
 		seams, err := tx.FindSeamsAt(ctx, a, 2, false, asOfInside)
@@ -97,11 +96,11 @@ func TestTx_WalkRingAt_validityFilter(t *testing.T) {
 		RawContent: "x",
 		Validity:   record.ValidityWire{ValidFrom: &lo, ValidTo: &hi},
 	}
-	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(context.Background(), rec) }); err != nil {
+	if err := db.Update(func(tx *hexxladb.Tx) error { return tx.PutCell(t.Context(), rec) }); err != nil {
 		t.Fatal(err)
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	asOfInside := time.Unix(0, 150).UTC()
 	var n int
 	err = db.View(func(tx *hexxladb.Tx) error {
@@ -165,15 +164,15 @@ func TestTx_LoadContextAt_maxCellsAfterFilter(t *testing.T) {
 	var past int64 = 200
 	rec1 := record.CellRecord{Key: p1, RawContent: "b", Validity: record.ValidityWire{ValidFrom: &past, ValidTo: nil}}
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		if err := tx.PutCell(context.Background(), rec0); err != nil {
+		if err := tx.PutCell(t.Context(), rec0); err != nil {
 			return err
 		}
-		return tx.PutCell(context.Background(), rec1)
+		return tx.PutCell(t.Context(), rec1)
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	asOf := time.Unix(0, 50).UTC()
 	var out []record.CellRecord
 	err = db.View(func(tx *hexxladb.Tx) error {
@@ -247,7 +246,7 @@ func TestTx_WalkRingFacets_maskAndAsOf(t *testing.T) {
 	f0 := record.FacetRecord{Key: p, FacetID: 0, DerivedContent: "f0", DerivationHash: record.HashRawContent([]byte("raw"))}
 	f2 := record.FacetRecord{Key: p, FacetID: 2, DerivedContent: "f2", DerivationHash: record.HashRawContent([]byte("raw"))}
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		if err := tx.PutCell(context.Background(), cell); err != nil {
+		if err := tx.PutCell(t.Context(), cell); err != nil {
 			return err
 		}
 		if err := tx.PutFacet(f0); err != nil {
@@ -258,7 +257,7 @@ func TestTx_WalkRingFacets_maskAndAsOf(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	asOf := time.Unix(0, 500).UTC()
 	var gotFacets int
 	err = db.View(func(tx *hexxladb.Tx) error {

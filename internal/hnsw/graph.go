@@ -365,9 +365,7 @@ func (g *Graph) Search(ctx context.Context, vec []float32, k, efSearch int) ([]S
 	if k <= 0 {
 		k = 10
 	}
-	if efSearch < k {
-		efSearch = k
-	}
+	efSearch = max(efSearch, k)
 
 	meta, hasMeta, err := g.s.GetHNSWMeta()
 	if err != nil {

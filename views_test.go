@@ -1,7 +1,6 @@
 package hexxladb_test
 
 import (
-	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -33,13 +32,13 @@ func TestTx_AssembleCellView(t *testing.T) {
 		Tags:       []string{"t1"},
 	}
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutCell(context.Background(), rec)
+		return tx.PutCell(t.Context(), rec)
 	}); err != nil {
 		t.Fatal(err)
 	}
 	opts := hexxladb.AssembleCellViewOpts{IncludeFacets: false}
 	err = db.View(func(tx *hexxladb.Tx) error {
-		v, err := tx.AssembleCellView(context.Background(), c, nil, opts)
+		v, err := tx.AssembleCellView(t.Context(), c, nil, opts)
 		if err != nil {
 			return err
 		}
@@ -67,7 +66,7 @@ func TestTx_LoadContext_nearestFirstResultLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	ring1 := lattice.Ring(center, 1)
 	if len(ring1) != 6 {
 		t.Fatal(len(ring1))
@@ -131,7 +130,7 @@ func mustPutCell(t *testing.T, db *hexxladb.DB, c lattice.Coord, content string)
 		t.Fatal(err)
 	}
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutCell(context.Background(), record.CellRecord{
+		return tx.PutCell(t.Context(), record.CellRecord{
 			Key:        p,
 			RawContent: content,
 			Provenance: record.ProvenanceWire{Confidence: 1.0},
@@ -152,7 +151,7 @@ func TestFilterSuperseded_excludesStale(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	ctx := context.Background()
+	ctx := t.Context()
 	center := lattice.Coord{Q: 0, R: 0}
 	stale := lattice.Coord{Q: 1, R: 0}    // ring-1 cell, will be superseded
 	current := lattice.Coord{Q: -1, R: 0} // ring-1 cell, the current truth
@@ -309,7 +308,7 @@ func TestFilterSuperseded_chainWalk(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	ctx := context.Background()
+	ctx := t.Context()
 	center := lattice.Coord{Q: 0, R: 0}
 	a := lattice.Coord{Q: 1, R: 0}  // stale
 	b := lattice.Coord{Q: 0, R: 1}  // intermediate (a→b→c)
@@ -370,7 +369,7 @@ func TestFilterSuperseded_noSuccessor(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	ctx := context.Background()
+	ctx := t.Context()
 	center := lattice.Coord{Q: 0, R: 0}
 	stale := lattice.Coord{Q: 1, R: 0}
 	ghost := lattice.Coord{Q: 0, R: 1} // successor coord — cell NOT stored in DB
@@ -419,7 +418,7 @@ func TestFilterSuperseded_offByDefault(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	ctx := context.Background()
+	ctx := t.Context()
 	center := lattice.Coord{Q: 0, R: 0}
 	stale := lattice.Coord{Q: 1, R: 0}
 	current := lattice.Coord{Q: -1, R: 0}

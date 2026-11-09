@@ -4,6 +4,8 @@
 
 ### Changed
 
+- **Modern Go cleanup** — use standard collection, bounds, fallback, clone, and pointer-construction helpers, tie test operations to their test context, and register remote shutdown through context cancellation.
+
 - **Development workflow** — Publish module versions through Git tags. Remove automated binary publishing, coverage uploads, duplicate vulnerability scans, and custom complexity and mutation tooling. Retain the API baseline, race suite, and scheduled vulnerability and recovery checks.
 
 ### Breaking
@@ -13,6 +15,8 @@
 - **Derived HNSW index state** — current builds read older graph metadata and use exact scoring until `DB.RebuildEmbeddingIndex` succeeds. After an embedding mutation or rebuild writes the updated derived state, use a pre-upgrade backup to return to a build that predates it. The primary data and embedding encodings are unchanged. See the [operator instructions](docs/hexxladb/OPERATIONS.md#deferred-embedding-ingestion-and-hnsw-rebuild).
 
 ### Fixed
+
+- **Close error reporting** — retain every simultaneous finalization and file-close failure through error aggregation while returning single failures directly.
 
 - **Storage recovery** — repair torn mutable headers from complete identity-bound WAL commits, bind redo routing and the complete page set to the commit descriptor, validate allocator boundaries, and fence storage reads after uncertain engine commits.
 - **Encrypted history** — prevent nonce reuse after backup restore or valid-boundary truncation, and validate existing changelog checkpoints before outbox replay even without registered consumers.

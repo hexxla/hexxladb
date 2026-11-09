@@ -1,7 +1,6 @@
 package hexxladb
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -24,7 +23,7 @@ func TestBackupDirectorySyncFailureRemovesPartialFiles(t *testing.T) {
 	}
 	wantErr := errors.New("sync failed")
 	syncCalls := 0
-	err = db.copyBackupFilesWithSync(context.Background(), files, nil, func(...string) error {
+	err = db.copyBackupFilesWithSync(t.Context(), files, nil, func(...string) error {
 		syncCalls++
 		if syncCalls == 1 {
 			return wantErr

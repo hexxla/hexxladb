@@ -32,7 +32,7 @@ func putCompactCell(t *testing.T, db *hexxladb.DB, q, r int, content string) lat
 		t.Fatal(err)
 	}
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutCell(context.Background(), record.CellRecord{
+		return tx.PutCell(t.Context(), record.CellRecord{
 			Key:        p,
 			RawContent: content,
 			Provenance: record.ProvenanceWire{SourceID: "s"},
@@ -71,7 +71,7 @@ func TestCompactTo_emptyDB(t *testing.T) {
 	closeCompactDB(t, db)
 	destPath := filepath.Join(t.TempDir(), "dest.db")
 
-	if err := hexxladb.CompactTo(context.Background(), srcPath, destPath, nil); err != nil {
+	if err := hexxladb.CompactTo(t.Context(), srcPath, destPath, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -98,7 +98,7 @@ func TestCompactTo_emptyDB(t *testing.T) {
 func TestCompactTo_preservesData(t *testing.T) {
 	t.Parallel()
 	db, srcPath := openCompactDB(t, nil)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	p1 := putCompactCell(t, db, 0, 0, "cell-a")
 	p2 := putCompactCell(t, db, 1, 0, "cell-b")
@@ -177,7 +177,7 @@ func TestCompactTo_MVCC_preservesHistory(t *testing.T) {
 	t.Parallel()
 	opts := &hexxladb.Options{}
 	db, srcPath := openCompactDB(t, opts)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	p := putCompactCell(t, db, 0, 0, "v1")
 
@@ -245,7 +245,7 @@ func TestCompactTo_encrypted(t *testing.T) {
 	closeCompactDB(t, db)
 
 	destPath := filepath.Join(t.TempDir(), "dest.db")
-	if err := hexxladb.CompactTo(context.Background(), srcPath, destPath, opts); err != nil {
+	if err := hexxladb.CompactTo(t.Context(), srcPath, destPath, opts); err != nil {
 		t.Fatal(err)
 	}
 
@@ -284,7 +284,7 @@ func TestCompactTo_ctxCancellation(t *testing.T) {
 	}
 	closeCompactDB(t, db)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel() // pre-cancel
 
 	destPath := filepath.Join(t.TempDir(), "dest.db")
@@ -306,7 +306,7 @@ func TestCompactTo_ctxCancellation(t *testing.T) {
 func TestCompactTo_fileSizeReduction(t *testing.T) {
 	t.Parallel()
 	db, srcPath := openCompactDB(t, nil)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Write many cells then delete most.
 	for i := range 50 {
@@ -406,7 +406,7 @@ func TestCompactTo_existingDestinationWALIsPreserved(t *testing.T) {
 func TestCompact_convenience(t *testing.T) {
 	t.Parallel()
 	db, _ := openCompactDB(t, nil)
-	ctx := context.Background()
+	ctx := t.Context()
 	putCompactCell(t, db, 0, 0, "conv")
 
 	destPath := filepath.Join(t.TempDir(), "compacted.db")
@@ -437,7 +437,7 @@ func TestCompact_convenience(t *testing.T) {
 func TestCompactTo_healthCheckClean(t *testing.T) {
 	t.Parallel()
 	db, srcPath := openCompactDB(t, nil)
-	ctx := context.Background()
+	ctx := t.Context()
 	putCompactCell(t, db, 0, 0, "health")
 	closeCompactDB(t, db)
 

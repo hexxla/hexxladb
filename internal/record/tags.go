@@ -1,7 +1,7 @@
 package record
 
 import (
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -24,6 +24,6 @@ func UniqueSortedTags(tags []string) []string {
 		seen[t] = struct{}{}
 		out = append(out, t)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }

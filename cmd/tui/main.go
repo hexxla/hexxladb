@@ -4,6 +4,7 @@
 package main
 
 import (
+	"cmp"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -26,10 +27,7 @@ func run() int {
 	pathFlag := flag.String("path", "", "database file path (overrides HEXXLA_DB_PATH)")
 	flag.Parse()
 
-	dbPath := *pathFlag
-	if dbPath == "" {
-		dbPath = os.Getenv("HEXXLA_DB_PATH")
-	}
+	dbPath := cmp.Or(*pathFlag, os.Getenv("HEXXLA_DB_PATH"))
 	if dbPath == "" {
 		fmt.Fprintln(os.Stderr, "error: database path required (-path or HEXXLA_DB_PATH)")
 		return 1

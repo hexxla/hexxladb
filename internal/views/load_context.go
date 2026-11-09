@@ -157,9 +157,7 @@ func mergeSeeds(results []seedResult, p LoadContextParams) (ContextPack, error) 
 		}
 		pack := results[i].pack
 		totalStats.CandidatesScanned += pack.Stats.CandidatesScanned
-		if pack.Stats.MaxRingUsed > totalStats.MaxRingUsed {
-			totalStats.MaxRingUsed = pack.Stats.MaxRingUsed
-		}
+		totalStats.MaxRingUsed = max(totalStats.MaxRingUsed, pack.Stats.MaxRingUsed)
 	}
 
 	for candidateIndex := 0; len(merged) < p.MaxCells; candidateIndex++ {

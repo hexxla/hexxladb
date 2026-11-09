@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -156,8 +157,7 @@ func (c *pageCache) stats() (hits, misses int64) {
 // --- shard methods (all called with s.mu held) ---
 
 func (s *pcShard) set(pageID uint64, data []byte) {
-	cp := make([]byte, len(data))
-	copy(cp, data)
+	cp := bytes.Clone(data)
 	size := int64(len(cp))
 
 	e, exists := s.index[pageID]
@@ -184,9 +184,7 @@ func (s *pcShard) set(pageID uint64, data []byte) {
 		s.sizeTest -= e.size
 		s.countTest--
 		s.coldTarget += size
-		if s.coldTarget > s.maxSize {
-			s.coldTarget = s.maxSize
-		}
+		s.coldTarget = min(s.coldTarget, s.maxSize)
 		// unlinkAdvance advances any hand (hot/cold/test) that pointed at e.
 		// This prevents dangling hand pointers when e is re-inserted below.
 		// After this call e.next == nil and e.prev == nil.
@@ -245,10 +243,7 @@ func (s *pcShard) del(pageID uint64) {
 }
 
 func (s *pcShard) targetSize() int64 {
-	if s.maxSize < 1 {
-		return 1
-	}
-	return s.maxSize
+	return max(s.maxSize, 1)
 }
 
 // evict runs the CLOCK-Pro clock hands until hot+cold fits within maxSize.
@@ -347,9 +342,7 @@ func (s *pcShard) runHandTest() {
 		s.sizeTest -= e.size
 		s.countTest--
 		s.coldTarget -= e.size
-		if s.coldTarget < 0 {
-			s.coldTarget = 0
-		}
+		s.coldTarget = max(s.coldTarget, 0)
 		// unlinkAdvance advances handTest (and handHot/handCold if they pointed here).
 		// It also handles the sole-element case by clearing all hands.
 		next := e.next

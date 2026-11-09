@@ -181,8 +181,7 @@ func open(path string, opts *Options, syncParents func(...string) error) (*Engin
 	}
 	e.pageBufPool = sync.Pool{
 		New: func() any {
-			b := make([]byte, max(e.pageSize, e.physicalPageSize))
-			return &b
+			return new(make([]byte, max(e.pageSize, e.physicalPageSize)))
 		},
 	}
 	if err := e.validateFreelistOnOpen(hdr); err != nil {
@@ -391,12 +390,11 @@ func (e *Engine) Close() error {
 		errs = append(errs, e.db.Close())
 		e.db = nil
 	}
-	for _, err := range errs {
-		if err != nil {
-			return err
-		}
+	errs = slices.DeleteFunc(errs, func(err error) bool { return err == nil })
+	if len(errs) == 1 {
+		return errs[0]
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // PageSizeInt returns the effective page size in bytes for this engine instance.
@@ -622,9 +620,7 @@ func (e *Engine) writePageWithGeneration(pageID uint64, data []byte) (uint64, er
 		if pageID == e.wtxn.hdr.BTreeRoot {
 			e.wtxn.hdr.BTreeRootGeneration = seq
 		}
-		if pageID+1 > e.wtxn.hdr.NextPageID {
-			e.wtxn.hdr.NextPageID = pageID + 1
-		}
+		e.wtxn.hdr.NextPageID = max(e.wtxn.hdr.NextPageID, pageID+1)
 		return seq, nil
 	}
 

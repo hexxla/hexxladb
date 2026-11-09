@@ -31,6 +31,10 @@ defer db.Close()
 
 [`Options`](../../options.go) controls page and value limits, prune suggestions, changelog, embeddings, encryption, hooks, and durability tuning. Both storage profiles use MVCC. Defaults and supported combinations are documented in [`CONFIGURATION.md`](./CONFIGURATION.md).
 
+`DB.Close` attempts every cleanup step. A single failure is returned directly.
+Simultaneous failures are joined and remain inspectable with `errors.Is` and
+`errors.As`.
+
 ## Transactions
 
 All reads and writes occur through [`Tx`](../../tx.go):

@@ -1,7 +1,6 @@
 package hexxladb_test
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -20,7 +19,7 @@ func openLargeContextTestDB(t *testing.T) *hexxladb.DB {
 func TestLoadContext_LargeRadius(t *testing.T) {
 	t.Parallel()
 	db := openLargeContextTestDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	coords := lattice.WalkRings(nil, lattice.Coord{Q: 0, R: 0}, 6)
 	err := db.Update(func(tx *hexxladb.Tx) error {
@@ -114,7 +113,7 @@ func TestLoadContext_LargeRadiusDoesNotSubstituteCoarsenedCoordinates(t *testing
 func TestLoadContext_LargeRadiusMaxCellsCap(t *testing.T) {
 	t.Parallel()
 	db := openLargeContextTestDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	err := db.Update(func(tx *hexxladb.Tx) error {
 		coords := lattice.WalkRings(nil, lattice.Coord{Q: 0, R: 0}, 4)
@@ -165,7 +164,7 @@ func TestLoadContext_LargeRadiusMaxCellsCap(t *testing.T) {
 func TestLoadContext_LargeRadiusNilTx(t *testing.T) {
 	t.Parallel()
 	var tx *hexxladb.Tx
-	_, err := tx.LoadContext(context.Background(), hexxladb.LoadContextConfig{
+	_, err := tx.LoadContext(t.Context(), hexxladb.LoadContextConfig{
 		Seeds: []hexxladb.Coord{{Q: 0, R: 0}}, MaxRing: 12,
 	})
 	if err == nil {

@@ -100,7 +100,7 @@ func TestFindEdgePath_basic(t *testing.T) {
 	}
 
 	err = db.View(func(tx *hexxladb.Tx) error {
-		path, err := tx.FindEdgePath(context.Background(), coords[0], coords[3], hexxladb.FindEdgePathConfig{})
+		path, err := tx.FindEdgePath(t.Context(), coords[0], coords[3], hexxladb.FindEdgePathConfig{})
 		if err != nil {
 			return err
 		}
@@ -320,7 +320,7 @@ func TestFindEdgePath_noEdges(t *testing.T) {
 	}
 
 	err = db.View(func(tx *hexxladb.Tx) error {
-		path, err := tx.FindEdgePath(context.Background(), lattice.Coord{Q: 0, R: 0}, lattice.Coord{Q: 5, R: 5}, hexxladb.FindEdgePathConfig{})
+		path, err := tx.FindEdgePath(t.Context(), lattice.Coord{Q: 0, R: 0}, lattice.Coord{Q: 5, R: 5}, hexxladb.FindEdgePathConfig{})
 		if err != nil {
 			return err
 		}
@@ -361,7 +361,7 @@ func TestFindEdgePath_filtered(t *testing.T) {
 	}
 
 	err = db.View(func(tx *hexxladb.Tx) error {
-		path, err := tx.FindEdgePath(context.Background(), a, c, hexxladb.FindEdgePathConfig{Filter: "related"})
+		path, err := tx.FindEdgePath(t.Context(), a, c, hexxladb.FindEdgePathConfig{Filter: "related"})
 		if err != nil {
 			return err
 		}
@@ -403,7 +403,7 @@ func TestFindEdgePath_customCostFunc(t *testing.T) {
 	b, c := coords[1], coords[2]
 	err = db.View(func(tx *hexxladb.Tx) error {
 		// Block B→C so path from A to D is impossible.
-		path, err := tx.FindEdgePath(context.Background(), coords[0], coords[3], hexxladb.FindEdgePathConfig{
+		path, err := tx.FindEdgePath(t.Context(), coords[0], coords[3], hexxladb.FindEdgePathConfig{
 			CostFunc: func(from, to hexxladb.Coord) float64 {
 				if from == b && to == c {
 					return -1 // impassable
@@ -425,7 +425,7 @@ func TestFindEdgePath_customCostFunc(t *testing.T) {
 
 	// Without blocking, path must exist.
 	err = db.View(func(tx *hexxladb.Tx) error {
-		path, err := tx.FindEdgePath(context.Background(), coords[0], coords[3], hexxladb.FindEdgePathConfig{})
+		path, err := tx.FindEdgePath(t.Context(), coords[0], coords[3], hexxladb.FindEdgePathConfig{})
 		if err != nil {
 			return err
 		}
@@ -463,7 +463,7 @@ func TestWalkEdges_basic(t *testing.T) {
 	}
 
 	err = db.View(func(tx *hexxladb.Tx) error {
-		result, err := tx.WalkEdges(context.Background(), coords[0], "", 2, 0)
+		result, err := tx.WalkEdges(t.Context(), coords[0], "", 2, 0)
 		if err != nil {
 			return err
 		}
@@ -501,7 +501,7 @@ func TestLoadContext_ByEdges_basic(t *testing.T) {
 	}
 
 	err = db.View(func(tx *hexxladb.Tx) error {
-		pack, err := tx.LoadContext(context.Background(), hexxladb.LoadContextConfig{
+		pack, err := tx.LoadContext(t.Context(), hexxladb.LoadContextConfig{
 			Seeds:      []hexxladb.Coord{coords[0]},
 			EdgeFilter: "seq",
 			MaxHops:    5,
@@ -514,7 +514,7 @@ func TestLoadContext_ByEdges_basic(t *testing.T) {
 		if len(pack.Cells) != 3 {
 			t.Fatalf("expected 3 cells via edges, got %d", len(pack.Cells))
 		}
-		bounded, err := tx.LoadContext(context.Background(), hexxladb.LoadContextConfig{
+		bounded, err := tx.LoadContext(t.Context(), hexxladb.LoadContextConfig{
 			Seeds:      []hexxladb.Coord{coords[0]},
 			EdgeFilter: "seq",
 			MaxHops:    5,
@@ -530,7 +530,7 @@ func TestLoadContext_ByEdges_basic(t *testing.T) {
 		if !bounded.Stats.ResultLimitReached {
 			t.Fatal("bounded edge context did not report result limit")
 		}
-		ringOnly, err := tx.LoadContext(context.Background(), hexxladb.LoadContextConfig{
+		ringOnly, err := tx.LoadContext(t.Context(), hexxladb.LoadContextConfig{
 			Seeds:    []hexxladb.Coord{coords[0]},
 			MaxRing:  1,
 			MaxHops:  5,

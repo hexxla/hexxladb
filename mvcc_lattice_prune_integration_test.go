@@ -3,7 +3,6 @@
 package hexxladb_test
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -66,7 +65,7 @@ func TestIntegration_MVCC_latticeAndHighChurnPrune(t *testing.T) {
 		t.Fatal(err)
 	}
 	coords := hexxladb.WalkRings(nil, c0, fillR)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	tagsRot := []string{"demo/tag-a", "demo/tag-b", "demo/tag-c", "demo/tag-d", "demo/tag-e"}
 	srcRot := []string{
@@ -122,7 +121,6 @@ func TestIntegration_MVCC_latticeAndHighChurnPrune(t *testing.T) {
 	}
 
 	for v := 2; v <= centerVersions; v++ {
-		v := v
 		if err := db.Update(func(tx *hexxladb.Tx) error {
 			rec, ok, err := tx.GetCell(p0)
 			if err != nil {

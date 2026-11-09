@@ -86,7 +86,7 @@ func (tx *Tx) AscendFacetsForCell(key PackedCoord, fn func(FacetWalkRecord) bool
 	if tx.db.activeEng() == nil {
 		return ErrDatabaseClosed
 	}
-	for facetID := byte(0); facetID <= index.MaxFacetID; facetID++ {
+	for facetID := range byte(index.MaxFacetID + 1) {
 		raw, ok, err := tx.getFacetVisibleRaw(key, facetID)
 		if err != nil {
 			return err

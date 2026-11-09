@@ -38,7 +38,7 @@ func TestLoadContextFOV_CancelsDuringGeometry(t *testing.T) {
 
 func populateFOVCells(t *testing.T, db *hexxladb.DB, maxR int) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	err := db.Update(func(tx *hexxladb.Tx) error {
 		for _, c := range lattice.WalkRings(nil, lattice.Coord{Q: 0, R: 0}, maxR) {
 			p, err := lattice.Pack(c)
@@ -65,7 +65,7 @@ func TestLoadContextFOV_noOpaque(t *testing.T) {
 	populateFOVCells(t, db, 3)
 
 	err := db.View(func(tx *hexxladb.Tx) error {
-		recs, err := tx.LoadContextFOV(context.Background(),
+		recs, err := tx.LoadContextFOV(t.Context(),
 			lattice.Coord{Q: 0, R: 0}, 3,
 			func(lattice.Coord) bool { return false },
 			hexxladb.FOVContextConfig{})
@@ -90,7 +90,7 @@ func TestLoadContextFOV_withWall(t *testing.T) {
 
 	wall := lattice.Coord{Q: 1, R: 0}
 	err := db.View(func(tx *hexxladb.Tx) error {
-		recs, err := tx.LoadContextFOV(context.Background(),
+		recs, err := tx.LoadContextFOV(t.Context(),
 			lattice.Coord{Q: 0, R: 0}, 3,
 			func(c lattice.Coord) bool { return c == wall },
 			hexxladb.FOVContextConfig{})
@@ -119,7 +119,7 @@ func TestLoadContextFOV_maxCells(t *testing.T) {
 	populateFOVCells(t, db, 3)
 
 	err := db.View(func(tx *hexxladb.Tx) error {
-		recs, err := tx.LoadContextFOV(context.Background(),
+		recs, err := tx.LoadContextFOV(t.Context(),
 			lattice.Coord{Q: 0, R: 0}, 3,
 			func(lattice.Coord) bool { return false },
 			hexxladb.FOVContextConfig{MaxCells: 5})
@@ -179,7 +179,7 @@ func TestLoadContextFOV_maxCellsDeterministicNearestFirst(t *testing.T) {
 func TestLoadContextFOV_nilTx(t *testing.T) {
 	t.Parallel()
 	var tx *hexxladb.Tx
-	_, err := tx.LoadContextFOV(context.Background(),
+	_, err := tx.LoadContextFOV(t.Context(),
 		lattice.Coord{}, 3,
 		func(lattice.Coord) bool { return false },
 		hexxladb.FOVContextConfig{})
@@ -192,7 +192,7 @@ func TestLoadContextFOV_nilOpaque(t *testing.T) {
 	t.Parallel()
 	db := openFOVTestDB(t)
 	err := db.View(func(tx *hexxladb.Tx) error {
-		_, err := tx.LoadContextFOV(context.Background(),
+		_, err := tx.LoadContextFOV(t.Context(),
 			lattice.Coord{}, 3, nil, hexxladb.FOVContextConfig{})
 		if err == nil {
 			t.Fatal("expected error on nil opaque")
@@ -208,7 +208,7 @@ func TestLoadContextFOV_negativeRadius(t *testing.T) {
 	t.Parallel()
 	db := openFOVTestDB(t)
 	err := db.View(func(tx *hexxladb.Tx) error {
-		_, err := tx.LoadContextFOV(context.Background(),
+		_, err := tx.LoadContextFOV(t.Context(),
 			lattice.Coord{}, -1,
 			func(lattice.Coord) bool { return false },
 			hexxladb.FOVContextConfig{})

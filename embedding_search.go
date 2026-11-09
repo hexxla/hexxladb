@@ -2,6 +2,7 @@ package hexxladb
 
 import (
 	"bytes"
+	"cmp"
 	"container/heap"
 	"context"
 	"errors"
@@ -97,10 +98,7 @@ func (tx *Tx) searchByEmbedding(ctx context.Context, vec []float32, cfg Embeddin
 		maxResults = 10
 	}
 	metric := tx.db.eng.EmbeddingMetric()
-	efSearch := cfg.EfSearch
-	if efSearch == 0 {
-		efSearch = max(maxResults*2, min(max(len(vec), 100), 400))
-	}
+	efSearch := cmp.Or(cfg.EfSearch, max(maxResults*2, min(max(len(vec), 100), 400)))
 	efSearch = max(efSearch, maxResults)
 
 	state, stateFound, err := tx.loadEmbeddingIndexState()

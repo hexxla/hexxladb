@@ -1,7 +1,6 @@
 package hexxladb_test
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -32,7 +31,7 @@ func TestHealthCheck_EmptyDB(t *testing.T) {
 		}
 	})
 
-	report, err := db.HealthCheck(context.Background(), hexxladb.DefaultHealthCheckConfig())
+	report, err := db.HealthCheck(t.Context(), hexxladb.DefaultHealthCheckConfig())
 	if err != nil {
 		t.Fatalf("HealthCheck: %v", err)
 	}
@@ -68,7 +67,7 @@ func TestHealthCheck_WithCellsAndSeams(t *testing.T) {
 		}
 	})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	coordA := hexxladb.Coord{Q: 0, R: 0}
 	coordB := hexxladb.Coord{Q: 1, R: 0}
 	pkA := mustPackTest(t, coordA)
@@ -116,7 +115,7 @@ func TestHealthCheck_OrphanedSeam(t *testing.T) {
 		}
 	})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	coordA := hexxladb.Coord{Q: 0, R: 0}
 	coordB := hexxladb.Coord{Q: 1, R: 0}
 	pkA := mustPackTest(t, coordA)
@@ -155,7 +154,7 @@ func TestHealthCheck_ResolvedSeamCounting(t *testing.T) {
 		}
 	})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	coordA := hexxladb.Coord{Q: 0, R: 0}
 	coordB := hexxladb.Coord{Q: 2, R: 1}
 
@@ -229,7 +228,7 @@ func TestHealthCheck_MVCC(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	ctx := context.Background()
+	ctx := t.Context()
 	coords := []hexxladb.Coord{{Q: 0, R: 0}, {Q: 1, R: 0}, {Q: 0, R: 1}}
 	for _, c := range coords {
 		pk := mustPackTest(t, c)
@@ -265,7 +264,7 @@ func TestHealthCheck_MVCC_seam_resolve_not_double_counted(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	ctx := context.Background()
+	ctx := t.Context()
 	pkA := mustPackTest(t, hexxladb.Coord{Q: 0, R: 0})
 	pkB := mustPackTest(t, hexxladb.Coord{Q: 1, R: 0})
 	var seamID string
@@ -321,7 +320,7 @@ func TestHealthCheck_MVCC_churn_then_delete_cleanSecondaries(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	ctx := context.Background()
+	ctx := t.Context()
 	pk := mustPackTest(t, hexxladb.Coord{Q: 2, R: -1})
 	for i := range 4 {
 		if err := db.Update(func(tx *hexxladb.Tx) error {
@@ -370,7 +369,7 @@ func TestHealthCheck_MaxErrors(t *testing.T) {
 		}
 	})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	coord := hexxladb.Coord{Q: 0, R: 0}
 	pk := mustPackTest(t, coord)
 	if err := db.Update(func(tx *hexxladb.Tx) error {

@@ -1,7 +1,6 @@
 package hexxladb_test
 
 import (
-	"context"
 	"errors"
 	"math"
 	"path/filepath"
@@ -277,7 +276,7 @@ func openQueryDB(t *testing.T) *hexxladb.DB {
 func putQueryCell(t *testing.T, db *hexxladb.DB, coord hexxladb.Coord, content, source string, tags []string, confidence float64, validFrom time.Time) {
 	t.Helper()
 	pk := mustPackTest(t, coord)
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.Update(func(tx *hexxladb.Tx) error {
 		rec := hexxladb.NewFactCell(pk, content, source, "topic", confidence)
 		rec.Tags = tags
@@ -296,7 +295,7 @@ func putQueryCell(t *testing.T, db *hexxladb.DB, coord hexxladb.Coord, content, 
 func TestQueryCells_EmptyDB(t *testing.T) {
 	t.Parallel()
 	db := openQueryDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{})
@@ -319,7 +318,7 @@ func TestQueryCells_RequireTagsAND(t *testing.T) {
 	putQueryCell(t, db, hexxladb.Coord{Q: 0, R: 0}, "both tags", "src", []string{"alpha", "beta"}, 0.9, time.Time{})
 	putQueryCell(t, db, hexxladb.Coord{Q: 1, R: 0}, "only alpha", "src", []string{"alpha"}, 0.9, time.Time{})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 			RequireTags: []string{"alpha", "beta"},
@@ -347,7 +346,7 @@ func TestQueryCells_AnyTagsOR(t *testing.T) {
 	putQueryCell(t, db, hexxladb.Coord{Q: 1, R: 0}, "has beta", "src", []string{"beta"}, 0.9, time.Time{})
 	putQueryCell(t, db, hexxladb.Coord{Q: 2, R: 0}, "has gamma", "src", []string{"gamma"}, 0.9, time.Time{})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 			AnyTags:    []string{"alpha", "beta"},
@@ -372,7 +371,7 @@ func TestQueryCells_ExcludeTags(t *testing.T) {
 	putQueryCell(t, db, hexxladb.Coord{Q: 0, R: 0}, "keep this", "src", []string{"fact"}, 0.9, time.Time{})
 	putQueryCell(t, db, hexxladb.Coord{Q: 1, R: 0}, "exclude this", "src", []string{"fact", "draft"}, 0.9, time.Time{})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 			RequireTags: []string{"fact"},
@@ -401,7 +400,7 @@ func TestQueryCells_ContentQuery(t *testing.T) {
 	putQueryCell(t, db, hexxladb.Coord{Q: 0, R: 0}, "the database is spatial", "src", []string{"fact"}, 0.9, time.Time{})
 	putQueryCell(t, db, hexxladb.Coord{Q: 1, R: 0}, "the weather is fine", "src", []string{"fact"}, 0.9, time.Time{})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 			Query:      "database",
@@ -505,7 +504,7 @@ func TestQueryCells_SourceID(t *testing.T) {
 	putQueryCell(t, db, hexxladb.Coord{Q: 0, R: 0}, "from session-A", "session-A", []string{"msg"}, 0.9, time.Time{})
 	putQueryCell(t, db, hexxladb.Coord{Q: 1, R: 0}, "from session-B", "session-B", []string{"msg"}, 0.9, time.Time{})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 			SourceID:   "session-A",
@@ -555,7 +554,7 @@ func TestQueryCells_ConfidenceRange(t *testing.T) {
 	putQueryCell(t, db, hexxladb.Coord{Q: 1, R: 0}, "mid conf", "src", []string{"f"}, 0.5, time.Time{})
 	putQueryCell(t, db, hexxladb.Coord{Q: 2, R: 0}, "low conf", "src", []string{"f"}, 0.2, time.Time{})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 			MinConfidence: 0.4,
@@ -586,7 +585,7 @@ func TestQueryCells_SpatialRadius(t *testing.T) {
 		putQueryCell(t, db, c, "content", "src", []string{"x"}, 0.8, time.Time{})
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 			Center:     center,
@@ -618,7 +617,7 @@ func TestQueryCells_TemporalAfter(t *testing.T) {
 	putQueryCell(t, db, hexxladb.Coord{Q: 0, R: 0}, "old cell", "src", []string{"t"}, 0.9, old)
 	putQueryCell(t, db, hexxladb.Coord{Q: 1, R: 0}, "recent cell", "src", []string{"t"}, 0.9, recent)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 			After:      base,
@@ -650,7 +649,7 @@ func TestQueryCells_TemporalBefore(t *testing.T) {
 	putQueryCell(t, db, hexxladb.Coord{Q: 0, R: 0}, "old cell", "src", []string{"t"}, 0.9, old)
 	putQueryCell(t, db, hexxladb.Coord{Q: 1, R: 0}, "recent cell", "src", []string{"t"}, 0.9, recent)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 			Before:     base,
@@ -684,7 +683,7 @@ func TestQueryCells_TemporalRange(t *testing.T) {
 	putQueryCell(t, db, hexxladb.Coord{Q: 1, R: 0}, "in window", "src", []string{"t"}, 0.9, inWindow)
 	putQueryCell(t, db, hexxladb.Coord{Q: 2, R: 0}, "future", "src", []string{"t"}, 0.9, future)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 			After:      t0,
@@ -713,7 +712,7 @@ func TestQueryCells_NoValidFrom_ExcludedFromTemporalQuery(t *testing.T) {
 	// Cell with no ValidFrom should be excluded from any temporal query.
 	putQueryCell(t, db, hexxladb.Coord{Q: 0, R: 0}, "no time", "src", []string{"t"}, 0.9, time.Time{})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 			After:      time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -741,7 +740,7 @@ func TestQueryCells_SortByConfidence(t *testing.T) {
 	putQueryCell(t, db, hexxladb.Coord{Q: 1, R: 0}, "high", "src", []string{"x"}, 0.9, time.Time{})
 	putQueryCell(t, db, hexxladb.Coord{Q: 2, R: 0}, "mid", "src", []string{"x"}, 0.6, time.Time{})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 			MaxResults: 10,
@@ -775,7 +774,7 @@ func TestQueryCells_SortByRecency(t *testing.T) {
 	putQueryCell(t, db, hexxladb.Coord{Q: 2}, "after epoch", "src", nil, 0.8, epoch.Add(time.Nanosecond))
 	putQueryCell(t, db, hexxladb.Coord{Q: 3}, "epoch", "src", nil, 0.8, epoch)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 			MaxResults: 10,
@@ -806,7 +805,7 @@ func TestQueryCells_SortByCoord(t *testing.T) {
 	putQueryCell(t, db, hexxladb.Coord{Q: 1, R: 0}, "a", "src", []string{"x"}, 0.8, time.Time{})
 	putQueryCell(t, db, hexxladb.Coord{Q: 2, R: 0}, "b", "src", []string{"x"}, 0.8, time.Time{})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 			MaxResults: 10,
@@ -838,7 +837,7 @@ func TestQueryCells_Explain(t *testing.T) {
 
 	putQueryCell(t, db, hexxladb.Coord{Q: 0, R: 0}, "database facts", "src", []string{"fact"}, 0.9, time.Time{})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 			Query:      "database",
@@ -877,7 +876,7 @@ func TestQueryCells_TagAndTemporalAndConfidence(t *testing.T) {
 	// Low confidence.
 	putQueryCell(t, db, hexxladb.Coord{Q: 3, R: 0}, "fail-conf", "src", []string{"fact"}, 0.3, base.Add(1*time.Hour))
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.QueryCells(ctx, hexxladb.CellQuery{
 			RequireTags:   []string{"fact"},
@@ -907,7 +906,7 @@ func TestSearchCells_StillWorks(t *testing.T) {
 
 	putQueryCell(t, db, hexxladb.Coord{Q: 0, R: 0}, "database search", "src", []string{"fact"}, 0.9, time.Time{})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := db.View(func(tx *hexxladb.Tx) error {
 		results, err := tx.SearchCells(ctx, hexxladb.CellSearchConfig{Query: "database"})
 		if err != nil {

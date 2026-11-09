@@ -12,8 +12,7 @@ const maxTags = 65536
 
 var cellPayloadScratch = sync.Pool{
 	New: func() any {
-		b := make([]byte, 0, 4096)
-		return &b
+		return new(make([]byte, 0, 4096))
 	},
 }
 

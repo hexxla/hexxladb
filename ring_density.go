@@ -30,7 +30,7 @@ func (tx *Tx) RingDensityMap(ctx context.Context, center Coord, maxR int) ([]Rin
 		return nil, err
 	}
 	out := make([]RingDensity, 0, maxR+1)
-	for ring := 0; ring <= maxR; ring++ {
+	for ring := range maxR + 1 {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}

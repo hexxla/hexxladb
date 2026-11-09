@@ -79,7 +79,7 @@ func TestRing_distanceShellCount(t *testing.T) {
 func TestWalkRings_ballCount(t *testing.T) {
 	t.Parallel()
 	center := lattice.Coord{Q: 0, R: 0}
-	for maxR := 0; maxR <= 5; maxR++ {
+	for maxR := range 6 {
 		var buf []lattice.Coord
 		buf = lattice.WalkRings(buf, center, maxR)
 		want := 1 + 3*maxR*(maxR+1)
@@ -92,7 +92,7 @@ func TestWalkRings_ballCount(t *testing.T) {
 func TestSpiralRange_equalsWalkRings(t *testing.T) {
 	t.Parallel()
 	center := lattice.Coord{Q: 0, R: 0}
-	for maxR := 0; maxR <= 5; maxR++ {
+	for maxR := range 6 {
 		got := lattice.SpiralRange(nil, center, 0, maxR)
 		want := lattice.WalkRings(nil, center, maxR)
 		if len(got) != len(want) {

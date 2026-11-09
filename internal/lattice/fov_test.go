@@ -199,7 +199,7 @@ func TestFieldOfViewShadowcast_openRegressionVsRaycast(t *testing.T) {
 	origin := lattice.Coord{Q: 0, R: 0}
 	noOpaque := func(lattice.Coord) bool { return false }
 
-	for r := 0; r <= 5; r++ {
+	for r := range 6 {
 		shadow := lattice.FieldOfView(origin, r, noOpaque)
 		ray := lattice.FieldOfViewRaycast(origin, r, noOpaque)
 		if len(shadow) != len(ray) {
@@ -249,7 +249,7 @@ func TestFieldOfViewShadowcast_countOpen(t *testing.T) {
 	t.Parallel()
 	origin := lattice.Coord{Q: 0, R: 0}
 	noOpaque := func(lattice.Coord) bool { return false }
-	for r := 0; r <= 8; r++ {
+	for r := range 9 {
 		got := lattice.FieldOfView(origin, r, noOpaque)
 		want := 1 + 3*r*(r+1)
 		if len(got) != want {

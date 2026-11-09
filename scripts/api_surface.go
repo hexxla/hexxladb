@@ -12,6 +12,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"os/exec"
 	"path"
@@ -115,12 +116,7 @@ func exportedAliases() ([]string, error) {
 			aliases[alias] = struct{}{}
 		}
 	}
-	result := make([]string, 0, len(aliases))
-	for alias := range aliases {
-		result = append(result, alias)
-	}
-	slices.Sort(result)
-	return result, nil
+	return slices.Sorted(maps.Keys(aliases)), nil
 }
 
 func exportedAliasesInFile(filename string) ([]string, error) {

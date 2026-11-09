@@ -945,7 +945,7 @@ func decodeInner(body []byte) (Record, error) {
 		if off+inlineLen+4 > len(body) {
 			return r, ErrCorrupt
 		}
-		r.Inline = append([]byte(nil), body[off:off+inlineLen]...)
+		r.Inline = bytes.Clone(body[off : off+inlineLen])
 		off += inlineLen
 	}
 	// crc32 last 4

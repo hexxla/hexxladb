@@ -2,7 +2,6 @@ package hexxladb_test
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"errors"
 	"path/filepath"
@@ -254,7 +253,7 @@ func TestDB_ReadChangelogSince_PutCell(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutCell(context.Background(), record.CellRecord{Key: p, RawContent: "x"})
+		return tx.PutCell(t.Context(), record.CellRecord{Key: p, RawContent: "x"})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +331,7 @@ func TestDB_ReadChangelogSince_ResolveSeam_emits_OpResolveSeam(t *testing.T) {
 	id := ulid.MustNew(ulid.Now(), rand.Reader).String()
 
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutSeam(context.Background(), record.SeamRecord{
+		return tx.PutSeam(t.Context(), record.SeamRecord{
 			ID: id, CellA: p0, CellB: p1, SeamType: "t",
 		})
 	}); err != nil {
@@ -372,7 +371,7 @@ func TestDB_changelog_resumeAfterReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.Update(func(tx *hexxladb.Tx) error {
-		return tx.PutCell(context.Background(), record.CellRecord{Key: p, RawContent: "a"})
+		return tx.PutCell(t.Context(), record.CellRecord{Key: p, RawContent: "a"})
 	}); err != nil {
 		t.Fatal(err)
 	}

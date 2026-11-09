@@ -3,7 +3,6 @@
 package hexxladb_test
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -41,7 +40,7 @@ func TestIntegration_MVCC_sustainedPutCellSameKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	vFrom := int64(1e12)
 	vTo := int64(2e12)
 	for i := range iterations {

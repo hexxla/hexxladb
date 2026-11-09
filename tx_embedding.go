@@ -50,9 +50,6 @@ func (tx *Tx) PutEmbeddingWithOptions(coord PackedCoord, vec []float32, opts Emb
 		// Auto-detect: first PutEmbedding sets the dimension for this database.
 		newDim := uint16(len(vec)) //nolint:gosec // bounded by uint16 max
 		metric := tx.db.eng.EmbeddingMetric()
-		if metric == 0 {
-			metric = engine.DistanceCosine // default
-		}
 		if err := tx.db.eng.SetEmbeddingConfig(newDim, metric); err != nil {
 			return fmt.Errorf("auto-detect embedding dimension: %w", err)
 		}
