@@ -129,33 +129,6 @@ See the [encrypted changelog policy](./ENCRYPTION.md#changelog-policy).
 
 HexxlaDB permits exactly one open handle per primary database file, across handles and processes. A competing [`Open`](../../db.go) fails immediately with [`ErrDatabaseLocked`](../../errors.go); do not bypass this lock or independently manipulate the WAL. Close the owning handle before using offline tools such as [`CompactTo`](../../compact.go) or encryption rotation.
 
-## Remote access boundary
-
-The database remains embedded: it does not listen on a network or provide
-transport authentication, authorization, tenancy, or request admission. When
-remote access is required, run one application process that exclusively owns
-the database handle and expose application-specific operations through that
-process. Remote clients must never open or share the primary, WAL, or changelog
-files.
-
-[`examples/remote_access`](../../examples/remote_access) validates this pattern
-with a small standard-library HTTP owner service. It defaults to and enforces an
-explicit loopback listener, requires a long bearer token and authenticated-v3
-encryption key, strictly bounds requests, applies admission and rate limits,
-and configures server timeouts and graceful shutdown. Its HTTP boundary test
-proves cell put/get through the owner while a competing database owner still
-gets `ErrDatabaseLocked`.
-
-The example is not a production server. Terminate TLS at a trusted local proxy
-and supply product-specific identity, authorization, tenancy, audit,
-observability, secret rotation, and workload-derived limits. Treat the host,
-owner process, and proxy as one trust boundary. A stolen bearer token grants the
-example's complete API authority, its rate limit is global and process-local,
-and an owner restart is required to replace credentials. The owner remains an
-availability and serialized-write boundary; replication, consensus, and
-automatic failover are separate product decisions. See the example's README
-for its exact threat model and run instructions.
-
 [`DB.BackupTo`](../../backup.go) is the supported online backup path:
 
 ```go
@@ -188,6 +161,33 @@ Copying only the primary, mixing a primary and WAL from different instants, or o
 When changelog is enabled, the primary may contain unacknowledged `__meta/changelog-outbox/` intents. A clean `Close` syncs and acknowledges lazy-mode intents before returning. `BackupTo` and a crash-consistent snapshot can capture pending intents; reopening the restored primary with its paired changelog completes projection automatically and may redeliver an already appended operation. Consumers must retain their at-least-once idempotency rules.
 
 Durable named consumer cursors and their logical-history checkpoint live in the primary, so `BackupTo` preserves them with the matching sidecar. Restore with changelog enabled to validate the binding before resuming. `ErrChangelogConsumerInvalidated` means the primary and retained logical history do not match; do not reset the cursor or delete the sidecar until the correct backup set has been sought. See [`CHANGEFEED.md`](./CHANGEFEED.md#durable-consumer-cursors) for compare-and-advance and explicit re-bootstrap rules.
+
+## Remote access boundary
+
+The database remains embedded: it does not listen on a network or provide
+transport authentication, authorization, tenancy, or request admission. When
+remote access is required, run one application process that exclusively owns
+the database handle and expose application-specific operations through that
+process. Remote clients must never open or share the primary, WAL, or changelog
+files.
+
+[`examples/remote_access`](../../examples/remote_access) validates this pattern
+with a small standard-library HTTP owner service. It defaults to and enforces an
+explicit loopback listener, requires a long bearer token and authenticated-v3
+encryption key, strictly bounds requests, applies admission and rate limits,
+and configures server timeouts and graceful shutdown. Its HTTP boundary test
+proves cell put/get through the owner while a competing database owner still
+gets `ErrDatabaseLocked`.
+
+The example is not a production server. Terminate TLS at a trusted local proxy
+and supply product-specific identity, authorization, tenancy, audit,
+observability, secret rotation, and workload-derived limits. Treat the host,
+owner process, and proxy as one trust boundary. A stolen bearer token grants the
+example's complete API authority, its rate limit is global and process-local,
+and an owner restart is required to replace credentials. The owner remains an
+availability and serialized-write boundary; replication, consensus, and
+automatic failover are separate product decisions. See the example's README
+for its exact threat model and run instructions.
 
 ## Offline conversion of retired files
 
@@ -590,9 +590,9 @@ The historical `leaf page full` variant caused by an incomplete cascading split 
 
 ### 5) Commit finalization failure
 
-**Signal:** `Update`/`Batch` returns `ErrCommitFinalization`; known durable projection failures also match `ErrCommitDurable`.
+**Signal:** `Update` returns `ErrCommitFinalization`; known durable projection failures also match `ErrCommitDurable`.
 
-**Response:** Stop writes on that handle. Do not retry a mutation when `ErrCommitDurable` matches. Close and reopen with the same changelog configuration, then inspect authoritative state and resume the consumer from its durable cursor. If reopen still fails, correct the reported filesystem/changelog error while preserving the primary and its outbox.
+**Response:** Follow the [finalization recovery runbook](./CHANGEFEED.md#finalization-recovery-runbook) to identify the commit outcome and recover the handle.
 
 ### 6) Durable consumer history invalidated
 

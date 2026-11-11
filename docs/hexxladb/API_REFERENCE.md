@@ -52,6 +52,16 @@ For an uncertain commit outcome, close and reopen before retrying.
 `ErrCommitDurable` identifies a known-durable primary commit that requires
 recovery. See [transaction failures](./TX.md#commit-finalization-failures).
 
+`Tx.ReadSequence()` exposes the transaction's base snapshot sequence during
+its callback; staged writes in `Update` are excluded. Use it when creating a
+continuation at a stable sequence, and handle retention expiry on later reads.
+`Tx.CountEmbeddings(ctx, limit)` counts current authoritative vector rows up to
+a positive limit, with cancellation between rows. Reaching the limit means
+additional vectors may exist; historical views reject this current-only read.
+`DB.HasRetainedChangefeed()` reports consumers, a history checkpoint or pending
+intents that require a matching sidecar, including on a disabled handle. It
+does not reset, acknowledge or validate the contents of an external sidecar.
+
 For historical graph or vector requests, use a separate `DB.View` if current data is acceptable.
 See [snapshot semantics](./TX.md#mvcc-temporal-semantics).
 

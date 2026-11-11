@@ -24,7 +24,7 @@ func appendLenPrefixedUTF8(dst []byte, s string, maxBytes int, tooLong error) ([
 }
 
 // lenPrefixedIDPrefixAfterASCII returns asciiPrefix + u16be(len(id)) + id + '/'.
-// It is the shared head of [SourceRangePrefix] and [TagRangePrefix] before min/max [lattice.PackedCoord] sentinels.
+// It is the shared head of source and tag keys before their coordinate bounds.
 func lenPrefixedIDPrefixAfterASCII(asciiPrefix string, id []byte, maxBytes int, errLong error) ([]byte, error) {
 	if len(id) > maxBytes {
 		return nil, errLong

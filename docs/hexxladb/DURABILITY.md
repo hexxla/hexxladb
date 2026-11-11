@@ -27,7 +27,7 @@ Data, version visibility, allocator changes, and changefeed outbox intents share
 this boundary. An engine commit failure fences storage reads and writes until
 close and reopen. With changefeed enabled, projection and acknowledgment follow the
 authoritative commit. A projection failure reports `ErrCommitDurable`.
-See [commit errors](./TX.md#commit-finalization-failures).
+See the [finalization recovery runbook](./CHANGEFEED.md#finalization-recovery-runbook).
 
 `DB.WriteStats` reports time spent waiting, staging, committing, and finalizing.
 `DB.WALStats` reports commit attempts and successful redo syncs. Redo syncs exclude the sync for WAL extent cleanup. Batch records in a single `DB.Update` to share a commit.

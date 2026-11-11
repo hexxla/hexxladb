@@ -2,7 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- Typed `DB.HasRetainedChangefeed`, bounded/cancellable `Tx.CountEmbeddings`, and callback-scoped `Tx.ReadSequence` accessors let integrations inspect capabilities without decoding physical metadata keys or scanning all cell history to obtain a sequence.
+
 ### Changed
+
+- Correct obsolete Batch and automation references, consolidate backup and recovery guidance, and remove an unused private source-index bounds helper.
 
 - **Go and dependencies** — Require Go 1.27.4 and update imported Go modules.
 
@@ -19,6 +25,11 @@
 - **Derived HNSW index state** — current builds read older graph metadata and use exact scoring until `DB.RebuildEmbeddingIndex` succeeds. After an embedding mutation or rebuild writes the updated derived state, use a pre-upgrade backup to return to a build that predates it. The primary data and embedding encodings are unchanged. See the [operator instructions](docs/hexxladb/OPERATIONS.md#deferred-embedding-ingestion-and-hnsw-rebuild).
 
 ### Fixed
+
+- Cancel superseded TUI searches and browse requests, including in-flight Ollama requests.
+- Correct the default MVCC configuration example.
+
+- Honor cancellation throughout embedding reindexing, including an empty database or a canceled cell scan.
 
 - **Close error reporting** — retain every simultaneous finalization and file-close failure through error aggregation while returning single failures directly.
 

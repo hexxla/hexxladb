@@ -107,10 +107,14 @@ Convenience adapters: `CellValidatorFunc`, `AfterPutCellHookFunc`, `AfterPutSeam
 ### Minimal (defaults)
 
 ```go
-db, _ := hexxladb.Open("data.db", nil)
+db, err := hexxladb.Open("data.db", nil)
+if err != nil {
+    return err
+}
 ```
 
-No MVCC, embedding dimension auto-detected on first vector write, 4 KiB pages, 8 KiB max value. Good for simple key-value usage.
+The default open uses plaintext MVCC, 4 KiB pages, and an 8 KiB maximum value
+size. The first vector write establishes the embedding dimension.
 
 ### LLM memory with embeddings
 

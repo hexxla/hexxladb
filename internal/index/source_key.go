@@ -23,11 +23,6 @@ func SourceKeyWithVersion(id string, p lattice.PackedCoord, seq uint64) ([]byte,
 	return secondaryCoordKey(SourcePrefix, id, MaxSourceIDBytes, ErrSourceIDTooLong, p, &seq)
 }
 
-// SourceRangePrefix returns inclusive coordinate bounds for a source ID.
-func SourceRangePrefix(id string) (from, to []byte, err error) {
-	return secondaryCoordBounds(SourcePrefix, id, MaxSourceIDBytes, ErrSourceIDTooLong, false)
-}
-
 // SourceRangePrefixAllVersions includes all commit sequences.
 func SourceRangePrefixAllVersions(id string) (from, to []byte, err error) {
 	return secondaryCoordBounds(SourcePrefix, id, MaxSourceIDBytes, ErrSourceIDTooLong, true)

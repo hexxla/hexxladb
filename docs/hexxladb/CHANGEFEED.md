@@ -86,7 +86,7 @@ The default path therefore performs a second small engine transaction to remove 
 
 ## Finalization recovery runbook
 
-When an `Update`/`Batch` returns **[`ErrCommitFinalization`](../../errors.go)**:
+When an `Update` returns **[`ErrCommitFinalization`](../../errors.go)**:
 
 1. Stop issuing writes on that handle and retain the original error cause.
 2. If the error also matches **[`ErrCommitDurable`](../../errors.go)**, the primary commit is known durable: do **not** retry the mutation.
@@ -98,7 +98,7 @@ If reopen returns `ErrCommitFinalization`, primary intent remains preserved but 
 
 **Retries:** backoff and retry **`ReadChangelogSince`** on transient I/O errors; treat **`ErrChangelogCorrupt`** as terminal for that tail (see **Recovery** below)—do not spin tight loops.
 
-**Lag:** combine **`changelog_records_lag`** (table above) with application-level alerting when consumers fall behind **`CommitSeq`** expectations.
+**Lag:** combine **`changelog_records_lag`** (table below) with application-level alerting when consumers fall behind **`CommitSeq`** expectations.
 
 ## Recovery
 

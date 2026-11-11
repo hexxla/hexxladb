@@ -59,7 +59,7 @@ func TestTabReplyDeliveredAfterTabSwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	m := newModel(db, "tabs.db")
+	m := newModel(t.Context(), db, "tabs.db")
 	browsing, browseCmd := m.Update(tabActivatedMsg{})
 	grid, _ := browsing.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	updated, _ := grid.Update(browseCmd())
@@ -100,7 +100,7 @@ func TestInspectorIgnoresStaleContextAndDisplaysErrors(t *testing.T) {
 
 func TestCellsDisplaysPartialSearchErrorAndIgnoresOlderReply(t *testing.T) {
 	t.Parallel()
-	v := &cellsView{input: "test", width: 120, height: 24}
+	v := &cellsView{lifetime: t.Context(), input: "test", width: 120, height: 24}
 	v.browse()
 	stale := v.request
 	v.executeSearch()

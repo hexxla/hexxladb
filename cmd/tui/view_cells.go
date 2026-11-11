@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -12,6 +13,8 @@ import (
 )
 
 type cellsView struct {
+	lifetime   context.Context
+	cancelLoad context.CancelFunc
 	db         *hexxladb.DB
 	cells      []hexxladb.CellView
 	searchHits []searchResult
@@ -30,8 +33,8 @@ type cellsView struct {
 	height     int
 }
 
-func newCellsView(db *hexxladb.DB) view {
-	return &cellsView{db: db, searchMode: "lexical"}
+func newCellsView(ctx context.Context, db *hexxladb.DB) *cellsView {
+	return &cellsView{lifetime: ctx, db: db, searchMode: "lexical"}
 }
 
 func (v *cellsView) SetSize(w, h int) { v.width = w; v.height = h }
@@ -62,6 +65,7 @@ func (v *cellsView) Update(msg tea.Msg) (view, tea.Cmd) {
 		if msg.request != v.request {
 			return v, nil
 		}
+		v.cancelLoad = nil
 		v.err = msg.err
 		v.cells = msg.browse
 		v.searchHits = msg.hits
@@ -105,10 +109,11 @@ func (v *cellsView) executeSearch() tea.Cmd {
 	}
 	v.searched = true
 	v.resultMode = v.searchMode
-	v.beginLoad()
+	ctx, cancel := v.beginLoad()
 	db, query, mode, request := v.db, v.query, v.resultMode, v.request
 	return func() tea.Msg {
-		hits, err := searchCells(db, query, mode)
+		defer cancel()
+		hits, err := searchCells(ctx, db, query, mode)
 		return cellsLoadedMsg{request: request, hits: hits, err: err}
 	}
 }
@@ -156,7 +161,12 @@ func (v *cellsView) handleNavKeyMsg(msg tea.KeyMsg) (view, tea.Cmd) {
 	return v, nil
 }
 
-func (v *cellsView) beginLoad() {
+func (v *cellsView) beginLoad() (context.Context, context.CancelFunc) {
+	if v.cancelLoad != nil {
+		v.cancelLoad()
+	}
+	ctx, cancel := context.WithCancel(v.lifetime)
+	v.cancelLoad = cancel
 	v.started = true
 	v.loading = true
 	v.request++
@@ -164,14 +174,18 @@ func (v *cellsView) beginLoad() {
 	v.cells = nil
 	v.searchHits = nil
 	v.err = nil
+	return ctx, cancel
 }
 
 func (v *cellsView) browse() tea.Cmd {
 	v.searched = false
 	v.query = ""
-	v.beginLoad()
+	ctx, cancel := v.beginLoad()
 	db, request := v.db, v.request
-	return func() tea.Msg { return loadCells(db, request) }
+	return func() tea.Msg {
+		defer cancel()
+		return loadCells(ctx, db, request)
+	}
 }
 
 func (v *cellsView) Help() []string {

@@ -66,10 +66,10 @@ const (
 	embeddingCandidates = 2_000
 )
 
-func searchCells(db *hexxladb.DB, query, mode string) ([]searchResult, error) {
+func searchCells(ctx context.Context, db *hexxladb.DB, query, mode string) ([]searchResult, error) {
 	cfg := hexxladb.CellQuery{Query: query, MaxResults: cellListLimit, MaxScanRows: lexicalScanRows}
 	if mode == "embedding" || mode == "hybrid" {
-		vector, err := embed(query)
+		vector, err := embedWithClient(ctx, ollamaHTTPClient, ollamaBase, query)
 		if err != nil {
 			return nil, fmt.Errorf("embed query: %w", err)
 		}
@@ -80,9 +80,12 @@ func searchCells(db *hexxladb.DB, query, mode string) ([]searchResult, error) {
 			cfg.Query = ""
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var hits []searchResult
 	err := db.View(func(tx *hexxladb.Tx) error {
-		results, stats, err := tx.QueryCellsWithStats(context.Background(), cfg)
+		results, stats, err := tx.QueryCellsWithStats(ctx, cfg)
 		hits = make([]searchResult, 0, len(results))
 		for _, result := range results {
 			hits = append(hits, searchResult{cell: result.Cell, score: result.Score})
@@ -95,8 +98,11 @@ func searchCells(db *hexxladb.DB, query, mode string) ([]searchResult, error) {
 	return hits, err
 }
 
-func loadCells(db *hexxladb.DB, request uint64) cellsLoadedMsg {
-	cells, err := inspect.Cells(context.Background(), db, cellListLimit, lexicalScanRows)
+func loadCells(ctx context.Context, db *hexxladb.DB, request uint64) cellsLoadedMsg {
+	if err := ctx.Err(); err != nil {
+		return cellsLoadedMsg{request: request, err: err}
+	}
+	cells, err := inspect.Cells(ctx, db, cellListLimit, lexicalScanRows)
 	return cellsLoadedMsg{request: request, browse: cells, err: err}
 }
 
@@ -109,13 +115,9 @@ const (
 
 var ollamaHTTPClient = &http.Client{Timeout: ollamaRequestTimeout}
 
-func embed(text string) ([]float32, error) {
-	return embedWithClient(ollamaHTTPClient, ollamaBase, text)
-}
-
-func embedWithClient(client *http.Client, baseURL, text string) ([]float32, error) {
+func embedWithClient(ctx context.Context, client *http.Client, baseURL, text string) ([]float32, error) {
 	body, _ := json.Marshal(map[string]string{"model": "all-minilm", "prompt": text})
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/embeddings", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/embeddings", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("ollama request: %w", err)
 	}

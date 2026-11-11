@@ -101,7 +101,6 @@ Follow the [architecture guide](docs/architecture/HEXAGONAL_ARCHITECTURE.md). Th
 
 ## Supply chain (repo automation)
 
-- **Dependabot** — [`.github/dependabot.yml`](.github/dependabot.yml) opens weekly PRs for Go module and GitHub Actions updates.
 - **Secret scanning** — enable **secret scanning** (and push protection if your plan allows) in the repository or organization **Settings → Code security**. That is the primary guard against committed credentials; editor hooks are a convenience, not a substitute.
 
 ## Editor and agent assets

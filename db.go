@@ -22,8 +22,8 @@ type dbCachedHeader struct {
 }
 
 // DB is a handle to an embedded HexxlaDB database. Use [Open] or [OpenExisting].
-// Concurrent [View] calls may run together. [Update] and [Batch] hold the exclusive DB lock through
-// their callback, engine commit, and DB-level finalization; see [docs/hexxladb/TX.md].
+// Concurrent [DB.View] calls may run together. [DB.Update] holds the exclusive DB lock
+// through its callback, engine commit, and DB-level finalization; see [docs/hexxladb/TX.md].
 type DB struct {
 	mu            sync.RWMutex
 	eng           *engine.Engine
@@ -269,7 +269,7 @@ func mapChangelogOpenError(err error) error {
 }
 
 // Close releases resources associated with the database.
-// It waits for any in-flight [View], [Update], or [Batch] to finish.
+// It waits for any in-flight [DB.View] or [DB.Update] to finish.
 // Multiple cleanup failures are joined and remain inspectable with errors.Is
 // and errors.As. A single failure is returned directly.
 func (db *DB) Close() error {

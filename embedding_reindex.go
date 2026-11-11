@@ -30,6 +30,9 @@ func (tx *Tx) ReindexEmbeddings(ctx context.Context, fn EmbeddingFunc) error {
 	if fn == nil {
 		return ErrNilCallback
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	// Collect cell coords first to avoid mutation during iteration.
 	var coords []lattice.PackedCoord
@@ -37,6 +40,9 @@ func (tx *Tx) ReindexEmbeddings(ctx context.Context, fn EmbeddingFunc) error {
 	from := []byte(index.CellPrefix)
 	to := cellPrefixEnd()
 	err := tx.db.btree.AscendRange(from, to, func(k, _ []byte) bool {
+		if scanErr = ctx.Err(); scanErr != nil {
+			return false
+		}
 		if !bytes.HasPrefix(k, []byte(index.CellPrefix)) {
 			return false
 		}
@@ -83,6 +89,9 @@ func (tx *Tx) ReindexEmbeddings(ctx context.Context, fn EmbeddingFunc) error {
 		if fnErr != nil {
 			return fnErr
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if vec == nil {
 			// fn chose to skip — remove existing embedding.
 			if err := tx.deleteEmbeddingIfEnabled(coord); err != nil {
@@ -94,7 +103,7 @@ func (tx *Tx) ReindexEmbeddings(ctx context.Context, fn EmbeddingFunc) error {
 			return err
 		}
 	}
-	return nil
+	return ctx.Err()
 }
 
 // cellPrefixEnd returns the exclusive upper bound for a cell/ prefix scan.

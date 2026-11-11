@@ -5,6 +5,7 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -43,7 +44,9 @@ func run() int {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	slog.SetDefault(log)
 
-	p := tea.NewProgram(newModel(db, dbPath), tea.WithAltScreen())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := tea.NewProgram(newModel(ctx, db, dbPath), tea.WithAltScreen(), tea.WithContext(ctx))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "tui error: %v\n", err)
 		return 1
@@ -70,12 +73,12 @@ type model struct {
 	height   int
 }
 
-func newModel(db *hexxladb.DB, dbPath string) model {
+func newModel(ctx context.Context, db *hexxladb.DB, dbPath string) model {
 	return model{
 		dbPath:   dbPath,
 		metadata: fmt.Sprintf("%d-byte pages · vector dim %d", db.PageSize(), db.EmbeddingDimension()),
 		tabs: [len(tabNames)]view{
-			newCellsView(db),
+			newCellsView(ctx, db),
 			newHexGridView(db),
 			newInspectorView(db),
 			newSeamsView(db),

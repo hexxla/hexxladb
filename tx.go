@@ -40,7 +40,7 @@ type Tx struct {
 }
 
 // View runs fn inside a read-only transaction. Many concurrent View calls are allowed;
-// they exclude only an active [Update] or [Batch]. See docs/hexxladb/TX.md.
+// they exclude an active [DB.Update]. See docs/hexxladb/TX.md.
 func (db *DB) View(fn func(*Tx) error) error {
 	if fn == nil {
 		return ErrNilCallback

@@ -602,6 +602,25 @@ func TestEmbedding_ReindexSkipRemoves(t *testing.T) {
 	}
 }
 
+func TestEmbedding_ReindexCanceledEmptyDatabaseDoesNotCommit(t *testing.T) {
+	db := openEmbeddingDB(t, 2, hexxladb.DistanceCosine)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err := db.Update(func(tx *hexxladb.Tx) error {
+		return tx.ReindexEmbeddings(ctx, func(context.Context, hexxladb.CellRecord) ([]float32, error) {
+			t.Fatal("embedder called on an empty database")
+			return nil, nil
+		})
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("reindex error = %v, want context.Canceled", err)
+	}
+	stats, err := db.StatsMVCC()
+	if err != nil || stats.CommitSeq != 0 {
+		t.Fatalf("canceled reindex advanced commit sequence: %d, %v", stats.CommitSeq, err)
+	}
+}
+
 func TestEmbedding_ReindexRejectsNilCallback(t *testing.T) {
 	t.Parallel()
 	db := openEmbeddingDB(t, 3, hexxladb.DistanceCosine)
