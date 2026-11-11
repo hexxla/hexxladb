@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Go 1.27.3 or newer**, as required by [`go.mod`](go.mod). [Go toolchain selection](https://go.dev/doc/toolchain) can select the required version automatically.
+- **Go 1.27.4 or newer**, as required by [`go.mod`](go.mod). [Go toolchain selection](https://go.dev/doc/toolchain) can select the required version automatically.
 - **[Task](https://taskfile.dev)** v3 for local repository tasks. GitHub Actions runs the validation script directly.
 - Repository analyzers require no global installation. [`scripts/tool.sh`](scripts/tool.sh)
   runs reviewed versions of the CI tools with the active Go toolchain.

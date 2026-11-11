@@ -63,7 +63,7 @@ using a `v0.y.z` version; the v1 API commitment remains a separate decision.
 
 The initial candidate profile is:
 
-- the Go module embedded in one Linux/amd64 process using Go 1.27.3 or newer;
+- the Go module embedded in one Linux/amd64 process using Go 1.27.4 or newer;
 - exactly one open owner for each database path and serialized public writes;
 - a trusted local filesystem that honors exclusive creation, file locking, and
   `fsync`/`fdatasync` durability for the primary, WAL, and optional changelog;

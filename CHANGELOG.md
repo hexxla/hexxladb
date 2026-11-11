@@ -4,6 +4,8 @@
 
 ### Changed
 
+- **Go and dependencies** — Require Go 1.27.4 and update imported Go modules.
+
 - **Modern Go cleanup** — use standard collection, bounds, fallback, clone, and pointer-construction helpers, tie test operations to their test context, and register remote shutdown through context cancellation.
 
 - **Development workflow** — Publish module versions through Git tags. Remove automated binary publishing, coverage uploads, duplicate vulnerability scans, and custom complexity and mutation tooling. Retain the API baseline, race suite, and scheduled vulnerability and recovery checks.
