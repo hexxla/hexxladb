@@ -123,10 +123,12 @@ site-specific service-level objectives.
 The v0.6.0 candidate recorded local validation, synthetic restore, cross-build,
 install and format-refusal rehearsals on 2026-08-26. Reproducible performance
 runners and a five-minute minimum-sample reference qualification also exist.
-These are historical results, not qualification of current `main`. No current
-owner-confirmed operating pilot, restore/rollback report or complete beta/v1
-qualification report is recorded. The five-minute runner is a smoke check;
-it does not satisfy the shared plan's observation window.
+These are historical results, not qualification of current `main`. The
+[2026-11-11 candidate report](https://github.com/hexxla/mosaic/blob/main/docs/qualification/2026-11-11-baseline-short-soaks.md)
+records baseline/crash-recovery, restore/upgrade/rollback and short lexical-soak
+results for exact sources. It does not complete the 24-hour beta workload,
+14-day operating pilot or beta/v1 qualification. The five-minute reference
+runner is a smoke check; it does not satisfy those observation windows.
 
 ## Beta gates
 

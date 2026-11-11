@@ -1,21 +1,47 @@
 # Roadmap
 
 This file tracks planned and deliberately deferred work. Completed changes
-belong in [the changelog](../CHANGELOG.md).
+belong in [the changelog](../CHANGELOG.md) and the dated qualification report
+linked below; this roadmap summarizes progress only to identify remaining gates.
 
 ## Release and adoption
 
-Current maturity is alpha. Complete the [beta and v1 gates](../VERSIONING.md#beta-gates)
-using the [shared qualification plan](https://github.com/hexxla/mosaic/blob/main/docs/RELEASE_QUALIFICATION.md):
-select candidate sources and profile, run baseline/recovery checks and a
-24-hour beta workload, then complete a named-owner 14-day operational pilot
-with restore and upgrade/rollback evidence before v1 sign-off. Historical
-qualification does not establish current readiness. Existing tags are preserved;
-there is no deadline or minor-version ceiling forcing v1.
+Current maturity is alpha. As of 2026-11-11, the three-repository baseline and
+recovery checks passed, followed by successful 30-minute / 1-hour lexical soaks
+(2,144 / 2,084 MCP calls, three verified backup/compaction/reopen cycles each).
+The 1-hour stage verified session expiry and resumed work after 31 minutes idle.
+Owner: void. The [dated stack report](https://github.com/hexxla/mosaic/blob/main/docs/qualification/2026-11-11-baseline-short-soaks.md)
+records exact candidates, scope, raw-artifact custody and remaining gaps.
+
+The 24-hour workload, live embeddings where enabled, representative concurrent
+callers/readers and broader failure/profile evidence remain pending. Complete
+applicable capacity checks and the [beta/v1 gates](../VERSIONING.md#beta-gates)
+using the [shared plan](https://github.com/hexxla/mosaic/blob/main/docs/RELEASE_QUALIFICATION.md).
+After beta, complete the named-owner 14-day real-workflow pilot with verified
+upgrade/restore/rollback and accepted v1 contracts. Current evidence covers a
+small serial lexical workload; it does not promote the stack or qualify a new
+runtime revision automatically. Existing tags remain intact and there is no
+minor-version ceiling forcing v1.
+
+## Recommended priorities
+
+1. **Complete scoped qualification** — Close the remaining release gates above
+   and select a real adopting workflow before expanding the supported envelope.
+2. **Sustainable maintenance** — Define consumer-coordinated changefeed archival/
+   reclamation with crash/replay and resource bounds. `ChangelogRetentionFloor`
+   reports acknowledgements; it does not reclaim the append-only sidecar and is
+   separate from MVCC pruning. Also design history-preserving encrypted
+   compaction: a fresh encrypted primary cannot reuse the old sidecar because
+   its salt changes. These capabilities remain unsupported until implemented
+   and qualified; preserve original recovery sets and never silently reset
+   cursors/history. See [changefeed](hexxladb/CHANGEFEED.md#durable-consumer-cursors)
+   and [compaction](hexxladb/OPERATIONS.md#compaction) contracts.
+3. **Bulk cell deletion** — Add a `BatchPutCells`-style bounded/chunked helper
+   when the adopting cleanup/retention workflow establishes requirements. Define
+   cancellation, MVCC-aware per-row outcomes, progress and changelog behavior.
+   Disk reclamation remains explicit prune-then-compact work.
 
 ## Other near-term work
-
-- **Bulk cell deletion** — add a `BatchPutCells`-style helper for bounded or chunked deletion, with MVCC-aware per-row outcomes, progress, and documented changelog behavior. Disk reclamation remains an explicit prune-then-compact operation.
 
 - **Secondary-index contract isolation** — investigate the smallest test seam that exercises cell and seam secondary maintenance without requiring every assertion to construct a complete database. Keep receiver methods in the root package and avoid exporting raw transaction internals.
 
@@ -40,7 +66,7 @@ These are plausible extensions, not commitments. Promote one only when a represe
 
 ## Research experiments
 
-These experiments test research-derived hypotheses without committing to a public API, storage-format change, or production implementation. Stop an experiment when its representative workload shows no material benefit.
+These experiments remain deferred and unscheduled. They test research-derived hypotheses without committing to a public API, storage-format change, or production implementation. Select one only after a concrete use case establishes a bounded experiment and measurable acceptance criterion; stop when its representative workload shows no material benefit.
 
 - **Record-granular caching and update buffering** — use *Bf-Tree: A Modern Read-Write-Optimized Concurrent Larger-Than-Memory Range Index* to design a larger-than-memory comparison of the current page cache with a bounded record/negative-cache prototype. Exercise real cell, secondary-index, MVCC, and HNSW record shapes under uniform and skewed point reads, scans, and mixed writes; report cache hits, bytes read/decrypted/copied, durable write amplification, p50/p95 latency, and throughput. Consider mini-page write buffering only if record-granular caching isolates fixed-page granularity as a material bottleneck without weakening WAL, recovery, encryption, or snapshot semantics.
 - **Bidirectional exact shortest paths** — use *Bidirectional Search That Is Guaranteed to Meet in the Middle* to compare current Dijkstra with bidirectional Dijkstra on directed persisted graphs across scale, degree, path length, weight distribution, relation filters, cache state, and disconnected components. Start with exactly representable path costs and verify optimal cost against the forward search. Specify a canonical route only if callers require identical paths among equal-cost alternatives. Include reverse-adjacency construction and evaluate floating-point accumulation order before considering a persistent incoming-edge index.

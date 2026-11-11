@@ -8,6 +8,8 @@
 
 ### Changed
 
+- Record completed baseline/recovery and short lexical-soak evidence; prioritize qualification, consumer-coordinated maintenance and use-case-driven bulk deletion while keeping research deferred and maturity alpha.
+
 - Expand the root README with runnable cell put/get and common query/update/link/delete examples, a cell metadata guide, and the current alpha installation target.
 
 - Mark the repository and combined stack as alpha; preserve published tags, define independent v0 prerelease milestones and evidence-gated beta/v1 promotion, and link the shared practical qualification plan.
