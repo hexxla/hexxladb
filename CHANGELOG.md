@@ -8,6 +8,8 @@
 
 ### Changed
 
+- Expand the root README with runnable cell put/get and common query/update/link/delete examples, a cell metadata guide, and the current alpha installation target.
+
 - Mark the repository and combined stack as alpha; preserve published tags, define independent v0 prerelease milestones and evidence-gated beta/v1 promotion, and link the shared practical qualification plan.
 
 - Correct obsolete Batch and automation references, consolidate backup and recovery guidance, and remove an unused private source-index bounds helper.
