@@ -13,6 +13,11 @@
 
 </div>
 
+**Status: alpha.** This repository and the HexxlaDB–Mosaic–MCP Ratchet stack
+are under active development. Use controlled evaluation with recoverable data;
+general production sign-off has not been given. Existing tags remain intact.
+[Release policy and beta/v1 gates](VERSIONING.md)
+
 HexxlaDB stores records as cells on a sparse hex grid. Search by text, tags,
 or application-supplied vectors, then expand around the results to find nearby
 or linked context. Each cell can carry provenance, confidence, and a validity

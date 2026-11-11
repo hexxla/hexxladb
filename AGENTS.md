@@ -34,7 +34,7 @@ Keep planned work in the roadmap and completed history in `CHANGELOG.md`.
 ## Session and release tracking
 
 - Add user-visible features, fixes, breaking changes, and material documentation changes under `CHANGELOG.md` → `[Unreleased]`.
-- Follow [`VERSIONING.md`](VERSIONING.md) and Semantic Versioning 2.0.0. During v0.y.z, features increment the minor version and fixes increment the patch version; document pre-v1 breaking changes.
+- Follow [`VERSIONING.md`](VERSIONING.md) and Semantic Versioning 2.0.0. During v0, tag deliberate prerelease milestones; feature groups or intentional breaks increment minor and compatible fixes increment patch. Preserve existing tags, document migrations, and require the beta/v1 evidence gates before promotion.
 
 ## Repository workflow
 

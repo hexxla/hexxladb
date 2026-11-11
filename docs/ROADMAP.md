@@ -5,12 +5,13 @@ belong in [the changelog](../CHANGELOG.md).
 
 ## Release and adoption
 
-- Record an adopting operator's backup and restore drill and upgrade and
-  rollback results using a build from the candidate source tag.
-- Complete a limited-production pilot with a named owner, monitoring window,
-  and restore report.
-- Evaluate the [v1 release gates](../VERSIONING.md#v1-release-gates) on the
-  proposed release commit.
+Current maturity is alpha. Complete the [beta and v1 gates](../VERSIONING.md#beta-gates)
+using the [shared qualification plan](https://github.com/hexxla/mosaic/blob/main/docs/RELEASE_QUALIFICATION.md):
+select candidate sources and profile, run baseline/recovery checks and a
+24-hour beta workload, then complete a named-owner 14-day operational pilot
+with restore and upgrade/rollback evidence before v1 sign-off. Historical
+qualification does not establish current readiness. Existing tags are preserved;
+there is no deadline or minor-version ceiling forcing v1.
 
 ## Other near-term work
 
